@@ -4404,14 +4404,15 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
         let goalRegressionStarted = false;
         const failureSettlementScope = (failure) => failure?.verificationScope
           || deriveVerificationSettlementScope(store.getRunObligation(runId, failure?.obligationId));
-        for (const request of proofRequests) {
-          if (request.verificationScope === 'goal' && failures.some((failure) => failureSettlementScope(failure) === 'focused')) break;
-          if (request.verificationScope === 'goal' && !goalRegressionStarted) {
-            goalRegressionStarted = true;
-            recordEfficiency(runId, { timestamps: { goalRegressionStartedAt: new Date().toISOString() } });
-          }
-          const obligationId = request.obligationId || request.commandRef;
-          try {
+        try {
+          for (const request of proofRequests) {
+            if (request.verificationScope === 'goal' && failures.some((failure) => failureSettlementScope(failure) === 'focused')) break;
+            if (request.verificationScope === 'goal' && !goalRegressionStarted) {
+              goalRegressionStarted = true;
+              recordEfficiency(runId, { timestamps: { goalRegressionStartedAt: new Date().toISOString() } });
+            }
+            const obligationId = request.obligationId || request.commandRef;
+            try {
             const declaredObligation = store.getRunObligation(runId, obligationId);
             const scopeAuthority = authoritativeVerificationScope(declaredObligation);
             const scopeObservation = scopeAuthority
@@ -4502,10 +4503,11 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
             }
             throw error;
           }
-        }
-
-        if (goalRegressionStarted) {
-          recordEfficiency(runId, { timestamps: { goalRegressionFinishedAt: new Date().toISOString() } });
+          }
+        } finally {
+          if (goalRegressionStarted) {
+            recordEfficiency(runId, { timestamps: { goalRegressionFinishedAt: new Date().toISOString() } });
+          }
         }
 
         for (const judgment of judgmentRequests) {
@@ -4632,6 +4634,9 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
           report,
           failures: workUnitFailures,
           outstanding: focusedOutstanding,
+          requiredObligationIds: (activeStep.obligationIds || []).filter((obligationId) => (
+            deriveVerificationSettlementScope(store.getRunObligation(runId, obligationId)) === 'focused'
+          )),
           observation,
           persistAttempt: false,
         })

@@ -583,6 +583,7 @@ export const createWorkCursorApi = ({ store, projectRoot, runtimeHome, worktree 
     report,
     failures = [],
     outstanding = [],
+    requiredObligationIds = null,
     observation,
     persistAttempt = true,
   }) {
@@ -597,6 +598,7 @@ export const createWorkCursorApi = ({ store, projectRoot, runtimeHome, worktree 
         verifications: store.getVerifications(runId),
         run,
         acceptance: run.taskContract?.acceptance || [],
+        requiredObligationIds,
       });
 
     const resultDigest = canonicalDigest({

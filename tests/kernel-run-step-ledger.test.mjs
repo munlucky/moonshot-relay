@@ -16,7 +16,7 @@ const setup = async () => {
   const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'krn-step-proj-'));
   spawnSync('git', ['init'], { cwd: projectRoot, encoding: 'utf8' });
   await writeFile(path.join(projectRoot, 'package.json'), JSON.stringify({
-    name: 'step-fixture', version: '0.0.1', scripts: { 'test:ok': 'node -e "process.exit(0)"', lint: 'node -e "process.exit(0)"' },
+    name: 'step-fixture', version: '0.0.1', scripts: { 'test:ok': 'node -e "process.exit(0)"', 'test:fail': 'node -e "process.exit(1)"', lint: 'node -e "process.exit(0)"', 'lint:fail': 'node -e "process.exit(1)"' },
   }, null, 2));
   await mkdir(path.join(projectRoot, 'src', 'auth'), { recursive: true });
   await mkdir(path.join(projectRoot, 'tests'), { recursive: true });
@@ -127,6 +127,7 @@ test('K2-8/9: a passed step advances the cursor but only a full plan completes t
       verifications: [{ obligationId: 'unit-test', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] }],
     });
     assert.equal(step1.step.state, 'passed');
+    assert.equal(step1.executed.filter((entry) => entry.obligationId === 'unit-test').length, 1, 'the first Work Unit records its focused proof');
     assert.notEqual(step1.status, 'completed', 'one passed step is not a completed run');
     assert.equal(cp.getRunSteps('r-cursor').find((step) => step.stepId === second.stepId).state, 'ready', 'the dependent step is unlocked');
     assert.equal(cp.getCurrentStep('r-cursor').stepId, second.stepId, 'the cursor advanced');
@@ -146,6 +147,7 @@ test('K2-8/9: a passed step advances the cursor but only a full plan completes t
       ],
     });
     assert.equal(step2.step.state, 'passed');
+    assert.equal(step2.executed.filter((entry) => entry.obligationId === 'unit-test').length, 1, 'later mutation makes the earlier proof stale, so final coverage reruns it');
     assert.equal(allStepsPassed(cp.getRunSteps('r-cursor'), 1), true);
     assert.equal(step2.status, 'completed');
   } finally {
@@ -194,6 +196,115 @@ test('verification boundary: non-final work runs focused proof and final work ru
     assert.equal(goalExecutions.length, 1, 'goal proof executes once at the final mutation revision');
     assert.equal(goalExecutions[0].verificationScope, 'goal');
     assert.equal(step2.status, 'completed');
+  } finally {
+    await cp.close();
+    await cleanup(fixture);
+  }
+});
+
+test('verification boundary: unplanned acceptance is deferred to the final Work Unit instead of stranding an intermediate Step', async () => {
+  const fixture = await setup();
+  const cp = await createKernelControlPlane(fixture);
+  try {
+    const contract = {
+      complex: true,
+      riskTier: 'T1',
+      acceptance: [
+        { acceptance: 'legacy optional evidence-plan acceptance remains supported' },
+        { acceptance: 'final focused evidence is explicit', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test:ok'] } },
+      ],
+      steps: [
+        { objective: 'Implement legacy-compatible behavior', allowedPaths: ['src/auth/**'], acceptanceIds: ['AC-1'], obligationIds: ['unit-test'] },
+        { objective: 'Add focused final coverage', allowedPaths: ['tests/**'], acceptanceIds: ['AC-2'] },
+      ],
+    };
+    await cp.startRun({ runId: 'r-unplanned-acceptance', objective: 'Preserve optional evidence plans', taskContract: contract });
+    const [first, second] = cp.getRunSteps('r-unplanned-acceptance');
+    assert.deepEqual(first.acceptanceIds, [], 'goal-only acceptance moves off the intermediate Work Unit');
+    assert.equal(first.obligationIds.includes('unit-test'), false, 'goal proof-policy obligation moves off the intermediate Work Unit');
+    assert.equal(second.acceptanceIds.includes('AC-1'), true, 'the final Work Unit owns the deferred acceptance');
+    assert.equal(second.obligationIds.includes('unit-test'), true, 'the final Work Unit owns the deferred goal proof');
+
+    await mutate(fixture, 'src/auth/service.mjs', 1);
+    const step1 = await cp.report('r-unplanned-acceptance', {
+      summary: 'intermediate implementation complete',
+      stepId: first.stepId,
+      changedPaths: ['src/auth/service.mjs'],
+    });
+    assert.equal(step1.step.state, 'passed');
+    assert.equal(step1.executed.some((entry) => entry.obligationId === 'unit-test'), false, 'goal proof is not reintroduced on the intermediate Work Unit');
+    assert.equal(cp.getRunSteps('r-unplanned-acceptance').find((step) => step.stepId === second.stepId).state, 'ready');
+
+    await mutate(fixture, 'tests/auth.test.mjs', 1);
+    const step2 = await cp.report('r-unplanned-acceptance', {
+      summary: 'final coverage complete',
+      stepId: second.stepId,
+      changedPaths: ['tests/auth.test.mjs'],
+    });
+    assert.equal(step2.step.state, 'passed');
+    assert.equal(step2.executed.filter((entry) => entry.verificationScope === 'goal').length, 1);
+    assert.equal(step2.status, 'completed');
+  } finally {
+    await cp.close();
+    await cleanup(fixture);
+  }
+});
+
+test('verification boundary: focused failure prevents final goal proof execution', async () => {
+  const fixture = await setup();
+  const cp = await createKernelControlPlane(fixture);
+  try {
+    const contract = {
+      ...COMPLEX_CONTRACT,
+      acceptance: [
+        COMPLEX_CONTRACT.acceptance[0],
+        { acceptance: 'the suite stays clean', evidencePlan: { class: 'hard', method: 'static-analysis', commandRefs: ['lint:fail'], obligationId: 'static-analysis' } },
+      ],
+      requiredVerifications: [{ obligationId: 'goal-regression', commandRef: 'test:ok', method: 'unit-test' }],
+    };
+    await cp.startRun({ runId: 'r-focused-failure', objective: 'Stop before goal proof', taskContract: contract });
+    const [first, second] = cp.getRunSteps('r-focused-failure');
+
+    await mutate(fixture, 'src/auth/service.mjs', 1);
+    const step1 = await cp.report('r-focused-failure', { summary: 'first', stepId: first.stepId, changedPaths: ['src/auth/service.mjs'] });
+    assert.equal(step1.step.state, 'passed');
+
+    await mutate(fixture, 'tests/auth.test.mjs', 1);
+    const step2 = await cp.report('r-focused-failure', { summary: 'final', stepId: second.stepId, changedPaths: ['tests/auth.test.mjs'] });
+    assert.equal(step2.step.state, 'failed');
+    assert.equal(step2.executed.some((entry) => entry.obligationId === 'static-analysis' && entry.status !== 'passed'), true);
+    assert.equal(step2.executed.filter((entry) => entry.obligationId === 'goal-regression').length, 0, 'goal proof never runs after focused proof failure');
+  } finally {
+    await cp.close();
+    await cleanup(fixture);
+  }
+});
+
+test('verification boundary: failed final goal regression keeps the Work Unit passed and routes repair', async () => {
+  const fixture = await setup();
+  const cp = await createKernelControlPlane(fixture);
+  try {
+    const contract = {
+      ...COMPLEX_CONTRACT,
+      requiredVerifications: [{ obligationId: 'goal-regression', commandRef: 'test:fail', method: 'unit-test' }],
+    };
+    await cp.startRun({ runId: 'r-goal-failure', objective: 'Keep final Work Unit settled', taskContract: contract });
+    const [first, second] = cp.getRunSteps('r-goal-failure');
+
+    await mutate(fixture, 'src/auth/service.mjs', 1);
+    const step1 = await cp.report('r-goal-failure', { summary: 'first', stepId: first.stepId, changedPaths: ['src/auth/service.mjs'] });
+    assert.equal(step1.step.state, 'passed');
+
+    await mutate(fixture, 'tests/auth.test.mjs', 1);
+    const step2 = await cp.report('r-goal-failure', { summary: 'final', stepId: second.stepId, changedPaths: ['tests/auth.test.mjs'] });
+    assert.equal(step2.step.state, 'passed', 'goal failure must not reopen or fail completed Work Unit implementation');
+    assert.equal(cp.getRunSteps('r-goal-failure').find((step) => step.stepId === second.stepId).state, 'passed');
+    assert.equal(step2.executed.some((entry) => entry.obligationId === 'goal-regression' && entry.status !== 'passed'), true);
+    const telemetry = (await cp.getRun('r-goal-failure')).runSignals?.efficiency || {};
+    assert.ok(telemetry.goalRegressionStartedAt, 'goal regression telemetry records the actual proof start');
+    assert.ok(telemetry.goalRegressionFinishedAt, 'goal regression telemetry records proof settlement even on failure');
+    assert.notEqual(step2.status, 'completed');
+    assert.equal(step2.next?.action?.type || step2.next?.action || step2.action?.type, 'fix');
   } finally {
     await cp.close();
     await cleanup(fixture);

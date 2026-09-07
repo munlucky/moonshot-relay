@@ -4,6 +4,7 @@
 // the contract and the route — never from a free-form plan the model narrated.
 
 import { normalizeWorkUnitAllowedPaths } from './work-unit-scope.mjs';
+import { deriveVerificationSettlementScope } from './obligation-compiler.mjs';
 
 const FILES_CHANGED_THRESHOLD = 8;
 
@@ -44,6 +45,39 @@ const normalizeDeclaredStep = ({ declared, index, runId, planRevision, contract,
 // A declared id that a previous revision already used is qualified with the plan
 // revision: step ids are unique per run, so reusing one would make the
 // replacement step collide with the step it replaces.
+const settleGoalBindingsOnFinalStep = ({ steps = [], obligations = [], contract = {} } = {}) => {
+  if (steps.length <= 1) return steps;
+  const goalObligationIds = new Set(obligations
+    .filter((obligation) => deriveVerificationSettlementScope(obligation) === 'goal')
+    .map((obligation) => String(obligation.obligationId)));
+  const acceptanceBindings = new Map((contract.acceptance || []).map((acceptance) => [
+    String(acceptance.id),
+    obligations.filter((obligation) => (obligation.acceptanceIds || []).some((id) => String(id) === String(acceptance.id))),
+  ]));
+  const final = steps[steps.length - 1];
+
+  for (const step of steps.slice(0, -1)) {
+    const deferredAcceptance = (step.acceptanceIds || []).filter((acceptanceId) => {
+      const bound = acceptanceBindings.get(String(acceptanceId)) || [];
+      return bound.length > 0 && bound.every((obligation) => deriveVerificationSettlementScope(obligation) === 'goal');
+    });
+    if (deferredAcceptance.length > 0) {
+      const deferred = new Set(deferredAcceptance.map(String));
+      step.acceptanceIds = (step.acceptanceIds || []).filter((id) => !deferred.has(String(id)));
+      final.acceptanceIds = [...new Set([...(final.acceptanceIds || []), ...deferredAcceptance])];
+    }
+
+    const deferredObligations = (step.obligationIds || []).filter((obligationId) => goalObligationIds.has(String(obligationId)));
+    if (deferredObligations.length > 0) {
+      const deferred = new Set(deferredObligations.map(String));
+      step.obligationIds = (step.obligationIds || []).filter((id) => !deferred.has(String(id)));
+      final.obligationIds = [...new Set([...(final.obligationIds || []), ...deferredObligations])];
+    }
+  }
+
+  return steps;
+};
+
 const normalizeDeclaredSteps = ({ declared = [], runId, planRevision, contract, reservedStepIds = [] }) => {
   const taken = new Set(reservedStepIds);
   const idMap = new Map();
@@ -123,7 +157,11 @@ export const planRunSteps = ({
     return { applies: decision.applies, signals: decision.signals, steps: [buildSyntheticStep({ run, contract, obligations, planRevision })] };
   }
 
-  const steps = normalizeDeclaredSteps({ declared, runId: run.runId, planRevision, contract });
+  const steps = settleGoalBindingsOnFinalStep({
+    steps: normalizeDeclaredSteps({ declared, runId: run.runId, planRevision, contract }),
+    obligations,
+    contract,
+  });
 
   const claimedObligations = new Set(steps.flatMap((step) => step.obligationIds));
   const claimedAcceptance = new Set(steps.flatMap((step) => step.acceptanceIds));
@@ -145,6 +183,9 @@ export const planReplacementSteps = ({ run, contract = {}, obligations = [], pla
   if (!Array.isArray(deltaSteps) || deltaSteps.length === 0) {
     return [buildSyntheticStep({ run, contract, obligations, planRevision })];
   }
-  return normalizeDeclaredSteps({ declared: deltaSteps, runId: run.runId, planRevision, contract, reservedStepIds })
-    .map((step) => (step.dependencyIds.length === 0 ? { ...step, state: 'ready' } : step));
+  return settleGoalBindingsOnFinalStep({
+    steps: normalizeDeclaredSteps({ declared: deltaSteps, runId: run.runId, planRevision, contract, reservedStepIds }),
+    obligations,
+    contract,
+  }).map((step) => (step.dependencyIds.length === 0 ? { ...step, state: 'ready' } : step));
 };
