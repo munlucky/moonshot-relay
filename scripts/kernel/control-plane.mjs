@@ -37,6 +37,7 @@ import {
   assertVerificationSupport,
   selectBoundCommandRef,
   authoritativeVerificationScope,
+  deriveVerificationSettlementScope,
   rebindProofPolicyCommands,
   ObligationBindingError,
 } from './run/obligation-compiler.mjs';
@@ -945,6 +946,10 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
     const projectCommands = discoverProjectCommands({ projectRoot });
     const currentRun = store.getRun(runId);
     const obligations = store.getRunObligations(runId);
+    const planSteps = store.getRunSteps(runId, { planRevision: currentRun?.planRevision });
+    const finalWorkUnitCandidate = Boolean(step) && planSteps
+      .filter((candidate) => candidate.stepId !== step.stepId)
+      .every((candidate) => ['passed', 'superseded', 'cancelled'].includes(candidate.state));
     const byId = new Map(obligations.map((obligation) => [obligation.obligationId, obligation]));
     const outstanding = new Set((completion?.unsatisfiedObligations || []).map((entry) => entry.obligationId));
     const acceptedCoverage = new Set((completion?.acceptanceCovered || []).map(String));
@@ -976,10 +981,14 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
         if (forceFresh) existing.allowEvidenceReuse = false;
         return;
       }
+      const verificationScope = deriveVerificationSettlementScope(obligation);
       requests.push({
         obligationId: obligation.obligationId,
         commandRef,
-        timeoutMs: hint.timeoutMs,
+        verificationScope,
+        timeoutMs: Number.isFinite(Number(hint.timeoutMs)) && Number(hint.timeoutMs) > 0
+          ? Number(hint.timeoutMs)
+          : (Number.isFinite(Number(obligation.metadata?.timeoutMs)) && Number(obligation.metadata.timeoutMs) > 0 ? Number(obligation.metadata.timeoutMs) : undefined),
         // A model-supplied verification hint is not itself acceptance proof.
         // Only the no-hint, Kernel-planned path may use the obligation's
         // declared acceptance binding; explicit hints must carry their own
@@ -1018,7 +1027,9 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
       // settlement on an unrelated later Step's automatic proof (which can
       // fail intentionally while the current Step is still being completed).
       // An explicit hint remains authoritative and is still honored below.
-      if (!hasHint && stepObligationIds && !stepObligationIds.has(String(obligationId))) continue;
+      const settlementScope = deriveVerificationSettlementScope(obligation);
+      if (settlementScope === 'goal' && !finalWorkUnitCandidate && step) continue;
+      if (settlementScope === 'focused' && !hasHint && stepObligationIds && !stepObligationIds.has(String(obligationId))) continue;
       addRequest(obligation, requested.get(obligationId) || {}, { forceFresh: false, automatic: !hasHint });
     }
     // An obligation can have a valid receipt while the report explicitly
@@ -1035,9 +1046,11 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
     // command is still Kernel-selected from the authority ordering above.
     for (const request of freshRequests) {
       const obligationId = reportHintObligationId(request, obligations);
-      addRequest(byId.get(obligationId), request, { forceFresh: true });
+      const obligation = byId.get(obligationId);
+      if (deriveVerificationSettlementScope(obligation) === 'goal' && !finalWorkUnitCandidate && step) continue;
+      addRequest(obligation, request, { forceFresh: true });
     }
-    return requests;
+    return requests.sort((left, right) => (left.verificationScope === 'goal') - (right.verificationScope === 'goal'));
   };
 
   const assertLiveReviewWorkspace = (runId, expectedRun, phase = 'review') => {
@@ -4388,7 +4401,15 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
           });
         })();
 
+        let goalRegressionStarted = false;
+        const failureSettlementScope = (failure) => failure?.verificationScope
+          || deriveVerificationSettlementScope(store.getRunObligation(runId, failure?.obligationId));
         for (const request of proofRequests) {
+          if (request.verificationScope === 'goal' && failures.some((failure) => failureSettlementScope(failure) === 'focused')) break;
+          if (request.verificationScope === 'goal' && !goalRegressionStarted) {
+            goalRegressionStarted = true;
+            recordEfficiency(runId, { timestamps: { goalRegressionStartedAt: new Date().toISOString() } });
+          }
           const obligationId = request.obligationId || request.commandRef;
           try {
             const declaredObligation = store.getRunObligation(runId, obligationId);
@@ -4452,7 +4473,7 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
             // just the raw command exit; use it so the report is consistent
             // with what completion authority actually sees.
             const effectiveStatus = execution.recordedStatus || execution.status;
-            executed.push({ obligationId, commandRef: request.commandRef, status: effectiveStatus, exitCode: execution.exitCode, evidenceDigest: execution.outputDigest, newRegression: request.newRegression === true, flaky: Boolean(execution.flaky), workspaceMutatedByProof: Boolean(execution.workspaceMutatedByProof), shared: Boolean(execution.shared) });
+            executed.push({ obligationId, commandRef: request.commandRef, verificationScope: request.verificationScope, status: effectiveStatus, exitCode: execution.exitCode, evidenceDigest: execution.outputDigest, newRegression: request.newRegression === true, flaky: Boolean(execution.flaky), workspaceMutatedByProof: Boolean(execution.workspaceMutatedByProof), shared: Boolean(execution.shared) });
             if (effectiveStatus !== 'passed') {
               const flakyNote = execution.flaky ? ' (flaky: divergent pass/fail — requires a waiver to pass)' : '';
               const mutationNote = execution.workspaceMutatedByProof ? ' (verification command mutated tracked source; evidence invalid)' : '';
@@ -4463,6 +4484,7 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
                 errorSummary: `${execution.errorSummary || ''}${flakyNote}${mutationNote}`.trim() || null,
                 timedOut: execution.timedOut === true,
                 reason: execution.timedOut ? 'verification-timeout' : 'verification-failed',
+                verificationScope: request.verificationScope,
               });
             }
           } catch (error) {
@@ -4480,6 +4502,10 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
             }
             throw error;
           }
+        }
+
+        if (goalRegressionStarted) {
+          recordEfficiency(runId, { timestamps: { goalRegressionFinishedAt: new Date().toISOString() } });
         }
 
         for (const judgment of judgmentRequests) {
@@ -4590,6 +4616,11 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
       if (typeof store.recordRunSignals === 'function') store.recordRunSignals(runId, structuredSignals);
       const completionPreview = evaluateRunCompletion(runId);
       const outstanding = completionPreview.unsatisfiedObligations.map((entry) => entry.obligationId);
+      const focusedOutstanding = completionPreview.unsatisfiedObligations
+        .filter((entry) => deriveVerificationSettlementScope(store.getRunObligation(runId, entry.obligationId)) === 'focused')
+        .map((entry) => entry.obligationId);
+      const workUnitFailures = failures.filter((failure) => (failure?.verificationScope
+        || deriveVerificationSettlementScope(store.getRunObligation(runId, failure?.obligationId))) === 'focused');
 
       // Settle the step BEFORE completion is considered: a step that passed
       // moves the cursor, and only a plan whose every step passed can reach
@@ -4599,8 +4630,8 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
           step: activeStep,
           attempt: stepAttempt,
           report,
-          failures,
-          outstanding,
+          failures: workUnitFailures,
+          outstanding: focusedOutstanding,
           observation,
           persistAttempt: false,
         })
@@ -4628,17 +4659,12 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
             finalizationChangedPaths = canonicalChangedPaths(finalizationChangeSet.actualChangedPaths);
           }
         }
-        recordEfficiency(runId, { timestamps: { goalRegressionStartedAt: new Date().toISOString() } });
-        try {
-          finalization = await this.finalizeRun(runId, {
-            gitCloseoutRequest: report.gitCloseoutRequest,
-            changedPaths: finalizationChangedPaths,
-            knowledgeObservations: report.knowledgeObservations,
-            structuredSignals,
-          });
-        } finally {
-          recordEfficiency(runId, { timestamps: { goalRegressionFinishedAt: new Date().toISOString() } });
-        }
+        finalization = await this.finalizeRun(runId, {
+          gitCloseoutRequest: report.gitCloseoutRequest,
+          changedPaths: finalizationChangedPaths,
+          knowledgeObservations: report.knowledgeObservations,
+          structuredSignals,
+        });
       }
 
       const proofMutatedWorkspace = executed.some((entry) => entry.workspaceMutatedByProof === true);

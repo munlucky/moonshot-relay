@@ -257,6 +257,17 @@ export const authoritativeVerificationScope = (obligation) => {
     : null;
 };
 
+// Verification settlement scope is a derived execution view, not a new
+// writable authority. Explicit path-scoped/project-owned and acceptance-bound
+// evidence settles the current Work Unit; broad policy/caller requirements
+// remain Goal proof. Unknown hard requirements fail conservatively to Goal.
+export const deriveVerificationSettlementScope = (obligation) => {
+  if (!obligation) return 'goal';
+  if (authoritativeVerificationScope(obligation)) return 'focused';
+  if (obligation.sourceType === 'evidence-plan' && (obligation.acceptanceIds || []).length > 0) return 'focused';
+  return 'goal';
+};
+
 // Commands may be added or updated during EXECUTE before PROVE is entered.
 // Refresh proof-policy bindings as well as deferred explicit/evidence-plan
 // command candidates against the current project command catalog.
@@ -594,6 +605,7 @@ export const compileRunObligations = ({
         evidenceDepth: record.evidenceDepth || null,
         scope: normalizeScope(record.scope),
         freshnessInputs: Array.isArray(record.freshnessInputs) ? record.freshnessInputs : [],
+        timeoutMs: Number.isFinite(Number(record.timeoutMs)) && Number(record.timeoutMs) > 0 ? Number(record.timeoutMs) : null,
       },
     });
   }
@@ -619,6 +631,7 @@ export const compileRunObligations = ({
         outcome: item.evidencePlan?.outcome || null,
         scope: normalizeScope(item.evidencePlan?.scope),
         freshnessInputs: Array.isArray(item.evidencePlan?.freshnessInputs) ? item.evidencePlan.freshnessInputs : [],
+        timeoutMs: Number.isFinite(Number(item.evidencePlan?.timeoutMs)) && Number(item.evidencePlan?.timeoutMs) > 0 ? Number(item.evidencePlan.timeoutMs) : null,
       },
     });
   }

@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { createKernelControlPlane } from '../scripts/kernel/control-plane.mjs';
-import { compileRunObligations, assertVerificationSupport } from '../scripts/kernel/run/obligation-compiler.mjs';
+import { compileRunObligations, assertVerificationSupport, deriveVerificationSettlementScope } from '../scripts/kernel/run/obligation-compiler.mjs';
 import { mergeContractRevisionWithBindings, normalizeTaskContract } from '../scripts/kernel/task/task-contract.mjs';
 import { discoverProjectCommands, classifyCommandName } from '../scripts/kernel/proof/command-catalog.mjs';
 
@@ -32,6 +32,53 @@ const cleanup = async ({ runtimeHome, projectRoot }) => {
 };
 
 const mutate = (projectRoot, value) => writeFile(path.join(projectRoot, 'app.mjs'), `export const v = ${value};\n`);
+
+
+test('verification settlement scope stays derived: scoped/acceptance proof is focused and broad policy is goal', () => {
+  assert.equal(deriveVerificationSettlementScope({
+    obligationId: 'step-test',
+    evidenceClass: 'hard',
+    sourceType: 'caller',
+    metadata: { scope: ['src/auth/**'] },
+  }), 'focused');
+  assert.equal(deriveVerificationSettlementScope({
+    obligationId: 'acceptance-ac-1',
+    evidenceClass: 'hard',
+    sourceType: 'evidence-plan',
+    acceptanceIds: ['AC-1'],
+  }), 'focused');
+  assert.equal(deriveVerificationSettlementScope({
+    obligationId: 'unit-test',
+    evidenceClass: 'hard',
+    sourceType: 'proof-policy',
+  }), 'goal');
+  assert.equal(deriveVerificationSettlementScope({
+    obligationId: 'unknown-hard',
+    evidenceClass: 'hard',
+    sourceType: 'caller',
+  }), 'goal');
+  assert.equal(deriveVerificationSettlementScope({
+    obligationId: 'global-project-rule',
+    evidenceClass: 'hard',
+    sourceType: 'knowledge',
+  }), 'goal', 'unscoped project knowledge remains conservative goal proof');
+});
+
+test('required verification timeout remains an obligation contract value', async () => {
+  const fixture = await setup();
+  try {
+    const obligations = compileRunObligations({
+      projectRoot: fixture.projectRoot,
+      requiredChecks: [],
+      contract: {
+        requiredVerifications: [{ obligationId: 'long-goal', commandRef: 'test:ok', timeoutMs: 600000 }],
+      },
+    });
+    assert.equal(obligations[0].metadata.timeoutMs, 600000);
+  } finally {
+    await cleanup(fixture);
+  }
+});
 
 test('P1-4: project commands are discovered per ecosystem and classified semantically', async () => {
   const fixture = await setup();

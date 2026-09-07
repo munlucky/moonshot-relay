@@ -154,6 +154,52 @@ test('K2-8/9: a passed step advances the cursor but only a full plan completes t
   }
 });
 
+
+test('verification boundary: non-final work runs focused proof and final work runs goal proof once', async () => {
+  const fixture = await setup();
+  const cp = await createKernelControlPlane(fixture);
+  try {
+    const contract = {
+      ...COMPLEX_CONTRACT,
+      requiredVerifications: [
+        { obligationId: 'goal-regression', commandRef: 'test:ok', method: 'unit-test', timeoutMs: 600000 },
+      ],
+    };
+    await cp.startRun({ runId: 'r-proof-boundary', objective: 'Harden auth once', taskContract: contract });
+    const [first, second] = cp.getRunSteps('r-proof-boundary');
+
+    await mutate(fixture, 'src/auth/service.mjs', 1);
+    const step1 = await cp.report('r-proof-boundary', {
+      summary: 'first work unit',
+      stepId: first.stepId,
+      changedPaths: ['src/auth/service.mjs'],
+      verifications: [{ obligationId: 'unit-test', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] }],
+    });
+    assert.equal(step1.step.state, 'passed');
+    assert.equal(step1.executed.some((entry) => entry.obligationId === 'goal-regression'), false, 'goal proof is deferred while work remains');
+    assert.equal(cp.getRunSteps('r-proof-boundary').find((step) => step.stepId === second.stepId).state, 'ready');
+
+    await mutate(fixture, 'tests/auth.test.mjs', 1);
+    const step2 = await cp.report('r-proof-boundary', {
+      summary: 'final work unit',
+      stepId: second.stepId,
+      changedPaths: ['tests/auth.test.mjs'],
+      verifications: [
+        { obligationId: 'static-analysis', commandRef: 'lint', acceptanceCoverage: ['AC-2'] },
+        { obligationId: 'unit-test', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] },
+      ],
+    });
+    assert.equal(step2.step.state, 'passed');
+    const goalExecutions = step2.executed.filter((entry) => entry.obligationId === 'goal-regression');
+    assert.equal(goalExecutions.length, 1, 'goal proof executes once at the final mutation revision');
+    assert.equal(goalExecutions[0].verificationScope, 'goal');
+    assert.equal(step2.status, 'completed');
+  } finally {
+    await cp.close();
+    await cleanup(fixture);
+  }
+});
+
 test('K2: the ledger only decomposes when the work actually calls for it', () => {
   assert.equal(stepLedgerApplies({ contract: { taskClass: 'feature' }, route: { stages: ['FRAME', 'EXECUTE', 'PROVE', 'CLOSE'] } }).applies, false);
   assert.equal(stepLedgerApplies({ contract: { taskClass: 'long-running' } }).applies, true);
