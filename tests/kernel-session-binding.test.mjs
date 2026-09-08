@@ -9,6 +9,7 @@ import { openSqliteDb } from '../scripts/kernel/sqlite-adapter.mjs';
 import { openKernelStateStore } from '../scripts/kernel/state-store.mjs';
 
 const sourceIdentity = `sha256:${'c'.repeat(64)}`;
+const workspaceIdentity = `sha256:${'e'.repeat(64)}`;
 
 const createRun = (store, { runId, projectId, workspaceId }) =>
   store.createRun({
@@ -17,6 +18,7 @@ const createRun = (store, { runId, projectId, workspaceId }) =>
     sourceIdentity,
     projectId,
     workspaceId,
+    workspaceIdentity,
   });
 
 const owner = ({ bindingId, sessionId, runId, projectId, workspaceId }) =>
@@ -503,6 +505,7 @@ const successorSpec = ({
   sessionId = 'codex:successor-session',
   workspaceId = 'successor-workspace',
   worktreeId = null,
+  workspaceIdentityValue = workspaceIdentity,
 }) => {
   const taskContractDigest = `sha256:${'d'.repeat(64)}`;
   return {
@@ -512,6 +515,7 @@ const successorSpec = ({
     sourceIdentity,
     projectId,
     workspaceId,
+    workspaceIdentity: workspaceIdentityValue,
     ...(worktreeId ? { worktreeId } : {}),
     taskContract: {
       schemaVersion: 1,
@@ -586,6 +590,19 @@ test('successor handoff is atomic, idempotent, preserves predecessor lineage, an
         worktreeId: workspace.worktreeId,
       }),
     };
+
+    assert.throws(
+      () => store.createSuccessorRunAtomic({
+        ...request,
+        ...successorSpec({
+          runId: 'run-successor-continuity-mismatch',
+          bindingId: 'binding-successor-continuity-mismatch',
+          worktreeId: workspace.worktreeId,
+          workspaceIdentityValue: `sha256:${'f'.repeat(64)}`,
+        }),
+      }),
+      (error) => error.code === 'successor_workspace_continuity_mismatch',
+    );
 
     const first = store.createSuccessorRunAtomic(request);
     const retry = store.createSuccessorRunAtomic({

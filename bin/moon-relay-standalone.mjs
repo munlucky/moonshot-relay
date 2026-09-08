@@ -34,6 +34,10 @@ export async function runStandaloneCli(name, argv = process.argv.slice(2), { cwd
     target: args.target || args.path || null,
     objective: args.objective || args._.slice(0).join(' '),
     source: args.source || null,
+    approve: args.approve === true,
+    approver: args.approver || null,
+    reason: args.reason || args.approvalReason || null,
+    operatorApprovalRef: args.operatorApprovalRef || env.MOON_RELAY_KERNEL_OPERATOR_APPROVAL_REF || null,
   });
   return { ...result, utility: name, authority: entry.authority || 'informational' };
 }

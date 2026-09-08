@@ -65,11 +65,12 @@ export const classifyCommandName = (name = '', body = '') => {
 
 const nodeCommands = (projectRoot) => {
   const manifest = readJson(path.join(projectRoot, 'package.json'));
-  if (!manifest || !manifest.scripts || typeof manifest.scripts !== 'object') return [];
+  if (!manifest) return [];
   const runner = existsSync(path.join(projectRoot, 'pnpm-lock.yaml'))
     ? 'pnpm'
     : existsSync(path.join(projectRoot, 'yarn.lock')) ? 'yarn' : 'npm';
-  return Object.entries(manifest.scripts)
+  const scripts = manifest.scripts && typeof manifest.scripts === 'object' ? manifest.scripts : {};
+  const commands = Object.entries(scripts)
     .filter(([, body]) => typeof body === 'string')
     .map(([name, body]) => ({
       commandRef: name,
@@ -80,6 +81,34 @@ const nodeCommands = (projectRoot) => {
       source: 'package.json',
       declaration: body,
     }));
+  const dependencySections = [
+    manifest.dependencies,
+    manifest.devDependencies,
+    manifest.optionalDependencies,
+    manifest.peerDependencies,
+  ];
+  const hasTypeScriptDependency = dependencySections.some((section) => (
+    section && typeof section === 'object' && typeof section.typescript === 'string'
+  ));
+  const hasTypeScriptConfig = existsSync(path.join(projectRoot, 'tsconfig.json'));
+  const hasDeclaredTypeScriptCheck = commands.some(({ commandRef }) => /^(?:typecheck|tsc)(?::|$)/i.test(commandRef));
+  const localTypeScriptBinary = [
+    path.join(projectRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'tsc.cmd' : 'tsc'),
+    path.join(projectRoot, 'node_modules', '.bin', 'tsc'),
+  ].find((candidate) => existsSync(candidate));
+  if (hasTypeScriptDependency && hasTypeScriptConfig && !hasDeclaredTypeScriptCheck && localTypeScriptBinary) {
+    const relativeBinary = path.relative(projectRoot, localTypeScriptBinary).replaceAll('\\', '/');
+    commands.push({
+      commandRef: 'typescript:check',
+      commandClass: 'static-analysis',
+      command: relativeBinary,
+      args: ['--noEmit'],
+      ecosystem: 'node',
+      source: 'package.json+tsconfig.json+node_modules/.bin/tsc',
+      declaration: `${relativeBinary} --noEmit`,
+    });
+  }
+  return commands;
 };
 
 // Canonical ecosystem commands. These are not invented by the Kernel: each is

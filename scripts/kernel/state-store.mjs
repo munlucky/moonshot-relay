@@ -1702,16 +1702,16 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         : Number(run.contractRevision || 1);
       const revise = db.transaction(() => {
         const compiledIds = [...new Set(obligations.map((obligation) => obligation.obligationId))];
-        const retiredEvidencePlanIds = db.prepare(`
-          SELECT obligation_id as obligationId FROM run_obligations
-          WHERE run_id=? AND source_type='evidence-plan'
-        `).all(runId)
-          .map((row) => row.obligationId)
+        const previousObligationRows = new Map(this.getRunObligations(runId).map((obligation) => [obligation.obligationId, obligation]));
+        const existingObligationIds = db.prepare(`
+          SELECT obligation_id as obligationId FROM run_obligations WHERE run_id=?
+        `).all(runId).map((row) => row.obligationId);
+        const supersededObligationIds = existingObligationIds
           .filter((obligationId) => !compiledIds.includes(obligationId));
-        const nextRequiredObligations = [...new Set([
-          ...run.requiredObligations.filter((obligationId) => !retiredEvidencePlanIds.includes(obligationId)),
-          ...compiledIds,
-        ])];
+        // The compiled result is the complete current authority. Historical
+        // rows remain queryable and are marked superseded below, but they must
+        // not silently keep a removed requirement alive in the Run gate.
+        const nextRequiredObligations = compiledIds;
         db.prepare(`UPDATE runs
           SET task_contract_json=?, contract_revision=?, acceptance_criteria=?, required_obligations=?, revision=revision+1, updated_at=?
           WHERE run_id=?`)
@@ -1724,10 +1724,10 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
             runId,
           );
 
-        if (retiredEvidencePlanIds.length > 0) {
-          const placeholders = retiredEvidencePlanIds.map(() => '?').join(', ');
+        if (supersededObligationIds.length > 0) {
+          const placeholders = supersededObligationIds.map(() => '?').join(', ');
           db.prepare(`UPDATE run_obligations SET status='superseded', updated_at=? WHERE run_id=? AND obligation_id IN (${placeholders})`)
-            .run(now(), runId, ...retiredEvidencePlanIds);
+            .run(now(), runId, ...supersededObligationIds);
         }
 
         const upsertObligation = db.prepare(`
@@ -1770,6 +1770,33 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         for (const obligation of obligations) obligationRows.set(obligation.obligationId, obligation);
         const canonicalCoverage = (rawCoverage, obligationId) => {
           const coverage = safeJsonParse(rawCoverage, []);
+          if (coverage.length === 0) return [];
+          const previousObligation = previousObligationRows.get(obligationId) || null;
+          // Once an obligation has been superseded it no longer participates
+          // in the current completion authority. Its historical coverage is
+          // retained for audit only and may refer to acceptance ids removed by
+          // an earlier replacement, so do not validate it against the reduced
+          // current contract on later revisions.
+          if (previousObligation?.status === 'superseded' && !compiledIds.includes(obligationId)) {
+            return coverage;
+          }
+          // Validate historical evidence against the old authority first. A
+          // genuinely malformed old receipt still fails closed; a criterion
+          // deliberately removed by the new contract becomes stale history.
+          try {
+            normalizeAcceptanceCoverage({
+              contract: run.taskContract || {},
+              acceptanceCriteria: run.acceptanceCriteria || [],
+              obligation: previousObligation,
+              coverage,
+            });
+          } catch (error) {
+            throw Object.assign(new Error(`CONTRACT_COVERAGE_REBASE_FAILED: ${error.message}`), {
+              code: 'CONTRACT_COVERAGE_REBASE_FAILED',
+              detail: { obligationId, coverage, cause: error.code || 'ACCEPTANCE_COVERAGE_INVALID' },
+            });
+          }
+          if (!compiledIds.includes(obligationId)) return coverage;
           try {
             return normalizeAcceptanceCoverage({
               contract: taskContract,
@@ -1778,6 +1805,11 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
               coverage,
             });
           } catch (error) {
+            // Removal or rebinding of an acceptance criterion makes prior
+            // proof stale, not a reason to abandon the Run. The old validation
+            // above preserves the fail-closed check for corrupt history.
+            if (error?.code === 'ACCEPTANCE_COVERAGE_UNKNOWN'
+              || error?.code === 'ACCEPTANCE_COVERAGE_NOT_BOUND') return [];
             throw Object.assign(new Error(`CONTRACT_COVERAGE_REBASE_FAILED: ${error.message}`), {
               code: 'CONTRACT_COVERAGE_REBASE_FAILED',
               detail: { obligationId, coverage, cause: error.code || 'ACCEPTANCE_COVERAGE_INVALID' },
@@ -2475,7 +2507,8 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
           SELECT run_id as runId, project_id as projectId,
                  workspace_id as workspaceId, worktree_id as worktreeId,
                  owner_binding_id as ownerBindingId,
-                 status, finalization_status as finalizationStatus
+                 status, finalization_status as finalizationStatus,
+                 current_workspace_identity as currentWorkspaceIdentity
           FROM runs WHERE run_id=?
         `).get(predecessorRunId);
         const predecessorBinding = predecessorBindingId && sessionId
@@ -2505,6 +2538,25 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
               && predecessor?.finalizationStatus !== 'completed'
               ? 'retry-finalization'
               : 'inspect-predecessor-binding',
+          });
+        }
+        const predecessorFinalWorkspaceIdentity = predecessor.currentWorkspaceIdentity || null;
+        const successorStartWorkspaceIdentity = successorRun.runStartWorkspaceIdentity
+          || successorRun.workspaceIdentity
+          || null;
+        if (!predecessorFinalWorkspaceIdentity
+          || !successorStartWorkspaceIdentity
+          || predecessorFinalWorkspaceIdentity !== successorStartWorkspaceIdentity) {
+          throw Object.assign(new Error('successor_workspace_continuity_mismatch'), {
+            code: 'successor_workspace_continuity_mismatch',
+            errorCode: 'successor_workspace_continuity_mismatch',
+            nextAction: 'inspect-successor-workspace-continuity',
+            details: {
+              predecessorRunId,
+              successorRunId: successorRun.runId,
+              predecessorFinalWorkspaceIdentity,
+              successorStartWorkspaceIdentity,
+            },
           });
         }
         if (
@@ -3567,6 +3619,111 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
       return db.prepare(`SELECT run_id as runId FROM runs ${where} ORDER BY updated_at DESC`).all(...values)
         .map((row) => this.getRun(row.runId)).filter(Boolean);
+    },
+
+    // Read the existing successor edge stored on session_bindings. This is a
+    // derived view only: no Goal/lineage table is introduced. The walk is
+    // deliberately fail-closed when two predecessor edges or a cross-scope
+    // edge are present.
+    resolveSuccessorLineage(runId) {
+      if (!runId) throw new Error('resolveSuccessorLineage requires runId');
+      const seen = new Set();
+      const runs = [];
+      const edges = [];
+      let cursor = String(runId);
+      let terminalSuccessor = db.prepare(`
+        SELECT DISTINCT successor_run_id as successorRunId
+        FROM session_bindings
+        WHERE run_id=? AND successor_run_id IS NOT NULL
+      `).all(cursor).map((row) => row.successorRunId).filter(Boolean);
+      if (terminalSuccessor.length > 1) {
+        throw Object.assign(new Error('SUCCESSOR_LINEAGE_AMBIGUOUS'), {
+          code: 'SUCCESSOR_LINEAGE_AMBIGUOUS',
+          errorCode: 'SUCCESSOR_LINEAGE_AMBIGUOUS',
+          details: { runId: cursor, successorRunIds: terminalSuccessor },
+        });
+      }
+      const isTerminal = terminalSuccessor.length === 0;
+
+      while (cursor) {
+        if (seen.has(cursor)) {
+          throw Object.assign(new Error('SUCCESSOR_LINEAGE_CYCLE'), {
+            code: 'SUCCESSOR_LINEAGE_CYCLE',
+            errorCode: 'SUCCESSOR_LINEAGE_CYCLE',
+            details: { runId: cursor },
+          });
+        }
+        seen.add(cursor);
+        const current = this.getRun(cursor);
+        if (!current) {
+          throw Object.assign(new Error('SUCCESSOR_LINEAGE_RUN_MISSING'), {
+            code: 'SUCCESSOR_LINEAGE_RUN_MISSING',
+            errorCode: 'SUCCESSOR_LINEAGE_RUN_MISSING',
+            details: { runId: cursor },
+          });
+        }
+        runs.unshift(current);
+        const predecessors = db.prepare(`
+          SELECT * FROM session_bindings
+          WHERE successor_run_id=?
+          ORDER BY updated_at DESC
+        `).all(cursor);
+        if (predecessors.length === 0) break;
+        const ownerPredecessors = predecessors.filter((row) => row.access_mode === 'owner');
+        if (ownerPredecessors.length !== 1) {
+          throw Object.assign(new Error('SUCCESSOR_LINEAGE_AMBIGUOUS'), {
+            code: 'SUCCESSOR_LINEAGE_AMBIGUOUS',
+            errorCode: 'SUCCESSOR_LINEAGE_AMBIGUOUS',
+            details: { runId: cursor, predecessorBindingIds: ownerPredecessors.map((row) => row.binding_id) },
+          });
+        }
+        const edge = ownerPredecessors[0];
+        const predecessor = this.getRun(edge.run_id);
+        if (!predecessor
+          || predecessor.projectId !== current.projectId
+          || predecessor.workspaceId !== current.workspaceId
+          || !predecessor.worktreeId
+          || !current.worktreeId
+          || predecessor.worktreeId !== current.worktreeId) {
+          throw Object.assign(new Error('SUCCESSOR_LINEAGE_SCOPE_MISMATCH'), {
+            code: 'SUCCESSOR_LINEAGE_SCOPE_MISMATCH',
+            errorCode: 'SUCCESSOR_LINEAGE_SCOPE_MISMATCH',
+            details: { predecessorRunId: edge.run_id, successorRunId: cursor },
+          });
+        }
+        const predecessorFinalWorkspaceIdentity = predecessor.currentWorkspaceIdentity || null;
+        const successorStartWorkspaceIdentity = current.runStartWorkspaceIdentity || null;
+        if (!predecessorFinalWorkspaceIdentity
+          || !successorStartWorkspaceIdentity
+          || predecessorFinalWorkspaceIdentity !== successorStartWorkspaceIdentity) {
+          throw Object.assign(new Error('SUCCESSOR_WORKSPACE_CONTINUITY_MISMATCH'), {
+            code: 'SUCCESSOR_WORKSPACE_CONTINUITY_MISMATCH',
+            errorCode: 'SUCCESSOR_WORKSPACE_CONTINUITY_MISMATCH',
+            details: {
+              predecessorRunId: edge.run_id,
+              successorRunId: cursor,
+              predecessorFinalWorkspaceIdentity,
+              successorStartWorkspaceIdentity,
+            },
+          });
+        }
+        edges.unshift({
+          predecessorRunId: edge.run_id,
+          successorRunId: cursor,
+          binding: mapSessionBinding(edge),
+          predecessorFinalWorkspaceIdentity,
+          successorStartWorkspaceIdentity,
+        });
+        cursor = edge.run_id;
+        terminalSuccessor = [];
+      }
+      return {
+        runIds: runs.map((run) => run.runId),
+        runs,
+        edges,
+        terminalRunId: String(runId),
+        isTerminal,
+      };
     },
 
     getLatestRunForWorktree({ projectId, worktreeId, workspaceId = null } = {}) {
@@ -5833,6 +5990,10 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         if (Number(v.exitCode) !== 0) return false;
         if (!v.command) return false;
         if (!v.evidenceRef) return false;
+        // Historical builds briefly allowed operator approval to mint synthetic
+        // executable proof. Preserve those rows for audit, but never let them
+        // satisfy a hard-evidence gate during inspection or reevaluation.
+        if (v.command === 'operator-override' || String(v.evidenceRef).startsWith('operator-override://')) return false;
         if (!v.evidenceDigest || !sha256Regex.test(v.evidenceDigest)) return false;
 
         if (!v.sourceIdentity || v.sourceIdentity !== run.sourceIdentity) return false;

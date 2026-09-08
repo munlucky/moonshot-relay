@@ -16,6 +16,30 @@ const args = process.argv.slice(2);
 const command = args[0] || 'doctor';
 const json = args.includes('--json');
 
+if (args.includes('--help') || args.includes('-h') || command === 'help') {
+  if (command === 'next') {
+    console.log(`Usage: kernel next [run-id] [--contract-json <file>] [--project-root <path>] [--json]`);
+  } else if (command === 'report') {
+    console.log(`Usage: kernel report [run-id] --report-json <file> [--project-root <path>] [--json]`);
+  } else if (command === 'approve') {
+    console.log(`Usage: kernel approve [run-id] [--obligation <id>] [--reason <text>] [--approver <name>] [--approval-ref <host-ref>] [--all-judgments] [--json]`);
+  } else {
+    console.log(`Moon Relay Kernel CLI
+Usage: kernel <command> [options]
+
+Commands:
+  next       Get next action and context capsule
+  report     Submit execution report and verification requests
+  approve    Approve pending obligations (operator/manual approval)
+  status     Show run status and verification progress
+  finalize   Finalize a completed run
+  resume     Resume an existing run
+  doctor     Check environment and health
+`);
+  }
+  process.exit(0);
+}
+
 const getArgValue = (flag) => {
   const idx = args.indexOf(flag);
   return idx >= 0 && idx + 1 < args.length ? args[idx + 1] : null;
@@ -57,7 +81,7 @@ if (!process.env.MOON_RELAY_KERNEL_REEXEC) {
 const runtimeHomeArg = getArgValue('--runtime-home');
 const configuredRuntimeHome = runtimeHomeArg || process.env.MOON_RELAY_KERNEL_HOME || null;
 const projectRoot = getArgValue('--project-root') || process.cwd();
-const positionalRunId = ['next', 'report', 'resume', 'abandon'].includes(command)
+const positionalRunId = ['next', 'report', 'resume', 'abandon', 'approve'].includes(command)
   && args[1]
   && !args[1].startsWith('--')
   ? args[1]
@@ -560,6 +584,31 @@ try {
       payload = JSON.parse(readFileSync(path.resolve(reportFile), 'utf8'));
     }
     const res = await cp.report(runId, payload);
+    await cp.close();
+    output(res);
+  } else if (command === 'approve') {
+    const cp = await openControlPlane();
+    const positionalRunId = args[1] && !args[1].startsWith('--') ? args[1] : null;
+    const runId = await cp.resolveRunId({
+      explicitRunId: getArgValue('--run-id') || positionalRunId,
+      envRunId: kernelEnv.MOON_RELAY_KERNEL_RUN_ID || null,
+    });
+    const obligationId = getArgValue('--obligation') || 'security-review';
+    const reason = getArgValue('--reason') || 'Operator approved via kernel approve CLI';
+    const approver = getArgValue('--approver') || process.env.USERNAME || process.env.USER || 'operator';
+    const approvalRef = getArgValue('--approval-ref') || kernelEnv.MOON_RELAY_KERNEL_OPERATOR_APPROVAL_REF || null;
+    const allJudgments = args.includes('--all-judgments') || args.includes('--all') || obligationId === 'all';
+    const noFinalize = args.includes('--no-finalize');
+
+    const res = await cp.approveObligation({
+      runId,
+      obligationId,
+      approver,
+      reason,
+      approvalRef,
+      allJudgments,
+      autoFinalize: !noFinalize,
+    });
     await cp.close();
     output(res);
   } else if (command === 'start-run') {

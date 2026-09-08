@@ -673,10 +673,55 @@ export const mergeContractRevisionWithBindings = (previous, next) => {
   };
 };
 
-// Within a run a contract may only be REFINED, never weakened — the same rule
-// route and tier already follow. Acceptance, constraints, non-goals, risks and
-// risk flags are unioned, so a later turn cannot quietly drop a criterion the
-// completion gate is meant to enforce. Dropping scope requires a new run.
+// Active Run revisions are authoritative replacements, not additive contract
+// merges. `mergeContractRevisionWithBindings` remains the compatibility path
+// for successor creation, where a new Run may need to rebase local acceptance
+// ids onto a predecessor's lineage. An active Run has a different rule: the
+// latest compiled contract is the complete current Goal authority.
+export const replaceContractRevisionWithBindings = (previous, next) => {
+  if (!previous) {
+    const identity = new Map((next?.acceptance || []).map((item) => [item.id, item.id]));
+    const canonicalIds = acceptanceIdSet(next?.acceptance || []);
+    const knownObligations = contractObligationIds(next || {});
+    const steps = rebaseStepAcceptanceReferences(next?.steps || [], {
+      idMap: identity,
+      canonicalIds,
+      knownObligations,
+    });
+    const contract = { ...next, steps, digest: contractDigest({ ...next, steps }) };
+    return { contract, acceptanceIdMap: Object.fromEntries(identity) };
+  }
+
+  const identity = new Map((next?.acceptance || []).map((item) => [item.id, item.id]));
+  const canonicalIds = acceptanceIdSet(next?.acceptance || []);
+  const knownObligations = contractObligationIds(next || {});
+  const explicitSteps = Array.isArray(next?.steps) && next.steps.length > 0;
+  // An active replacement that omits `steps` intentionally falls back to the
+  // synthetic plan built from the replacement contract. Retaining normalized
+  // predecessor steps here would retain their old path authority and let a
+  // later `next` issue work outside the replacement scope.
+  const stepSource = explicitSteps ? next.steps : [];
+  const steps = rebaseStepAcceptanceReferences(stepSource, {
+    idMap: identity,
+    canonicalIds,
+    knownObligations,
+  });
+  const contract = {
+    ...next,
+    steps,
+    // A replacement is allowed to remove acceptance, scope, obligations, and
+    // other contract fields. History remains in SQLite evidence rows; only
+    // this normalized contract is current authority.
+    digest: contractDigest({ ...next, steps }),
+  };
+  if (explicitSteps) {
+    assertIntroducedBindingsAreClaimed({ previous: null, next, merged: contract, idMap: identity, steps });
+  }
+  return { contract, acceptanceIdMap: Object.fromEntries(identity) };
+};
+
+// Compatibility export for callers that explicitly request a contract merge.
+// Active Run lifecycle code uses replaceContractRevisionWithBindings instead.
 export const mergeContractRevision = (previous, next) => {
   return mergeContractRevisionWithBindings(previous, next).contract;
 };

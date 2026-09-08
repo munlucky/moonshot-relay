@@ -26,6 +26,7 @@ test('next returns baseline-required without executing the bound command or writ
     const elapsed = performance.now() - started;
     const after = await readFile(path.join(runtimeHome, 'state', 'runtime-state.sqlite'));
     assert.equal(next.action.type, 'baseline-required');
+    assert.equal(next.nextAction, 'baseline-required');
     assert.ok(next.action.commandRefs.includes('test:sentinel'));
     assert.ok(elapsed < 2000, `next took ${elapsed}ms`);
     assert.deepEqual(after, before);

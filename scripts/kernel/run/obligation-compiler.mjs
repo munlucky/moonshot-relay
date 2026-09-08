@@ -649,9 +649,18 @@ export const compileRunObligations = ({
     const scope = recordScope.length > 0 ? recordScope : verificationScope;
     if (!Array.isArray(changedPaths) || changedPaths.length === 0) continue;
     if (scope.length > 0 && !changedPaths.some((changedPath) => matchPathScope(changedPath, scope))) continue;
-    const commandRefs = Array.isArray(verification.commandRefs)
+    const explicitCommandRefs = Array.isArray(verification.commandRefs)
       ? verification.commandRefs
       : (verification.commandRef ? [verification.commandRef] : []);
+    // Older committed required_verification records may have preserved the
+    // canonical regression statement but lost the nested commandRefs field.
+    // Recover only the exact command token emitted by the Kernel's own
+    // regression-capture format; arbitrary knowledge prose must not become an
+    // executable command binding.
+    const statementCommand = /^Regression verification executed:\s*([A-Za-z0-9][A-Za-z0-9:_-]*)\s*$/i.exec(String(record.statement || ''))?.[1] || null;
+    const commandRefs = explicitCommandRefs.length > 0
+      ? explicitCommandRefs
+      : (statementCommand ? [statementCommand] : []);
     const obligationId = String(verification.obligationId || `required-verification-${record.id || record.recordId || 'record'}`);
     declare(obligationId, {
       sourceType: 'knowledge',

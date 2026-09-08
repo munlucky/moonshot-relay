@@ -1,10 +1,10 @@
-const SENSITIVE_KEY = /^(?:authorization|cookie|password|passwd|privateKey|private_key|accessToken|access_token|refreshToken|refresh_token|sessionToken|session_token|apiKey|api_key|secret)$/i;
+const SENSITIVE_KEY = /^(?:authorization|cookie|set-cookie|password|passwd|privateKey|private_key|accessToken|access_token|access-token|x-access-token|refreshToken|refresh_token|refresh-token|x-refresh-token|sessionToken|session_token|session-token|apiKey|api_key|api-key|x-api-key|secret|session-secret|session_secret)$/i;
 const TOKEN_PATTERNS = [
   /\bsk-(?:proj-)?[A-Za-z0-9_-]{16,}\b/g,
   /\bgh[opusr]_[A-Za-z0-9]{16,}\b/g,
   /\b(?:Bearer\s+)[A-Za-z0-9._~+/-]{12,}=*\b/gi,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
-  /\b(authorization|api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|cookie|secret)\s*[:=]\s*["']?([^\s"',;}{]{8,})/gi,
+  /\b(authorization|x-api-key|api[_-]?key|access[_-]?token|x-refresh-token|refresh[_-]?token|password|passwd|cookie|session[-_]?secret|secret)\s*[:=]\s*(?:(?:bearer|token)\s+)?["']?([^\s"',;}{]{3,})/gi,
 ];
 
 const knownValuesFromEnv = (env = process.env) => Object.entries(env)

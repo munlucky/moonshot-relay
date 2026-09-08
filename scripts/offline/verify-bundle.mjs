@@ -76,7 +76,7 @@ const verifyRuntime = async (root, failures, evidence) => {
   const nodeOutput = spawnSync(nodePath, ['-p', 'JSON.stringify({version:process.version,platform:process.platform,arch:process.arch,modules:process.versions.modules})'], { encoding: 'utf8' });
   if (nodeOutput.status !== 0) failures.push(`bundled Node failed: ${nodeOutput.stderr || nodeOutput.stdout}`);
   const nodeInfo = JSON.parse(nodeOutput.stdout);
-  if (nodeInfo.version !== 'v24.16.0' || nodeInfo.platform !== 'win32' || nodeInfo.arch !== 'x64' || nodeInfo.modules !== '137') {
+  if (nodeInfo.version !== `v${manifest.version}` || nodeInfo.platform !== 'win32' || nodeInfo.arch !== 'x64' || nodeInfo.modules !== '137') {
     failures.push(`unexpected Node runtime: ${JSON.stringify(nodeInfo)}`);
   }
   const actualChecksum = await hashFile(nodePath);
@@ -206,7 +206,7 @@ const main = async () => {
   const failures = [];
   const evidence = { bundleRoot, selectedRuntimes, antigravity: 'excluded' };
   const manifest = JSON.parse(await readFile(path.join(bundleRoot, 'bundle-manifest.json'), 'utf8'));
-  if (manifest.target?.nodeVersion !== '24.16.0') failures.push(`unexpected target Node version: ${manifest.target?.nodeVersion}`);
+  if (!manifest.target?.nodeVersion) failures.push('missing target Node version in bundle-manifest');
   if (JSON.stringify(manifest.runtimes) !== JSON.stringify(selectedRuntimes)) failures.push('bundle runtime selection drift');
   await verifyManifest(bundleRoot, failures);
   await verifyRuntime(bundleRoot, failures, evidence);

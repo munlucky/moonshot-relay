@@ -11,6 +11,7 @@ import {
 import { executeTrustedProof } from '../../kernel/proof/proof-executor.mjs';
 import { buildUsageReceipt } from './usage-receipt.mjs';
 import { buildModelVisiblePromptView } from './model-capsule-view.mjs';
+import { sanitizePersistentPayload } from '../../kernel/persistent-sanitizer.mjs';
 
 const baseCommit = (repoRoot) => {
   const result = runGit(repoRoot, ['rev-parse', '--verify', 'HEAD']);
@@ -215,6 +216,7 @@ export const dispatchKernelStep = async ({
   } catch (error) {
     result = { status: 'failed', resultStatus: 'failed', errorSummary: error?.message || String(error), failureCategory: 'provider/infrastructure' };
   }
+  result = sanitizePersistentPayload(result);
   const usageContext = dispatchContext || hosted;
   const usageDecision = usageContext.decision || usageContext.hostDirective?.modelRouteDecision || hosted.hostDirective?.modelRouteDecision;
   const usageAttempt = boundAttempt || usageContext.hostDirective?.attempt || null;

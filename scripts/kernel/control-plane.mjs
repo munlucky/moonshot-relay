@@ -28,6 +28,7 @@ import {
   assertEvidencePlanSubmission,
   normalizeAcceptanceCoverage,
   mergeContractRevisionWithBindings,
+  replaceContractRevisionWithBindings,
   contractBriefing,
   riskSummaryFromContract,
 } from './task/task-contract.mjs';
@@ -666,12 +667,30 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
       },
     };
   };
-  const buildContractPreflightRejection = ({ runId, error }) => {
+  const buildContractPreflightRejection = ({ runId, error, contract = {}, commands = [], obligations = [] }) => {
     const errorCode = error?.errorCode || error?.code || 'contract-preflight-invalid';
     const errorSummary = error?.message || String(error);
     const nextAction = error?.nextAction || 'revise-task-contract-before-run-creation';
     const recoverable = error?.recoverable ?? (errorCode !== 'contract-preflight-unauthorized-path-escape' && errorCode !== 'contract-preflight-worktree-escape');
     const blockingClass = error?.blockingClass || (recoverable ? 'completion' : 'safety');
+    const canonicalAcceptanceIds = (contract?.acceptance || []).map((item) => String(item.id));
+    const availableCommandRefs = [...new Set((commands || []).map((command) => command?.commandRef).filter(Boolean).map(String))].sort();
+    const requiredVerifications = (obligations || []).map((obligation) => ({
+      obligationId: String(obligation.obligationId),
+      evidenceClass: obligation.evidenceClass || 'hard',
+      allowedCommandRefs: obligation.allowedCommandRefs || [],
+      commandRef: obligation.allowedCommandRefs?.[0] || null,
+      acceptanceIds: obligation.acceptanceIds || [],
+      verificationScope: obligation.metadata?.verificationScope || obligation.metadata?.scope || null,
+      timeoutMs: Number.isFinite(Number(obligation.metadata?.timeoutMs)) ? Number(obligation.metadata.timeoutMs) : null,
+    }));
+    const repairHint = {
+      action: nextAction,
+      errorCode,
+      canonicalAcceptanceIds,
+      availableCommandRefs,
+      supportedEvidenceClasses: ['hard', 'judgment'],
+    };
     const action = {
       type: 'blocked',
       reason: errorCode,
@@ -686,6 +705,7 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
       errorCode,
       errorSummary,
       nextAction,
+      repairHint,
       recoverable,
       blockingClass,
       action,
@@ -698,8 +718,18 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
       failureCode: errorCode,
       errorSummary,
       nextAction,
+      canonicalAcceptanceIds,
+      availableCommandRefs,
+      supportedEvidenceClasses: ['hard', 'judgment'],
+      requiredVerifications,
+      repairHint,
       recoverable,
-      diagnostics: error?.details || {},
+      diagnostics: {
+        ...(error?.details || {}),
+        canonicalAcceptanceIds,
+        availableCommandRefs,
+        supportedEvidenceClasses: ['hard', 'judgment'],
+      },
       action,
       modelInput,
       executionCapsule: null,
@@ -734,7 +764,12 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
           errorSummary,
           nextAction,
           recoverable,
-          diagnostics: error?.details || {},
+          diagnostics: {
+            ...(error?.details || {}),
+            canonicalAcceptanceIds,
+            availableCommandRefs,
+            supportedEvidenceClasses: ['hard', 'judgment'],
+          },
         },
       },
     };
@@ -1069,7 +1104,9 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
       } catch {
         throw new Error(`incomplete_review_chain: live workspace observation could not be persisted during ${phase}`);
       }
-      throw new Error(`incomplete_review_chain: review workspace identity changed during ${phase}`);
+      if (phase !== 'operator-approval') {
+        throw new Error(`incomplete_review_chain: review workspace identity changed during ${phase}`);
+      }
     }
     return { identity: observation.identity, run: store.getRun(runId) || expectedRun };
   };
@@ -1398,6 +1435,7 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
         objective: contract.objective,
         sourceIdentity: trustedSourceIdentity,
         workspaceIdentity: workspaceObservation.identity,
+        runStartWorkspaceIdentity: workspaceObservation.identity,
         proofTier: proofRoute.proofTier,
         evidenceTier: proofRoute.evidenceTier,
         requiredObligations: obligations.map((obligation) => obligation.obligationId),
@@ -1629,12 +1667,12 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
       }
       preflight(runId, 'next');
       const existing = store.getRun(runId);
-      // An existing run may still be refined: a contract that now carries an
-      // optional evidence plan or new constraints is a revision, never a new run.
+      // An existing Run carries the active Goal. A new contract is a
+      // revision of that Run, never a reason to fragment the lifecycle.
       if (objective || (taskContract && Object.keys(taskContract).length > 0)) {
-        // A revision may only refine the contract; scope it already carries is
-        // never dropped, so a later turn cannot shrink the completion gate.
-        const mergedRevision = mergeContractRevisionWithBindings(
+        // The replacement helper preserves only compatible step structure;
+        // acceptance, scope, and obligations are authoritative in this input.
+        const mergedRevision = replaceContractRevisionWithBindings(
           existing.taskContract,
           normalizeTaskContract(taskContract, { objective: objective || existing.objective }),
         );
@@ -1648,14 +1686,17 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
           const currentRun = store.getRun(runId);
           const currentStep = this.getCurrentStep(runId);
           const amendedStep = resolveDeclaredStepForReplan(activeContract, currentStep);
-          const requiresScopeReplan = stepScopeChanged(currentStep, amendedStep);
+          const requiresSyntheticReplan = contractChanged && activeContract.steps.length === 0;
+          const requiresScopeReplan = requiresSyntheticReplan || stepScopeChanged(currentStep, amendedStep);
           const currentPlan = store.getRunSteps(runId, { planRevision: currentRun.planRevision });
           const requiresCompletedPlanReplan = !currentStep
             && activeContract.steps.length > 0
             && planDiffersFromContract(currentPlan, activeContract.steps);
           if (requiresScopeReplan || requiresCompletedPlanReplan) {
             await this.replanSteps(runId, {
-              steps: requiresCompletedPlanReplan
+              steps: requiresSyntheticReplan
+                ? []
+                : requiresCompletedPlanReplan
                 ? activeContract.steps
                 : [{
                   ...amendedStep,
@@ -2871,6 +2912,191 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
       return { review: normalized, reviewReceipt, run: updated, followUp: classifyReviewFindings(normalized.findings) };
     },
 
+    async approveObligation({
+      runId,
+      obligationId = 'security-review',
+      approver = 'operator',
+      reason = 'User approval granted',
+      approvalRef = null,
+      allJudgments = false,
+      autoFinalize = true,
+    } = {}) {
+      let run = store.getRun(runId);
+      if (!run) throw new Error(`Run ${runId} not found`);
+      run = assertLiveReviewWorkspace(runId, run, 'operator-approval').run;
+
+      // Operator approval is a human judgment override, never executable proof.
+      // Require an opaque Host/operator reference and bind only its digest to the
+      // exact run + obligation so raw approval text does not enter durable state.
+      const normalizedApprovalRef = String(approvalRef || '').trim();
+      if (!normalizedApprovalRef) {
+        const err = new Error('OPERATOR_APPROVAL_REF_REQUIRED: operator approval requires a Host-issued approval reference');
+        err.code = 'OPERATOR_APPROVAL_REF_REQUIRED';
+        throw err;
+      }
+      if (normalizedApprovalRef.length > 512) {
+        const err = new Error('OPERATOR_APPROVAL_REF_INVALID: approval reference is too long');
+        err.code = 'OPERATOR_APPROVAL_REF_INVALID';
+        throw err;
+      }
+
+      const obligations = store.getRunObligations(runId);
+      const completionBefore = evaluateRunCompletion(runId, { obligations });
+      const outstandingIds = new Set(completionBefore.unsatisfiedObligations.map((entry) => String(entry.obligationId)));
+      const latestAttempt = store.getLatestImplementationAttempt?.(runId);
+      const changedPaths = (latestAttempt?.changedPaths && latestAttempt.changedPaths.length > 0)
+        ? latestAttempt.changedPaths
+        : (Array.isArray(run.taskContract?.allowedPaths) && run.taskContract.allowedPaths.length > 0
+          ? run.taskContract.allowedPaths
+          : (run.taskContract?.scope || []));
+      const targetObligations = [];
+
+      if (allJudgments || obligationId === 'all-judgments' || obligationId === 'all') {
+        for (const obligation of obligations) {
+          if (obligation.evidenceClass === 'judgment' && outstandingIds.has(String(obligation.obligationId))) {
+            targetObligations.push(obligation);
+          }
+        }
+      } else {
+        const found = obligations.find((item) => item.obligationId === obligationId);
+        if (!found) {
+          const err = new Error(`OPERATOR_APPROVAL_OBLIGATION_NOT_DECLARED: Obligation "${obligationId}" is not declared for run ${runId}`);
+          err.code = 'OPERATOR_APPROVAL_OBLIGATION_NOT_DECLARED';
+          throw err;
+        }
+        if (found.evidenceClass !== 'judgment') {
+          const err = new Error(`HARD_EVIDENCE_NOT_OPERATOR_APPROVABLE: Obligation "${found.obligationId}" requires executable hard evidence`);
+          err.code = 'HARD_EVIDENCE_NOT_OPERATOR_APPROVABLE';
+          throw err;
+        }
+        if (!outstandingIds.has(String(found.obligationId))) {
+          const err = new Error(`OPERATOR_APPROVAL_OBLIGATION_NOT_OUTSTANDING: Obligation "${found.obligationId}" is already satisfied`);
+          err.code = 'OPERATOR_APPROVAL_OBLIGATION_NOT_OUTSTANDING';
+          throw err;
+        }
+        targetObligations.push(found);
+      }
+
+      if (targetObligations.length === 0) {
+        // `--all-judgments` is intentionally idempotent for commit/retry flows:
+        // never mint a second approval receipt, but allow a run that is already
+        // otherwise ready to complete its finalization.
+        const allRequested = allJudgments || obligationId === 'all-judgments' || obligationId === 'all';
+        if (allRequested) {
+          let finalized = null;
+          if (autoFinalize && completionBefore.readyExceptClose && run.state === 'PROVE') {
+            finalized = await this.finalizeRun(runId, {
+              changedPaths,
+              changedFileCount: changedPaths.length,
+            });
+          }
+          return {
+            status: 'no_op',
+            success: true,
+            runId,
+            decisionBasis: 'operator_approval',
+            approvedObligations: [],
+            finalizationStatus: store.getRun(runId)?.finalizationStatus || null,
+            completion: completionBefore,
+            finalized,
+            run: store.getRun(runId),
+          };
+        }
+        const err = new Error('NO_OUTSTANDING_JUDGMENT_OBLIGATIONS: no declared judgment obligation currently requires operator approval');
+        err.code = 'NO_OUTSTANDING_JUDGMENT_OBLIGATIONS';
+        throw err;
+      }
+
+      if (run.state !== 'PROVE') {
+        if (run.state === 'FRAME') {
+          await this.transition(runId, 'EXECUTE');
+        }
+        await this.transition(runId, 'PROVE');
+        run = store.getRun(runId);
+      }
+
+      const results = [];
+
+      for (const target of targetObligations) {
+        const targetCoverage = Array.isArray(target.acceptanceIds) ? target.acceptanceIds : [];
+        const approvalRefDigest = `sha256:${createHash('sha256')
+          .update(`${normalizedApprovalRef}|${runId}|${target.obligationId}`)
+          .digest('hex')}`;
+        const reviewReceipt = store.recordReviewReceipt(runId, {
+          runId,
+          obligationId: target.obligationId,
+          reviewStage: 'engineering',
+          verdict: 'pass',
+          findingClass: 'none',
+          planRevision: Number(run.planRevision || run.contractRevision || 1),
+          reviewer: {
+            actorSessionId: hashSessionId(`operator:${approver}:${runId}`),
+            usageReceiptId: null,
+            routeDecisionId: null,
+            modelClass: 'operator',
+            resolvedModel: `operator:${approver}`,
+            enforcementStatus: 'operator_approved',
+            approvalRefDigest,
+          },
+          implementer: {
+            actorSessionId: null,
+            usageReceiptId: null,
+          },
+          stepId: latestAttempt?.stepId || null,
+          reviewerBindingId: null,
+          implementerAttemptId: latestAttempt?.attemptId || null,
+          subject: {
+            workspaceIdentity: run.currentWorkspaceIdentity,
+            mutationRevision: run.mutationRevision,
+            changedPathsDigest: digestOfPaths(changedPaths),
+            evidenceDigest: digestOfEvidence(store.getVerifications(runId), { excludeObligationId: target.obligationId }),
+          },
+          acceptanceCoverage: targetCoverage,
+          findings: [],
+          rationale: reason || `Operator approval granted by ${approver}`,
+        });
+
+        await this.recordProof(runId, {
+          obligationId: target.obligationId,
+          status: 'passed',
+          evidenceRef: reviewEvidenceRef(runId, reviewReceipt.receiptId),
+          command: 'operator-approval',
+          exitCode: 0,
+          evidenceDigest: reviewReceipt.digest,
+          evidenceClass: 'judgment',
+          acceptanceCoverage: targetCoverage,
+        });
+        results.push({
+          obligationId: target.obligationId,
+          status: 'passed',
+          decisionBasis: 'operator_approval',
+          reviewReceiptId: reviewReceipt.receiptId,
+          receipt: reviewReceipt,
+        });
+      }
+
+      const completionPreview = evaluateRunCompletion(runId);
+      let finalized = null;
+      if (autoFinalize && completionPreview.readyExceptClose && run.state === 'PROVE') {
+        finalized = await this.finalizeRun(runId, {
+          changedPaths,
+          changedFileCount: changedPaths.length,
+        });
+      }
+
+      return {
+        status: 'approved',
+        success: true,
+        runId,
+        decisionBasis: 'operator_approval',
+        approvedObligations: results,
+        finalizationStatus: store.getRun(runId)?.finalizationStatus || null,
+        completion: completionPreview,
+        finalized,
+        run: store.getRun(runId),
+      };
+    },
+
     async ingestReviewerOutcome({
       runId,
       stepId = null,
@@ -3296,15 +3522,22 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
       }
       let run = store.getRun(runId);
       if (!run) return { schemaVersion: 1, runId, status: 'not_found' };
+      const projectCommands = discoverProjectCommands({ projectRoot });
       try {
         preflightTaskContract({
           contract: run.taskContract || {},
           projectRoot,
-          commands: discoverProjectCommands({ projectRoot }),
+          commands: projectCommands,
           obligations: store.getRunObligations(runId),
         });
       } catch (error) {
-        return buildContractPreflightRejection({ runId, error });
+        return buildContractPreflightRejection({
+          runId,
+          error,
+          contract: run.taskContract || {},
+          commands: projectCommands,
+          obligations: store.getRunObligations(runId),
+        });
       }
       const deliveryRecovery = await this.recoverPendingDeliveryMaterialization(runId);
       if (deliveryRecovery.status === 'blocked') {
@@ -3376,6 +3609,7 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
             guidance: 'The Kernel host must capture the bound baseline commands before implementation.',
             commandRefs,
           };
+          payload.nextAction = 'baseline-required';
         }
       }
       if (payload.action?.type === 'implement' && run.implementationContext) {

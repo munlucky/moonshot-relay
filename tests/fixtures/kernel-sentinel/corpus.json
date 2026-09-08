@@ -84,8 +84,8 @@
     {
       "id": "SEN-014",
       "trap": "contract_revision_shrinks_acceptance",
-      "expect": "reject",
-      "rationale": "A shorter later contract must not overwrite an earlier acceptance criterion through its positional id."
+      "expect": "accept",
+      "rationale": "A shorter later contract replaces the active acceptance authority, permits removal of the old criterion, and keeps the same Run."
     },
     {
       "id": "SEN-015",

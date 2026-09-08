@@ -73,7 +73,7 @@ test('kernel commit admission rejects unknown, foreign, and drifted provenance',
     const workspaceIdentity = observeWorkspaceIdentity({ projectRoot: temp }).identity;
     const stable = resolveStableWorkspaceIdentity({ projectId: project.projectId, workspaceRoot: temp });
     const sourceIdentity = 'sha256:' + 'c'.repeat(64);
-    const run = { runId: 'run-valid', projectId: project.projectId, workspaceId: stable.workspaceId, status: 'completed', currentState: 'CLOSE', finalizationStatus: 'completed', mutationRevision: 1, sourceIdentity, currentWorkspaceIdentity: workspaceIdentity };
+    const run = { runId: 'run-valid', projectId: project.projectId, workspaceId: stable.workspaceId, worktreeId: 'worktree-fixture', status: 'completed', currentState: 'CLOSE', finalizationStatus: 'completed', mutationRevision: 1, sourceIdentity, currentWorkspaceIdentity: workspaceIdentity };
     const completion = { runId: run.runId, decision: 'accepted', sourceIdentity, mutationRevision: 1 };
     const provenance = { runId: run.runId, projectId: project.projectId, workspaceId: stable.workspaceId, sourceIdentity, mutationRevision: 1, changedPaths: ['app.txt'], workspaceIdentity, mutationDigest: 'sha256:' + 'd'.repeat(64), status: 'passed' };
     const stateStore = {
@@ -182,6 +182,7 @@ test('matchesCurrentMutationCandidate and resolveKernelCloseoutRun canonicalize 
         runId: 'run-case',
         projectId: project.projectId,
         workspaceId,
+        worktreeId: 'worktree-1',
         status: 'completed',
         currentState: 'CLOSE',
         finalizationStatus: 'completed',
@@ -209,6 +210,19 @@ test('matchesCurrentMutationCandidate and resolveKernelCloseoutRun canonicalize 
     selectedPaths: ['SRC/App.mjs'],
   });
   assert.equal(resolved.run.runId, 'run-case');
+
+  const missingWorktreeStore = {
+    ...stateStore,
+    listRuns: () => [{ ...stateStore.listRuns()[0], worktreeId: null }],
+  };
+  assert.throws(() => resolveKernelCloseoutRun({
+    stateStore: missingWorktreeStore,
+    projectId: project.projectId,
+    workspaceId,
+    currentWorkspaceIdentity: 'id-1',
+    currentPaths: ['src/app.mjs'],
+    selectedPaths: ['SRC/App.mjs'],
+  }), (error) => error.code === 'RUN_PROVENANCE_REQUIRED');
 });
 
 test('replacement and authority audit passes current checkout', async () => {

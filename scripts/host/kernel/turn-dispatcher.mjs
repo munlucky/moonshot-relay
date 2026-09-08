@@ -22,6 +22,7 @@ import { attestReviewTransport, resolveReviewTransports } from './review-transpo
 import { normalizeHostBoundaryRequest } from './host-boundary.mjs';
 import { validateIndependentSubagentReviewAttestation } from './independent-subagent-review.mjs';
 import { digestOfEvidence } from '../../kernel/proof/review-receipt.mjs';
+import { sanitizePersistentPayload } from '../../kernel/persistent-sanitizer.mjs';
 
 const REVIEW_ATTEMPT_META = Symbol('reviewAttemptMeta');
 
@@ -1178,6 +1179,12 @@ const dispatchKernelTurnAttempt = async ({
       };
     }
   }
+
+  // Provider output is untrusted text. Sanitize once at the Host boundary so
+  // the same safe value is used for receipts, Kernel reports, and the public
+  // dispatch response; no provider-specific adapter may bypass persistence
+  // redaction.
+  dispatch = sanitizePersistentPayload(dispatch);
 
   const receipt = buildUsageReceipt({
     decision,

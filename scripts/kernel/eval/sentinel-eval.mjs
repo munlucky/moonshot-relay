@@ -212,8 +212,9 @@ const TRAPS = {
     return cp.finalizeRun('sen');
   },
 
-  // A later, shorter contract must not overwrite an earlier acceptance
-  // criterion through its positional id (F2).
+  // A later, shorter contract replaces the active acceptance authority by
+  // canonical binding, rather than overwriting an earlier criterion through
+  // a positional id (F2).
   async contract_revision_shrinks_acceptance(cp, projectRoot, { runtimeHome }) {
     await cp.ensureRun({ runId: 'sen', objective: 'x', taskContract: { allowedPaths: ['app.mjs'], acceptance: ['A must hold', 'B must hold'] } });
     await cp.ensureRun({ runId: 'sen', objective: 'x', taskContract: { allowedPaths: ['app.mjs'], acceptance: ['C must hold'] } });

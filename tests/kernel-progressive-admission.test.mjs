@@ -147,6 +147,9 @@ test("Case C: verification command missing until PROVE is reported only when PRO
     const blockedNext = await cp.next('r-case-c');
     assert.equal(blockedNext.action.type, 'blocked');
     assert.equal(blockedNext.action.reason, 'unsupported-verification');
+    assert.match(blockedNext.action.guidance, /existing discovered project command/);
+    assert.match(blockedNext.action.guidance, /project owner/);
+    assert.doesNotMatch(blockedNext.action.guidance, /package\.json|project manifest/);
 
     // 5. report() also returns blocked response
     const blockedReport = await cp.report('r-case-c', {

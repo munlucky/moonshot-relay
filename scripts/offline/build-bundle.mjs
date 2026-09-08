@@ -12,9 +12,8 @@ import { fileURLToPath } from 'node:url';
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(scriptPath), '..', '..');
 const selectedRuntimes = ['claude', 'codex', 'qwen'];
-const targetNodeVersion = '24.16.0';
 
-const usage = () => `Usage: node scripts/offline/build-bundle.mjs --node-runtime <path-to-node-v24.16.0> [--out <directory>] [--zip]`;
+const usage = () => `Usage: node scripts/offline/build-bundle.mjs [--node-runtime <path-to-node-win32-x64>] [--out <directory>] [--zip]`;
 
 const pathExists = async (target) => {
   try {
@@ -40,7 +39,7 @@ const sha256File = async (target) => createHash('sha256').update(await readFile(
 
 const parseArgs = (argv) => {
   const options = {
-    nodeRuntime: null,
+    nodeRuntime: process.execPath,
     out: path.join(os.tmpdir(), 'moonshot-relay-offline-bundles'),
     zip: true,
   };
@@ -55,7 +54,6 @@ const parseArgs = (argv) => {
       process.exit(0);
     } else throw new Error(`Unknown argument: ${arg}\n${usage()}`);
   }
-  if (!options.nodeRuntime) throw new Error(`--node-runtime is required.\n${usage()}`);
   return options;
 };
 
@@ -85,10 +83,11 @@ const run = (executable, args, options = {}) => {
 const probeNode = (nodeRuntime) => {
   const result = run(nodeRuntime, ['-p', 'JSON.stringify({version:process.version,platform:process.platform,arch:process.arch,modules:process.versions.modules})'], { capture: true });
   const info = JSON.parse(result.stdout);
-  if (info.version !== `v${targetNodeVersion}` || info.platform !== 'win32' || info.arch !== 'x64' || info.modules !== '137') {
-    throw new Error(`Target Node mismatch: expected v${targetNodeVersion}/win32/x64/137, got ${JSON.stringify(info)}`);
+  const cleanVersion = info.version.replace(/^v/u, '');
+  if (info.platform !== 'win32' || info.arch !== 'x64' || info.modules !== '137') {
+    throw new Error(`Target Node mismatch: expected win32/x64/ABI:137, got ${JSON.stringify(info)}`);
   }
-  return info;
+  return { ...info, cleanVersion };
 };
 
 const gitHead = () => run('git', ['rev-parse', 'HEAD'], { capture: true }).stdout.trim();
@@ -226,11 +225,12 @@ const writeBundleGuide = async (stageRoot, manifest) => {
   await writeFile(path.join(stageRoot, 'START_HERE_OFFLINE.ko.md'), text, 'utf8');
 };
 
-const writeLaunchers = async (stageRoot) => {
-  await writeFile(path.join(stageRoot, 'Install-Offline.cmd'), `@echo off\r\nsetlocal\r\nset "ROOT=%~dp0"\r\nset "NODE_BIN=node"\r\nif exist "%ROOT%payload\\moonshot-relay\\profile\\runtime\\versions\\24.16.0-win32-x64\\node.exe" set "NODE_BIN=%ROOT%payload\\moonshot-relay\\profile\\runtime\\versions\\24.16.0-win32-x64\\node.exe"\r\n"%NODE_BIN%" "%ROOT%scripts\\offline\\install-bundle.mjs" %*\r\nexit /b %ERRORLEVEL%\r\n`, 'utf8');
-  await writeFile(path.join(stageRoot, 'Verify-Offline.cmd'), `@echo off\r\nsetlocal\r\nset "ROOT=%~dp0"\r\nset "NODE_BIN=node"\r\nif exist "%ROOT%payload\\moonshot-relay\\profile\\runtime\\versions\\24.16.0-win32-x64\\node.exe" set "NODE_BIN=%ROOT%payload\\moonshot-relay\\profile\\runtime\\versions\\24.16.0-win32-x64\\node.exe"\r\n"%NODE_BIN%" "%ROOT%scripts\\offline\\verify-bundle.mjs" %*\r\nexit /b %ERRORLEVEL%\r\n`, 'utf8');
-  await writeFile(path.join(stageRoot, 'Install-Offline.ps1'), `param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Args)\n$root = $PSScriptRoot\n$node = Join-Path $root 'payload\\moonshot-relay\\profile\\runtime\\versions\\24.16.0-win32-x64\\node.exe'\nif (-not (Test-Path -LiteralPath $node)) { $node = 'node' }\n& $node (Join-Path $root 'scripts\\offline\\install-bundle.mjs') @Args\nexit $LASTEXITCODE\n`, 'utf8');
-  await writeFile(path.join(stageRoot, 'Verify-Offline.ps1'), `param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Args)\n$root = $PSScriptRoot\n$node = Join-Path $root 'payload\\moonshot-relay\\profile\\runtime\\versions\\24.16.0-win32-x64\\node.exe'\nif (-not (Test-Path -LiteralPath $node)) { $node = 'node' }\n& $node (Join-Path $root 'scripts\\offline\\verify-bundle.mjs') @Args\nexit $LASTEXITCODE\n`, 'utf8');
+const writeLaunchers = async (stageRoot, nodeVersion) => {
+  const nodeRel = `payload\\moonshot-relay\\profile\\runtime\\versions\\${nodeVersion}-win32-x64\\node.exe`;
+  await writeFile(path.join(stageRoot, 'Install-Offline.cmd'), `@echo off\r\nsetlocal\r\nset "ROOT=%~dp0"\r\nset "NODE_BIN=node"\r\nif exist "%ROOT%${nodeRel}" set "NODE_BIN=%ROOT%${nodeRel}"\r\n"%NODE_BIN%" "%ROOT%scripts\\offline\\install-bundle.mjs" %*\r\nexit /b %ERRORLEVEL%\r\n`, 'utf8');
+  await writeFile(path.join(stageRoot, 'Verify-Offline.cmd'), `@echo off\r\nsetlocal\r\nset "ROOT=%~dp0"\r\nset "NODE_BIN=node"\r\nif exist "%ROOT%${nodeRel}" set "NODE_BIN=%ROOT%${nodeRel}"\r\n"%NODE_BIN%" "%ROOT%scripts\\offline\\verify-bundle.mjs" %*\r\nexit /b %ERRORLEVEL%\r\n`, 'utf8');
+  await writeFile(path.join(stageRoot, 'Install-Offline.ps1'), `param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Args)\n$root = $PSScriptRoot\n$node = Join-Path $root '${nodeRel}'\nif (-not (Test-Path -LiteralPath $node)) { $node = 'node' }\n& $node (Join-Path $root 'scripts\\offline\\install-bundle.mjs') @Args\nexit $LASTEXITCODE\n`, 'utf8');
+  await writeFile(path.join(stageRoot, 'Verify-Offline.ps1'), `param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Args)\n$root = $PSScriptRoot\n$node = Join-Path $root '${nodeRel}'\nif (-not (Test-Path -LiteralPath $node)) { $node = 'node' }\n& $node (Join-Path $root 'scripts\\offline\\verify-bundle.mjs') @Args\nexit $LASTEXITCODE\n`, 'utf8');
 };
 
 const writeHashes = async (stageRoot) => {
@@ -252,6 +252,7 @@ const zipBundle = (stageRoot, outRoot) => {
 const main = async () => {
   const options = parseArgs(process.argv.slice(2));
   const nodeInfo = probeNode(options.nodeRuntime);
+  const targetNodeVersion = nodeInfo.cleanVersion;
   const stamp = new Date().toISOString().replace(/[-:]/gu, '').replace(/\.\d{3}Z$/u, 'Z');
   const bundleName = `moonshot-relay-offline-win32-x64-node${targetNodeVersion}-${stamp}`;
   const stageRoot = path.join(options.out, bundleName);
@@ -284,7 +285,7 @@ const main = async () => {
   };
   await writeFile(path.join(stageRoot, 'bundle-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
   await writeBundleGuide(stageRoot, manifest);
-  await writeLaunchers(stageRoot);
+  await writeLaunchers(stageRoot, targetNodeVersion);
   await writeHashes(stageRoot);
 
   let archive = null;

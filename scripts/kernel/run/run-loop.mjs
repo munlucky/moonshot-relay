@@ -100,7 +100,10 @@ const describeObligations = (obligations = [], obligationIds = []) => obligation
     evidenceClass: declared?.evidenceClass || 'hard',
     verificationMethod: declared?.verificationMethod || 'kernel-executed-command',
     allowedCommandRefs: declared?.allowedCommandRefs || [],
+    commandRef: declared?.allowedCommandRefs?.[0] || null,
     acceptanceIds: declared?.acceptanceIds || [],
+    verificationScope: declared?.metadata?.verificationScope || declared?.metadata?.scope || null,
+    timeoutMs: Number.isFinite(Number(declared?.metadata?.timeoutMs)) ? Number(declared.metadata.timeoutMs) : null,
   };
 });
 
@@ -170,6 +173,13 @@ export const buildNextPayload = ({
     outstandingObligationIds,
     failures,
   });
+  const requiredVerificationDescriptions = describeObligations(obligations, requiredObligations);
+  const currentWorkUnit = workAuthority?.currentWorkUnit || null;
+  const currentAction = (action) => ({
+    ...base,
+    nextAction: action?.type || null,
+    action,
+  });
   const executionProjectionOptions = {
     // An empty contract briefing is the legacy unplanned-run shape. A
     // declared acceptance contract is the boundary at which ordinary work
@@ -191,54 +201,58 @@ export const buildNextPayload = ({
     knowledge: knowledgePromptBlock,
     acceptancePlans,
     capabilities,
+    stepId: currentWorkUnit?.stepId || null,
+    allowedPaths: currentWorkUnit?.allowedPaths || [],
+    forbiddenPaths: currentWorkUnit?.forbiddenPaths || [],
+    acceptanceIds: Array.isArray(contract?.acceptance) ? contract.acceptance.map((item) => item.id) : [],
+    requiredVerifications: requiredVerificationDescriptions,
+    availableCommandRefs: [...new Set(requiredVerificationDescriptions.flatMap((entry) => entry.allowedCommandRefs || []))].sort(),
     ...(workAuthority ? { workAuthority } : {}),
     ...(trustAuthority ? { trustAuthority } : {}),
-    ...(resume ? { resume } : {}),
+    ...(resume ? {
+      resume: (resume.durableState && !run.verboseNext)
+        ? {
+          status: resume.status,
+          action: resume.action,
+          stepId: resume.stepId || null,
+          workUnitId: resume.workUnitId || null,
+        }
+        : resume,
+    } : {}),
   };
 
   if (run.status === 'completed' && (run.finalizationStatus || 'completed') === 'completed') {
     if (workAuthority?.goalStatus === 'active' || workAuthority?.goal?.status === 'active') {
-      return {
-        ...base,
-        action: withExecution({
+      return currentAction(withExecution({
           type: 'implement',
           guidance: 'Work unit finished, but goal is still active. Continue with the remaining acceptance criteria.',
-        }, executionProjectionOptions),
-      };
+        }, executionProjectionOptions));
     }
-    return { ...base, action: { type: 'done', guidance: 'Run is complete. No further work is required.' } };
+    return currentAction({ type: 'done', guidance: 'Run is complete. No further work is required.' });
   }
   // Accepted completion whose knowledge commit or Git closeout did not finish
   // is NOT done; the run stays retryable (P0-7).
   if (run.status === 'completed') {
-    return {
-      ...base,
-      action: {
+    return currentAction({
         type: 'finalize',
         finalizationStatus: run.finalizationStatus,
         guidance: 'Evidence was accepted but finalization did not complete. Submit kernel report again to retry the outstanding finalization step.',
-      },
-    };
+      });
   }
   if (run.status === 'blocked' && run.blockedReason) {
-    return {
-      ...base,
-      action: {
+    return currentAction({
         type: 'blocked',
         reason: run.blockedReason,
         blockingClass: run.blockingClass || 'safety',
         guidance: run.blockedReason === 'unsupported-verification'
-          ? 'Required verification commands are missing or unsatisfiable. Add the required verification script to the project manifest or package.json, then run next again.'
+          ? 'Required verification commands are missing or unsatisfiable. Use an existing discovered project command when available; otherwise report an unsupported-verification blocker for the project owner, without mutating the product manifest.'
           : 'Resolve the blocker with the user, then submit a new report.',
-      },
-    };
+      });
   }
 
   const failing = verification.failed;
   if (failing.length > 0) {
-    return {
-      ...base,
-      action: withExecution({
+    return currentAction(withExecution({
         type: 'fix',
         guidance: 'Fix the failing verification(s), then submit kernel report again with the summary and changed paths.',
         failures: failing.map((failure) => ({
@@ -247,39 +261,33 @@ export const buildNextPayload = ({
           errorSummary: failure.errorSummary || null,
           allowedCommandRefs: failure.allowedCommandRefs || undefined,
         })),
-      }, executionProjectionOptions),
-    };
+      }, executionProjectionOptions));
   }
 
   const outstanding = verification.pending;
   if (outstanding.length > 0) {
     const described = describeObligations(obligations, outstanding);
     if (outstanding.length > 0 && described.every((entry) => entry.evidenceClass === 'judgment')) {
-      return {
-        ...base,
-        action: withExecution({
+      return currentAction(withExecution({
           type: 'review',
           mode: 'subagent',
-          guidance: 'Route the outstanding judgment obligations to an independent reviewer session or native subagent, and submit the Kernel-recorded review receipt in kernel report.',
+          guidance: 'Route the outstanding judgment obligations to an independent reviewer session or native subagent, and submit the Kernel-recorded review receipt in kernel report. In a single-session environment where subagents are unavailable, submit self-review findings for operator confirmation. Operator approval may satisfy only outstanding judgment obligations and requires a Host-issued approval reference; hard evidence must still be executed by the Kernel.',
           outstandingObligations: outstanding,
           obligations: described,
           independentReviewRequired: true,
-        }, executionProjectionOptions),
-      };
+          supportOperatorApproval: true,
+        }, executionProjectionOptions));
     }
     const unsatisfiable = described
       .filter((entry) => entry.evidenceClass === 'hard' && entry.allowedCommandRefs.length === 0);
-    return {
-      ...base,
-      action: withExecution({
-        type: 'implement',
-        guidance: unsatisfiable.length > 0
-          ? 'Implement the objective. Some required evidence has no runnable project command yet — add one to the project manifest, or report an unsupported-verification blocker.'
+    return currentAction(withExecution({
+      type: 'implement',
+      guidance: unsatisfiable.length > 0
+          ? 'Implement the objective. Some required evidence has no runnable project command yet — use an existing discovered project command when available; otherwise report an unsupported-verification blocker for the project owner.'
           : 'Implement the objective, then submit kernel report with a summary and changed paths. The Kernel will run only outstanding bound proof.',
         outstandingObligations: outstanding,
         obligations: described,
-      }, executionProjectionOptions),
-    };
+      }, executionProjectionOptions));
   }
 
   if (workAuthority?.progress?.remainingCount > 0 && (workAuthority?.goalStatus === 'active' || workAuthority?.goal?.status === 'active')) {
@@ -292,10 +300,7 @@ export const buildNextPayload = ({
     };
   }
 
-  return {
-    ...base,
-    action: { type: 'report', guidance: 'All Kernel evidence obligations passed. Submit kernel report to finalize the run.' },
-  };
+  return currentAction({ type: 'report', guidance: 'All Kernel evidence obligations passed. Submit kernel report to finalize the run.' });
 };
 
 export const normalizeReport = (payload = {}) => {

@@ -10,6 +10,9 @@ import {
   selectBoundCommandRef,
 } from '../scripts/kernel/run/obligation-compiler.mjs';
 import { readFile } from 'node:fs/promises';
+import { buildNextPayload } from '../scripts/kernel/run/run-loop.mjs';
+import { resolveKernelCloseoutRun } from '../scripts/kernel/standalone/kernel-commit.mjs';
+import { sanitizePersistentPayload, sanitizePersistentText } from '../scripts/kernel/persistent-sanitizer.mjs';
 
 test('structured repeated failures produce a bounded, evidence-bound knowledge candidate', () => {
   const candidate = extractStructuredKnowledgeCandidates({
@@ -222,4 +225,123 @@ test('architecture, mutation, and acceptance verification compile only for a mat
 
   // An unrelated scope must not trigger expensive project verification.
   assert.deepEqual(compile(['docs/readme.md']), []);
+});
+
+test('next is self-describing at the model boundary', () => {
+  const payload = buildNextPayload({
+    run: { runId: 'run-self-describing', objective: 'describe work', status: 'active', state: 'EXECUTE', acceptanceCriteria: ['works'] },
+    contract: {
+      acceptance: [{ id: 'AC-1', statement: 'works' }],
+      constraints: ['stay bounded'],
+      nonGoals: ['no redesign'],
+    },
+    obligations: [{
+      obligationId: 'unit-test',
+      evidenceClass: 'hard',
+      verificationMethod: 'kernel-executed-command',
+      allowedCommandRefs: ['test:unit'],
+      acceptanceIds: ['AC-1'],
+      metadata: { timeoutMs: 5000, verificationScope: 'focused' },
+    }],
+    requiredObligations: ['unit-test'],
+    workAuthority: {
+      currentWorkUnit: { stepId: 'step-1', allowedPaths: ['src/**'], forbiddenPaths: ['src/secrets/**'] },
+      goalStatus: 'active',
+      progress: { remainingCount: 1 },
+    },
+  });
+  assert.equal(payload.stepId, 'step-1');
+  assert.deepEqual(payload.allowedPaths, ['src/**']);
+  assert.deepEqual(payload.acceptanceIds, ['AC-1']);
+  assert.deepEqual(payload.requiredVerifications[0], {
+    obligationId: 'unit-test',
+    evidenceClass: 'hard',
+    verificationMethod: 'kernel-executed-command',
+    allowedCommandRefs: ['test:unit'],
+    commandRef: 'test:unit',
+    acceptanceIds: ['AC-1'],
+    verificationScope: 'focused',
+    timeoutMs: 5000,
+  });
+  assert.equal(payload.nextAction, 'implement');
+});
+
+test('successor closeout resolves the existing binding chain and unions provenance', () => {
+  const runA = {
+    runId: 'run-a', projectId: 'project', workspaceId: 'workspace', worktreeId: 'worktree',
+    status: 'completed', currentState: 'CLOSE', finalizationStatus: 'completed', sourceIdentity: 'src-a',
+    mutationRevision: 1, currentWorkspaceIdentity: 'identity-a',
+  };
+  const runB = {
+    runId: 'run-b', projectId: 'project', workspaceId: 'workspace', worktreeId: 'worktree',
+    status: 'completed', currentState: 'CLOSE', finalizationStatus: 'completed', sourceIdentity: 'src-b',
+    mutationRevision: 1, currentWorkspaceIdentity: 'identity-current',
+  };
+  const lineage = { runIds: ['run-a', 'run-b'], runs: [runA, runB], edges: [], terminalRunId: 'run-b', isTerminal: true };
+  const stateStore = {
+    listRuns: () => [runA, runB],
+    getRun: (runId) => ({ 'run-a': runA, 'run-b': runB }[runId] || null),
+    resolveSuccessorLineage: (runId) => runId === 'run-b'
+      ? lineage
+      : { ...lineage, terminalRunId: runId, isTerminal: false },
+    getCompletionDecision: (runId) => ({ decision: 'accepted', sourceIdentity: runId === 'run-a' ? 'src-a' : 'src-b' }),
+    getMutationProvenance: (runId) => runId === 'run-a'
+      ? { projectId: 'project', workspaceId: 'workspace', sourceIdentity: 'src-a', mutationRevision: 1, workspaceIdentity: 'identity-a', changedPaths: ['a.ts'] }
+      : { projectId: 'project', workspaceId: 'workspace', sourceIdentity: 'src-b', mutationRevision: 1, workspaceIdentity: 'identity-current', changedPaths: ['b.ts'] },
+  };
+  const resolved = resolveKernelCloseoutRun({
+    stateStore,
+    projectId: 'project',
+    workspaceId: 'workspace',
+    currentWorkspaceIdentity: 'identity-current',
+    currentPaths: ['a.ts', 'b.ts'],
+    selectedPaths: ['a.ts', 'b.ts'],
+  });
+  assert.equal(resolved.run.runId, 'run-b');
+  assert.deepEqual(resolved.lineage.runIds, ['run-a', 'run-b']);
+  assert.deepEqual(resolved.approvedPaths, ['a.ts', 'b.ts']);
+});
+
+test('canonical sanitizer protects provider output and transport header variants', () => {
+  const text = sanitizePersistentText('Authorization: Bearer abc x-refresh-token: xyz x-api-key: key123');
+  assert.doesNotMatch(text, /Bearer abc|xyz|key123/);
+  const payload = sanitizePersistentPayload({ Authorization: 'Bearer abc', 'x-refresh-token': 'xyz', nested: { 'x-api-key': 'key123' } });
+  assert.equal(payload.Authorization, '[REDACTED]');
+  assert.equal(payload['x-refresh-token'], '[REDACTED]');
+  assert.equal(payload.nested['x-api-key'], '[REDACTED]');
+  const headerPayload = sanitizePersistentPayload({ 'Set-Cookie': 'sid=secret', 'access-token': 'access-value', 'refresh-token': 'refresh-value' });
+  assert.equal(headerPayload['Set-Cookie'], '[REDACTED]');
+  assert.equal(headerPayload['access-token'], '[REDACTED]');
+  assert.equal(headerPayload['refresh-token'], '[REDACTED]');
+});
+
+test('successor closeout rejects incomplete worktree identity', () => {
+  const runA = {
+    runId: 'run-a', projectId: 'project', workspaceId: 'workspace', worktreeId: null,
+    status: 'completed', currentState: 'CLOSE', finalizationStatus: 'completed', sourceIdentity: 'src-a',
+    mutationRevision: 1, currentWorkspaceIdentity: 'identity-a',
+  };
+  const runB = {
+    runId: 'run-b', projectId: 'project', workspaceId: 'workspace', worktreeId: 'worktree',
+    status: 'completed', currentState: 'CLOSE', finalizationStatus: 'completed', sourceIdentity: 'src-b',
+    mutationRevision: 1, currentWorkspaceIdentity: 'identity-current',
+  };
+  const stateStore = {
+    listRuns: () => [runA, runB],
+    getRun: (runId) => ({ 'run-a': runA, 'run-b': runB }[runId] || null),
+    resolveSuccessorLineage: () => ({ runIds: ['run-a', 'run-b'], runs: [runA, runB], edges: [], terminalRunId: 'run-b', isTerminal: true }),
+    getCompletionDecision: () => ({ decision: 'accepted' }),
+    getMutationProvenance: (runId) => ({
+      projectId: 'project', workspaceId: 'workspace', sourceIdentity: runId === 'run-a' ? 'src-a' : 'src-b',
+      mutationRevision: 1, workspaceIdentity: runId === 'run-a' ? 'identity-a' : 'identity-current', changedPaths: [`${runId}.ts`],
+    }),
+  };
+  assert.throws(() => resolveKernelCloseoutRun({
+    stateStore,
+    projectId: 'project',
+    workspaceId: 'workspace',
+    currentWorkspaceIdentity: 'identity-current',
+    currentPaths: ['run-a.ts', 'run-b.ts'],
+    selectedPaths: ['run-a.ts', 'run-b.ts'],
+  }), /RUN_PROVENANCE_REQUIRED/);
 });

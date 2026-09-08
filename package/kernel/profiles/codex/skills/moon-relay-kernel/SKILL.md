@@ -27,7 +27,7 @@ The account command skillset defaults to Kernel. Bind the current project/worktr
 
 ## Verification
 - Request verifications using the command refs `next` lists for each outstanding obligation; the Kernel runtime executes them and owns the resulting evidence receipts.
-- For independent review actions (security review, protected T3 obligations, explicit flags), satisfy them via trusted review receipts recorded from an independent reviewer session (or native subagent fallback).
+- For independent review actions (security review, protected T3 obligations, explicit flags), satisfy them via trusted review receipts recorded from an independent reviewer session (or native subagent fallback). In single-session environments where independent sessions cannot be spawned, request user operator approval. Resolve only outstanding judgment obligations via `kernel approve <run-id>` or `kernel-commit --approve` when the Host supplies an operator approval reference; hard evidence remains mandatory.
 - Satisfy every verification obligation with fresh evidence; choose an order that fits the work, and report only after all required evidence is recorded.
 
 ## Plan Ingestion & Worktree Reclaim

@@ -116,31 +116,57 @@ export function resolveKernelCloseoutRun({
   selectedPaths = [],
 } = {}) {
   const effectiveRunId = runId || env.MOON_RELAY_KERNEL_RUN_ID || null;
+  const resolveLineage = (candidate) => {
+    if (typeof stateStore.resolveSuccessorLineage !== 'function') {
+      return { runs: [candidate], runIds: [candidate.runId], terminalRunId: candidate.runId, isTerminal: true, edges: [] };
+    }
+    return stateStore.resolveSuccessorLineage(candidate.runId);
+  };
+  const validLineage = (candidate) => {
+    const lineage = resolveLineage(candidate);
+    if (!lineage.isTerminal || lineage.terminalRunId !== candidate.runId) return null;
+    const entries = lineage.runs.map((lineageRun) => {
+      const provenance = stateStore.getMutationProvenance(lineageRun.runId);
+      const completion = stateStore.getCompletionDecision(lineageRun.runId);
+      const valid = lineageRun.projectId === projectId
+        && lineageRun.workspaceId === workspaceId
+        && Boolean(lineageRun.worktreeId)
+        && Boolean(candidate.worktreeId)
+        && lineageRun.worktreeId === candidate.worktreeId
+        && lineageRun.status === 'completed'
+        && lineageRun.currentState === 'CLOSE'
+        && lineageRun.finalizationStatus === 'completed'
+        && completion?.decision === 'accepted'
+        && provenance
+        && provenance.projectId === projectId
+        && provenance.workspaceId === workspaceId
+        && provenance.sourceIdentity === lineageRun.sourceIdentity
+        && Number(provenance.mutationRevision) > 0
+        && Number(provenance.mutationRevision) === Number(lineageRun.mutationRevision)
+        && Boolean(provenance.workspaceIdentity)
+        && Array.isArray(provenance.changedPaths)
+        && provenance.changedPaths.length > 0;
+      return { run: lineageRun, completion, provenance, valid };
+    });
+    return entries.every((entry) => entry.valid) ? { lineage, entries } : null;
+  };
   // Stage 1: Filter Completed Structural Candidates
   const structuralCandidates = effectiveRunId
     ? [stateStore.getRun(effectiveRunId)].filter(Boolean)
     : stateStore.listRuns({ projectId, statuses: ['completed'] })
       .filter((candidate) => candidate.projectId === projectId && candidate.workspaceId === workspaceId)
-      .filter((candidate) => candidate.status === 'completed' && candidate.currentState === 'CLOSE' && candidate.finalizationStatus === 'completed')
-      .filter((candidate) => stateStore.getCompletionDecision(candidate.runId)?.decision === 'accepted')
-      .filter((candidate) => {
-        const provenance = stateStore.getMutationProvenance(candidate.runId);
-        return provenance
-          && provenance.projectId === projectId
-          && provenance.workspaceId === workspaceId
-          && provenance.sourceIdentity === candidate.sourceIdentity
-          && Number(provenance.mutationRevision) > 0
-          && Number(provenance.mutationRevision) === Number(candidate.mutationRevision)
-          && Boolean(provenance.workspaceIdentity)
-          && Array.isArray(provenance.changedPaths)
-          && provenance.changedPaths.length > 0;
-      });
+      .filter((candidate) => validLineage(candidate));
 
   // Stage 2: Filter Exact Current Mutation Candidates
   let candidates = structuralCandidates;
   if (!effectiveRunId && (currentWorkspaceIdentity || (Array.isArray(currentPaths) && currentPaths.length > 0) || (Array.isArray(selectedPaths) && selectedPaths.length > 0))) {
     candidates = structuralCandidates.filter((candidate) => {
-      const provenance = stateStore.getMutationProvenance(candidate.runId) || stateStore.getLatestImplementationAttempt?.(candidate.runId);
+      const lineage = validLineage(candidate);
+      if (!lineage) return false;
+      const provenance = {
+        changedPaths: lineage.entries.flatMap((entry) => entry.provenance.changedPaths || []),
+        workspaceIdentity: candidate.currentWorkspaceIdentity,
+      };
       return matchesCurrentMutationCandidate({
         run: candidate,
         provenance,
@@ -158,6 +184,10 @@ export function resolveKernelCloseoutRun({
     throw admissionError('RUN_PROVENANCE_AMBIGUOUS', { projectId, workspaceId, runIds: candidates.map((candidate) => candidate.runId) });
   }
   const run = candidates[0];
+  const resolvedLineage = validLineage(run);
+  if (!resolvedLineage) {
+    throw admissionError(effectiveRunId ? 'RUN_NOT_FINALIZED' : 'RUN_PROVENANCE_REQUIRED', { runId: run.runId });
+  }
   if (run.projectId !== projectId) {
     throw admissionError('RUN_PROJECT_MISMATCH', { runId: run.runId, expectedProjectId: projectId, actualProjectId: run.projectId });
   }
@@ -171,7 +201,13 @@ export function resolveKernelCloseoutRun({
   if (!completion || completion.decision !== 'accepted') {
     throw admissionError('COMPLETION_NOT_ACCEPTED', { runId: run.runId, completion: completion?.decision || null });
   }
-  return { run, completion };
+  return {
+    run,
+    completion,
+    lineage: resolvedLineage.lineage,
+    provenance: resolvedLineage.entries.at(-1)?.provenance || null,
+    approvedPaths: uniquePaths(resolvedLineage.entries.flatMap((entry) => entry.provenance.changedPaths || [])),
+  };
 }
 
 export function admitKernelMutation({ stateStore, project, statusEntries = [], selected = [], runId = null, env = {} } = {}) {
@@ -179,7 +215,7 @@ export function admitKernelMutation({ stateStore, project, statusEntries = [], s
   const currentObservation = observeWorkspaceIdentity({ projectRoot: project.projectRoot });
   const currentPaths = uniquePaths(statusEntries.map((entry) => entry.path));
   const selectedPaths = uniquePaths(selected);
-  const { run, completion } = resolveKernelCloseoutRun({
+  const resolution = resolveKernelCloseoutRun({
     stateStore,
     projectId: project.projectId,
     workspaceId: workspace.workspaceId,
@@ -189,11 +225,12 @@ export function admitKernelMutation({ stateStore, project, statusEntries = [], s
     currentPaths,
     selectedPaths,
   });
-  const provenance = stateStore.getMutationProvenance(run.runId) || stateStore.getLatestImplementationAttempt(run.runId);
+  const { run, completion } = resolution;
+  const provenance = resolution.provenance || stateStore.getMutationProvenance(run.runId) || stateStore.getLatestImplementationAttempt(run.runId);
   if (!provenance || provenance.status && provenance.status !== 'passed') {
     throw admissionError('MUTATION_PROVENANCE_MISSING', { runId: run.runId });
   }
-  const approvedPaths = uniquePaths(provenance.changedPaths || []);
+  const approvedPaths = uniquePaths(resolution.approvedPaths || provenance.changedPaths || []);
   if (approvedPaths.length === 0) {
     throw admissionError('MUTATION_PROVENANCE_MISSING', { runId: run.runId, reason: 'changed_paths_empty' });
   }
@@ -264,12 +301,33 @@ export function admitKernelMutation({ stateStore, project, statusEntries = [], s
   };
 }
 
-export async function kernelCommit({ cwd = process.cwd(), env = process.env, message = null, push = false, memory = false, memoryReview = false, approvalRef = null, runId = null } = {}) {
+export async function kernelCommit({ cwd = process.cwd(), env = process.env, message = null, push = false, memory = false, memoryReview = false, approvalRef = null, runId = null, approve = false, approver = null, reason = null, approvalReason = null, operatorApprovalRef = null } = {}) {
   await ensureAccountRootTrack({ startDir: cwd, track: 'kernel', env, source: 'standalone-kernel-commit' });
   const project = resolveStandaloneProject({ cwd, env });
   const statusResult = runGitChecked(project.projectRoot, ['status', '--porcelain=v1']);
   const statusEntries = parseGitStatus(statusResult.stdout);
   const { selected, denied } = selectStagingPaths(statusEntries);
+
+  if (approve) {
+    const { createKernelControlPlane } = await import('../control-plane.mjs');
+    const cp = await createKernelControlPlane({ projectRoot: project.projectRoot, runtimeHome: project.runtimeHome, env });
+    try {
+      const effectiveRunId = runId || env.MOON_RELAY_KERNEL_RUN_ID || await cp.resolveRunId({ explicitRunId: null, envRunId: null });
+      if (effectiveRunId) {
+        await cp.approveObligation({
+          runId: effectiveRunId,
+          allJudgments: true,
+          approver: approver || process.env.USERNAME || process.env.USER || 'operator',
+          reason: reason || approvalReason || 'User approved via kernel-commit --approve',
+          approvalRef: operatorApprovalRef || env.MOON_RELAY_KERNEL_OPERATOR_APPROVAL_REF || null,
+          autoFinalize: true,
+        });
+      }
+    } finally {
+      await cp.close();
+    }
+  }
+
   const stateStore = await openKernelStateStore({ runtimeHome: project.runtimeHome });
   try {
     const admission = selected.length > 0
@@ -366,5 +424,16 @@ export async function kernelCommit({ cwd = process.cwd(), env = process.env, mes
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const args = parseCliArgs(process.argv.slice(2));
-  kernelCommit({ message: args.message || null, push: args.push === true, memory: args.memory === true, memoryReview: args.memoryReview === true, approvalRef: args.approvalRef || null, runId: args.runId || null }).then((result) => printResult(result, { json: args.json })).catch((error) => { printResult({ status: 'error', errorCode: error.code || error.message }, { json: true }); process.exitCode = 1; });
+  kernelCommit({
+    message: args.message || null,
+    push: args.push === true,
+    memory: args.memory === true,
+    memoryReview: args.memoryReview === true,
+    approvalRef: args.approvalRef || null,
+    runId: args.runId || null,
+    approve: args.approve === true,
+    approver: args.approver || null,
+    reason: args.reason || args.approvalReason || null,
+    operatorApprovalRef: args.operatorApprovalRef || process.env.MOON_RELAY_KERNEL_OPERATOR_APPROVAL_REF || null,
+  }).then((result) => printResult(result, { json: args.json })).catch((error) => { printResult({ status: 'error', errorCode: error.code || error.message }, { json: true }); process.exitCode = 1; });
 }

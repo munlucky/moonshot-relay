@@ -20,9 +20,9 @@ export const REVIEW_FINDING_CLASSES = Object.freeze(['none', 'minor', 'important
 // `unrouted` is the honest status for a review the Host never routed through a
 // model usage receipt. It is recorded rather than rejected so the lineage is
 // visible, but it can never satisfy a protected or T3 judgment.
-export const REVIEW_ENFORCEMENT_STATUSES = Object.freeze(['enforced', 'fallback', 'advisory', 'unsupported', 'failed', 'unrouted']);
-// Only these two prove the requested model class was actually applied.
-export const TRUSTED_ENFORCEMENT_STATUSES = Object.freeze(['enforced', 'fallback']);
+export const REVIEW_ENFORCEMENT_STATUSES = Object.freeze(['enforced', 'fallback', 'operator_approved', 'advisory', 'unsupported', 'failed', 'unrouted']);
+// These prove the requested model class or authorized operator approval was actually applied.
+export const TRUSTED_ENFORCEMENT_STATUSES = Object.freeze(['enforced', 'fallback', 'operator_approved']);
 
 const SESSION_ID = /^sha256:[a-f0-9]{64}$/;
 const SHA256 = /^sha256:[a-f0-9]{64}$/;
@@ -99,7 +99,10 @@ export const normalizeReviewReceipt = (input = {}) => {
     fail('kernel_review_receipt_invalid', `reviewer.enforcementStatus must be one of: ${REVIEW_ENFORCEMENT_STATUSES.join(', ')}`);
   }
   if (!reviewer.modelClass) fail('kernel_review_receipt_invalid', 'reviewer.modelClass is required');
-  if (reviewer.enforcementStatus !== 'unrouted' && !reviewer.usageReceiptId) {
+  if (reviewer.enforcementStatus === 'operator_approved' && !SHA256.test(String(reviewer.approvalRefDigest || ''))) {
+    fail('kernel_review_receipt_invalid', 'operator_approved review receipt requires a scoped approvalRefDigest');
+  }
+  if (!['unrouted', 'operator_approved'].includes(reviewer.enforcementStatus) && !reviewer.usageReceiptId) {
     fail('kernel_review_receipt_invalid', 'a routed review receipt requires the reviewer usageReceiptId');
   }
 
@@ -139,6 +142,7 @@ export const normalizeReviewReceipt = (input = {}) => {
       modelClass: String(reviewer.modelClass),
       resolvedModel: reviewer.resolvedModel ? String(reviewer.resolvedModel) : null,
       enforcementStatus: reviewer.enforcementStatus,
+      approvalRefDigest: reviewer.approvalRefDigest ? String(reviewer.approvalRefDigest) : null,
     },
     implementer: {
       actorSessionId: input.implementer?.actorSessionId ? requireSession(input.implementer.actorSessionId, 'implementer.actorSessionId') : null,
@@ -189,13 +193,17 @@ export const evaluateReviewReceipt = ({
       reasons.push('review-stale-workspace-identity');
     }
   }
+  const isOperatorApproved = receipt.reviewer?.enforcementStatus === 'operator_approved';
+  if (isOperatorApproved && !SHA256.test(String(receipt.reviewer?.approvalRefDigest || ''))) {
+    reasons.push('operator-approval-ref-missing');
+  }
   if (requireTrustedEnforcement && !TRUSTED_ENFORCEMENT_STATUSES.includes(receipt.reviewer.enforcementStatus)) {
     reasons.push(`review-routing-${receipt.reviewer.enforcementStatus}`);
   }
-  if (requireFrontierClass && receipt.reviewer.modelClass !== 'frontier_reasoning') {
+  if (!isOperatorApproved && requireFrontierClass && receipt.reviewer.modelClass !== 'frontier_reasoning') {
     reasons.push(`review-model-class-${receipt.reviewer.modelClass}`);
   }
-  if (requireIndependentSession) {
+  if (!isOperatorApproved && requireIndependentSession) {
     if (!receipt.implementer.actorSessionId) reasons.push('review-implementer-session-unknown');
     else if (receipt.implementer.actorSessionId === receipt.reviewer.actorSessionId) reasons.push('review-session-not-independent');
   }

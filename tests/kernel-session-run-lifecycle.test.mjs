@@ -333,6 +333,13 @@ const successorAfterCompletedFinalization = async () => {
   const predecessorRunId = 'codex-thread-a';
   const contractPath = path.join(fixture.projectRoot, 'contract-b.json');
   try {
+    // The contract is an invocation input, not a successor workspace
+    // mutation. Create it before the predecessor baseline so continuity
+    // compares the same workspace contents across the handoff.
+    await writeFile(contractPath, JSON.stringify({
+      objective: 'contract B',
+      acceptance: ['contract B has an independent Run'],
+    }));
     await startOwnedRun({
       ...fixture,
       sessionId,
@@ -344,11 +351,6 @@ const successorAfterCompletedFinalization = async () => {
       runId: predecessorRunId,
       finalizationStatus: 'completed',
     });
-    await writeFile(contractPath, JSON.stringify({
-      objective: 'contract B',
-      acceptance: ['contract B has an independent Run'],
-    }));
-
     const result = invokeNext({ ...fixture, sessionId, contractPath });
 
     assert.equal(result.status, 0, result.stderr || result.stdout);

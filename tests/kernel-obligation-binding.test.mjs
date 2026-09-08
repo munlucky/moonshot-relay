@@ -80,6 +80,28 @@ test('required verification timeout remains an obligation contract value', async
   }
 });
 
+test('legacy required-verification statements recover their Kernel command binding', async () => {
+  const fixture = await setup();
+  try {
+    const obligations = compileRunObligations({
+      projectRoot: fixture.projectRoot,
+      requiredChecks: [],
+      contract: {},
+      knowledgeRecords: [{
+        id: 'kn-legacy-test-kernel',
+        type: 'required_verification',
+        statement: 'Regression verification executed: test:ok',
+        scope: ['app.mjs'],
+        status: 'committed',
+      }],
+      changedPaths: ['app.mjs'],
+    });
+    assert.deepEqual(obligations[0].allowedCommandRefs, ['test:ok']);
+  } finally {
+    await cleanup(fixture);
+  }
+});
+
 test('P1-4: project commands are discovered per ecosystem and classified semantically', async () => {
   const fixture = await setup();
   try {
@@ -582,21 +604,37 @@ test('P0-2: an approved discovered command is not falsely rejected for a require
   }
 });
 
-test('F2: a shorter revision cannot overwrite an earlier criterion in place', async () => {
+test('F2: an active Run revision replaces the current acceptance authority', async () => {
   const fixture = await setup();
   const cp = await createKernelControlPlane(fixture);
   try {
     await cp.ensureRun({ runId: 'r-f2', objective: 'x', taskContract: { allowedPaths: ['app.mjs'], acceptance: ['A must hold', 'B must hold'] } });
-    // Plain acceptance is numbered positionally, so revising with a single
-    // different statement previously replaced AC-1 and dropped A.
+    // A revised Task Contract is the current Goal authority. It is not an
+    // append-only history and does not require abandoning the Run.
     await cp.ensureRun({ runId: 'r-f2', objective: 'x', taskContract: { allowedPaths: ['app.mjs'], acceptance: ['C must hold'] } });
 
     const run = await cp.getRun('r-f2');
-    assert.deepEqual(run.acceptanceCriteria, ['A must hold', 'B must hold', 'C must hold']);
-    // A's id must still point at A, so evidence covering AC-1 cannot be
-    // re-attributed to a criterion it never proved.
-    assert.equal(run.taskContract.acceptance.find((item) => item.id === 'AC-1').statement, 'A must hold');
-    assert.equal(run.taskContract.acceptance.find((item) => item.statement === 'C must hold').id, 'AC-3');
+    assert.deepEqual(run.acceptanceCriteria, ['C must hold']);
+    assert.equal(run.taskContract.acceptance.find((item) => item.id === 'AC-1').statement, 'C must hold');
+    assert.equal(run.status, 'active');
+  } finally {
+    await cp.close();
+    await cleanup(fixture);
+  }
+});
+
+test('active replacement rebuilds a synthetic work-unit scope from the new contract', async () => {
+  const fixture = await setup();
+  const cp = await createKernelControlPlane(fixture);
+  try {
+    await cp.ensureRun({ runId: 'r-synthetic-scope', objective: 'x', taskContract: { allowedPaths: ['old/**'], acceptance: ['old holds'] } });
+    await cp.ensureRun({ runId: 'r-synthetic-scope', objective: 'x', taskContract: { allowedPaths: ['new/**'], acceptance: ['new holds'] } });
+    const next = await cp.next('r-synthetic-scope');
+    assert.deepEqual(next.action.step.allowedPaths, ['new/**']);
+    assert.deepEqual(next.action.step.acceptanceIds, ['AC-1']);
+    assert.ok(next.workAuthority.currentWorkUnit.obligationIds.includes('default'));
+    assert.deepEqual(next.allowedPaths, ['new/**']);
+    assert.deepEqual(next.acceptanceIds, ['AC-1']);
   } finally {
     await cp.close();
     await cleanup(fixture);
@@ -826,7 +864,7 @@ test('P0-5: an unknown AC in a late evidence-plan submission is rejected, not ig
   }
 });
 
-test('P0-4: a contract revision can refine scope but never shrink it', async () => {
+test('P0-4: a contract revision can replace acceptance, constraints, and scope authority', async () => {
   const fixture = await setup();
   const cp = await createKernelControlPlane(fixture);
   try {
@@ -836,13 +874,13 @@ test('P0-4: a contract revision can refine scope but never shrink it', async () 
       taskContract: { allowedPaths: ['app.mjs'], acceptance: ['A must hold', 'B must hold'], constraints: ['keep the response shape'] },
     });
 
-    // A later turn submits a narrower contract. Dropping an acceptance
-    // criterion mid-run would quietly shrink the completion gate.
+    // A later turn submits the current contract. Removed criteria and
+    // constraints are historical, not current completion authority.
     await cp.ensureRun({ runId: 'r-shrink', objective: 'x', taskContract: { allowedPaths: ['app.mjs'], acceptance: ['A must hold'] } });
 
     const run = await cp.getRun('r-shrink');
-    assert.deepEqual(run.acceptanceCriteria, ['A must hold', 'B must hold']);
-    assert.deepEqual(run.taskContract.constraints, ['keep the response shape']);
+    assert.deepEqual(run.acceptanceCriteria, ['A must hold']);
+    assert.deepEqual(run.taskContract.constraints, []);
 
     // Refinement in the same revision still lands.
     await cp.ensureRun({
@@ -851,7 +889,7 @@ test('P0-4: a contract revision can refine scope but never shrink it', async () 
       taskContract: { allowedPaths: ['app.mjs'], acceptance: ['C must hold'], nonGoals: ['no redesign'] },
     });
     const refined = await cp.getRun('r-shrink');
-    assert.ok(refined.acceptanceCriteria.includes('B must hold'), 'existing acceptance survives');
+    assert.deepEqual(refined.acceptanceCriteria, ['C must hold']);
     assert.deepEqual(refined.taskContract.nonGoals, ['no redesign']);
   } finally {
     await cp.close();
@@ -1201,9 +1239,10 @@ test('contract revision atomically rebases steps and keeps predecessor coverage 
 
     const run = await cp.getRun('r-merge-rebase');
     assert.equal(run.contractRevision, 2);
-    assert.deepEqual(run.taskContract.acceptance.map((item) => item.id), ['AC-1', 'AC-2']);
-    assert.deepEqual(cp.getCurrentStep('r-merge-rebase').acceptanceIds, ['AC-2']);
-    assert.deepEqual(cp.stateStore.getRunObligation('r-merge-rebase', 'new-check').acceptanceIds, ['AC-2']);
+    assert.deepEqual(run.taskContract.acceptance.map((item) => item.id), ['AC-1']);
+    assert.deepEqual(cp.getCurrentStep('r-merge-rebase').acceptanceIds, ['AC-1']);
+    assert.equal(cp.stateStore.getRunObligation('r-merge-rebase', 'old-check').status, 'superseded');
+    assert.deepEqual(cp.stateStore.getRunObligation('r-merge-rebase', 'new-check').acceptanceIds, ['AC-1']);
     assert.deepEqual(cp.stateStore.getVerifications('r-merge-rebase')[0].acceptanceCoverage, ['AC-1']);
   } finally {
     await cp.close();
