@@ -254,20 +254,19 @@ const runtimeSpecs = {
 
 const profileRuntimeNames = Object.freeze(['claude', 'codex', 'qwen', 'antigravity']);
 
-const usage = () => `Usage: node scripts/install-account-root-harness.mjs [--runtime all|claude,codex,qwen,antigravity] [--source-root <repo>] [--payload-root <materialized-payload>] [--moonshot-home <dir>] [--codex-home <dir>] [--claude-home <dir>] [--qwen-home <dir>] [--antigravity-home <dir>] [--antigravity-skills-home <dir>] [--dry-run] [--json] [--no-backup] [--remove-legacy-harness-core]`;
+const usage = () => `Usage: node scripts/install-account-root-harness.mjs [--runtime all|claude,codex,qwen,antigravity] [--source-root <repo>] [--payload-root <materialized-payload>] [--moonshot-home <dir>] [--codex-home <dir>] [--claude-home <dir>] [--qwen-home <dir>] [--antigravity-home <dir>] [--antigravity-skills-home <dir>] [--skip-common] [--dry-run] [--json] [--no-backup] [--remove-legacy-harness-core]`;
 
 const parseArgs = (argv) => {
   const options = {
-    runtime: 'all',
-    sourceRoot: process.env.MOONSHOT_RELAY_SOURCE_ROOT || process.env.CLAUDE_SETTINGS_SOURCE_ROOT
-      ? path.resolve(process.env.MOONSHOT_RELAY_SOURCE_ROOT || process.env.CLAUDE_SETTINGS_SOURCE_ROOT)
-      : defaultSourceRoot,
+    sourceRoot: defaultSourceRoot,
     payloadRoot: null,
+    runtime: 'all',
     homes: {},
     dryRun: false,
     json: false,
     backup: true,
     removeLegacyHarnessCore: false,
+    skipCommon: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -290,6 +289,8 @@ const parseArgs = (argv) => {
       options.homes.antigravity = path.resolve(argv[++index]);
     } else if (arg === '--antigravity-skills-home') {
       options.homes.antigravitySkills = path.resolve(argv[++index]);
+    } else if (arg === '--skip-common') {
+      options.skipCommon = true;
     } else if (arg === '--dry-run') {
       options.dryRun = true;
     } else if (arg === '--json') {
@@ -1314,7 +1315,9 @@ const main = async () => {
 
   try {
     const manifests = [];
-    manifests.push(await installCommonRuntime({ payloadRoot, options, installId, sourceRepo }));
+    if (!options.skipCommon) {
+      manifests.push(await installCommonRuntime({ payloadRoot, options, installId, sourceRepo }));
+    }
     for (const runtime of runtimes) {
       manifests.push(...await installRuntime({ runtime, payloadRoot, options, installId, sourceRepo }));
     }

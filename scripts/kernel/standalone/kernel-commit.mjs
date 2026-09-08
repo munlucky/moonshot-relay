@@ -117,14 +117,18 @@ export function resolveKernelCloseoutRun({
 } = {}) {
   const effectiveRunId = runId || env.MOON_RELAY_KERNEL_RUN_ID || null;
   const resolveLineage = (candidate) => {
-    if (typeof stateStore.resolveSuccessorLineage !== 'function') {
-      return { runs: [candidate], runIds: [candidate.runId], terminalRunId: candidate.runId, isTerminal: true, edges: [] };
+    try {
+      if (typeof stateStore.resolveSuccessorLineage !== 'function') {
+        return { runs: [candidate], runIds: [candidate.runId], terminalRunId: candidate.runId, isTerminal: true, edges: [] };
+      }
+      return stateStore.resolveSuccessorLineage(candidate.runId);
+    } catch {
+      return null;
     }
-    return stateStore.resolveSuccessorLineage(candidate.runId);
   };
   const validLineage = (candidate) => {
     const lineage = resolveLineage(candidate);
-    if (!lineage.isTerminal || lineage.terminalRunId !== candidate.runId) return null;
+    if (!lineage || !lineage.isTerminal || lineage.terminalRunId !== candidate.runId) return null;
     const entries = lineage.runs.map((lineageRun) => {
       const provenance = stateStore.getMutationProvenance(lineageRun.runId);
       const completion = stateStore.getCompletionDecision(lineageRun.runId);

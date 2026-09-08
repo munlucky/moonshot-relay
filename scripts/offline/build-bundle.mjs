@@ -208,15 +208,25 @@ const writeBundleGuide = async (stageRoot, manifest) => {
     + `2. 폐쇄망 PC에서 ZIP을 임의의 작업 폴더에 먼저 압축 해제합니다. ZIP 내부에서 실행하지 않습니다.\n`
     + `3. 압축 해제 폴더에서 \`Verify-Offline.cmd\`를 실행합니다. 네트워크를 사용하지 않습니다.\n\n`
     + `## 설치\n\n`
-    + `\`Install-Offline.cmd\`를 실행하면 계정 루트에 공통 Relay payload와 Claude/Codex/Qwen 프로필을 설치하고, Kernel provider도 세 프로필만 설치합니다.\n\n`
+    + `\`Install-Offline.cmd\`를 실행하면 Kernel 홈과 Qwen/Claude/Codex 프로필에 필요한 핵심 자산만 미니멀하게 설치합니다. (모노레포의 불필요한 995개 공통 하네스 파일 복사는 기본 제외)\n\n`
     + `기본 설치 위치:\n\n`
-    + `- \`%USERPROFILE%\\.moonshot-relay\`\n`
-    + `- \`%USERPROFILE%\\.claude\`\n`
-    + `- \`%USERPROFILE%\\.codex\`\n`
-    + `- \`%USERPROFILE%\\.qwen\`\n`
-    + `- \`%USERPROFILE%\\.moon-relay-kernel\`\n\n`
+    + `- \`%USERPROFILE%\\.moon-relay-kernel\` (Kernel 엔진 및 필수 페이로드 249개)\n`
+    + `- \`%USERPROFILE%\\.qwen\` (Qwen 필수 프로필 94개)\n`
+    + `- \`C:\\ProgramData\\PatchRelay\\agent-homes\\ade\\.qwen\` (Patch Relay ADE 환경 감지 시 또는 \`--ade-qwen-home\` 지정 시 자동 설치)\n`
+    + `- \`%USERPROFILE%\\.claude\`, \`%USERPROFILE%\\.codex\`\n\n`
+    + `Qwen 전용으로만 설치하려면:\n\n`
+    + `\`Install-Offline.cmd --runtime qwen\`\n\n`
+    + `모노레포 전체 공통 하네스 995개 파일을 모두 포함하여 설치하려면:\n\n`
+    + `\`Install-Offline.cmd --with-common\`\n\n`
     + `경로를 바꾸려면 예를 들어 다음처럼 실행합니다:\n\n`
-    + `\`Install-Offline.cmd --moonshot-home D:\\Moonshot\\.moonshot-relay --claude-home D:\\Moonshot\\.claude --codex-home D:\\Moonshot\\.codex --qwen-home D:\\Moonshot\\.qwen --kernel-home D:\\Moonshot\\.moon-relay-kernel\`\n\n`
+    + `\`Install-Offline.cmd --claude-home D:\\Moonshot\\.claude --codex-home D:\\Moonshot\\.codex --qwen-home D:\\Moonshot\\.qwen --kernel-home D:\\Moonshot\\.moon-relay-kernel --ade-qwen-home D:\\PatchRelay\\agent-homes\\ade\\.qwen\`\n\n`
+    + `## 사전 점검 및 디버깅 (Dry-Run)\n\n`
+    + `실제 파일 쓰기 작업 없이 무엇이 어디에 설치될지 디버깅 및 시뮬레이션만 수행하려면 \`--dry-run\` 또는 \`--debug\` 옵션을 사용합니다:\n\n`
+    + `\`Install-Offline.cmd --dry-run\`\n\n`
+    + `JSON 상세 결과가 필요한 경우:\n\n`
+    + `\`Install-Offline.cmd --dry-run --json\`\n\n`
+    + `번들 자체 무결성, Node.js 바이너리 및 SQLite C++ 모듈을 비파괴 검증하려면:\n\n`
+    + `\`Verify-Offline.cmd\`\n\n`
     + `## npm 의존성 복구\n\n`
     + `정상 설치에는 npm 호출이 필요하지 않으며 번들 안의 \`node_modules\`를 사용합니다. 손상 시에만 아래처럼 오프라인 tarball을 사용합니다:\n\n`
     + `\`npm install --offline --no-audit --no-fund --ignore-scripts --no-save ${repairCommand}\`\n\n`
