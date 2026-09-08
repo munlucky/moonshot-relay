@@ -35,7 +35,7 @@
       "skillPath": "skills/kernel-commit",
       "entrypoint": "scripts/kernel/standalone/kernel-commit.mjs",
       "exportName": "kernelCommit",
-      "contentHash": "58753c0aee61b35fa2ff88964abb92390ac5aa3d390aa9e0d98a8c0a5079ae50",
+      "contentHash": "fc524622aa1f99e7b11e8e08678ac4e45a662f7c3f31222743a02e36ca741aa8",
       "cli": {
         "enabled": true,
         "binName": "kernel-commit"

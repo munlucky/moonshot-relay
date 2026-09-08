@@ -94,7 +94,7 @@ test('Preflight Wave 1: Missing verification commands at start do not block run 
   }
 });
 
-test('Preflight Wave 1: Multi-acceptance contract without allowedPaths passes fail-soft at Turn 0 and reaches EXECUTE', async () => {
+test('Multi-acceptance contract without allowedPaths requires bounded scope before execution', async () => {
   const fixture = await setup();
   const cp = await createKernelControlPlane(fixture);
   try {
@@ -112,18 +112,20 @@ test('Preflight Wave 1: Multi-acceptance contract without allowedPaths passes fa
     assert.equal(run.runId, 'r-multi-ac-failsoft');
     const nextTurn = await cp.next('r-multi-ac-failsoft');
     assert.equal(nextTurn.action.type, 'implement');
-    assert.notEqual(nextTurn.status, 'scope-rejected');
+    assert.equal(nextTurn.status, 'scope-rejected');
+    assert.equal(nextTurn.errorCode, 'work-unit-decomposition-required');
+    assert.equal(nextTurn.nextAction, 'revise-task-contract-with-bounded-steps');
   } finally {
     await cp.close();
     await cleanup(fixture);
   }
 });
 
-test('Preflight Wave 1: Acceptance boundary matrix (0, 1, 2, 9, 10, 100) uniformly receives provisional scope and reaches EXECUTE', async () => {
+test('Acceptance boundary matrix preserves small provisional work and blocks broad unbounded work', async () => {
   const fixture = await setup();
   const cp = await createKernelControlPlane(fixture);
   try {
-    const counts = [0, 1, 2, 9, 10, 100];
+    const counts = [0, 1, 2, 3, 9, 10, 100];
     for (const count of counts) {
       const runId = `r-ac-matrix-${count}`;
       const run = await cp.startRun({
@@ -136,7 +138,12 @@ test('Preflight Wave 1: Acceptance boundary matrix (0, 1, 2, 9, 10, 100) uniform
       assert.equal(run.runId, runId);
       const nextTurn = await cp.next(runId);
       assert.equal(nextTurn.action.type, 'implement');
-      assert.notEqual(nextTurn.status, 'scope-rejected');
+      if (count >= 3) {
+        assert.equal(nextTurn.status, 'scope-rejected');
+        assert.equal(nextTurn.errorCode, 'work-unit-decomposition-required');
+      } else {
+        assert.notEqual(nextTurn.status, 'scope-rejected');
+      }
       await cp.abandonRun(runId);
     }
   } finally {

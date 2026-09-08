@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createKernelControlPlane } from '../control-plane.mjs';
 import { resolveKernelWorktreeIdentity } from '../run/worktree-binding.mjs';
 import { resolveKernelRuntimeHome } from '../runtime-home.mjs';
+import { projectKernelModelView } from '../run/model-view.mjs';
 import { createKernelHostReviewBridge, isKernelReviewAction } from '../../host/kernel/lifecycle-bridge.mjs';
 
 const MCP_PROTOCOL_VERSION = '2024-11-05';
@@ -34,6 +35,7 @@ export const KERNEL_MCP_TOOLS = [
         contractJson: { type: 'object', description: 'Task contract JSON to bootstrap or match' },
         runId: { type: 'string', description: 'Explicit run id to attach to' },
         surface: { type: 'string', description: 'Surface identifier (e.g. codex_app, claude_app, qwen_code_cli)' },
+        verbose: { type: 'boolean', description: 'Return full diagnostic snapshots instead of the compact model view' },
       },
       required: ['workspaceRoot'],
     },
@@ -48,6 +50,7 @@ export const KERNEL_MCP_TOOLS = [
         contractJson: { type: 'object', description: 'Task contract JSON for contract-first bootstrapping' },
         runId: { type: 'string', description: 'Explicit run id' },
         surface: { type: 'string', description: 'Surface identifier' },
+        verbose: { type: 'boolean', description: 'Return full diagnostic snapshots instead of the compact model view' },
       },
       required: ['workspaceRoot'],
     },
@@ -62,6 +65,7 @@ export const KERNEL_MCP_TOOLS = [
         runId: { type: 'string', description: 'Explicit run id' },
         report: { type: 'object', description: 'Structured report payload' },
         surface: { type: 'string', description: 'Surface identifier' },
+        verbose: { type: 'boolean', description: 'Return full diagnostic snapshots instead of the compact model view' },
       },
       required: ['workspaceRoot', 'report'],
     },
@@ -269,7 +273,7 @@ export const handleMcpToolCall = async ({
         modelInput: res,
         parameters,
       });
-      return processed.output;
+      return projectKernelModelView(processed.output, { verbose: parameters.verbose === true });
     }
 
     if (name === 'kernel_report') {
@@ -286,12 +290,12 @@ export const handleMcpToolCall = async ({
         modelInput: res.next || null,
         parameters,
       });
-      if (!processed.hostReview && processed.output?.status !== 'execution-readiness-blocked') return res;
-      return {
+      if (!processed.hostReview && processed.output?.status !== 'execution-readiness-blocked') return projectKernelModelView(res, { verbose: parameters.verbose === true });
+      return projectKernelModelView({
         ...res,
         next: processed.output,
         ...(processed.hostReview ? { hostReview: processed.hostReview } : {}),
-      };
+      }, { verbose: parameters.verbose === true });
     }
 
     if (name === 'kernel_status') {

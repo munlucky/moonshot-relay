@@ -21,6 +21,14 @@ The account command skillset defaults to Kernel. Bind the current project/worktr
 - **Delegation**: Subagents are optional for genuinely partitioned tasks; they are never a prerequisite for ordinary implementation.
 - **Fast Blockers**: When blocked, immediately report the blocker reason (`question`, `permission`, `unsupported-verification`, etc.) rather than looping or improvising.
 
+
+## Context and Wait Budget
+- Use `kernel --help` or `kernel report --help` for CLI usage; help never binds a Run or starts verification. Default CLI/MCP output is compact; request `--verbose` (MCP `verbose: true`) only for a specific diagnostic need.
+- Search with `rg` first, then read the relevant function or section. Keep each tool result near 4,000 tokens or less; save long diagnostics to a file and inspect only failures or selected fields.
+- Inspect `git diff --stat` first, then one relevant file or hunk per read. Do not dump the entire multi-file diff into the model context.
+- For tests and report verification, use a 10–30 second initial wait and 30–60 second continuation waits supported by the tool. Avoid one-second polling; keep user progress updates within 60 seconds. Inspect completion and failures once the process exits.
+- Declare directory scope as globs such as `scripts/kernel/**`, not `scripts/kernel/`. For broad work (3+ acceptance criteria or files), supply bounded steps with acceptance IDs or a defensibly narrow explicit scope. Never invent file ownership by splitting acceptance text.
+
 ## Definition of Done
 - Treat Kernel completion decisions as the only completion authority; a run is done only when `kernel next` returns `{ action: { type: "done" } }`. Narration or plain text completion claims have zero authority.
 - Reusable invariants, required verifications, architecture decisions, and failure patterns are recorded in `knowledgeObservations` upon completion.
@@ -40,4 +48,3 @@ The account command skillset defaults to Kernel. Bind the current project/worktr
   - Small / Bounded Tasks (1–3 files): Produce a lightweight 1-step contract (30–40 lines) to enter execution within 30 seconds.
   - Multi-Wave / Large Tasks (5+ subsystems): Map all waves into a structured task contract up front so the run executes autonomously under Kernel step sequencing.
 - **Ghost Run Recovery**: Starting a new task with `--invocation-intent new-task` or a distinct task contract automatically supersedes and archives any unresumed `blocked` run on the worktree, reclaiming the mutation lease.
-

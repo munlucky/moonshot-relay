@@ -204,7 +204,7 @@
       "name": "moon-relay-kernel",
       "path": "skills/moon-relay-kernel",
       "source": "canonical",
-      "contentHash": "180baf41eaa09d74f415fcb371164f5e9279f4d4e14f8d68b8a7697d2a0493b7",
+      "contentHash": "4a552c5df3b4a4fe39f6e446ad17f184989f87e19534a4aa25123749e98974db",
       "license": "MIT",
       "stages": [],
       "permissions": [

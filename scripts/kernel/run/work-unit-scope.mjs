@@ -121,6 +121,18 @@ export const resolveWorkUnitAllowedPaths = ({ step = null, contract = null } = {
 
 export const inspectWorkUnitScope = ({ step = null, contract = null, strict = false } = {}) => {
   const allowedPaths = resolveWorkUnitAllowedPaths({ step, contract });
+  const acceptanceCount = (contract?.acceptance || contract?.acceptanceCriteria || []).length;
+  const broad = acceptanceCount >= 3 || Number(contract?.filesChanged || 0) >= 3
+    || contract?.flags?.complex === true || contract?.taskClass === 'long-running';
+  const undecomposed = !contract?.steps?.length && step?.synthetic !== false;
+  if (broad && undecomposed && (!allowedPaths.length || isWorkspaceWideScope(allowedPaths))) {
+    return {
+      valid: false, required: true, provisional: false,
+      reason: 'decomposition-required', errorCode: 'work-unit-decomposition-required',
+      allowedPaths, nextAction: 'revise-task-contract-with-bounded-steps',
+      message: 'Broad undecomposed work cannot use workspace-wide synthetic scope. Submit explicit steps with acceptanceIds and bounded allowedPaths (for directories use src/**), or narrow this work unit to a defensible explicit scope. Do not infer file ownership from acceptance text.',
+    };
+  }
   const requiresScope = requiresImplementationWorkUnitScope({ contract, step });
   const isStrict = strict || contract?.strictBoundedScope === true || requiresScope;
   if (!requiresScope && !isStrict) {

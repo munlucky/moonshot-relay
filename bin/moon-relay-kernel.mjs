@@ -11,32 +11,41 @@ import { resolveCanonicalHostSession } from '../scripts/kernel/run/host-session.
 import { recoveryForKernelError } from '../scripts/kernel/run/binding-preflight.mjs';
 import { discoverRunLocator } from '../scripts/kernel/run/run-locator.mjs';
 import { createOpaqueRunId } from '../scripts/kernel/run/run-identity.mjs';
+import { projectKernelModelView } from '../scripts/kernel/run/model-view.mjs';
 
 const args = process.argv.slice(2);
 const command = args[0] || 'doctor';
 const json = args.includes('--json');
 
 if (args.includes('--help') || args.includes('-h') || command === 'help') {
-  if (command === 'next') {
-    console.log(`Usage: kernel next [run-id] [--contract-json <file>] [--project-root <path>] [--json]`);
-  } else if (command === 'report') {
-    console.log(`Usage: kernel report [run-id] --report-json <file> [--project-root <path>] [--json]`);
-  } else if (command === 'approve') {
-    console.log(`Usage: kernel approve [run-id] [--obligation <id>] [--reason <text>] [--approver <name>] [--approval-ref <host-ref>] [--all-judgments] [--json]`);
-  } else {
-    console.log(`Moon Relay Kernel CLI
-Usage: kernel <command> [options]
-
-Commands:
-  next       Get next action and context capsule
-  report     Submit execution report and verification requests
-  approve    Approve pending obligations (operator/manual approval)
-  status     Show run status and verification progress
-  finalize   Finalize a completed run
-  resume     Resume an existing run
-  doctor     Check environment and health
-`);
-  }
+  const help = {
+    usage: 'kernel <command> [options]',
+    commands: {
+      next: 'kernel next [run-id] [--contract-json <file>] [--project-root <path>] [--json] [--verbose]',
+      report: 'kernel report [run-id] --report-json <file> [--project-root <path>] [--json] [--verbose]',
+      approve: 'kernel approve [run-id] [--obligation <id>] [--reason <text>] [--approver <name>] [--approval-ref <host-ref>] [--all-judgments] [--json]',
+      status: 'kernel status --run-id <id> [--json]',
+      context: 'kernel context [--run-id <id>] [--stage <stage>] [--json]',
+      finalize: 'kernel finalize [run-id] [--json]',
+      resume: 'kernel resume [run-id] [--json]',
+      doctor: 'kernel doctor [--project-root <path>] [--json]',
+    },
+    reportExample: {
+      stepId: '<current stepId from next>',
+      summary: 'What changed',
+      changedPaths: ['src/example.mjs'],
+      verifications: [{ obligationId: '<from next>', commandRef: '<allowed command ref>', acceptanceCoverage: ['AC-1'] }],
+    },
+    notes: [
+      'First invocation: next --contract-json <file>. Continue a bound Run with next.',
+      'Common binding flags: --project-root <path>, --runtime-home <path>, --session-id <id>, --provider <name>.',
+      'next/report default to a compact model view. --verbose returns full diagnostic snapshots.',
+      'Help exits before runtime binding, lease acquisition, report submission, or verification.',
+    ],
+  };
+  if (json) console.log(JSON.stringify(help));
+  else if (command !== 'help' && help.commands[command]) console.log(`Usage: ${help.commands[command].replace(/^kernel\s+/, '')}`);
+  else console.log([help.usage, '', 'Commands:', ...Object.entries(help.commands).map(([name, usage]) => `  ${name.padEnd(10)} ${usage.replace(/^kernel\s+[^\s]+\s*/, '')}`), '', ...help.notes, `Report JSON example: ${JSON.stringify(help.reportExample)}`].join('\n'));
   process.exit(0);
 }
 
@@ -242,10 +251,14 @@ const openControlPlane = async () => {
   });
 };
 
-const output = (value) =>
+const output = (rawValue) => {
+  const value = ['next', 'report'].includes(command)
+    ? projectKernelModelView(rawValue, { verbose: args.includes('--verbose') })
+    : rawValue;
   console.log(
     json ? JSON.stringify(value) : typeof value === 'object' ? Object.entries(value).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join('\n') : String(value)
   );
+};
 
 try {
   if (runtimeBindingDiscoveryError) throw runtimeBindingDiscoveryError;

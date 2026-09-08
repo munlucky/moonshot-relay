@@ -10,17 +10,30 @@ import { executeKernelGitCloseout } from '../scripts/kernel/git/closeout.mjs';
 import { runGit } from '../scripts/lib/git-safe.mjs';
 
 test('executeKernelGitCloseout retry skips creating duplicate commit when existingCommitSha is provided', async () => {
-  const receipt = await executeKernelGitCloseout({
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'kernel-git-retry-isolated-'));
+  try {
+    runGit(repoRoot, ['init', '-b', 'main']);
+    runGit(repoRoot, ['config', 'user.name', 'Kernel Test']);
+    runGit(repoRoot, ['config', 'user.email', 'kernel-test@example.invalid']);
+    await writeFile(path.join(repoRoot, 'fixture.txt'), 'retry fixture\n');
+    runGit(repoRoot, ['add', 'fixture.txt']);
+    assert.equal(runGit(repoRoot, ['commit', '-m', 'fixture']).status, 0);
+    const existingCommitSha = runGit(repoRoot, ['rev-parse', 'HEAD']).stdout.trim();
+    const receipt = await executeKernelGitCloseout({
     runId: 'retry-run-1',
     projectId: 'p-retry',
-    repoRoot: process.cwd(),
-    gitCloseoutRequest: { requested: true, mode: 'soft', approvalReceipt: 'approval://user/1', existingCommitSha: 'sha-existing-123' },
+    repoRoot,
+    gitCloseoutRequest: { requested: true, mode: 'soft', approvalReceipt: 'approval://user/1', existingCommitSha },
     knowledgeCommitReceipt: { digest: 'k-digest-1' },
     changedFiles: [],
   });
 
-  assert.equal(receipt.commitSha, 'sha-existing-123');
+  assert.equal(receipt.commitSha, existingCommitSha);
   assert.equal(receipt.status, 'completed');
+  assert.equal(runGit(repoRoot, ['rev-parse', 'HEAD']).stdout.trim(), existingCommitSha);
+  } finally {
+    await rm(repoRoot, { recursive: true, force: true });
+  }
 });
 
 test('public Git retry blocks external mutation after push_failed and records stale receipt', async () => {
