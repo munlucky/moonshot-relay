@@ -94,6 +94,7 @@ export const resolveBoundInvocation = ({
   taskContract = null,
   invocationIntent = null,
   intent = null,
+  observedWorkspaceIdentity = null,
 } = {}) => {
   if (!stateStore || !projectId || (!worktreeId && !workspaceId)) {
     throw codedError('host_binding_missing', 'reopen-from-correct-worktree');
@@ -311,6 +312,18 @@ export const resolveBoundInvocation = ({
         reason: 'completed-run-finalization-incomplete',
         taskContract: contract,
         changeClass: contract ? classifyContractChange({ previous: cursorRun.taskContract, next: contract }) : null,
+      };
+    }
+    // Explicit recovery starts a fresh proof baseline; never rewrite the
+    // completed Run or claim continuity across an externally changed checkout.
+    if (isNewTask && !requestedRunId && contract
+      && observedWorkspaceIdentity
+      && taskContract?.workspaceRecovery?.acknowledgedIdentity === observedWorkspaceIdentity
+      && cursorRun.currentWorkspaceIdentity !== observedWorkspaceIdentity) {
+      return {
+        mode: 'create', runId: createOpaqueRunId(), predecessorRunId: null,
+        binding: null, reason: 'user-acknowledged-new-workspace-baseline',
+        taskContract: contract, changeClass: null,
       };
     }
     if (!isNewTask && (!contract || cursorRun.taskContract?.digest === contract.digest)) {

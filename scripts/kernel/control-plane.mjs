@@ -1188,6 +1188,7 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
         projectId: currentProject.projectId,
         provider: hostProvider,
         sessionId: sessionId || hostSessionId,
+        observedWorkspaceIdentity: observeWorkspaceIdentity({ projectRoot }).identity,
         workspaceId: effectiveWorkspaceId,
         worktreeId: effectiveWorktreeId,
         explicitRunId,
