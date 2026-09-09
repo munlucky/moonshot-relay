@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
-export const KERNEL_PROFILE_RUNTIMES = ['claude', 'codex', 'qwen', 'antigravity'];
+export const KERNEL_PROFILE_RUNTIMES = ['claude', 'codex', 'qwen', 'ade', 'antigravity'];
 export const buildKernelProfile=async({sourceRoot=process.cwd(),runtime,targetRoot})=>{
   if(!KERNEL_PROFILE_RUNTIMES.includes(runtime)) throw new Error(`Unsupported Kernel profile runtime: ${runtime}`);
   const source=path.join(sourceRoot,'package','kernel','profiles',runtime);

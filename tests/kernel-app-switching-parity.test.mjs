@@ -37,8 +37,11 @@ test('Antigravity launch uses the native Gemini HOME and user data dir', () => {
   assert.equal(spec.env.MOON_RELAY_KERNEL_HOME, canonicalPath(roots.runtimeHome));
 });
 test('provider parity matrix keeps all native surfaces disjoint from Kernel state', () => {
-  const result = providerParityMatrix({ kernelHome: path.join(os.tmpdir(), 'kernel') });
-  assert.equal(result.status, 'passed'); assert.equal(result.rows.length, 6); assert.ok(result.rows.every((row) => row.sensitiveContentRead === false));
+  const result = providerParityMatrix({
+    kernelHome: path.join(os.tmpdir(), 'kernel'),
+    baseEnv: { ...process.env, ADE_HOME: path.join(os.tmpdir(), 'ade-provider-home') },
+  });
+  assert.equal(result.status, 'passed'); assert.equal(result.rows.length, 7); assert.ok(result.rows.every((row) => row.sensitiveContentRead === false));
 });
 test('Codex Desktop uses the native macOS Application Support root', () => {
   const kernelHome = path.join(os.tmpdir(), 'kernel-macos');

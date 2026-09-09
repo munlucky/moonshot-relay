@@ -146,6 +146,7 @@ const profileRuntimeForSurface = (surface) => {
   if (surface === 'claude_cli' || surface === 'claude_desktop') return 'claude';
   if (surface === 'codex_desktop' || surface === 'codex_cli') return 'codex';
   if (surface === 'qwen_cli') return 'qwen';
+  if (surface === 'ade_cli') return 'ade';
   if (surface === 'antigravity_desktop') return 'antigravity';
   return null;
 };
@@ -169,8 +170,7 @@ async function launchKernelSurface({
 } = {}) {
   validateSurface(surface);
   const targetProjectRoot = projectRoot || workspaceRoot || sourceRoot;
-  const defaultRoots = resolveSurfaceRoots({ surface, sourceRoot, platform });
-  const roots = explicitRoots || launchSpec?.roots || defaultRoots;
+  const roots = explicitRoots || launchSpec?.roots || resolveSurfaceRoots({ surface, sourceRoot, platform });
   await safeRoots(roots);
 
   const state = await readState();

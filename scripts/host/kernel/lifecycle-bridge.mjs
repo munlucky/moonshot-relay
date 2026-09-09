@@ -7,6 +7,7 @@
 
 import { createClaudeAdapter } from './adapters/claude.mjs';
 import { createCodexAdapter } from './adapters/codex.mjs';
+import { createAdeAdapter } from './adapters/ade.mjs';
 import { createModelRegistry } from './model-registry.mjs';
 import { dispatchKernelTurn } from './turn-dispatcher.mjs';
 import { assessReviewReadiness } from './review-readiness.mjs';
@@ -96,7 +97,9 @@ export const createKernelHostReviewBridge = ({
     ? createCodexAdapter({ nativeAgentHost, runtimeHome, env, parentSessionObserver })
     : effectiveSurface === 'claude'
       ? createClaudeAdapter({})
-      : null);
+      : ['ade', 'ade_cli'].includes(effectiveSurface)
+        ? createAdeAdapter({ nativeAgentHost })
+        : null);
   const effectiveRegistry = registry || createModelRegistry({
     surface: effectiveSurface,
     runtimeHome,

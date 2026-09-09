@@ -71,6 +71,7 @@ accountRootInstall:
     claude: "${CLAUDE_HOME:-~/.claude}"
     codex: "${CODEX_HOME:-~/.codex}"
     qwen: "${QWEN_HOME:-~/.qwen}"
+    ade: "${ADE_HOME}"
     antigravity: "${ANTIGRAVITY_HOME:-~/.gemini/antigravity}"
     antigravitySkills: "${ANTIGRAVITY_SKILLS_HOME:-~/.gemini/config}"
   commonPayloadEntries:
@@ -179,6 +180,10 @@ accountRootInstall:
     - "${QWEN_HOME:-~/.qwen}/.env"
     - "${QWEN_HOME:-~/.qwen}/tmp/**"
     - "${QWEN_HOME:-~/.qwen}/logs/**"
+    - "${ADE_HOME}/settings.json"
+    - "${ADE_HOME}/.env"
+    - "${ADE_HOME}/tmp/**"
+    - "${ADE_HOME}/logs/**"
 
 kernelCodexAccountRoot:
   installer: "bin/moon-relay-kernel.mjs profile-install --runtime codex --account-root"

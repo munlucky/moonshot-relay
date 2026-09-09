@@ -36,6 +36,7 @@ const runtimeEnvKeys = Object.freeze([
   'MOON_RELAY_KERNEL_SESSION_ID',
   'MOON_RELAY_KERNEL_LEGACY_SESSION_ID',
   'MOON_RELAY_KERNEL_PROVIDER',
+  'MOON_RELAY_KERNEL_SURFACE',
   'MOON_RELAY_KERNEL_WORKSPACE_ID',
   'MOON_RELAY_WORKSPACE_ROOT',
 ]);
@@ -77,6 +78,7 @@ const defaultCommand = (surface, platform = process.platform) => {
   if (surface === 'claude_desktop') return platform === 'darwin' ? 'Claude' : 'Claude.exe';
   if (surface === 'claude_cli') return 'claude';
   if (surface === 'qwen_cli') return 'qwen';
+  if (surface === 'ade_cli') return 'ade';
   if (surface === 'codex_cli') return 'codex';
   return surface;
 };

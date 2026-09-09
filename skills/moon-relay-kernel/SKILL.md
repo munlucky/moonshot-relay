@@ -1,6 +1,6 @@
 ---
 name: moon-relay-kernel
-description: Default Codex command-skill entrypoint for Moon Relay Kernel task routing and adaptive workflow execution. Selecting this skill activates Kernel workflow for that task; it does not force unselected ordinary Codex tasks into Kernel.
+description: Default provider-neutral command-skill entrypoint for Moon Relay Kernel task routing and adaptive workflow execution. Selecting this skill activates Kernel workflow for that task; it does not force unselected ordinary tasks into Kernel.
 ---
 
 # Moon Relay Kernel
@@ -16,9 +16,9 @@ The account command skillset defaults to Kernel. Bind the current project/worktr
 - **Task Contract**: Captured as compact JSON (objective, acceptance, constraints, non-goals) passed via `kernel next --contract-json <file>` on the first call to atomically create/bind the Run; do not bootstrap a fresh session with bare `kernel next` (use bare `kernel next` only after a Host binding exists).
 
 ## Autonomy & Priorities
-- **Implementation Autonomy**: Perform code edits, testing, and commands directly in the native owner session and stay inside its allowed paths returned by `next`.
+- **Host Execution Policy**: Execute each model-owned work unit according to the active provider Host policy. A Host may use owner-direct execution or require an isolated child; the public Kernel skill does not override that provider boundary.
 - **Mutation Boundary**: Never mutate files outside `allowedPaths`. Mutations outside the allowed unit are rejected before verification runs.
-- **Delegation**: Subagents are optional for genuinely partitioned tasks; they are never a prerequisite for ordinary implementation.
+- **Delegation**: Delegation mode, freshness, nesting, and concurrency are Host-owned. Follow the active provider profile rather than inventing a second workflow.
 - **Fast Blockers**: When blocked, immediately report the blocker reason (`question`, `permission`, `unsupported-verification`, etc.) rather than looping or improvising.
 
 

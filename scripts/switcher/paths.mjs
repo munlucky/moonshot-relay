@@ -26,6 +26,7 @@ const providerEnvNames = Object.freeze({
   codex_cli: 'CODEX_HOME',
   codex_desktop: 'CODEX_HOME',
   qwen_cli: 'QWEN_HOME',
+  ade_cli: 'ADE_HOME',
   antigravity_desktop: 'ANTIGRAVITY_HOME',
 });
 
@@ -38,11 +39,17 @@ export function resolveSurfaceRoots({ surface, sourceRoot = process.cwd(), kerne
     claude_cli: path.join(userHome, '.claude'),
     codex_cli: path.join(userHome, '.codex'),
     qwen_cli: path.join(userHome, '.qwen'),
+    ade_cli: null,
     codex_desktop: path.join(userHome, '.codex'),
     antigravity_desktop: path.join(userHome, '.gemini', 'antigravity'),
   };
   const configuredProvider = providerEnvNames[surface] ? baseEnv[providerEnvNames[surface]] : null;
-  const providerHome = canonicalPath(configuredProvider || defaultProvider[surface]);
+  const providerRoot = configuredProvider || defaultProvider[surface];
+  if (!providerRoot) {
+    const envName = providerEnvNames[surface] || 'provider home';
+    throw Object.assign(new Error(`wrong_harness: ${envName} is required for ${surface}`), { code: 'wrong_harness' });
+  }
+  const providerHome = canonicalPath(providerRoot);
   if (pathsOverlap(runtimeHome, providerHome)) throw Object.assign(new Error(`unsafe_target: ${surface} native provider home overlaps Kernel runtime`), { code: 'unsafe_target' });
   const roots = { runtimeHome, providerHome };
   if (surface === 'codex_desktop') {

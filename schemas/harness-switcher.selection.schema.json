@@ -6,7 +6,7 @@
   "required": ["schemaVersion", "surface", "requestedRuntime", "resolvedRoots", "persistence"],
   "properties": {
     "schemaVersion": { "const": 1 },
-    "surface": { "enum": ["claude_cli", "codex_cli", "codex_desktop", "qwen_cli", "antigravity_desktop"] },
+    "surface": { "enum": ["claude_cli", "codex_cli", "codex_desktop", "qwen_cli", "ade_cli", "antigravity_desktop"] },
     "requestedRuntime": { "const": "moon-relay-kernel" },
     "effectiveRuntime": { "enum": ["moon-relay-kernel", "unknown"] },
     "resolvedRoots": { "type": "object", "additionalProperties": { "type": "string" } },

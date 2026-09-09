@@ -746,6 +746,16 @@ const dispatchKernelTurnAttempt = async ({
 } = {}) => {
   if (!adapter) throw new Error('dispatchKernelTurn requires a Host adapter');
   const hostCapabilities = adapter.capabilities || {};
+  const adeOrchestratorOnly = ['ade', 'ade_cli'].includes(String(hostCapabilities.surface || '').toLowerCase());
+  if (adeOrchestratorOnly) {
+    actionContext = {
+      ...actionContext,
+      executionMode: 'native-subagent',
+      delegationRequested: true,
+      skipParallel: true,
+    };
+    suppressParallel = true;
+  }
   const hasSubagentCapability = adapter.nativeDelegationAvailable === true
     || hostCapabilities.nativeSubagent === true
     || hostCapabilities.supportsSubagentModel === true;
@@ -1062,7 +1072,7 @@ const dispatchKernelTurnAttempt = async ({
         canDelegate: false,
         canCommit: false,
         maxNestedAgents: 0,
-        freshSessionRequired: decision.workProfile?.independentContextRequired === true || decision.independentContextRequired === true || decision.role === 'reviewer',
+        freshSessionRequired: adeOrchestratorOnly || decision.workProfile?.independentContextRequired === true || decision.independentContextRequired === true || decision.role === 'reviewer',
       },
     }) || {};
   } catch (error) {

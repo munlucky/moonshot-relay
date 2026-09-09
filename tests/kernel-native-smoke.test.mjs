@@ -12,7 +12,7 @@ const emitReceipt = (t, receipt) => {
   t.diagnostic(JSON.stringify(receipt));
 };
 
-test('Native Smoke: All 6 surfaces resolve into typed native receipts', async (t) => {
+test('Native Smoke: All 7 surfaces resolve into typed native receipts', async (t) => {
   const probes = [];
 
   for (const surface of SURFACES) {
@@ -65,6 +65,7 @@ test('Native Smoke: Native CLI binaries report version; missing is SKIP and inst
     { name: process.platform === 'win32' ? 'claude.cmd' : 'claude', surface: 'claude_cli' },
     { name: process.platform === 'win32' ? 'codex.cmd' : 'codex', surface: 'codex_cli' },
     { name: process.platform === 'win32' ? 'qwen.cmd' : 'qwen', surface: 'qwen_cli' },
+    { name: process.platform === 'win32' ? 'ade.cmd' : 'ade', surface: 'ade_cli' },
   ];
 
   for (const { name, surface } of cliCommands) {

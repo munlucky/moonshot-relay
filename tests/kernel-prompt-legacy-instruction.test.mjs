@@ -43,7 +43,7 @@ test('no Kernel prompt surface carries a legacy instruction', async () => {
 
 test('Kernel authority rules survive the cleanup', async () => {
   const skill = await readFile('skills/moon-relay-kernel/SKILL.md', 'utf8');
-  assert.match(skill, /stay inside its allowed paths/i);
+  assert.match(skill, /Never mutate files outside `allowedPaths`/i);
   assert.match(skill, /Kernel runtime executes them/i);
   assert.match(skill, /independent reviewer session/i);
   assert.match(skill, /only completion authority/i);

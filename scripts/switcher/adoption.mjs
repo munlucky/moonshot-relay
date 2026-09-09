@@ -16,6 +16,7 @@ const profileRuntimeForSurface = (surface) => {
   if (surface === 'claude_cli' || surface === 'claude_desktop') return 'claude';
   if (surface === 'codex_cli' || surface === 'codex_desktop') return 'codex';
   if (surface === 'qwen_cli') return 'qwen';
+  if (surface === 'ade_cli') return 'ade';
   if (surface === 'antigravity_desktop') return 'antigravity';
   return null;
 };
@@ -28,6 +29,7 @@ export async function buildLivePreflight({ sourceRoot = process.cwd(), kernelHom
   const targets = [{ surface: null, kind: 'runtimeHome', target: kernelHome, identity: kernelHomeIdentity }];
   const seen = new Set([kernelHome]);
   for (const surface of SURFACES) {
+    if (surface === 'ade_cli' && !process.env.ADE_HOME) continue;
     const roots = resolveSurfaceRoots({ surface, sourceRoot, kernelHome });
     for (const [kind, target] of Object.entries(roots)) {
       if (!['providerHome', 'appDataRoot'].includes(kind) || !target || seen.has(target)) continue;
@@ -76,6 +78,7 @@ export async function adoptLive({ sourceRoot = process.cwd(), kernelHome: reques
   const installed = [];
   const installedProfiles = new Set();
   for (const surface of SURFACES) {
+    if (surface === 'ade_cli' && !process.env.ADE_HOME) continue;
     const runtime = profileRuntimeForSurface(surface);
     if (!runtime || installedProfiles.has(runtime)) continue;
     const roots = resolveSurfaceRoots({ surface, sourceRoot, kernelHome: preflight.kernelHome });

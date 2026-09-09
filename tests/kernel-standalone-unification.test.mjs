@@ -163,15 +163,17 @@ test('kernel commit admission rejects unknown, foreign, and drifted provenance',
   }
 });
 
-test('matchesCurrentMutationCandidate and resolveKernelCloseoutRun canonicalize paths across Windows case and separators', () => {
+test('matchesCurrentMutationCandidate and resolveKernelCloseoutRun canonicalize separators and Windows path case', () => {
   const run = { runId: 'run-case', currentWorkspaceIdentity: 'id-1' };
-  const provenance = { workspaceIdentity: 'id-1', changedPaths: ['Src/App.mjs'] };
+  const provenancePath = process.platform === 'win32' ? 'Src\\App.mjs' : 'src\\app.mjs';
+  const selectedPath = process.platform === 'win32' ? 'SRC/App.mjs' : 'src/app.mjs';
+  const provenance = { workspaceIdentity: 'id-1', changedPaths: [provenancePath] };
   assert.equal(matchesCurrentMutationCandidate({
     run,
     provenance,
     currentWorkspaceIdentity: 'id-1',
     currentPaths: ['src/app.mjs'],
-    selectedPaths: ['SRC/App.mjs'],
+    selectedPaths: [selectedPath],
   }), true);
 
   const project = { projectId: 'fixture-project' };
@@ -198,7 +200,7 @@ test('matchesCurrentMutationCandidate and resolveKernelCloseoutRun canonicalize 
       sourceIdentity: 'src-id',
       mutationRevision: 1,
       workspaceIdentity: 'id-1',
-      changedPaths: ['Src/App.mjs'],
+      changedPaths: [provenancePath],
     }),
   };
   const resolved = resolveKernelCloseoutRun({
@@ -207,7 +209,7 @@ test('matchesCurrentMutationCandidate and resolveKernelCloseoutRun canonicalize 
     workspaceId,
     currentWorkspaceIdentity: 'id-1',
     currentPaths: ['src/app.mjs'],
-    selectedPaths: ['SRC/App.mjs'],
+    selectedPaths: [selectedPath],
   });
   assert.equal(resolved.run.runId, 'run-case');
 

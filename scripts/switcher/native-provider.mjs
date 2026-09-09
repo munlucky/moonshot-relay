@@ -21,6 +21,7 @@ const PROVIDERS = Object.freeze({
   codex_cli: { command: 'codex', envKey: 'CODEX_EXECUTABLE' },
   codex_desktop: { command: 'ChatGPT.exe', envKey: 'CODEX_DESKTOP_EXECUTABLE' },
   qwen_cli: { command: 'qwen', envKey: 'QWEN_EXECUTABLE' },
+  ade_cli: { command: 'ade', envKey: 'ADE_EXECUTABLE' },
   antigravity_desktop: { command: 'Antigravity.exe', envKey: 'ANTIGRAVITY_EXECUTABLE' },
 });
 

@@ -13,11 +13,11 @@ const repoRoot = path.dirname(path.dirname(binPath));
 const kernelInstaller = path.join(repoRoot, 'bin', 'moon-relay-kernel.mjs');
 const deliverySubmit = path.join(repoRoot, 'scripts', 'delivery-submit.mjs');
 const retroCli = path.join(repoRoot, 'tools', 'retro', 'retro-cli.mjs');
-const PROFILE_RUNTIMES = Object.freeze(['claude', 'codex', 'qwen', 'antigravity']);
+const PROFILE_RUNTIMES = Object.freeze(['claude', 'codex', 'qwen', 'ade', 'antigravity']);
 
 const usage = `Usage:
   moonshot-relay [install] [--dry-run] [--json] [--sync]
-  moonshot-relay install [--runtime all|claude,codex,qwen,antigravity] [--claude-home <dir>] [--codex-home <dir>] [--qwen-home <dir>] [--antigravity-home <dir>] [--antigravity-skills-home <dir>]
+  moonshot-relay install [--runtime all|claude,codex,qwen,ade,antigravity] [--claude-home <dir>] [--codex-home <dir>] [--qwen-home <dir>] [--ade-home <dir>] [--antigravity-home <dir>] [--antigravity-skills-home <dir>]
   moonshot-relay kernel [--json]
   moonshot-relay delivery submit --score <json-file> --verification <json-file> --current-sha <sha> [--mode local|pr|release] [--out <submission.json>] [--json]
   moonshot-relay retro collect|import|daily|propose|issue-draft [options]
@@ -121,6 +121,7 @@ const providerHomes = {
   claude: canonicalPath(optionValue('--claude-home') || process.env.CLAUDE_CONFIG_DIR || process.env.CLAUDE_HOME || path.join(userHome, '.claude')),
   codex: canonicalPath(optionValue('--codex-home') || process.env.CODEX_HOME || path.join(userHome, '.codex')),
   qwen: canonicalPath(optionValue('--qwen-home') || process.env.QWEN_HOME || path.join(userHome, '.qwen')),
+  ade: (optionValue('--ade-home') || process.env.ADE_HOME) ? canonicalPath(optionValue('--ade-home') || process.env.ADE_HOME) : null,
   antigravity: canonicalPath(optionValue('--antigravity-home') || process.env.ANTIGRAVITY_HOME || path.join(userHome, '.gemini', 'antigravity')),
 };
 const antigravitySkillsHome = optionValue('--antigravity-skills-home')
@@ -129,7 +130,7 @@ const antigravitySkillsHome = optionValue('--antigravity-skills-home')
 
 const requestedKernelHome = process.env.MOON_RELAY_KERNEL_HOME || path.join(userHome, '.moon-relay-kernel');
 const kernelHomeIdentity = await physicalTargetIdentity(requestedKernelHome, {
-  protectedRoots: [...Object.values(providerHomes), antigravitySkillsHome],
+  protectedRoots: [...Object.values(providerHomes).filter(Boolean), antigravitySkillsHome],
 });
 if (!kernelHomeIdentity.safe) {
   console.error(`Setup refused: unsafe Kernel home ${requestedKernelHome}`);
@@ -146,12 +147,19 @@ delete kernelEnvironment[legacyRuntimeEnvKey];
 
 const requestedRuntimes = () => {
   const raw = optionValue('--runtime') || 'all';
-  const names = raw === 'all' ? [...PROFILE_RUNTIMES] : raw.split(',').map((runtime) => runtime.trim()).filter(Boolean);
+  const names = raw === 'all'
+    ? PROFILE_RUNTIMES.filter((runtime) => runtime !== 'ade' || providerHomes.ade)
+    : raw.split(',').map((runtime) => runtime.trim()).filter(Boolean);
   if (!names.length || names.some((runtime) => !PROFILE_RUNTIMES.includes(runtime))) {
     console.error(`Unsupported runtime: ${raw}\n${usage}`);
     process.exit(1);
   }
-  return [...new Set(names)];
+  const unique = [...new Set(names)];
+  if (unique.includes('ade') && !providerHomes.ade) {
+    console.error(`ADE runtime requires --ade-home <dir> or ADE_HOME.\n${usage}`);
+    process.exit(1);
+  }
+  return unique;
 };
 
 const runKernelCommand = (kernelArgs, label) => {

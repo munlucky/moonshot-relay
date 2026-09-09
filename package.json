@@ -42,6 +42,7 @@
     "k:codex:cli": "node bin/moon-harness-switcher.mjs launch --surface codex_cli --track kernel --execute",
     "k:claude": "node bin/moon-harness-switcher.mjs launch --surface claude --track kernel --execute",
     "k:qwen": "node bin/moon-harness-switcher.mjs launch --surface qwen --track kernel --execute",
+    "k:ade": "node bin/moon-harness-switcher.mjs launch --surface ade --track kernel --execute",
     "k:agy": "node bin/moon-harness-switcher.mjs launch --surface antigravity --track kernel --execute",
     "r": "node bin/moon-harness-switcher.mjs launch --surface all --track relay --execute",
     "r:all": "node bin/moon-harness-switcher.mjs launch --surface all --track relay --execute",

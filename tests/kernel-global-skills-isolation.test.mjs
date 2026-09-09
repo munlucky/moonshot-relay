@@ -39,7 +39,7 @@ const readyKernelRoots = async (home) => {
 test('installing a Kernel profile serves the canonical entrypoint skill from the provider home', async () => {
   const target = path.join(os.tmpdir(), `kernel-profile-skill-${Date.now()}`);
   try {
-    for (const runtime of ['claude', 'codex', 'qwen', 'antigravity']) {
+    for (const runtime of ['claude', 'codex', 'qwen', 'ade', 'antigravity']) {
       const root = path.join(target, runtime);
       const result = await installKernelProfile({ sourceRoot: process.cwd(), runtime, targetRoot: root });
       const installed = path.join(root, KERNEL_SKILL_INSTALL_REL, 'SKILL.md');

@@ -92,6 +92,7 @@ export function providerForSurface(surface) {
   if (normalized === 'claude_desktop' || normalized === 'claude') return 'claude';
   if (normalized === 'claude_cli' || normalized === 'claude_code') return 'claude-code';
   if (normalized === 'qwen_cli' || normalized === 'qwen') return 'qwen';
+  if (normalized === 'ade_cli' || normalized === 'ade') return 'ade';
   if (normalized === 'antigravity_desktop' || normalized === 'antigravity') return 'antigravity';
   return 'unknown-host';
 }

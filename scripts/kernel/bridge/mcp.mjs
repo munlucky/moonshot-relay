@@ -214,9 +214,11 @@ export const handleMcpToolCall = async ({
     },
     requireHostBinding: false,
   });
+  const requestedSurface = String(parameters.surface || env.MOON_RELAY_KERNEL_SURFACE || '').trim().toLowerCase();
+  const lifecycleSurface = ['ade', 'ade_cli', 'ade-code'].includes(requestedSurface) ? 'ade' : 'codex';
   const configuredHostBridge = resolveConfiguredHostBridge(hostBridge, parameters)
     || createKernelHostReviewBridge({
-      surface: 'codex',
+      surface: lifecycleSurface,
       nativeAgentHost: nativeHost,
       runtimeHome: runtimeHome || resolveKernelRuntimeHome({ env }),
       env,

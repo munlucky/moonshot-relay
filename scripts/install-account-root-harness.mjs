@@ -252,9 +252,17 @@ const runtimeSpecs = {
   },
 };
 
-const profileRuntimeNames = Object.freeze(['claude', 'codex', 'qwen', 'antigravity']);
+// ADE embeds the Qwen-Code-compatible profile format but owns a distinct
+// runtime home and Host identity. Reuse only the materialized profile payload.
+runtimeSpecs.ade = {
+  ...runtimeSpecs.qwen,
+  defaultHome: () => null,
+  envName: 'ADE_HOME',
+};
 
-const usage = () => `Usage: node scripts/install-account-root-harness.mjs [--runtime all|claude,codex,qwen,antigravity] [--source-root <repo>] [--payload-root <materialized-payload>] [--moonshot-home <dir>] [--codex-home <dir>] [--claude-home <dir>] [--qwen-home <dir>] [--antigravity-home <dir>] [--antigravity-skills-home <dir>] [--skip-common] [--dry-run] [--json] [--no-backup] [--remove-legacy-harness-core]`;
+const profileRuntimeNames = Object.freeze(['claude', 'codex', 'qwen', 'ade', 'antigravity']);
+
+const usage = () => `Usage: node scripts/install-account-root-harness.mjs [--runtime all|claude,codex,qwen,ade,antigravity] [--source-root <repo>] [--payload-root <materialized-payload>] [--moonshot-home <dir>] [--codex-home <dir>] [--claude-home <dir>] [--qwen-home <dir>] [--ade-home <dir>] [--antigravity-home <dir>] [--antigravity-skills-home <dir>] [--skip-common] [--dry-run] [--json] [--no-backup] [--remove-legacy-harness-core]`;
 
 const parseArgs = (argv) => {
   const options = {
@@ -285,6 +293,8 @@ const parseArgs = (argv) => {
       options.homes.claude = path.resolve(argv[++index]);
     } else if (arg === '--qwen-home') {
       options.homes.qwen = path.resolve(argv[++index]);
+    } else if (arg === '--ade-home') {
+      options.homes.ade = path.resolve(argv[++index]);
     } else if (arg === '--antigravity-home') {
       options.homes.antigravity = path.resolve(argv[++index]);
     } else if (arg === '--antigravity-skills-home') {
@@ -308,12 +318,15 @@ const parseArgs = (argv) => {
   }
 
   const requestedRuntimes = options.runtime === 'all'
-    ? [...profileRuntimeNames]
+    ? profileRuntimeNames.filter((runtime) => runtime !== 'ade' || options.homes.ade || process.env.ADE_HOME)
     : options.runtime.split(',').map((runtime) => runtime.trim()).filter(Boolean);
   if (requestedRuntimes.length === 0 || requestedRuntimes.some((runtime) => !profileRuntimeNames.includes(runtime))) {
     throw new Error(`Unsupported runtime: ${options.runtime}\n${usage()}`);
   }
   options.runtimeNames = [...new Set(requestedRuntimes)];
+  if (options.runtimeNames.includes('ade') && !options.homes.ade && !process.env.ADE_HOME) {
+    throw new Error(`ADE runtime requires --ade-home <dir> or ADE_HOME.\n${usage()}`);
+  }
 
   return options;
 };
@@ -372,6 +385,7 @@ const getAllowedRoots = () => {
   if (process.env.CLAUDE_HOME) roots.push(process.env.CLAUDE_HOME);
   if (process.env.CODEX_HOME) roots.push(process.env.CODEX_HOME);
   if (process.env.QWEN_HOME) roots.push(process.env.QWEN_HOME);
+  if (process.env.ADE_HOME) roots.push(process.env.ADE_HOME);
   if (process.env.ANTIGRAVITY_HOME) roots.push(process.env.ANTIGRAVITY_HOME);
   if (process.env.ANTIGRAVITY_SKILLS_HOME) roots.push(process.env.ANTIGRAVITY_SKILLS_HOME);
 
@@ -384,7 +398,7 @@ const getAllowedRoots = () => {
 
   const argv = process.argv;
   for (let i = 0; i < argv.length; i++) {
-    if (['--moonshot-home', '--claude-home', '--codex-home', '--qwen-home', '--antigravity-home', '--antigravity-skills-home'].includes(argv[i])) {
+    if (['--moonshot-home', '--claude-home', '--codex-home', '--qwen-home', '--ade-home', '--antigravity-home', '--antigravity-skills-home'].includes(argv[i])) {
       if (argv[i + 1]) {
         roots.push(argv[i + 1]);
       }
@@ -450,11 +464,11 @@ const assertSafeTargetPath = async (root, candidate) => {
   }
 };
 
-const resolveSpecHome = ({ spec, runtime, options }) => path.resolve(
-  options.homes[runtime]
-    || process.env[spec.envName]
-    || spec.defaultHome(),
-);
+const resolveSpecHome = ({ spec, runtime, options }) => {
+  const configured = options.homes[runtime] || process.env[spec.envName] || spec.defaultHome();
+  if (!configured) throw new Error(`${runtime} home is required; configure ${spec.envName} or the matching --${runtime}-home option.`);
+  return path.resolve(configured);
+};
 
 const resolveSkillHome = ({ spec, runtime, options, targetRoot }) => {
   if (!spec.skillHome) {
@@ -496,7 +510,7 @@ const materializePayloads = async (sourceRoot, options) => {
   const tmpRoot = await mkdtemp(path.join(os.tmpdir(), 'moonshot-relay-account-root-'));
   const buildRuntimes = options.runtime === 'all'
     ? ['all']
-    : ['moonshot-relay', ...options.runtimeNames];
+    : ['moonshot-relay', ...new Set(options.runtimeNames.map((runtime) => runtime === 'ade' ? 'qwen' : runtime))];
 
   try {
     for (const runtime of buildRuntimes) {
@@ -1275,7 +1289,7 @@ const listDirectoryNames = async (root) => {
 };
 
 const computeProfileSurfaceParity = async ({ manifest, sourceRepo, publicRuntimeSkills }) => {
-  if (!['claude', 'codex', 'qwen', 'antigravity'].includes(manifest.runtime)) {
+  if (!['claude', 'codex', 'qwen', 'ade', 'antigravity'].includes(manifest.runtime)) {
     return null;
   }
 

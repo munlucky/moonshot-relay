@@ -212,14 +212,15 @@ const writeBundleGuide = async (stageRoot, manifest) => {
     + `기본 설치 위치:\n\n`
     + `- \`%USERPROFILE%\\.moon-relay-kernel\` (Kernel 엔진 및 필수 페이로드 249개)\n`
     + `- \`%USERPROFILE%\\.qwen\` (Qwen 필수 프로필 94개)\n`
-    + `- \`C:\\ProgramData\\PatchRelay\\agent-homes\\ade\\.qwen\` (Patch Relay ADE 환경 감지 시 또는 \`--ade-qwen-home\` 지정 시 자동 설치)\n`
     + `- \`%USERPROFILE%\\.claude\`, \`%USERPROFILE%\\.codex\`\n\n`
-    + `Qwen 전용으로만 설치하려면:\n\n`
-    + `\`Install-Offline.cmd --runtime qwen\`\n\n`
+    + `ADE를 사용하는 폐쇄망 PC에서는 실제 ADE 홈을 명시합니다:\n\n`
+    + `\`Install-Offline.cmd --runtime ade --ade-home D:\\ADE\\home\`\n\n`
+    + `실행 파일은 ADE_EXECUTABLE 환경변수로 지정하며, 미지정 시 \`ade\` 명령을 사용합니다.\n\n`
+    + `Qwen CLI를 직접 사용하는 환경은 별도로 \`Install-Offline.cmd --runtime qwen\`을 사용합니다.\n\n`
     + `모노레포 전체 공통 하네스 995개 파일을 모두 포함하여 설치하려면:\n\n`
     + `\`Install-Offline.cmd --with-common\`\n\n`
     + `경로를 바꾸려면 예를 들어 다음처럼 실행합니다:\n\n`
-    + `\`Install-Offline.cmd --claude-home D:\\Moonshot\\.claude --codex-home D:\\Moonshot\\.codex --qwen-home D:\\Moonshot\\.qwen --kernel-home D:\\Moonshot\\.moon-relay-kernel --ade-qwen-home D:\\PatchRelay\\agent-homes\\ade\\.qwen\`\n\n`
+    + `\`Install-Offline.cmd --claude-home D:\\Moonshot\\.claude --codex-home D:\\Moonshot\\.codex --qwen-home D:\\Moonshot\\.qwen --ade-home D:\\ADE\\home --kernel-home D:\\Moonshot\\.moon-relay-kernel\`\n\n`
     + `## 사전 점검 및 디버깅 (Dry-Run)\n\n`
     + `실제 파일 쓰기 작업 없이 무엇이 어디에 설치될지 디버깅 및 시뮬레이션만 수행하려면 \`--dry-run\` 또는 \`--debug\` 옵션을 사용합니다:\n\n`
     + `\`Install-Offline.cmd --dry-run\`\n\n`

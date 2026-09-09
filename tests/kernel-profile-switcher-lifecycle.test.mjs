@@ -6,9 +6,9 @@ import { mkdir, writeFile, readFile, stat } from 'node:fs/promises';
 import { installKernelProfile, inspectProfile, uninstallKernelProfile } from '../scripts/kernel/profile-install.mjs';
 import { doctorKernelProfile } from '../scripts/kernel/profile-doctor.mjs';
 
-test('phase 02 installs all four Kernel profiles and preserves external files', async () => {
+test('phase 02 installs all five Kernel profiles and preserves external files', async () => {
   const root = await mkdir(path.join(os.tmpdir(), `kernel-profiles-${Date.now()}`), { recursive: true });
-  for (const runtime of ['claude', 'codex', 'qwen', 'antigravity']) {
+  for (const runtime of ['claude', 'codex', 'qwen', 'ade', 'antigravity']) {
     const target = path.join(root, runtime);
     await mkdir(target, { recursive: true });
     await writeFile(path.join(target, 'user-owned.txt'), 'preserve');

@@ -5,12 +5,12 @@ import { readFile } from 'node:fs/promises';
 const canonicalSkillPath = 'skills/moon-relay-kernel/SKILL.md';
 const shippedSkillPath = 'package/kernel/profiles/codex/skills/moon-relay-kernel/SKILL.md';
 
-test('Kernel entrypoint metadata is the default Codex command skill without forcing every task into Kernel', async () => {
+test('Kernel entrypoint metadata is provider-neutral without forcing every task into Kernel', async () => {
   const skill = await readFile(canonicalSkillPath, 'utf8');
 
-  assert.match(skill, /description: Default Codex command-skill entrypoint/);
+  assert.match(skill, /description: Default provider-neutral command-skill entrypoint/);
   assert.match(skill, /Selecting this skill activates Kernel workflow for that task/);
-  assert.match(skill, /does not force unselected ordinary Codex tasks into Kernel/);
+  assert.match(skill, /does not force unselected ordinary tasks into Kernel/);
   assert.match(skill, /The account command skillset defaults to Kernel/);
   assert.match(skill, /for a non-kernel track return `wrong_harness`/);
   assert.match(skill, /kernel next --contract-json <file>/);

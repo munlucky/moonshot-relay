@@ -91,9 +91,19 @@ const SURFACE_PROFILES = [
     },
     expectedStrategy: 'advisory',
   },
+  {
+    surface: 'ade',
+    capabilities: {
+      surface: 'ade',
+      supportsSubagentModel: true,
+      supportsIndependentContext: true,
+      supportsResolvedModelIdentity: false,
+    },
+    expectedStrategy: 'advisory',
+  },
 ];
 
-test('Cross-Surface Matrix: All 6 surfaces normalize capabilities and resolve expected enforcement strategies', async () => {
+test('Cross-Surface Matrix: All 7 surfaces normalize capabilities and resolve expected enforcement strategies', async () => {
   for (const profile of SURFACE_PROFILES) {
     const normalized = normalizeHostCapabilities(profile.capabilities);
     assert.equal(normalized.surface, profile.surface, `Surface name must match: ${profile.surface}`);
@@ -106,14 +116,14 @@ test('Cross-Surface Matrix: All 6 surfaces normalize capabilities and resolve ex
   }
 });
 
-test('Cross-Surface Matrix: Control plane dispatches hostNext cleanly across all 6 surface profiles', async () => {
+test('Cross-Surface Matrix: Control plane dispatches hostNext cleanly across all 7 surface profiles', async () => {
   const fixture = await setup();
   const cp = await createKernelControlPlane(fixture);
   try {
     const runId = 'r-surface-matrix-1';
     await cp.startRun({
       runId,
-      objective: 'verify host turn dispatch across 6 surface profiles',
+      objective: 'verify host turn dispatch across 7 surface profiles',
       taskContract: {
         riskTier: 'T0',
         acceptance: [{
