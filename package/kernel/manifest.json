@@ -33,6 +33,7 @@
     "skills/ui-audit/",
     "skills/product-definition/",
     "skills/architecture-artifacts/",
+    "skills/codebase-master-guide/",
     "catalog/kernel-skills.yaml",
     "catalog/kernel-skills.json",
     "catalog/standalone-skills.json",

@@ -2,8 +2,8 @@
   "schemaVersion": 2,
   "scope": "kernel-standalone",
   "catalogId": "moon-relay-kernel-standalone-skills.v2",
-  "catalogDigest": "b386152f1fe83456c47b931d65fa46b87b284a668a085365779677df97918880",
-  "generatedAt": "2026-09-06T02:50:55.145Z",
+  "catalogDigest": "a3c3bcf6f36d916d619d211ee90d2babcb2cbbddeb539a4a5393ff9b500347ee",
+  "generatedAt": "2026-09-09T05:33:57.062Z",
   "sourceCommit": null,
   "skills": [
     {
@@ -35,7 +35,7 @@
       "skillPath": "skills/kernel-commit",
       "entrypoint": "scripts/kernel/standalone/kernel-commit.mjs",
       "exportName": "kernelCommit",
-      "contentHash": "fc524622aa1f99e7b11e8e08678ac4e45a662f7c3f31222743a02e36ca741aa8",
+      "contentHash": "d65a803ef0e58619c98ed09b0da49b0271809b2bf5d0c1720f2b0270d7b4e980",
       "cli": {
         "enabled": true,
         "binName": "kernel-commit"
@@ -158,6 +158,28 @@
       "permissions": [
         "filesystem-read",
         "filesystem-write"
+      ]
+    },
+    {
+      "name": "codebase-master-guide",
+      "kind": "analysis-utility",
+      "skillPath": "skills/codebase-master-guide",
+      "entrypoint": "scripts/kernel/standalone/codebase-master-guide.mjs",
+      "exportName": "runCodebaseMasterGuide",
+      "contentHash": "5cc667ab4901927765ef6f53f5da70f0efc47fea8fe43bbb8c6660c44c8154e2",
+      "cli": {
+        "enabled": true,
+        "binName": "codebase-master-guide"
+      },
+      "requiresKernelRun": false,
+      "mayMutateSource": false,
+      "mayMutateGit": false,
+      "mayMutateKnowledge": false,
+      "mayWriteArtifacts": true,
+      "permissions": [
+        "filesystem-read",
+        "filesystem-write",
+        "subprocess-exec"
       ]
     }
   ]

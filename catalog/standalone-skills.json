@@ -126,6 +126,22 @@
       "mayWriteArtifacts": true,
       "authority": "task-contract-seed-only",
       "permissions": ["filesystem-read", "filesystem-write"]
+    },
+    {
+      "name": "codebase-master-guide",
+      "kind": "analysis-utility",
+      "defaultEnabled": true,
+      "skillPath": "skills/codebase-master-guide",
+      "entrypoint": "scripts/kernel/standalone/codebase-master-guide.mjs",
+      "exportName": "runCodebaseMasterGuide",
+      "cli": { "enabled": true, "binName": "codebase-master-guide" },
+      "requiresKernelRun": false,
+      "mayMutateSource": false,
+      "mayMutateGit": false,
+      "mayMutateKnowledge": false,
+      "mayWriteArtifacts": true,
+      "authority": "informational",
+      "permissions": ["filesystem-read", "filesystem-write", "subprocess-exec"]
     }
   ]
 }

@@ -43,7 +43,7 @@ test('Kernel account-root profile replaces Relay command skills and preserves us
   assert.equal(await digest(preservedSession), sessionBefore);
 
   const skills = (await readdir(path.join(targetRoot, 'skills'))).sort();
-  assert.deepEqual(skills, ['.system', 'architecture-artifacts', 'codebase-understanding', 'explain-diff-html', 'keep-local', 'kernel-commit', 'moon-relay-kernel', 'product-definition', 'project-memory', 'ui-audit']);
+  assert.deepEqual(skills, ['.system', 'architecture-artifacts', 'codebase-master-guide', 'codebase-understanding', 'explain-diff-html', 'keep-local', 'kernel-commit', 'moon-relay-kernel', 'product-definition', 'project-memory', 'ui-audit']);
   assert.match(await readFile(path.join(targetRoot, 'AGENTS.md'), 'utf8'), /command skillset defaults to the Kernel catalog/);
   const config = await readFile(path.join(targetRoot, 'config.toml'), 'utf8');
   assert.match(config, /This project runs under Moon Relay Kernel/);
@@ -58,7 +58,7 @@ test('Kernel account-root profile replaces Relay command skills and preserves us
   const doctor = await doctorKernelProfile({ targetRoot, runtime: 'codex' });
   assert.equal(doctor.status, 'ready');
   assert.equal(doctor.effective, 'kernel');
-  assert.equal(doctor.managedFileCount, 22);
+  assert.equal(doctor.managedFileCount, 29);
 
   const manifestBefore = await readFile(result.manifestPath, 'utf8');
   const second = await installKernelAccountRoot({ sourceRoot, runtime: 'codex', targetRoot, runtimeHome });

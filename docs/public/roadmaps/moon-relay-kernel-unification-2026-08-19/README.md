@@ -11,7 +11,7 @@ The public standalone membership is catalog-driven by [`catalog/standalone-skill
 ## Utility groups
 
 - Project utilities: `project-memory`, `kernel-commit`, and `codebase-understanding`.
-- Analysis utilities: `explain-diff-html` and `ui-audit`.
+- Analysis utilities: `explain-diff-html`, `ui-audit`, and `codebase-master-guide`.
 - Pre-work utilities: `product-definition` and `architecture-artifacts`.
 
 Pre-work emits a `TASK_CONTRACT_SEED` containing artifact digest, source provenance, referenced artifacts, objective, acceptance, constraints, non-goals, and seed digest. Kernel normalization rejects a stale or invalid seed before execution.
