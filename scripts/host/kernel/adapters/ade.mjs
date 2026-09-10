@@ -8,6 +8,7 @@
 // concurrently, and never with nested delegation.
 
 import { buildModelVisiblePromptMessage, buildModelVisiblePromptView } from '../model-capsule-view.mjs';
+import { ADE_CHILD_PROMPT_TOKEN_LIMIT } from '../ade-context-policy.mjs';
 
 export const ADE_WORKER_AGENT = 'kernel-worker';
 export const ADE_REVIEWER_AGENT = 'kernel-reviewer';
@@ -157,19 +158,31 @@ export const createAdeAdapter = ({ spawnAgent = null, nativeAgentHost = globalTh
         canDelegate: false,
         canCommit: false,
         maxNestedAgents: 0,
+        inheritParentContext: false,
+        promptTokenLimit: ADE_CHILD_PROMPT_TOKEN_LIMIT,
         ...(reviewer ? { permissions: 'read_only', readOnly: true } : {}),
       };
+      const childPrompt = buildModelVisiblePromptMessage({ prompt: providerPrompt, review: reviewer });
       const request = {
         task_name: agent,
         taskName: agent,
         agent,
-        // Omit model/effort when the registry has no explicit override.  ADE
-        // then inherits the current session model rather than inventing a
-        // provider-specific routing policy.
+        // Qwen Code's Agent tool uses subagent_type for a named agent. Named
+        // agents start with their own context; never use the fork path here.
+        subagent_type: agent,
+        subagentType: agent,
+        description: reviewer ? 'Review one bounded Kernel subject' : 'Execute one bounded Kernel work unit',
+        run_in_background: false,
+        runInBackground: false,
+        // Omit model/effort when the registry has no explicit override. ADE
+        // then inherits the active service model rather than inventing a
+        // provider-specific model policy.
         ...(resolution?.model ? { model: resolution.model } : {}),
         ...(resolution?.effort ? { reasoning_effort: resolution.effort, reasoningEffort: resolution.effort } : {}),
-        message: buildModelVisiblePromptMessage({ prompt: providerPrompt, review: reviewer }),
-        prompt: providerPrompt,
+        // Use one sanitized text payload for both transport aliases. Keeping a
+        // second raw prompt object here would duplicate context in wrappers.
+        message: childPrompt,
+        prompt: childPrompt,
         parent_session_id: typeof parentSessionId === 'string' ? parentSessionId : null,
         parentSessionId: typeof parentSessionId === 'string' ? parentSessionId : null,
         child_session: safeChildSession,
@@ -220,7 +233,7 @@ export const createAdeAdapter = ({ spawnAgent = null, nativeAgentHost = globalTh
             parentSessionId,
             outcome,
             report: null,
-            invocation: { agent, freshSessionRequired: true, maxNestedAgents: 0, model: resolution?.model || null, effort: resolution?.effort || null },
+            invocation: { agent, freshSessionRequired: true, maxNestedAgents: 0, promptTokenLimit: ADE_CHILD_PROMPT_TOKEN_LIMIT, runInBackground: false, model: resolution?.model || null, effort: resolution?.effort || null },
           };
         }
 
@@ -238,7 +251,7 @@ export const createAdeAdapter = ({ spawnAgent = null, nativeAgentHost = globalTh
           parentSessionId,
           outcome: null,
           report,
-          invocation: { agent, freshSessionRequired: true, maxNestedAgents: 0, model: resolution?.model || null, effort: resolution?.effort || null },
+          invocation: { agent, freshSessionRequired: true, maxNestedAgents: 0, promptTokenLimit: ADE_CHILD_PROMPT_TOKEN_LIMIT, runInBackground: false, model: resolution?.model || null, effort: resolution?.effort || null },
         };
       } catch (error) {
         return failure({

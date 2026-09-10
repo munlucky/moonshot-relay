@@ -1,0 +1,46 @@
+{
+  "model": {
+    "sessionTokenLimit": 120000,
+    "maxSubagentDepth": 1
+  },
+  "tools": {
+    "workflowsEnabled": false,
+    "eager": [
+      "run_shell_command"
+    ],
+    "toolSearch": {
+      "enabled": true,
+      "threshold": 0
+    },
+    "truncateToolOutputThreshold": 12000,
+    "truncateToolOutputLines": 400,
+    "todoWrite": {
+      "enabled": false
+    },
+    "listDirectory": {
+      "enabled": false
+    },
+    "computerUse": {
+      "enabled": false
+    }
+  },
+  "goals": {
+    "modelProposed": "disabled"
+  },
+  "skills": {
+    "disabledLevels": [
+      "bundled",
+      "extension"
+    ]
+  },
+  "context": {
+    "fileName": ".moon-relay-kernel-ade-context.md"
+  },
+  "memory": {
+    "enableManagedAutoMemory": false,
+    "enableManagedAutoDream": false,
+    "enableAutoSkill": false,
+    "enableTeamMemory": false,
+    "enableTeamMemorySync": false
+  }
+}

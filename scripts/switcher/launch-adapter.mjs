@@ -5,6 +5,7 @@ import { canonicalPath } from '../kernel/runtime-home.mjs';
 import { canonicalizeHostSessionId, providerForSurface } from '../kernel/run/host-session.mjs';
 import { nativeProviderDescriptor } from './native-provider.mjs';
 import { KERNEL_RUNTIME_ID, SURFACE_ENV } from './constants.mjs';
+import { withAdeQwenOwnerArgs } from '../host/kernel/ade-context-policy.mjs';
 
 function resolveClaudeDesktopAumid({ platform = process.platform, execFileSyncImpl = execFileSync } = {}) {
   if (platform !== 'win32') return null;
@@ -67,6 +68,17 @@ export function buildProcessEnvironment({ surface, roots, workspaceRoot = null, 
   // process binding exists, bind only the active surface.
   const providerEnv = SURFACE_ENV[surface];
   if (providerEnv && !env[providerEnv]) env[providerEnv] = roots.providerHome;
+  if (surface === 'ade_cli') {
+    // ADE embeds Qwen Code but owns an independent provider home. Bind the
+    // underlying Qwen runtime to ADE_HOME so it cannot accidentally hydrate
+    // ~/.qwen or another raw Qwen profile. System defaults are lowest
+    // precedence and therefore preserve operator/project model settings.
+    env.QWEN_HOME = roots.providerHome;
+    env.QWEN_CODE_DISABLE_WORKFLOWS = '1';
+    if (!env.QWEN_CODE_SYSTEM_DEFAULTS_PATH) {
+      env.QWEN_CODE_SYSTEM_DEFAULTS_PATH = path.join(roots.providerHome, 'qwen-system-defaults.json');
+    }
+  }
   if (surface === 'antigravity_desktop') {
     if (!env.GEMINI_HOME) env.GEMINI_HOME = roots.providerHome;
     if (!env.ANTIGRAVITY_HOME) env.ANTIGRAVITY_HOME = roots.providerHome;
@@ -95,7 +107,7 @@ export function buildLaunchSpec({ surface, sourceRoot = process.cwd(), workspace
     surface,
     runtime: KERNEL_RUNTIME_ID,
     command: command || nativeProvider.command || defaultCommand(surface),
-    args: [...args],
+    args: surface === 'ade_cli' ? withAdeQwenOwnerArgs(args) : [...args],
     aumid: null,
     roots,
     workspaceRoot: resolvedWorkspace,
