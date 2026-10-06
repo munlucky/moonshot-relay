@@ -3,8 +3,8 @@
   "scope": "kernel-standalone",
   "catalogId": "moon-relay-kernel-standalone-skills.v2",
   "catalogDigest": "a3c3bcf6f36d916d619d211ee90d2babcb2cbbddeb539a4a5393ff9b500347ee",
-  "generatedAt": "2026-09-09T05:33:57.062Z",
-  "sourceCommit": null,
+  "generatedAt": "2026-10-06T08:34:47.113Z",
+  "sourceCommit": "aca19ec85cf06f40860e07ef5006b37b02f7a260",
   "skills": [
     {
       "name": "project-memory",
@@ -35,7 +35,7 @@
       "skillPath": "skills/kernel-commit",
       "entrypoint": "scripts/kernel/standalone/kernel-commit.mjs",
       "exportName": "kernelCommit",
-      "contentHash": "d65a803ef0e58619c98ed09b0da49b0271809b2bf5d0c1720f2b0270d7b4e980",
+      "contentHash": "b2694cd0d0f48115b8b5a1b0df51293e7eb0be206aca102ab6db23604a8b37b7",
       "cli": {
         "enabled": true,
         "binName": "kernel-commit"

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { openKernelStateStore } from '../state-store.mjs';
 import { commitProjectKnowledge } from '../knowledge/commit.mjs';
@@ -305,7 +306,17 @@ export function admitKernelMutation({ stateStore, project, statusEntries = [], s
   };
 }
 
-export async function kernelCommit({ cwd = process.cwd(), env = process.env, message = null, push = false, memory = false, memoryReview = false, approvalRef = null, runId = null, approve = false, approver = null, reason = null, approvalReason = null, operatorApprovalRef = null } = {}) {
+export async function resolveCommitMessage({ cwd = process.cwd(), message = null, messageFile = null } = {}) {
+  if (messageFile === null || messageFile === undefined) return message;
+  if (message !== null && message !== undefined) throw admissionError('COMMIT_MESSAGE_INPUT_CONFLICT');
+  if (typeof messageFile !== 'string' || !messageFile.trim()) throw admissionError('COMMIT_MESSAGE_FILE_REQUIRED');
+  const text = (await readFile(path.resolve(cwd, messageFile), 'utf8')).replace(/^\uFEFF/u, '').replace(/\r\n?/gu, '\n').trim();
+  if (text.includes('\u0000') || !text.split('\n').slice(1).some(line => line.trim())) throw admissionError('COMMIT_MESSAGE_BODY_REQUIRED');
+  return text;
+}
+
+export async function kernelCommit({ cwd = process.cwd(), env = process.env, message = null, messageFile = null, push = false, memory = false, memoryReview = false, approvalRef = null, runId = null, approve = false, approver = null, reason = null, approvalReason = null, operatorApprovalRef = null } = {}) {
+  message = await resolveCommitMessage({ cwd, message, messageFile });
   await ensureAccountRootTrack({ startDir: cwd, track: 'kernel', env, source: 'standalone-kernel-commit' });
   const project = resolveStandaloneProject({ cwd, env });
   const statusResult = runGitChecked(project.projectRoot, ['status', '--porcelain=v1']);
@@ -430,6 +441,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   const args = parseCliArgs(process.argv.slice(2));
   kernelCommit({
     message: args.message || null,
+    messageFile: args.messageFile ?? null,
     push: args.push === true,
     memory: args.memory === true,
     memoryReview: args.memoryReview === true,

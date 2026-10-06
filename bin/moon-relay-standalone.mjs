@@ -25,6 +25,7 @@ export async function runStandaloneCli(name, argv = process.argv.slice(2), { cwd
     query: args.query || '',
     force: args.force === true,
     message: args.message || null,
+    messageFile: args.messageFile ?? null,
     push: args.push === true,
     memory: args.memory === true,
     memoryReview: args.memoryReview === true,

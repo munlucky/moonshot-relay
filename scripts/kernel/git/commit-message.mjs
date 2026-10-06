@@ -143,7 +143,17 @@ export function buildKernelCommitMessage({
   const knowledge = hasKnowledge ? oneLine(knowledgeStatus || knowledgeCommitReceipt?.status) : null;
   const lines = [subject, ''];
 
-  if (supplied.body) lines.push('요청 메시지:', supplied.body, '');
+  // The final Run may describe only admission or push. Its objective/ACs must
+  // not displace an authored explanation of the actual patch. Full operational
+  // details remain in the commit receipt and Git already stores changed paths.
+  if (supplied.body) {
+    lines.push(supplied.body, '');
+    if (run?.runId) lines.push(`Kernel-Run: ${oneLine(run.runId)}`);
+    if (evidenceDigest) lines.push(`Kernel-Evidence: ${evidenceDigest}`);
+    if (verifications.length > 0) lines.push(`Kernel-Verification: ${verifications.map((entry) => `${entry.id}=${displayValue(entry.status)}`).join(', ')}`);
+    else if (verificationRefs.length > 0) lines.push(`Kernel-Verification: ${unique(verificationRefs.map(oneLine)).join(', ')}`);
+    return `${capMessage(lines.join('\n').trim())}\n`;
+  }
 
   lines.push('Kernel 작업:');
   if (run?.objective || taskContract.objective) lines.push(`- 작업 목표: ${truncate(oneLine(run?.objective || taskContract.objective), MAX_OBJECTIVE_LENGTH)}`);
