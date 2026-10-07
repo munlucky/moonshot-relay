@@ -94,7 +94,7 @@ test('Preflight Wave 1: Missing verification commands at start do not block run 
   }
 });
 
-test('Multi-acceptance contract without allowedPaths requires bounded scope before execution', async () => {
+test('Multi-acceptance contract alone does not invent a decomposition requirement', async () => {
   const fixture = await setup();
   const cp = await createKernelControlPlane(fixture);
   try {
@@ -112,16 +112,14 @@ test('Multi-acceptance contract without allowedPaths requires bounded scope befo
     assert.equal(run.runId, 'r-multi-ac-failsoft');
     const nextTurn = await cp.next('r-multi-ac-failsoft');
     assert.equal(nextTurn.action.type, 'implement');
-    assert.equal(nextTurn.status, 'scope-rejected');
-    assert.equal(nextTurn.errorCode, 'work-unit-decomposition-required');
-    assert.equal(nextTurn.nextAction, 'revise-task-contract-with-bounded-steps');
+    assert.notEqual(nextTurn.status, 'scope-rejected');
   } finally {
     await cp.close();
     await cleanup(fixture);
   }
 });
 
-test('Acceptance boundary matrix preserves small provisional work and blocks broad unbounded work', async () => {
+test('Acceptance count never becomes a hidden planning threshold', async () => {
   const fixture = await setup();
   const cp = await createKernelControlPlane(fixture);
   try {
@@ -138,12 +136,7 @@ test('Acceptance boundary matrix preserves small provisional work and blocks bro
       assert.equal(run.runId, runId);
       const nextTurn = await cp.next(runId);
       assert.equal(nextTurn.action.type, 'implement');
-      if (count >= 3) {
-        assert.equal(nextTurn.status, 'scope-rejected');
-        assert.equal(nextTurn.errorCode, 'work-unit-decomposition-required');
-      } else {
-        assert.notEqual(nextTurn.status, 'scope-rejected');
-      }
+      assert.notEqual(nextTurn.status, 'scope-rejected');
       await cp.abandonRun(runId);
     }
   } finally {

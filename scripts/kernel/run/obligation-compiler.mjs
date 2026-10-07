@@ -261,10 +261,32 @@ export const authoritativeVerificationScope = (obligation) => {
 // writable authority. Explicit path-scoped/project-owned and acceptance-bound
 // evidence settles the current Work Unit; broad policy/caller requirements
 // remain Goal proof. Unknown hard requirements fail conservatively to Goal.
+const requiresRootProof = (obligation) => obligation?.metadata?.rootProofRequired === true
+  || obligation?.sourceType === 'proof-policy'
+  || obligation?.metadata?.commandCandidates?.some((candidate) => candidate.sourceType === 'proof-policy');
+
 export const deriveVerificationSettlementScope = (obligation) => {
   if (!obligation) return 'goal';
+  if (requiresRootProof(obligation)) return 'goal';
+  const declared = obligation.metadata?.evidenceLevel;
+  if (declared === 'goal') return 'goal';
+  if (declared === 'integration') return 'integration';
+  if (declared === 'work') return 'focused';
   if (authoritativeVerificationScope(obligation)) return 'focused';
   if (obligation.sourceType === 'evidence-plan' && (obligation.acceptanceIds || []).length > 0) return 'focused';
+  return 'goal';
+};
+
+export const verificationSettlementRank = (scope) => ({ focused: 0, integration: 1, goal: 2 }[scope] ?? 2);
+
+export const deriveEvidenceLevel = (obligation) => {
+  if (!obligation) return 'goal';
+  if (requiresRootProof(obligation)) return 'goal';
+  const declared = obligation.metadata?.evidenceLevel;
+  if (['work', 'integration', 'goal'].includes(declared)) return declared;
+  const settlement = deriveVerificationSettlementScope(obligation);
+  if (settlement === 'focused') return 'work';
+  if (settlement === 'integration') return 'integration';
   return 'goal';
 };
 
@@ -585,7 +607,7 @@ export const compileRunObligations = ({
   };
 
   for (const check of tierObligations) {
-    declare(check, { sourceType: 'proof-policy', sourceRef: 'kernel/proof-policy.yaml' });
+    declare(check, { sourceType: 'proof-policy', sourceRef: 'kernel/proof-policy.yaml', metadata: { rootProofRequired: true } });
   }
   for (const declared of contract?.requiredObligations || []) {
     declare(declared, { sourceType: 'caller', sourceRef: 'task-contract' });
@@ -603,6 +625,7 @@ export const compileRunObligations = ({
         scenarioId: record.scenarioId || null,
         verificationKind: record.kind || record.type || null,
         evidenceDepth: record.evidenceDepth || null,
+        evidenceLevel: ['work', 'integration', 'goal'].includes(record.evidenceLevel) ? record.evidenceLevel : null,
         scope: normalizeScope(record.scope),
         freshnessInputs: Array.isArray(record.freshnessInputs) ? record.freshnessInputs : [],
         timeoutMs: Number.isFinite(Number(record.timeoutMs)) && Number(record.timeoutMs) > 0 ? Number(record.timeoutMs) : null,
@@ -629,6 +652,7 @@ export const compileRunObligations = ({
       method: item.evidencePlan?.method || null,
       metadata: {
         outcome: item.evidencePlan?.outcome || null,
+        evidenceLevel: ['work', 'integration', 'goal'].includes(item.evidencePlan?.evidenceLevel) ? item.evidencePlan.evidenceLevel : null,
         scope: normalizeScope(item.evidencePlan?.scope),
         freshnessInputs: Array.isArray(item.evidencePlan?.freshnessInputs) ? item.evidencePlan.freshnessInputs : [],
         timeoutMs: Number.isFinite(Number(item.evidencePlan?.timeoutMs)) && Number(item.evidencePlan?.timeoutMs) > 0 ? Number(item.evidencePlan.timeoutMs) : null,
@@ -670,6 +694,9 @@ export const compileRunObligations = ({
       method: verification.method || null,
       metadata: {
         scope,
+        evidenceLevel: ['work', 'integration', 'goal'].includes(verification.evidenceLevel || record.evidenceLevel)
+          ? (verification.evidenceLevel || record.evidenceLevel)
+          : null,
         receiptContractRef: verification.receiptContractRef || record.receiptContractRef || null,
         freshnessInputs: Array.isArray(verification.freshnessInputs) ? verification.freshnessInputs : (record.freshnessInputs || []),
       },

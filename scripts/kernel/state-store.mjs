@@ -8,10 +8,10 @@ import { canTransition } from './transition.mjs';
 import { openSqliteDb } from './sqlite-adapter.mjs';
 import { mapCandidateToCanonicalRecord } from './knowledge/canonical-record-mapper.mjs';
 import { isProtectedObligation } from './proof/protected-obligations.mjs';
-import { assertCommandBinding } from './run/obligation-compiler.mjs';
+import { assertCommandBinding, deriveEvidenceLevel } from './run/obligation-compiler.mjs';
 import { hashSessionId, normalizeModelRouteDecision, normalizeModelUsageReceipt } from './run/model-route-contract.mjs';
 import { ATTEMPT_PROVENANCE_KINDS, assertAttemptLineage, normalizeAttemptProvenance } from './run/attempt-provenance.mjs';
-import { digestOfEvidence, evaluateReviewReceipt, normalizeReviewReceipt, parseReviewEvidenceRef } from './proof/review-receipt.mjs';
+import { TRUSTED_ENFORCEMENT_STATUSES, digestOfEvidence, evaluateReviewReceipt, normalizeReviewReceipt, parseReviewEvidenceRef } from './proof/review-receipt.mjs';
 import { sanitizePersistentPayload, sanitizePersistentText } from './persistent-sanitizer.mjs';
 import { buildSuccessorKey } from './run/successor-key.mjs';
 import { emptyKnowledgeDoctorFinding, canonicalKnowledgeIdentity } from './knowledge/capture.mjs';
@@ -24,6 +24,7 @@ import {
   recoverProjectKnowledgeNamespaceMigrations,
 } from './knowledge/store.mjs';
 import { buildKernelDurableStateView } from './persistence/durable-state.mjs';
+import { runJournalSchema } from './persistence/run-journal.mjs';
 
 const TIER_RANK = { T0: 0, T1: 1, T2: 2, T3: 3 };
 const EVIDENCE_RANK = { E0: 0, E1: 1, E2: 2 };
@@ -64,13 +65,37 @@ const isProcessAlive = (pid) => {
 const sourceIdentityRegex = /^(?:[a-f0-9]{40}|sha256:[a-f0-9]{64}|[a-zA-Z0-9_.:/-]{1,128})$/i;
 const sha256Regex = /^sha256:[a-f0-9]{64}$/i;
 
+const reviewSubjectKey = (receipt = {}) => `review-subject-${createHash('sha256').update(JSON.stringify({
+  runId: receipt.runId || null,
+  obligationId: receipt.obligationId || null,
+  stepId: receipt.stepId || null,
+  planRevision: Number(receipt.planRevision || 1),
+  mutationRevision: Number(receipt.subject?.mutationRevision || 0),
+  workspaceIdentity: receipt.subject?.workspaceIdentity || null,
+  changedPathsDigest: receipt.subject?.changedPathsDigest || null,
+  evidenceDigest: receipt.subject?.evidenceDigest || null,
+})).digest('hex')}`;
+
+const reviewSubjectAdoptionEligible = (receipt = {}) => {
+  const enforcement = receipt.reviewer?.enforcementStatus || null;
+  if (!TRUSTED_ENFORCEMENT_STATUSES.includes(enforcement)) return false;
+  if (enforcement === 'operator_approved') return true;
+  if (receipt.reviewer?.modelClass !== 'frontier_reasoning') return false;
+  const reviewerSession = receipt.reviewer?.actorSessionId || null;
+  const implementerSession = receipt.implementer?.actorSessionId || null;
+  return Boolean(reviewerSession && implementerSession && reviewerSession !== implementerSession);
+};
+
 export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = resolveKernelRuntimeHome(), relayHome } = {}) => {
   const runtimeHome = canonicalRuntimeHome(runtimeHomeInput);
   assertIsolatedRuntimeHomes(runtimeHome, relayHome);
   const dbPath = kernelDbPath(runtimeHome);
   await mkdir(path.dirname(dbPath), { recursive: true });
   const db = await openSqliteDb(dbPath);
-
+  // Initialization can reject before the public store owns the connection.
+  // Release that connection on every schema/migration failure, including
+  // uniqueness failures, so recovery can reopen or remove the database.
+  try {
   db.exec(`
     PRAGMA journal_mode=WAL;
     PRAGMA synchronous=NORMAL;
@@ -127,14 +152,6 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       acquired_at TEXT NOT NULL,
       expires_at TEXT NOT NULL,
       FOREIGN KEY(run_id) REFERENCES runs(run_id)
-    );
-    CREATE TABLE IF NOT EXISTS workspace_mutation_locks (
-      project_id TEXT PRIMARY KEY,
-      holder_run_id TEXT NOT NULL,
-      session_token TEXT NOT NULL,
-      fencing_token INTEGER NOT NULL,
-      acquired_at TEXT NOT NULL,
-      expires_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS session_bindings (
       binding_id TEXT PRIMARY KEY,
@@ -198,16 +215,6 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       holder_run_id TEXT NOT NULL,
       acquired_at TEXT NOT NULL,
       FOREIGN KEY(holder_run_id) REFERENCES runs(run_id)
-    );
-    CREATE TABLE IF NOT EXISTS attempts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      run_id TEXT NOT NULL,
-      attempt_number INTEGER NOT NULL,
-      state TEXT NOT NULL,
-      started_at TEXT NOT NULL,
-      finished_at TEXT,
-      status TEXT NOT NULL,
-      FOREIGN KEY(run_id) REFERENCES runs(run_id)
     );
     CREATE TABLE IF NOT EXISTS waivers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -559,6 +566,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       receipt_id TEXT PRIMARY KEY,
       run_id TEXT NOT NULL,
       obligation_id TEXT NOT NULL,
+      review_subject_key TEXT,
       review_stage TEXT NOT NULL,
       verdict TEXT NOT NULL,
       finding_class TEXT NOT NULL DEFAULT 'none',
@@ -754,8 +762,33 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
   addCol('run_step_attempts', 'mutation_revision', 'INTEGER');
   addCol('run_step_attempts', 'retry_reason', 'TEXT');
   addCol('run_step_attempts', 'failure_category', 'TEXT');
+  // Report operation identity is independent from payload identity. Older
+  // report_digest rows mixed those concerns; terminal rows keep an explicit
+  // legacy marker for audit while new writers use only report_key and
+  // report_payload_digest.
   addCol('run_step_attempts', 'report_digest', 'TEXT');
+  addCol('run_step_attempts', 'report_key', 'TEXT');
+  addCol('run_step_attempts', 'report_checkpoint_json', 'TEXT');
+  addCol('run_step_attempts', 'report_payload_digest', 'TEXT');
   addCol('run_step_attempts', 'report_result_json', 'TEXT');
+  db.transaction(() => {
+    db.exec(`
+      UPDATE run_step_attempts
+      SET report_key='legacy:' || id || ':' || report_digest,
+          report_payload_digest=NULL,
+          report_digest=NULL
+      WHERE report_digest IS NOT NULL
+        AND report_key IS NULL
+        AND status NOT IN ('started','reported','verifying');
+      UPDATE run_step_attempts
+      SET report_digest=NULL
+      WHERE report_digest IS NOT NULL
+        AND status IN ('started','reported','verifying');
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_run_step_attempts_report_key
+      ON run_step_attempts(run_id, report_key)
+      WHERE report_key IS NOT NULL;
+    `);
+  })();
   addCol('run_step_attempts', 'review_claim_key', 'TEXT');
   addCol('run_step_attempts', 'review_claim_holder', 'TEXT');
   addCol('run_step_attempts', 'review_claim_expires_at', 'TEXT');
@@ -769,9 +802,21 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
     WHERE review_claim_key IS NOT NULL;
   `);
   addCol('route_admissions', 'attempt_id', 'TEXT');
+  addCol('project_workspaces', 'mutation_epoch', 'INTEGER NOT NULL DEFAULT 0');
+  db.exec(`UPDATE project_workspaces SET mutation_epoch=MAX(mutation_epoch,
+    COALESCE((SELECT fencing_token FROM workspace_mutation_locks_v2 WHERE workspace_id=project_workspaces.workspace_id), 0))`);
   addCol('review_receipts', 'step_id', 'TEXT');
   addCol('review_receipts', 'reviewer_binding_id', 'TEXT');
   addCol('review_receipts', 'implementer_attempt_id', 'TEXT');
+  addCol('review_receipts', 'review_subject_key', 'TEXT');
+  // Legacy receipts stay auditable without retroactively choosing a winner.
+  // New receipts use a subject key so at most one result is adopted for one
+  // plan/mutation/evidence subject while all reviewer attempt rows remain.
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_review_receipts_subject
+    ON review_receipts(run_id, review_subject_key)
+    WHERE review_subject_key IS NOT NULL;
+  `);
   // Remove the retired execution lifecycle from databases created before the
   // compression. In-flight grouped executions become ordinary retryable Step
   // attempts; their individual receipts remain the recovery record. The
@@ -976,6 +1021,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
   }
 
   const now = () => new Date().toISOString();
+  db.exec(runJournalSchema());
 
   const safeJsonParse = (str, fallback = []) => {
     try {
@@ -1280,7 +1326,6 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
   const reconcileTerminalLifecycleInTransaction = ({
     projectId = null,
     runId = null,
-    preserveSessionId = null,
     observedAt = now(),
   } = {}) => {
     const projectClause = projectId ? ' AND r.project_id=?' : '';
@@ -1289,15 +1334,6 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       ...(projectId ? [projectId] : []),
       ...(runId ? [runId] : []),
     ];
-    const activeOwnerForSession = (candidateRunId, candidateProjectId) => preserveSessionId
-      ? db.prepare(`
-          SELECT binding_id AS bindingId
-          FROM session_bindings
-          WHERE run_id=? AND project_id=? AND session_id=?
-            AND status='active' AND access_mode='owner'
-          LIMIT 1
-        `).get(candidateRunId, candidateProjectId, preserveSessionId)
-      : null;
     const deactivatedBindings = [];
     const terminalBindings = db.prepare(`
       SELECT b.binding_id AS bindingId, b.run_id AS runId, b.project_id AS projectId,
@@ -1309,7 +1345,6 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         ${projectClause}${runClause}
     `).all(...scopeArgs);
     for (const binding of terminalBindings) {
-      if (preserveSessionId && binding.sessionId === preserveSessionId && binding.runStatus === 'completed') continue;
       const closedAt = now();
       const updated = db.prepare(`
         UPDATE session_bindings
@@ -1369,7 +1404,6 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         SELECT run_id AS runId, project_id AS projectId, workspace_id AS workspaceId, status
         FROM runs WHERE run_id=?
       `).get(lock.holderRunId);
-      const activeOwner = run ? activeOwnerForSession(run.runId, run.projectId) : null;
       const expired = Number.isFinite(Date.parse(lock.expiresAt))
         ? Date.parse(lock.expiresAt) <= observedMs
         : true;
@@ -1377,14 +1411,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         || run.projectId !== lock.projectId
         || run.workspaceId !== lock.workspaceId;
       const terminal = run && terminalRunStatuses.has(run.status);
-      const preserveCompletedHostLock = Boolean(
-        activeOwner
-        && run.status === 'completed'
-        && !expired
-        && !invalidOwner
-        && (!runClause || run.runId === runId),
-      );
-      const shouldRelease = expired || invalidOwner || (terminal && !preserveCompletedHostLock);
+      const shouldRelease = expired || invalidOwner || terminal;
       if (!shouldRelease) continue;
       const released = db.prepare(`
         DELETE FROM workspace_mutation_locks_v2
@@ -1406,45 +1433,10 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       });
     }
 
-    const legacyLocks = db.prepare(`
-      SELECT project_id AS projectId, holder_run_id AS holderRunId,
-             session_token AS sessionToken, fencing_token AS fencingToken,
-             expires_at AS expiresAt
-      FROM workspace_mutation_locks l
-      WHERE 1=1${projectId ? ' AND l.project_id=?' : ''}
-    `).all(...(projectId ? [projectId] : []));
-    for (const lock of legacyLocks) {
-      const run = db.prepare(`
-        SELECT run_id AS runId, project_id AS projectId, status
-        FROM runs WHERE run_id=?
-      `).get(lock.holderRunId);
-      const activeOwner = run ? activeOwnerForSession(run.runId, run.projectId) : null;
-      const expired = Number.isFinite(Date.parse(lock.expiresAt))
-        ? Date.parse(lock.expiresAt) <= observedMs
-        : true;
-      const invalidOwner = !run || run.projectId !== lock.projectId;
-      const terminal = run && terminalRunStatuses.has(run.status);
-      const preserveCompletedHostLock = Boolean(activeOwner && run.status === 'completed' && !expired && !invalidOwner);
-      const shouldRelease = expired || invalidOwner || (terminal && !preserveCompletedHostLock);
-      if (!shouldRelease) continue;
-      const released = db.prepare(`
-        DELETE FROM workspace_mutation_locks
-        WHERE project_id=? AND holder_run_id=? AND session_token=? AND fencing_token=?
-      `).run(lock.projectId, lock.holderRunId, lock.sessionToken, Number(lock.fencingToken));
-      if (released.changes === 1) releasedLocks.push({
-        version: 1,
-        projectId: lock.projectId,
-        holderRunId: lock.holderRunId,
-        reason: expired ? 'expired' : (invalidOwner ? 'invalid_owner' : `terminal_${run.status}`),
-      });
-    }
 
     return {
       deactivatedBindings,
       releasedLocks,
-      preservedTerminalHostBindings: terminalBindings
-        .filter((binding) => preserveSessionId && binding.sessionId === preserveSessionId && binding.runStatus === 'completed')
-        .map((binding) => binding.bindingId),
     };
   };
   const bindingConflict = (error) => {
@@ -1623,7 +1615,10 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
           SELECT name FROM sqlite_master
           WHERE type='table' AND name NOT LIKE 'sqlite_%'
         `).all();
-        const tables = tableRows.map((row) => row.name).filter((name) => name !== 'runs').map((name) => {
+        // Compensating initialization cleanup removes canonical state, not
+        // append-only audit facts. The Journal may describe a removed Run;
+        // it never determines whether that Run currently exists.
+        const tables = tableRows.map((row) => row.name).filter((name) => name !== 'runs' && name !== 'run_journal').map((name) => {
           const quoted = quoteIdentifier(name);
           const columns = db.prepare(`PRAGMA table_info(${quoted})`).all().map((column) => column.name);
           const references = db.prepare(`PRAGMA foreign_key_list(${quoted})`).all().map((foreignKey) => foreignKey.table);
@@ -1938,12 +1933,6 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
     },
 
     // A replan is a durable event; counting it keeps the measurement honest.
-    incrementReplanCount(runId) {
-      if (!this.getRun(runId)) throw new Error(`Run ${runId} not found`);
-      db.prepare(`UPDATE runs SET replan_count=replan_count+1, revision=revision+1, updated_at=? WHERE run_id=?`).run(now(), runId);
-      return this.getRun(runId);
-    },
-
     markRunBlocked(runId, reason, blockingClass = null) {
       const run = this.getRun(runId);
       if (!run) throw new Error(`Run ${runId} not found`);
@@ -2334,6 +2323,13 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       });
     },
 
+    // Read-only audit projection. No authority reads the journal for decisions.
+    getRunJournal(runId) {
+      return db.prepare(`SELECT id, run_id AS runId, kind, subject_id AS subjectId,
+        contract_revision AS contractRevision, mutation_revision AS mutationRevision,
+        created_at AS createdAt FROM run_journal WHERE run_id=? ORDER BY id`).all(runId);
+    },
+
     // A report describes the delta since the last accepted mutable boundary.
     // Keep the original Run-start baseline immutable for user-change
     // protection, while advancing this observation baseline after a report
@@ -2450,7 +2446,6 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       projectId,
       sessionId,
       predecessorRunId,
-      predecessorBindingId,
       successorRun,
       successorBinding,
       obligations = [],
@@ -2511,12 +2506,12 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
                  current_workspace_identity as currentWorkspaceIdentity
           FROM runs WHERE run_id=?
         `).get(predecessorRunId);
-        const predecessorBinding = predecessorBindingId && sessionId
+        const predecessorBinding = predecessor?.ownerBindingId
           ? db.prepare(`
               SELECT * FROM session_bindings
-              WHERE binding_id=? AND run_id=? AND project_id=? AND session_id=?
+              WHERE binding_id=? AND run_id=? AND project_id=?
                 AND status='active' AND access_mode='owner'
-            `).get(predecessorBindingId, predecessorRunId, projectId, sessionId)
+            `).get(predecessor.ownerBindingId, predecessorRunId, projectId)
           : null;
         const successorWorkspace = db.prepare(`
           SELECT project_id as projectId, worktree_id as worktreeId
@@ -2569,7 +2564,6 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
             || successorBinding.runId !== successorRun.runId
             || successorRun.workspaceId !== successorBinding.workspaceId
           ))
-          || (successorBinding && predecessorBinding && successorBinding.provider !== predecessorBinding.provider)
           || successorRun.taskContract?.digest !== taskContractDigest
         ) {
           throw Object.assign(new Error('successor_creation_conflict'), {
@@ -2594,16 +2588,15 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
             UPDATE session_bindings
             SET status='inactive', closed_at=?, close_reason='successor_started',
                 successor_run_id=?, updated_at=?
-            WHERE binding_id=? AND run_id=? AND project_id=? AND session_id=?
+            WHERE binding_id=? AND run_id=? AND project_id=?
               AND status='active' AND access_mode='owner'
           `).run(
             closedAt,
             successorRun.runId,
             closedAt,
-            predecessorBindingId,
+            predecessor.ownerBindingId,
             predecessorRunId,
             projectId,
-            sessionId,
           );
           if (closed.changes !== 1) {
             throw Object.assign(new Error('successor_binding_conflict'), {
@@ -2703,10 +2696,6 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
             `).run(predecessor.workspaceId, currentLock.expiresAt);
           }
         }
-        db.prepare(`
-          DELETE FROM workspace_mutation_locks
-          WHERE project_id=? AND holder_run_id=?
-        `).run(projectId, predecessorRunId);
         return { created: true, runId: successorRun.runId };
       });
 
@@ -2717,6 +2706,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         bindingConflict(error);
       }
       const run = this.getRun(result.runId);
+      const predecessorOwnerBindingId = this.getRun(predecessorRunId)?.ownerBindingId || null;
       const binding = sessionId ? this.getActiveRunBinding({
           projectId,
           sessionId,
@@ -2733,9 +2723,9 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         created: result.created,
         run,
         binding,
-        predecessorBinding: predecessorBindingId ? mapSessionBinding(db.prepare(`
+        predecessorBinding: predecessorOwnerBindingId ? mapSessionBinding(db.prepare(`
           SELECT * FROM session_bindings WHERE binding_id=?
-        `).get(predecessorBindingId)) : null,
+        `).get(predecessorOwnerBindingId)) : null,
       };
     },
 
@@ -3072,11 +3062,10 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
     // successor handoff can atomically replace it; every other terminal owner
     // is safe to close here. This keeps cleanup project/session scoped without
     // selecting or terminating a host process.
-    reconcileTerminalLifecycle({ projectId = null, runId = null, preserveSessionId = null, observedAt = now() } = {}) {
+    reconcileTerminalLifecycle({ projectId = null, runId = null, observedAt = now() } = {}) {
       return db.transaction(() => reconcileTerminalLifecycleInTransaction({
         projectId,
         runId,
-        preserveSessionId,
         observedAt,
       }))();
     },
@@ -3123,16 +3112,6 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         return mapSessionBinding(db.prepare('SELECT * FROM session_bindings WHERE binding_id=?').get(bindingId));
       });
       return deactivate();
-    },
-
-    // Compatibility-only surface for legacy callers. Control-plane access uses
-    // the project-scoped APIs above and never selects authority by session alone.
-    getActiveSessionBinding({ sessionId, runId = null } = {}) {
-      if (!sessionId) return null;
-      const row = runId
-        ? db.prepare(`SELECT * FROM session_bindings WHERE session_id=? AND run_id=? AND status='active' ORDER BY updated_at DESC LIMIT 1`).get(sessionId, runId)
-        : db.prepare(`SELECT * FROM session_bindings WHERE session_id=? AND status='active' ORDER BY updated_at DESC LIMIT 1`).get(sessionId);
-      return mapSessionBinding(row);
     },
 
     registerProjectIdentity(identity = {}) {
@@ -3731,31 +3710,6 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       return this.listRuns({ projectId, worktreeId, workspaceId })[0] || null;
     },
 
-    acquireWorkspaceMutationLock({ projectId, runId, sessionToken, ttlMs = 60000 } = {}) {
-      if (!projectId || !runId || !sessionToken) throw new Error('workspace mutation lock requires projectId, runId, and sessionToken');
-      const acquiredAt = now();
-      const expiresAt = new Date(Date.now() + ttlMs).toISOString();
-      db.exec('BEGIN IMMEDIATE');
-      try {
-        const current = db.prepare(`SELECT project_id as projectId, holder_run_id as holderRunId, session_token as sessionToken, fencing_token as fencingToken, acquired_at as acquiredAt, expires_at as expiresAt FROM workspace_mutation_locks WHERE project_id=?`).get(projectId);
-        if (current && Date.parse(current.expiresAt) > Date.now() && (current.holderRunId !== runId || current.sessionToken !== sessionToken)) {
-          db.exec('ROLLBACK');
-          return { acquired: false, lock: current };
-        }
-        const fencingToken = Number(current?.fencingToken || 0) + 1;
-        db.prepare(`
-          INSERT INTO workspace_mutation_locks(project_id, holder_run_id, session_token, fencing_token, acquired_at, expires_at)
-          VALUES(?, ?, ?, ?, ?, ?)
-          ON CONFLICT(project_id) DO UPDATE SET holder_run_id=excluded.holder_run_id, session_token=excluded.session_token, fencing_token=excluded.fencing_token, acquired_at=excluded.acquired_at, expires_at=excluded.expires_at
-        `).run(projectId, runId, sessionToken, fencingToken, acquiredAt, expiresAt);
-        db.exec('COMMIT');
-        return { acquired: true, lock: { projectId, holderRunId: runId, sessionToken, fencingToken, acquiredAt, expiresAt } };
-      } catch (error) {
-        try { db.exec('ROLLBACK'); } catch {}
-        throw error;
-      }
-    },
-
     acquireWorkspaceMutationLockV2({ workspaceId, projectId, runId, sessionToken, ttlMs = 60000 } = {}) {
       if (!workspaceId || !projectId || !runId || !sessionToken) throw new Error('workspace mutation lock requires workspaceId, projectId, runId, and sessionToken');
       const workspace = this.getProjectWorkspace(workspaceId);
@@ -3785,7 +3739,11 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
           db.exec('ROLLBACK');
           return { acquired: false, lock: current };
         }
-        const fencingToken = Number(current?.fencingToken || 0) + 1;
+        // Releasing a transient lock must not reset the workspace's fencing
+        // epoch. Keep its monotonic counter in the existing workspace binding.
+        const epoch = db.prepare('SELECT mutation_epoch AS epoch FROM project_workspaces WHERE workspace_id=?').get(workspaceId);
+        const fencingToken = Math.max(Number(epoch?.epoch || 0), Number(current?.fencingToken || 0)) + 1;
+        db.prepare('UPDATE project_workspaces SET mutation_epoch=? WHERE workspace_id=?').run(fencingToken, workspaceId);
         db.prepare(`INSERT INTO workspace_mutation_locks_v2(workspace_id, project_id, holder_run_id, session_token, fencing_token, acquired_at, expires_at)
           VALUES(?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(workspace_id) DO UPDATE SET holder_run_id=excluded.holder_run_id, session_token=excluded.session_token, fencing_token=excluded.fencing_token, acquired_at=excluded.acquired_at, expires_at=excluded.expires_at`)
@@ -3874,40 +3832,6 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         return { released: true, lock: current };
       });
       return release();
-    },
-
-    getWorkspaceMutationLock(projectId) {
-      const row = db.prepare(`SELECT project_id as projectId, holder_run_id as holderRunId, session_token as sessionToken, fencing_token as fencingToken, acquired_at as acquiredAt, expires_at as expiresAt FROM workspace_mutation_locks WHERE project_id=?`).get(projectId);
-      if (!row || Date.parse(row.expiresAt) <= Date.now()) return null;
-      return row;
-    },
-
-    releaseWorkspaceMutationLock({ projectId, runId, sessionToken } = {}) {
-      const result = db.prepare(`UPDATE workspace_mutation_locks SET expires_at=? WHERE project_id=? AND holder_run_id=? AND session_token=?`)
-        .run('1970-01-01T00:00:00.000Z', projectId, runId, sessionToken);
-      return Number(result.changes || 0) > 0;
-    },
-
-    renewWorkspaceMutationLock({ projectId, runId, sessionToken, fencingToken, ttlMs = 60000 } = {}) {
-      if (!projectId || !runId || !sessionToken || fencingToken === null || fencingToken === undefined) {
-        throw new Error('renewWorkspaceMutationLock requires projectId, runId, sessionToken, and fencingToken');
-      }
-      const expiresAt = new Date(Date.now() + ttlMs).toISOString();
-      db.exec('BEGIN IMMEDIATE');
-      try {
-        const current = db.prepare(`SELECT project_id as projectId, holder_run_id as holderRunId, session_token as sessionToken, fencing_token as fencingToken, acquired_at as acquiredAt, expires_at as expiresAt FROM workspace_mutation_locks WHERE project_id=?`).get(projectId);
-        if (!current || current.holderRunId !== runId || current.sessionToken !== sessionToken || current.fencingToken !== fencingToken) {
-          db.exec('ROLLBACK');
-          return { renewed: false, lock: current || null };
-        }
-        db.prepare(`UPDATE workspace_mutation_locks SET expires_at=? WHERE project_id=? AND holder_run_id=? AND session_token=? AND fencing_token=?`)
-          .run(expiresAt, projectId, runId, sessionToken, fencingToken);
-        db.exec('COMMIT');
-        return { renewed: true, lock: { ...current, expiresAt } };
-      } catch (error) {
-        try { db.exec('ROLLBACK'); } catch {}
-        throw error;
-      }
     },
 
     recordKnowledgeContextReceipt(runId, { stage, knowledgeRevision, digest, receiptJson }) {
@@ -4766,7 +4690,6 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       baseWorkspaceIdentity = null,
       verificationRefs = [],
       knowledgeObservationRefs = [],
-      reportDigest = null,
     }) {
       const run = this.getRun(runId);
       if (!run) throw new Error(`Run ${runId} not found`);
@@ -4791,13 +4714,13 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       });
       const attemptNumber = this.nextStepAttemptNumber(runId, stepId);
       const result = db.prepare(`
-        INSERT INTO run_step_attempts(attempt_id, run_id, step_id, attempt_number, binding_id, actor_session_id, capsule_id, capsule_digest, admission_id, route_decision_id, usage_receipt_id, parent_attempt_id, provenance_kind, plan_revision, mutation_revision, retry_reason, failure_category, report_digest, status, workspace_identity_start, summary, changed_paths_json, workspace_id, workspace_root_hash, base_workspace_identity, verification_refs_json, knowledge_observation_refs_json, started_at)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'started', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO run_step_attempts(attempt_id, run_id, step_id, attempt_number, binding_id, actor_session_id, capsule_id, capsule_digest, admission_id, route_decision_id, usage_receipt_id, parent_attempt_id, provenance_kind, plan_revision, mutation_revision, retry_reason, failure_category, status, workspace_identity_start, summary, changed_paths_json, workspace_id, workspace_root_hash, base_workspace_identity, verification_refs_json, knowledge_observation_refs_json, started_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'started', ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         provenance.attemptId, runId, stepId, attemptNumber, provenance.bindingId, hashSessionId(actorSessionId), provenance.capsuleId,
         provenance.capsuleDigest, provenance.admissionId, routeDecisionId, usageReceiptId, provenance.parentAttemptId,
         provenance.provenanceKind, provenance.planRevision, provenance.mutationRevision, provenance.retryReason,
-        provenance.failureCategory, reportDigest, workspaceIdentityStart, summary, JSON.stringify(changedPaths), workspaceId,
+        provenance.failureCategory, workspaceIdentityStart, summary, JSON.stringify(changedPaths), workspaceId,
         workspaceRootHash, baseWorkspaceIdentity, JSON.stringify(verificationRefs), JSON.stringify(knowledgeObservationRefs), now(),
       );
       db.prepare(`UPDATE run_steps SET attempt_count=attempt_count+1, updated_at=? WHERE run_id=? AND step_id=?`).run(now(), runId, stepId);
@@ -5075,8 +4998,10 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         mutationRevision: legacy || row.mutation_revision === null ? null : Number(row.mutation_revision),
         retryReason: row.retry_reason || null,
         failureCategory: row.failure_category || null,
-        reportDigest: row.report_digest || null,
+        reportKey: row.report_key || null,
+        reportPayloadDigest: row.report_payload_digest || null,
         reportResult: row.report_result_json ? safeJsonParse(row.report_result_json, null) : null,
+        reportCheckpoint: row.report_checkpoint_json ? safeJsonParse(row.report_checkpoint_json, null) : null,
         reviewClaimKey: row.review_claim_key || null,
         reviewClaimHolder: row.review_claim_holder || null,
         reviewClaimExpiresAt: row.review_claim_expires_at || null,
@@ -5109,9 +5034,9 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       return row ? this.getStepAttempt(row.id) : null;
     },
 
-    findStepAttemptByReportDigest(runId, reportDigest) {
-      if (!runId || !reportDigest) return null;
-      const row = db.prepare(`SELECT id FROM run_step_attempts WHERE run_id=? AND report_digest=? ORDER BY id DESC LIMIT 1`).get(runId, reportDigest);
+    findStepAttemptByReportKey(runId, reportKey) {
+      if (!runId || !reportKey) return null;
+      const row = db.prepare(`SELECT id FROM run_step_attempts WHERE run_id=? AND report_key=? LIMIT 1`).get(runId, reportKey);
       return row ? this.getStepAttempt(row.id) : null;
     },
 
@@ -5213,9 +5138,55 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       return db.prepare(`UPDATE run_step_attempts SET review_claim_key=NULL, review_claim_holder=NULL, review_claim_expires_at=NULL WHERE review_claim_key=? AND review_claim_holder=?${scope.length ? ` AND ${scope.join(' AND ')}` : ''}`).run(...values).changes === 1;
     },
 
-    bindStepAttemptReportDigest(attemptId, reportDigest) {
-      if (!attemptId || !reportDigest) return null;
-      db.prepare(`UPDATE run_step_attempts SET report_digest=? WHERE attempt_id=? AND (report_digest IS NULL OR report_digest=?)`).run(reportDigest, String(attemptId), reportDigest);
+    bindStepAttemptReportOperation(attemptId, { reportKey, reportPayloadDigest } = {}) {
+      if (!attemptId || !reportKey || !reportPayloadDigest) return null;
+      const current = this.getStepAttemptByAttemptId(attemptId);
+      if (!current) return null;
+      if (current.reportKey && current.reportKey !== reportKey) {
+        throw Object.assign(new Error('canonical report operation key changed'), {
+          code: 'REPORT_OPERATION_KEY_CONFLICT',
+          errorCode: 'REPORT_OPERATION_KEY_CONFLICT',
+        });
+      }
+      if (current.reportPayloadDigest && current.reportPayloadDigest !== reportPayloadDigest) {
+        throw Object.assign(new Error('canonical report payload changed for the same operation'), {
+          code: 'REPORT_OPERATION_PAYLOAD_CONFLICT',
+          errorCode: 'REPORT_OPERATION_PAYLOAD_CONFLICT',
+        });
+      }
+      try {
+        const updated = db.prepare(`
+          UPDATE run_step_attempts
+          SET report_key=COALESCE(report_key, ?),
+              report_payload_digest=COALESCE(report_payload_digest, ?)
+          WHERE attempt_id=?
+            AND (report_key IS NULL OR report_key=?)
+            AND (report_payload_digest IS NULL OR report_payload_digest=?)
+        `).run(reportKey, reportPayloadDigest, String(attemptId), reportKey, reportPayloadDigest);
+        if (updated.changes !== 1) {
+          throw Object.assign(new Error('canonical report operation changed concurrently'), {
+            code: 'REPORT_OPERATION_PAYLOAD_CONFLICT',
+            errorCode: 'REPORT_OPERATION_PAYLOAD_CONFLICT',
+          });
+        }
+      } catch (error) {
+        if (String(error?.message || '').includes('UNIQUE constraint failed')) {
+          throw Object.assign(new Error('canonical report operation key is already owned by another attempt'), {
+            code: 'REPORT_OPERATION_KEY_CONFLICT',
+            errorCode: 'REPORT_OPERATION_KEY_CONFLICT',
+          });
+        }
+        throw error;
+      }
+      return this.getStepAttemptByAttemptId(attemptId);
+    },
+
+    checkpointStepReport(attemptId, checkpoint) {
+      const serialized = JSON.stringify(checkpoint);
+      const changed = db.prepare(`UPDATE run_step_attempts SET report_checkpoint_json=?
+        WHERE attempt_id=? AND (report_checkpoint_json IS NULL OR report_checkpoint_json=?)`)
+        .run(serialized, String(attemptId), serialized);
+      if (changed.changes !== 1) throw Object.assign(new Error('report settlement checkpoint changed'), { code: 'REPORT_CHECKPOINT_CONFLICT' });
       return this.getStepAttemptByAttemptId(attemptId);
     },
 
@@ -5345,12 +5316,17 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       if (reviewerUsage?.bindingId && normalized.reviewerBindingId && reviewerUsage.bindingId !== normalized.reviewerBindingId) {
         throw new Error(`review receipt reviewer binding ${normalized.reviewerBindingId} does not match reviewer usage binding ${reviewerUsage.bindingId || '<missing>'}`);
       }
+      const subjectKey = reviewSubjectAdoptionEligible(normalized) ? reviewSubjectKey(normalized) : null;
+      const adopted = subjectKey
+        ? db.prepare(`SELECT receipt_json as receiptJson FROM review_receipts WHERE run_id=? AND review_subject_key=? LIMIT 1`).get(runId, subjectKey)
+        : null;
+      if (adopted) return safeJsonParse(adopted.receiptJson, normalized);
       db.prepare(`
-        INSERT INTO review_receipts(receipt_id, run_id, obligation_id, step_id, reviewer_binding_id, implementer_attempt_id, review_stage, verdict, finding_class, plan_revision, reviewer_usage_receipt_id, implementer_usage_receipt_id, reviewer_session_id, implementer_session_id, route_decision_id, model_class, resolved_model, enforcement_status, workspace_identity, mutation_revision, changed_paths_digest, evidence_digest, acceptance_coverage_json, findings_json, rationale, digest, receipt_json, created_by_version, migration_origin, created_at)
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(receipt_id) DO NOTHING
+        INSERT INTO review_receipts(receipt_id, run_id, obligation_id, review_subject_key, step_id, reviewer_binding_id, implementer_attempt_id, review_stage, verdict, finding_class, plan_revision, reviewer_usage_receipt_id, implementer_usage_receipt_id, reviewer_session_id, implementer_session_id, route_decision_id, model_class, resolved_model, enforcement_status, workspace_identity, mutation_revision, changed_paths_digest, evidence_digest, acceptance_coverage_json, findings_json, rationale, digest, receipt_json, created_by_version, migration_origin, created_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT DO NOTHING
       `).run(
-        normalized.receiptId, runId, normalized.obligationId, normalized.stepId, normalized.reviewerBindingId, normalized.implementerAttemptId, normalized.reviewStage, normalized.verdict,
+        normalized.receiptId, runId, normalized.obligationId, subjectKey, normalized.stepId, normalized.reviewerBindingId, normalized.implementerAttemptId, normalized.reviewStage, normalized.verdict,
         normalized.findingClass, normalized.planRevision,
         normalized.reviewer.usageReceiptId, normalized.implementer.usageReceiptId,
         normalized.reviewer.actorSessionId, normalized.implementer.actorSessionId,
@@ -5362,7 +5338,10 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         sanitizePersistentText(normalized.rationale), normalized.digest, persistentJson(normalized),
         normalized.createdByVersion, normalized.migrationOrigin, normalized.createdAt,
       );
-      return normalized;
+      const settled = subjectKey
+        ? db.prepare(`SELECT receipt_json as receiptJson FROM review_receipts WHERE run_id=? AND review_subject_key=? LIMIT 1`).get(runId, subjectKey)
+        : db.prepare(`SELECT receipt_json as receiptJson FROM review_receipts WHERE receipt_id=? LIMIT 1`).get(normalized.receiptId);
+      return settled ? safeJsonParse(settled.receiptJson, normalized) : normalized;
     },
 
     getReviewReceipt(receiptId, { runId = null } = {}) {
@@ -5918,28 +5897,6 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       return Date.parse(existing.expiresAt) > Date.now();
     },
 
-    recordAttempt(runId, { attemptNumber, state, status = 'started', finishedAt = null }) {
-      if (!this.getRun(runId)) throw new Error(`Run ${runId} not found`);
-      const result = db.prepare(`INSERT INTO attempts(run_id, attempt_number, state, started_at, finished_at, status) VALUES(?, ?, ?, ?, ?, ?)`).run(runId, attemptNumber, state, now(), finishedAt, status);
-      return db.prepare(`SELECT id, run_id as runId, attempt_number as attemptNumber, state, started_at as startedAt, finished_at as finishedAt, status FROM attempts WHERE id=?`).get(result.lastInsertRowid);
-    },
-
-    getAttempts(runId) {
-      return db.prepare(`SELECT id, run_id as runId, attempt_number as attemptNumber, state, started_at as startedAt, finished_at as finishedAt, status FROM attempts WHERE run_id=? ORDER BY id ASC`).all(runId);
-    },
-
-    // Next attempt number is derived from persisted rows, so retry counting
-    // survives process restarts without a caller-held counter.
-    nextAttemptNumber(runId) {
-      const row = db.prepare(`SELECT MAX(attempt_number) as maxAttempt FROM attempts WHERE run_id=?`).get(runId);
-      return (row?.maxAttempt || 0) + 1;
-    },
-
-    finishAttempt(attemptId, status = 'finished') {
-      db.prepare(`UPDATE attempts SET status=?, finished_at=? WHERE id=?`).run(status, now(), attemptId);
-      return db.prepare(`SELECT id, run_id as runId, attempt_number as attemptNumber, state, started_at as startedAt, finished_at as finishedAt, status FROM attempts WHERE id=?`).get(attemptId);
-    },
-
     getEvidenceLineage(runId) {
       return db.prepare(`SELECT id, run_id as runId, evidence_digest as evidenceDigest, parent_digest as parentDigest, created_at as createdAt FROM evidence_lineage WHERE run_id=? ORDER BY id ASC`).all(runId);
     },
@@ -6128,6 +6085,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
             : null;
           return {
             obligationId,
+            evidenceLevel: deriveEvidenceLevel(declared),
             requiredEvidenceClass,
             observedEvidenceClass: verification?.evidenceClass || null,
             executor: verification?.executor || null,
@@ -6139,6 +6097,29 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
 
       const staticPassed = requiredObligations.every((ob) => obligationSatisfied(ob));
       const dynamicPassed = dynamicObligationRows.every((row) => row.status === 'passed' || row.status === 'waived' || obligationSatisfied(row.obligationId));
+
+      // Work-level proof may settle one bounded Work Unit, but it cannot by
+      // itself close the Goal. Goal completion requires at least one current,
+      // non-waived Goal-level verification. Integration-level obligations stay
+      // mandatory when declared, but do not substitute for root Goal proof.
+      const integrationEvidenceObligations = obligationStatuses.filter((entry) => entry.evidenceLevel === 'integration');
+      const requiredIntegrationEvidence = integrationEvidenceObligations.filter((entry) => !entry.waived);
+      const integrationEvidenceCount = requiredIntegrationEvidence.filter((entry) => {
+        if (!entry.satisfied) return false;
+        const verification = latestByObligation.get(entry.obligationId);
+        return Boolean(verification && isVerificationValid(verification));
+      }).length;
+      const integrationEvidenceSatisfied = requiredIntegrationEvidence.length === 0
+        || integrationEvidenceCount === requiredIntegrationEvidence.length;
+      const goalEvidenceObligations = obligationStatuses.filter((entry) => entry.evidenceLevel === 'goal');
+      const requiredGoalEvidence = goalEvidenceObligations.filter((entry) => !entry.waived);
+      const goalEvidenceCount = requiredGoalEvidence.filter((entry) => {
+        if (!entry.satisfied) return false;
+        const verification = latestByObligation.get(entry.obligationId);
+        return Boolean(verification && isVerificationValid(verification));
+      }).length;
+      const goalEvidenceSatisfied = goalEvidenceObligations.length > 0
+        && (requiredGoalEvidence.length === 0 || goalEvidenceCount > 0);
 
       const coveredAcceptance = new Set([
         ...verifications.filter(isVerificationValid).flatMap((v) => normalizedCoverageFor(v) || []),
@@ -6195,8 +6176,8 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       // All completion gates except the CLOSE-state requirement. Callers use
       // this to decide whether it is SAFE to transition to CLOSE, so a run is
       // never closed into an unrecoverable blocked state.
-      const readyExceptClose = staticPassed && dynamicPassed && evidencePlansComplete && acceptanceCovered && releaseEvidencePresent && hardEvidenceSatisfied && lifecycleOutcomesSatisfied;
-      const gates = { isClosed, staticPassed, dynamicPassed, evidencePlansComplete, acceptanceCovered, releaseEvidencePresent, hardEvidenceSatisfied, lifecycleOutcomesSatisfied };
+      const readyExceptClose = staticPassed && dynamicPassed && integrationEvidenceSatisfied && goalEvidenceSatisfied && evidencePlansComplete && acceptanceCovered && releaseEvidencePresent && hardEvidenceSatisfied && lifecycleOutcomesSatisfied;
+      const gates = { isClosed, staticPassed, dynamicPassed, integrationEvidenceSatisfied, goalEvidenceSatisfied, evidencePlansComplete, acceptanceCovered, releaseEvidencePresent, hardEvidenceSatisfied, lifecycleOutcomesSatisfied };
       const unsatisfiedObligations = obligationStatuses.filter((entry) => !entry.satisfied);
 
       const accepted = isClosed && readyExceptClose;
@@ -6213,6 +6194,8 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         currentWorkspaceIdentity: run.currentWorkspaceIdentity,
         mutationRevision: run.mutationRevision,
         hardEvidence: { required: hardEvidenceRequired, count: hardEvidenceCount },
+        integrationEvidence: { required: integrationEvidenceObligations.length > 0, count: integrationEvidenceCount },
+        goalEvidence: { required: goalEvidenceObligations.length > 0, count: goalEvidenceCount },
         lifecycleOutcomes,
         evidenceDigest: releaseEvidence?.digest || verifications[0]?.evidenceDigest || `sha256:${'0'.repeat(64)}`,
         verifications,
@@ -6230,6 +6213,8 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         evidencePlansComplete,
         acceptanceCovered: [...coveredAcceptance],
         hardEvidence: { required: hardEvidenceRequired, count: hardEvidenceCount },
+        integrationEvidence: { required: integrationEvidenceObligations.length > 0, count: integrationEvidenceCount },
+        goalEvidence: { required: goalEvidenceObligations.length > 0, count: goalEvidenceCount },
         lifecycleOutcomes,
         obligationStatuses,
         unsatisfiedObligations,
@@ -6274,4 +6259,8 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       db.close();
     },
   };
+  } catch (error) {
+    try { db.close(); } catch { /* A guarded migration may already have closed it. */ }
+    throw error;
+  }
 };

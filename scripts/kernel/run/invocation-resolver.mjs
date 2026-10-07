@@ -59,7 +59,7 @@ const normalizeObjective = (value) => String(value || '')
   .trim()
   .replace(/\s+/g, ' ');
 
-const isSameGoalIdentity = ({ existingRun, contract, binding, requestedRunId }) => {
+const isSameGoalIdentity = ({ existingRun, contract, requestedRunId }) => {
   if (!existingRun) return false;
   if (requestedRunId && requestedRunId === existingRun.runId) return true;
   if (contract?.predecessorRunId && contract.predecessorRunId === existingRun.runId) return true;
@@ -113,14 +113,6 @@ export const resolveBoundInvocation = ({
     ? stateStore.getProjectWorkspace?.(workspaceId) || null
     : null;
   const effectiveWorktreeId = worktreeId || registeredWorkspace?.worktreeId || null;
-  const binding = canonicalSessionId
-    ? stateStore.getActiveOwnerBinding({
-        projectId,
-        sessionId: canonicalSessionId,
-        workspaceId,
-      })
-    : null;
-
   const assertRunBinding = (run) => {
     if (run.projectId !== projectId) {
       throw codedError('run_project_mismatch', 'relaunch-from-bound-project');
@@ -161,7 +153,7 @@ export const resolveBoundInvocation = ({
     && mutableRuns.every((run) => run.status === 'blocked')
     && (
       isNewTask
-      || (contract && !requestedRunId && !binding?.runId && mutableRuns.every((run) => !isSameGoalIdentity({ existingRun: run, contract, binding, requestedRunId })))
+      || (contract && !requestedRunId && mutableRuns.every((run) => !isSameGoalIdentity({ existingRun: run, contract, requestedRunId })))
     );
 
   if (shouldAbandonBlockedRuns) {
@@ -227,41 +219,17 @@ export const resolveBoundInvocation = ({
         ...(effectiveWorktreeId ? { worktreeId: effectiveWorktreeId } : { workspaceId }),
       })
     : null;
-  const boundRun = binding?.runId ? stateStore.getRun(binding.runId) : null;
-  const compatibleBoundRun = boundRun
-    ? (() => {
-        try { return assertRunBinding(boundRun); } catch { return null; }
-      })()
-    : null;
-  if (
-    requestedRunId
-    && !requestedRun
-    && compatibleBoundRun?.status === 'active'
-    && compatibleBoundRun.runId !== requestedRunId
-  ) {
-    throw codedError(
-      'worktree_run_conflict',
-      'resume-the-worktree-bound-run',
-      worktreeConflictDetails({
-        projectId,
-        worktreeId: effectiveWorktreeId,
-        mutableRuns,
-        worktreeLease,
-        reason: 'requested-run-is-not-session-holder',
-      }),
-    );
-  }
   // A new task is allowed to start only after the mutable owner is absent.
   // Historical blocked Runs without a lease are not mutable owners and must
   // not become an implicit resume/revise cursor for the new task, while a
   // completed or abandoned cursor still carries the normal successor lineage.
   const newTaskCursor = isNewTask
-    ? [latestRun, compatibleBoundRun].find((run) => run?.status === 'completed' || run?.status === 'abandoned') || null
-    : latestRun || compatibleBoundRun;
+    ? [latestRun].find((run) => run?.status === 'completed' || run?.status === 'abandoned') || null
+    : latestRun;
   let cursorRun = requestedRun || mutableRun || newTaskCursor;
 
-  if (cursorRun && !requestedRunId && !binding?.runId && contract) {
-    if (!isSameGoalIdentity({ existingRun: cursorRun, contract, binding, requestedRunId })) {
+  if (cursorRun && !requestedRunId && contract) {
+    if (!isSameGoalIdentity({ existingRun: cursorRun, contract, requestedRunId })) {
       if (cursorRun.status === 'blocked') {
         if (typeof stateStore.abandonRun === 'function' && worktreeLease?.holderRunId === cursorRun.runId) {
           stateStore.abandonRun(cursorRun.runId, { reason: 'superseded-and-archived-for-new-task' });
@@ -285,15 +253,13 @@ export const resolveBoundInvocation = ({
     };
   }
   assertRunBinding(cursorRun);
-  const cursorBinding = binding?.runId === cursorRun.runId ? binding : null;
-
   if (cursorRun.status === 'active' || cursorRun.status === 'blocked') {
     const revised = Boolean(contract && cursorRun.taskContract?.digest !== contract.digest);
     return {
       mode: revised ? 'revise' : 'resume',
       runId: cursorRun.runId,
       predecessorRunId: null,
-      binding: cursorBinding,
+      binding: null,
       reason: revised
         ? 'worktree-run-contract-changed'
         : cursorRun.status === 'blocked' ? 'blocked-worktree-run' : 'active-worktree-run',
@@ -308,7 +274,7 @@ export const resolveBoundInvocation = ({
         mode: 'finalization-retry',
         runId: cursorRun.runId,
         predecessorRunId: null,
-        binding: cursorBinding,
+        binding: null,
         reason: 'completed-run-finalization-incomplete',
         taskContract: contract,
         changeClass: contract ? classifyContractChange({ previous: cursorRun.taskContract, next: contract }) : null,
@@ -331,7 +297,7 @@ export const resolveBoundInvocation = ({
         mode: 'done',
         runId: cursorRun.runId,
         predecessorRunId: null,
-        binding: cursorBinding,
+        binding: null,
         reason: contract ? 'same-contract-already-complete' : 'no-new-task-contract',
         taskContract: contract,
         changeClass: null,
@@ -341,7 +307,7 @@ export const resolveBoundInvocation = ({
       mode: 'successor',
       runId: createOpaqueRunId(),
       predecessorRunId: cursorRun.runId,
-      binding: cursorBinding,
+      binding: null,
       reason: 'new-contract-after-completed-finalization',
       taskContract: contract,
       changeClass: classifyContractChange({ previous: cursorRun.taskContract, next: contract }),

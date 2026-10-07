@@ -1,3 +1,4 @@
+import { detectTestStagnation, recommendTestRouting } from './helpers/kernel-host-test-api.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -38,8 +39,8 @@ test('replan count is recorded and surfaces in measurement', async () => {
   const cp = await createKernelControlPlane({ runtimeHome, projectRoot });
   try {
     await cp.startRun({ runId: 'r-replan', objective: 'x' });
-    await cp.signalReplan('r-replan');
-    await cp.signalReplan('r-replan');
+    await cp.replanSteps('r-replan');
+    await cp.replanSteps('r-replan');
     const status = await cp.status('r-replan');
     assert.equal(status.measurement.replanCount.status, 'observed');
     assert.equal(status.measurement.replanCount.value, 2);
@@ -61,9 +62,9 @@ test('stagnation is detected end to end after repeated failing reports and routi
     for (let i = 0; i < 3; i += 1) {
       await cp.report('r-stag', { summary: `try ${i}`, verifications: [{ obligationId: 'default', commandRef: 'test:fail' }] });
     }
-    const stagnation = cp.detectStagnation('r-stag');
+    const stagnation = detectTestStagnation(cp, 'r-stag');
     assert.equal(stagnation.stagnant, true);
-    const routing = cp.recommendRouting('r-stag');
+    const routing = recommendTestRouting(cp, 'r-stag');
     assert.equal(routing.action, 'replan');
   } finally {
     await cp.close();

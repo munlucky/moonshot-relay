@@ -9,6 +9,30 @@ import { openKernelStateStore } from '../scripts/kernel/state-store.mjs';
 import { executeKernelGitCloseout } from '../scripts/kernel/git/closeout.mjs';
 import { runGit } from '../scripts/lib/git-safe.mjs';
 
+test('S-19: a failed push retries only missing delivery and preserves accepted commit against a real local remote', async () => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'kernel-push-retry-'));
+  const remoteRoot = await mkdtemp(path.join(os.tmpdir(), 'kernel-push-remote-'));
+  try {
+    assert.equal(runGit(repoRoot, ['init', '-b', 'main']).status, 0);
+    runGit(repoRoot, ['config', 'user.name', 'Kernel Test']);
+    runGit(repoRoot, ['config', 'user.email', 'kernel-test@example.invalid']);
+    await writeFile(path.join(repoRoot, 'fixture.txt'), 'accepted code\n');
+    runGit(repoRoot, ['add', 'fixture.txt']);
+    assert.equal(runGit(repoRoot, ['commit', '-m', 'accepted fixture']).status, 0);
+    const accepted = runGit(repoRoot, ['rev-parse', 'HEAD']).stdout.trim();
+    const request = { requested: true, mode: 'commit_and_push', approvalReceipt: 'fixture-local-remote-approval', existingCommitSha: accepted };
+    await assert.rejects(executeKernelGitCloseout({ runId: 'push-retry', projectId: 'fixture', repoRoot, gitCloseoutRequest: request, changedFiles: [] }), (error) => error.code === 'GIT_PUSH_FAILED');
+    assert.equal(runGit(repoRoot, ['rev-parse', 'HEAD']).stdout.trim(), accepted);
+    assert.equal(runGit(remoteRoot, ['init', '--bare']).status, 0);
+    assert.equal(runGit(repoRoot, ['remote', 'add', 'origin', remoteRoot]).status, 0);
+    const retried = await executeKernelGitCloseout({ runId: 'push-retry', projectId: 'fixture', repoRoot, gitCloseoutRequest: request, changedFiles: [] });
+    assert.equal(retried.status, 'completed');
+    assert.equal(retried.commitSha, accepted);
+    assert.equal(runGit(repoRoot, ['rev-parse', 'HEAD']).stdout.trim(), accepted);
+    assert.equal(runGit(remoteRoot, ['rev-parse', 'refs/heads/main']).stdout.trim(), accepted);
+  } finally { await rm(repoRoot, { recursive: true, force: true }); await rm(remoteRoot, { recursive: true, force: true }); }
+});
+
 test('executeKernelGitCloseout retry skips creating duplicate commit when existingCommitSha is provided', async () => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'kernel-git-retry-isolated-'));
   try {

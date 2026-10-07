@@ -1,3 +1,4 @@
+import { prepareTestHostTurn, decideTestModelRoute } from './helpers/kernel-host-test-api.mjs';
 // K1 §6.8: reviewers do not receive the implementer's capsule. They receive a
 // read-only capsule describing the subject and the evidence, and nothing about
 // how the implementation was reasoned about.
@@ -54,7 +55,7 @@ test('K1-8: the reviewer capsule is read-only and carries subject plus evidence 
     await writeFile(path.join(fixture.projectRoot, 'src', 'auth', 'service.mjs'), 'export const v = 1;\n');
 
     const implementerCapsule = await cp.buildCapsule('r-revcap');
-    const decision = await cp.decideModelRoute('r-revcap', { actionKind: 'implement', obligationId: 'unit-test' });
+    const decision = await decideTestModelRoute(cp, 'r-revcap', { actionKind: 'implement', obligationId: 'unit-test' });
     await cp.recordModelUsage('r-revcap', {
       decisionId: decision.decisionId,
       runId: 'r-revcap',
@@ -230,11 +231,11 @@ test('K1: the Host receives a reviewer capsule for a review turn and an implemen
     await cp.startRun({ runId: 'r-hostcap', objective: 'auth boundary', taskContract: { surfaces: ['security_boundary'], acceptance: ['works'] } });
     const capabilities = { surface: 'claude', supportsSubagentModel: true, supportsIndependentContext: true, supportsResolvedModelIdentity: true };
 
-    const implementTurn = await cp.hostNext('r-hostcap', { hostCapabilities: capabilities, actionContext: { actionKind: 'implement' } });
+    const implementTurn = await prepareTestHostTurn(cp, 'r-hostcap', { hostCapabilities: capabilities, actionContext: { actionKind: 'implement' } });
     assert.equal(implementTurn.executionCapsule.role, 'implementer');
     assert.equal(implementTurn.modelInput.action.capsuleId, implementTurn.executionCapsule.capsuleId);
 
-    const reviewTurn = await cp.hostNext('r-hostcap', { hostCapabilities: capabilities, actionContext: { actionKind: 'review_engineering', obligationId: 'security-review' } });
+    const reviewTurn = await prepareTestHostTurn(cp, 'r-hostcap', { hostCapabilities: capabilities, actionContext: { actionKind: 'review_engineering', obligationId: 'security-review' } });
     assert.equal(reviewTurn.executionCapsule.role, 'reviewer');
     assert.equal(reviewTurn.executionCapsule.permissions.filesystem, 'read_only');
     assert.equal(reviewTurn.hostDirective.executionCapsule.capsuleId, reviewTurn.executionCapsule.capsuleId);

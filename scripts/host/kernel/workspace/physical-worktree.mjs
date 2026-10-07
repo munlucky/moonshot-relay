@@ -2,11 +2,10 @@ import path from 'node:path';
 import { mkdir, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { runGit } from '../../lib/git-safe.mjs';
-import { stageSelectedPaths } from '../git/staging-policy.mjs';
-import { resolveKernelRuntimeHome } from '../runtime-home.mjs';
-import { registerWorkspace } from '../run/workspace-registration.mjs';
-import { observeWorkspaceIdentity } from '../run/workspace-identity.mjs';
+import { runGit } from '../../../lib/git-safe.mjs';
+import { stageSelectedPaths } from '../../../kernel/git/staging-policy.mjs';
+import { resolveKernelRuntimeHome } from '../../../kernel/runtime-home.mjs';
+import { observeWorkspaceIdentity } from '../../../kernel/run/workspace-identity.mjs';
 
 const shortExecutionToken = (value, length = 8) => createHash('sha256').update(String(value)).digest('hex').slice(0, length);
 
@@ -86,11 +85,6 @@ const addOrReuseWorktree = async ({ repoRoot, target, baseCommit, containmentRoo
     : addWorktree({ repoRoot, target, baseCommit, containmentRoot });
 };
 
-const workspaceRecord = ({ stateStore, projectId, workspaceRoot }) => {
-  if (!stateStore || !projectId) return null;
-  return registerWorkspace({ stateStore, projectId, workspaceRoot });
-};
-
 export const prepareStepWorktree = async ({
   repoRoot,
   baseCommit,
@@ -98,22 +92,18 @@ export const prepareStepWorktree = async ({
   stepId,
   projectId,
   runtimeHome = resolveKernelRuntimeHome(),
-  stateStore = null,
 } = {}) => {
   const root = executionRoot({ runtimeHome, projectId, runId });
   const target = path.join(root, `s-${shortExecutionToken(stepId, 4)}`);
   const prepared = await addOrReuseWorktree({ repoRoot, target, baseCommit, containmentRoot: root });
-  const workspace = workspaceRecord({ stateStore, projectId, workspaceRoot: target });
   const identity = observeWorkspaceIdentity({ projectRoot: target });
   return {
     kind: 'step',
     stepId,
     workspaceRoot: target,
     reused: prepared.reused,
-    workspaceId: workspace?.workspaceId || null,
     baseCommitSha: baseCommit,
     baseWorkspaceIdentity: identity.identity,
-    identity: workspace?.identity || null,
   };
 };
 
@@ -123,31 +113,27 @@ export const prepareIntegrationWorktree = async ({
   runId,
   projectId,
   runtimeHome = resolveKernelRuntimeHome(),
-  stateStore = null,
 } = {}) => {
   const root = executionRoot({ runtimeHome, projectId, runId });
   const target = path.join(root, 'integration');
   const prepared = await addOrReuseWorktree({ repoRoot, target, baseCommit, containmentRoot: root });
-  const workspace = workspaceRecord({ stateStore, projectId, workspaceRoot: target });
   const identity = observeWorkspaceIdentity({ projectRoot: target });
   return {
     kind: 'integration',
     reused: prepared.reused,
     workspaceRoot: target,
-    workspaceId: workspace?.workspaceId || null,
     baseCommitSha: baseCommit,
     baseWorkspaceIdentity: identity.identity,
-    identity: workspace?.identity || null,
   };
 };
 
-export const prepareExecutionWorkspaces = async ({ repoRoot, baseCommit, runId, projectId, steps = [], runtimeHome, stateStore } = {}) => {
-  const integration = await prepareIntegrationWorktree({ repoRoot, baseCommit, runId, projectId, runtimeHome, stateStore });
+export const prepareExecutionWorkspaces = async ({ repoRoot, baseCommit, runId, projectId, steps = [], runtimeHome } = {}) => {
+  const integration = await prepareIntegrationWorktree({ repoRoot, baseCommit, runId, projectId, runtimeHome });
   const createdPaths = integration.reused ? [] : [integration.workspaceRoot];
   const stepWorkspaces = [];
   try {
     for (const step of steps) {
-      const workspace = await prepareStepWorktree({ repoRoot, baseCommit, runId, stepId: step.stepId, projectId, runtimeHome, stateStore });
+      const workspace = await prepareStepWorktree({ repoRoot, baseCommit, runId, stepId: step.stepId, projectId, runtimeHome });
       stepWorkspaces.push(workspace);
       if (!workspace.reused) createdPaths.push(workspace.workspaceRoot);
     }

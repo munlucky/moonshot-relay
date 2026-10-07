@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import { writeRunLocator } from '../scripts/kernel/run/run-locator.mjs';
+import { buildRunLocatorRecord, writeRunLocator } from '../scripts/kernel/run/run-locator.mjs';
 
 const setup = async () => {
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'krn-loc-failsoft-home-'));
@@ -43,6 +43,34 @@ const cleanup = async ({ runtimeHome, projectRoot }) => {
   await rm(runtimeHome, { recursive: true, force: true });
   await rm(projectRoot, { recursive: true, force: true });
 };
+
+
+test('S-01/S-20: run id is the durable Task handle and does not depend on owner session identity', () => {
+  const record = buildRunLocatorRecord({
+    run: { runId: 'run-durable-task', status: 'active', projectId: 'project-durable' },
+    runtimeHome: path.join(os.tmpdir(), 'durable-runtime'),
+    projectIdentity: {
+      projectId: 'project-durable',
+      canonicalRoot: path.join(os.tmpdir(), 'durable-project'),
+      gitCommonDir: path.join(os.tmpdir(), 'durable-project', '.git'),
+    },
+  });
+  assert.equal(record.runId, 'run-durable-task');
+  assert.equal(record.taskHandle, record.runId);
+  assert.equal(Object.hasOwn(record, 'ownerSessionId'), false);
+  const restarted = buildRunLocatorRecord({
+    run: { runId: record.runId, status: 'active', projectId: record.projectId },
+    runtimeHome: record.runtimeHome,
+    projectIdentity: {
+      projectId: record.projectId,
+      canonicalRoot: record.canonicalRoot,
+      gitCommonDir: record.gitCommonDir,
+    },
+    previous: record,
+  });
+  assert.equal(restarted.taskHandle, record.taskHandle);
+  assert.equal(Object.hasOwn(restarted, 'ownerSessionId'), false);
+});
 
 test('Locator Wave 3: Stale locator does not block Turn 0 next with contract', async () => {
   const fixture = await setup();

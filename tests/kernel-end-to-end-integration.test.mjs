@@ -1,3 +1,4 @@
+import { decideTestModelRoute } from './helpers/kernel-host-test-api.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
@@ -112,7 +113,7 @@ test('End-to-End Kernel Product Execution Flow', async () => {
   // K0: nor by a judgment the report authored itself. The verdict must come
   // from a routed, independent reviewer session and be recorded as a Review
   // Receipt that the completion gate can re-check.
-  const implementDecision = await cp.decideModelRoute('e2e-run-1', { actionKind: 'implement', obligationId: 'unit-test' });
+  const implementDecision = await decideTestModelRoute(cp, 'e2e-run-1', { actionKind: 'implement', obligationId: 'unit-test' });
   await cp.recordModelUsage('e2e-run-1', {
     decisionId: implementDecision.decisionId,
     runId: 'e2e-run-1',
@@ -122,7 +123,7 @@ test('End-to-End Kernel Product Execution Flow', async () => {
     enforcementStatus: 'enforced',
     resultStatus: 'completed',
   });
-  const reviewDecision = await cp.decideModelRoute('e2e-run-1', { actionKind: 'review_engineering', obligationId: 'security-review' });
+  const reviewDecision = await decideTestModelRoute(cp, 'e2e-run-1', { actionKind: 'review_engineering', obligationId: 'security-review' });
   const reviewUsage = await cp.recordModelUsage('e2e-run-1', {
     decisionId: reviewDecision.decisionId,
     runId: 'e2e-run-1',

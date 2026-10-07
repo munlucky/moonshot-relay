@@ -4,7 +4,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { admitRoute, policyDigests, REJECTION_CODES, revalidateAdmissionAtDispatch } from '../scripts/kernel/routing/route-admission.mjs';
+import { admitRoute, policyDigests, REJECTION_CODES, revalidateAdmissionAtDispatch } from '../scripts/host/kernel/route-admission.mjs';
 import { currentHostPolicies, revalidateBeforeDispatch } from '../scripts/host/kernel/admission-revalidator.mjs';
 
 const HOST = { surface: 'claude', supportsSubagentModel: true, supportsSessionModelOverride: true, supportsIndependentContext: true, supportsResolvedModelIdentity: true };

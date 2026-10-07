@@ -1,3 +1,4 @@
+import { prepareTestHostTurn } from './helpers/kernel-host-test-api.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
@@ -29,7 +30,7 @@ const withRun = async (fn, { runId = 'r-host' } = {}) => {
 test('the model-visible next payload is unchanged and carries no routing vocabulary', async () => {
   await withRun(async (cp, runId) => {
     const plain = await cp.next(runId);
-    const host = await cp.hostNext(runId, { hostCapabilities: CLAUDE });
+    const host = await prepareTestHostTurn(cp, runId, { hostCapabilities: CLAUDE });
     // The Host turn adds exactly one field: the handle for the bounded context
     // the worker is being given (K1), which the model echoes back in `report`.
     // Everything else the model sees must be identical, and no routing
@@ -52,7 +53,7 @@ test('the model-visible next payload is unchanged and carries no routing vocabul
 
 test('hostNext derives the action kind from the action the model was handed', async () => {
   await withRun(async (cp, runId) => {
-    const host = await cp.hostNext(runId, { hostCapabilities: CLAUDE });
+    const host = await prepareTestHostTurn(cp, runId, { hostCapabilities: CLAUDE });
     assert.equal(host.modelInput.action.type, 'implement');
     assert.equal(host.hostDirective.modelRouteDecision.actionKind, 'implement');
     assert.equal(host.hostDirective.modelRouteDecision.modelClass, 'value_coding');
@@ -62,7 +63,7 @@ test('hostNext derives the action kind from the action the model was handed', as
     assert.deepEqual(host.hostDirective.executionAssignment.delegation, { mode: 'optional', requested: false });
     assert.equal(Object.hasOwn(host.hostDirective.executionAssignment, 'parentMayImplement'), false);
     assert.equal(Object.hasOwn(host.hostDirective.executionAssignment, 'nestedDelegationAllowed'), false);
-    const review = await cp.hostNext(runId, { hostCapabilities: CLAUDE, actionContext: { actionKind: 'review_engineering' } });
+    const review = await prepareTestHostTurn(cp, runId, { hostCapabilities: CLAUDE, actionContext: { actionKind: 'review_engineering' } });
     assert.equal(review.hostDirective.modelRouteDecision.modelClass, 'frontier_reasoning');
     assert.equal(review.hostDirective.modelRouteDecision.permissions, 'read_only');
   });
@@ -70,7 +71,7 @@ test('hostNext derives the action kind from the action the model was handed', as
 
 test('every directive is persisted before the Host is allowed to dispatch', async () => {
   await withRun(async (cp, runId) => {
-    const host = await cp.hostNext(runId, { hostCapabilities: CLAUDE });
+    const host = await prepareTestHostTurn(cp, runId, { hostCapabilities: CLAUDE });
     const summary = cp.modelRoutingSummary(runId);
     assert.equal(summary.totalTurns, 1);
     assert.equal(summary.valueTurns, 1);
@@ -163,7 +164,7 @@ test('a completed run refuses a late usage receipt unless it is declared late', 
   const cp = await createKernelControlPlane({ runtimeHome, projectRoot });
   try {
     await cp.startRun({ runId: 'r-late', objective: 'late receipt' });
-    const host = await cp.hostNext('r-late', { hostCapabilities: CLAUDE });
+    const host = await prepareTestHostTurn(cp, 'r-late', { hostCapabilities: CLAUDE });
     const receipt = {
       decisionId: host.hostDirective.modelRouteDecision.decisionId,
       runId: 'r-late',

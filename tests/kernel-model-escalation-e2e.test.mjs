@@ -1,3 +1,4 @@
+import { detectTestStagnation, decideTestModelRoute } from './helpers/kernel-host-test-api.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -31,9 +32,9 @@ const withProject = async (scripts, fn) => {
 test('T1 work implements on value coding while its engineering review runs on frontier', async () => {
   await withProject({}, async (cp) => {
     await cp.startRun({ runId: 'r-t1', objective: 'behaviour change', taskContract: { flags: { behaviorChanging: true } } });
-    const implement = await cp.decideModelRoute('r-t1', { actionKind: 'implement', obligationId: 'default' });
+    const implement = await decideTestModelRoute(cp, 'r-t1', { actionKind: 'implement', obligationId: 'default' });
     assert.equal(implement.modelClass, 'value_coding');
-    const review = await cp.decideModelRoute('r-t1', { actionKind: 'review_engineering' });
+    const review = await decideTestModelRoute(cp, 'r-t1', { actionKind: 'review_engineering' });
     assert.equal(review.modelClass, 'frontier_reasoning');
     assert.equal(review.permissions, 'read_only');
   });
@@ -43,11 +44,11 @@ test('T3 work still implements on value coding but demands an independent fronti
   await withProject({}, async (cp) => {
     await cp.startRun({ runId: 'r-t3', objective: 'auth change', taskContract: { surfaces: ['security_boundary'] } });
     assert.equal((await cp.getRun('r-t3')).proofTier, 'T3');
-    const implement = await cp.decideModelRoute('r-t3', { actionKind: 'implement', obligationId: 'default' });
+    const implement = await decideTestModelRoute(cp, 'r-t3', { actionKind: 'implement', obligationId: 'default' });
     assert.equal(implement.modelClass, 'value_coding');
     assert.equal(implement.independentContextRequired, false);
     for (const stage of ['review_contract', 'review_engineering']) {
-      const review = await cp.decideModelRoute('r-t3', { actionKind: stage });
+      const review = await decideTestModelRoute(cp, 'r-t3', { actionKind: stage });
       assert.equal(review.modelClass, 'frontier_reasoning', stage);
       assert.equal(review.independentContextRequired, true, stage);
     }
@@ -57,12 +58,12 @@ test('T3 work still implements on value coding but demands an independent fronti
 test('repeated failure on the same obligation escalates implementation to frontier', async () => {
   await withProject({ 'test:fail': 'node -e "process.exit(1)"' }, async (cp) => {
     await cp.startRun({ runId: 'r-retry', objective: 'stubborn bug' });
-    const first = await cp.decideModelRoute('r-retry', { actionKind: 'implement', obligationId: 'default' });
+    const first = await decideTestModelRoute(cp, 'r-retry', { actionKind: 'implement', obligationId: 'default' });
     assert.equal(first.modelClass, 'value_coding');
     for (let i = 0; i < 2; i += 1) {
       await cp.report('r-retry', { summary: `try ${i}`, verifications: [{ obligationId: 'default', commandRef: 'test:fail' }] });
     }
-    const escalated = await cp.decideModelRoute('r-retry', { actionKind: 'implement', obligationId: 'default' });
+    const escalated = await decideTestModelRoute(cp, 'r-retry', { actionKind: 'implement', obligationId: 'default' });
     assert.equal(escalated.modelClass, 'frontier_reasoning');
     assert.ok(escalated.reasonCodes.includes('RETRY_ESCALATION'));
   });
@@ -80,18 +81,18 @@ test('stagnation replans on frontier, and the new plan revision resumes value co
     for (let i = 0; i < 3; i += 1) {
       await cp.report('r-stag', { summary: `try ${i}`, verifications: [{ obligationId: 'default', commandRef: 'test:fail' }] });
     }
-    assert.equal(cp.detectStagnation('r-stag').stagnant, true);
-    const replan = await cp.decideModelRoute('r-stag', { actionKind: 'implement', obligationId: 'default' });
+    assert.equal(detectTestStagnation(cp, 'r-stag').stagnant, true);
+    const replan = await decideTestModelRoute(cp, 'r-stag', { actionKind: 'implement', obligationId: 'default' });
     assert.equal(replan.actionKind, 'replan');
     assert.equal(replan.modelClass, 'frontier_reasoning');
     assert.equal(replan.role, 'planner');
 
     // The frontier planner produces a new contract revision; implementation of
     // that revision is allowed to fall back to the value class (§5.4).
-    await cp.signalReplan('r-stag');
+    await cp.replanSteps('r-stag');
     const revised = await cp.reviseContract('r-stag', { ...(await cp.getRun('r-stag')).taskContract, constraints: ['keep the public API'] });
     assert.ok(Number(revised.contractRevision) > 1);
-    const resumed = await cp.decideModelRoute('r-stag', { actionKind: 'implement', obligationId: 'default', });
+    const resumed = await decideTestModelRoute(cp, 'r-stag', { actionKind: 'implement', obligationId: 'default', });
     assert.equal(resumed.actionKind, 'replan', 'stagnation still stands until new evidence arrives');
 
     const summary = cp.modelRoutingSummary('r-stag');
@@ -103,9 +104,9 @@ test('stagnation replans on frontier, and the new plan revision resumes value co
 test('an escalation reason is preserved on every recorded decision', async () => {
   await withProject({ 'test:fail': 'node -e "process.exit(1)"' }, async (cp) => {
     await cp.startRun({ runId: 'r-reason', objective: 'reasons' });
-    await cp.decideModelRoute('r-reason', { actionKind: 'implement', obligationId: 'default' });
-    await cp.decideModelRoute('r-reason', { actionKind: 'implement', obligationId: 'default', protectedObligationFailed: true });
-    await cp.decideModelRoute('r-reason', { actionKind: 'implement', obligationId: 'default', planInvalid: true });
+    await decideTestModelRoute(cp, 'r-reason', { actionKind: 'implement', obligationId: 'default' });
+    await decideTestModelRoute(cp, 'r-reason', { actionKind: 'implement', obligationId: 'default', protectedObligationFailed: true });
+    await decideTestModelRoute(cp, 'r-reason', { actionKind: 'implement', obligationId: 'default', planInvalid: true });
     const decisions = (await cp.getRun('r-reason')) && cp.modelRoutingSummary('r-reason');
     assert.equal(decisions.totalTurns, 3);
     assert.equal(decisions.escalatedTurns, 2);

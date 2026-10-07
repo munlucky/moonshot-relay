@@ -50,6 +50,19 @@ test('surface report inventories every tracked test and current budget passes', 
   assert.equal(JSON.parse(checked.stdout).status, 'pass');
 });
 
+test('surface inventory follows imported test suites and leaves unreachable suites unregistered', async () => {
+  const root = await fixture({
+    'package.json': JSON.stringify({ scripts: { test: 'node --test tests/entry.test.mjs' } }),
+    'tests/entry.test.mjs': "import './behavior.test.mjs';\n",
+    'tests/behavior.test.mjs': "import './entry.test.mjs';\n",
+    'tests/unreachable.test.mjs': "import test from 'node:test';\n",
+  });
+  const reported = run('report', '--source-root', root, '--json');
+  assert.equal(reported.status, 0, reported.stderr);
+  const report = JSON.parse(reported.stdout);
+  assert.deepEqual(report.testInventory.unregistered, ['tests/unreachable.test.mjs']);
+});
+
 test('surface check blocks a deterministic over-budget source', async () => {
   const reported = run('report', '--source-root', sourceRoot, '--json');
   assert.equal(reported.status, 0, reported.stderr);

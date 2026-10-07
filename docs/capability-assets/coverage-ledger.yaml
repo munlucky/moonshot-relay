@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "kind": "capability-asset-coverage-ledger",
   "baselineCommit": "9701a86d2225c938f13982a7e0f7f43a7f9bc10e",
-  "updatedAt": "2026-09-05",
+  "updatedAt": "2026-10-06",
   "summary": {
-    "totalMapped": 737,
-    "classifiedCapabilityCount": 712,
+    "totalMapped": 788,
+    "classifiedCapabilityCount": 763,
     "ignoredCount": 25,
     "unclassifiedCount": 0
   },
@@ -854,6 +854,26 @@
       "classification": "capability",
       "capability": "account-root-package-and-profile-adoption"
     },
+    "package/kernel/profiles/ade/.moon-relay-kernel-ade-context.md": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "package/kernel/profiles/ade/QWEN.md": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "package/kernel/profiles/ade/agents/kernel-reviewer.md": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "package/kernel/profiles/ade/agents/kernel-worker.md": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "package/kernel/profiles/ade/qwen-system-defaults.json": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
     "package/kernel/profiles/antigravity/GEMINI.md": {
       "classification": "capability",
       "capability": "account-root-package-and-profile-adoption"
@@ -1026,9 +1046,149 @@
       "classification": "capability",
       "capability": "task-contract-and-bounded-work"
     },
+    "scripts/host/kernel/adapters/ade.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/adapters/claude.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/adapters/codex.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/adapters/fable.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/adapters/gemini-cli.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/adapters/gemini.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/ade-context-policy.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/admission-revalidator.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
     "scripts/host/kernel/cache-replay.mjs": {
       "classification": "capability",
-      "capability": "context-prompt-cache-and-optimization"
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/claude-effort-policy.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/codex-actor-router.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/codex-agents-policy.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/codex-model-policy.mjs": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/host/kernel/codex-session-observer.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/common-model-policy.mjs": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/host/kernel/host-boundary.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/host-routing.mjs": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/host/kernel/host-turn.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/independent-subagent-review.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/lifecycle-bridge.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/model-capsule-view.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/model-registry.mjs": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/host/kernel/parallel-dispatcher.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/prompt-envelope.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/prompts/claude-opus-5.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/prompts/codex-gpt-5p6.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/prompts/common-execution.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/provider-prompt-policy.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/review-readiness.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/review-transport-resolver.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/route-admission.mjs": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/host/kernel/session-affinity.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/tool-manifest.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/turn-dispatcher.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/usage-receipt.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/workspace/physical-worktree.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
     },
     "scripts/kernel/artifact-paths.mjs": {
       "classification": "capability",
@@ -1037,10 +1197,6 @@
     "scripts/kernel/bridge/coordinator-surface.mjs": {
       "classification": "capability",
       "capability": "control-plane-state-authority"
-    },
-    "scripts/kernel/bridge/host-routing.mjs": {
-      "classification": "capability",
-      "capability": "model-routing-and-route-admission"
     },
     "scripts/kernel/bridge/mcp.mjs": {
       "classification": "capability",
@@ -1274,15 +1430,7 @@
       "classification": "capability",
       "capability": "control-plane-state-authority"
     },
-    "scripts/kernel/persistence/knowledge-repository.mjs": {
-      "classification": "capability",
-      "capability": "control-plane-state-authority"
-    },
-    "scripts/kernel/persistence/run-repository.mjs": {
-      "classification": "capability",
-      "capability": "control-plane-state-authority"
-    },
-    "scripts/kernel/persistence/verification-repository.mjs": {
+    "scripts/kernel/persistence/run-journal.mjs": {
       "classification": "capability",
       "capability": "control-plane-state-authority"
     },
@@ -1446,6 +1594,10 @@
       "classification": "capability",
       "capability": "model-routing-and-route-admission"
     },
+    "scripts/kernel/run/model-view.mjs": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
     "scripts/kernel/run/mutation-guard.mjs": {
       "classification": "capability",
       "capability": "mutation-fencing-and-git-closeout"
@@ -1461,6 +1613,10 @@
     "scripts/kernel/run/provider-mutation-adapter.mjs": {
       "classification": "capability",
       "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/run/report-identity.mjs": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
     },
     "scripts/kernel/run/required-host-capabilities.mjs": {
       "classification": "capability",
@@ -1547,6 +1703,10 @@
       "capability": "standalone-architecture-and-research-tools"
     },
     "scripts/kernel/standalone/catalog.mjs": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "scripts/kernel/standalone/codebase-master-guide.mjs": {
       "classification": "capability",
       "capability": "standalone-architecture-and-research-tools"
     },
@@ -1650,10 +1810,6 @@
       "classification": "capability",
       "capability": "control-plane-state-authority"
     },
-    "scripts/kernel/workspace/step-worktree-manager.mjs": {
-      "classification": "capability",
-      "capability": "provider-session-and-execution-boundary"
-    },
     "skills/adr-c4-writer/SKILL.md": {
       "classification": "ignored",
       "reason": "generic-development-skill"
@@ -1701,6 +1857,10 @@
     "skills/codebase-architecture-recovery/SKILL.md": {
       "classification": "ignored",
       "reason": "generic-development-skill"
+    },
+    "skills/codebase-master-guide/SKILL.md": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
     },
     "skills/codebase-understanding/SKILL.md": {
       "classification": "capability",
@@ -1986,9 +2146,21 @@
       "classification": "capability",
       "capability": "provider-session-and-execution-boundary"
     },
+    "tests/fixtures/kernel-real-usage/scenarios.json": {
+      "classification": "capability",
+      "capability": "retrospective-and-regression-learning"
+    },
+    "tests/helpers/kernel-host-test-api.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
     "tests/kernel-account-root-profile.test.mjs": {
       "classification": "capability",
       "capability": "account-root-package-and-profile-adoption"
+    },
+    "tests/kernel-ade-host.test.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
     },
     "tests/kernel-app-switching-parity.test.mjs": {
       "classification": "capability",
@@ -1999,6 +2171,10 @@
       "capability": "knowledge-ingestion-and-evidence-graph"
     },
     "tests/kernel-attempt-provenance.test.mjs": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "tests/kernel-authority-write-boundary.test.mjs": {
       "classification": "capability",
       "capability": "control-plane-state-authority"
     },
@@ -2138,6 +2314,10 @@
       "classification": "capability",
       "capability": "control-plane-state-authority"
     },
+    "tests/kernel-command-catalog.test.mjs": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
     "tests/kernel-command-shim.test.mjs": {
       "classification": "capability",
       "capability": "control-plane-state-authority"
@@ -2189,6 +2369,10 @@
     "tests/kernel-concurrent-commit.test.mjs": {
       "classification": "capability",
       "capability": "control-plane-state-authority"
+    },
+    "tests/kernel-conditional-planning-recovery.test.mjs": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
     },
     "tests/kernel-context-bootstrap-degraded.test.mjs": {
       "classification": "capability",
@@ -2369,6 +2553,10 @@
     "tests/kernel-host-model-dispatch.test.mjs": {
       "classification": "capability",
       "capability": "model-routing-and-route-admission"
+    },
+    "tests/kernel-host-semantic-conformance.test.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
     },
     "tests/kernel-independent-review-session.test.mjs": {
       "classification": "capability",
@@ -2578,6 +2766,10 @@
       "classification": "capability",
       "capability": "context-prompt-cache-and-optimization"
     },
+    "tests/kernel-operator-approval.test.mjs": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
     "tests/kernel-optimization-cycle.test.mjs": {
       "classification": "capability",
       "capability": "context-prompt-cache-and-optimization"
@@ -2729,6 +2921,14 @@
     "tests/kernel-real-goal-golden-e2e.test.mjs": {
       "classification": "capability",
       "capability": "provider-session-and-execution-boundary"
+    },
+    "tests/kernel-real-usage-regression.test.mjs": {
+      "classification": "capability",
+      "capability": "retrospective-and-regression-learning"
+    },
+    "tests/kernel-report-identity-migration.test.mjs": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
     },
     "tests/kernel-report-lease.test.mjs": {
       "classification": "capability",
@@ -2949,6 +3149,10 @@
     "tests/kernel-workspace-mutation-lock.test.mjs": {
       "classification": "capability",
       "capability": "control-plane-state-authority"
+    },
+    "tests/kernel-workspace-recovery.test.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
     },
     "tests/kernel-worktree-binding.test.mjs": {
       "classification": "capability",

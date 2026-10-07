@@ -39,7 +39,7 @@ Host/provider session, execution capsule, workspace와 transport의 경계를 �
 - **Role**: 스텝 단위 워크트리 생성 및 격리
 - **Product Relevance**: Agent Workflow: true, Knowledge Lifecycle: false
 - **Implementation References**:
-  - `scripts/kernel/workspace/step-worktree-manager.mjs` (current source)
+  - `scripts/host/kernel/workspace/physical-worktree.mjs` (current source)
   - `skills/workspace-isolation-gate/SKILL.md` (current source)
 - **Proof References**:
   - `host-loop`

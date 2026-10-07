@@ -4,8 +4,10 @@
 
 import { randomUUID } from 'node:crypto';
 import { buildUsageReceipt } from './usage-receipt.mjs';
+import { prepareHostTurn } from './host-turn.mjs';
 import { createModelRegistry } from './model-registry.mjs';
 import { currentHostPolicies, revalidateBeforeDispatch } from './admission-revalidator.mjs';
+import { admitRoute } from './route-admission.mjs';
 import { buildPromptEnvelope } from './prompt-envelope.mjs';
 import { buildToolManifest } from './tool-manifest.mjs';
 import { resolveSessionLineage } from './session-affinity.mjs';
@@ -17,6 +19,7 @@ import { buildModelCapsuleView, buildModelVisiblePromptView } from './model-caps
 import { dispatchKernelRun } from './parallel-dispatcher.mjs';
 import { isMutationBearingAction, isNativeDelegationRequested, isWorkUnitBounded } from './codex-actor-router.mjs';
 import { resolveEnforcementStrategy } from '../../kernel/run/model-route-contract.mjs';
+import { admitHostExecutionContract } from '../../kernel/run/host-execution-contract.mjs';
 import { observeWorkspaceIdentity } from '../../kernel/run/workspace-identity.mjs';
 import { attestReviewTransport, resolveReviewTransports } from './review-transport-resolver.mjs';
 import { normalizeHostBoundaryRequest } from './host-boundary.mjs';
@@ -670,16 +673,17 @@ export const prepareParallelWorkerDispatch = async ({
   const executionCapsule = hosted.executionCapsule || hostDirective.executionCapsule || null;
   const attemptId = hostDirective.attemptId || null;
   const policies = currentHostPolicies({ registry: modelRegistry, capabilities: hostCapabilities, toolPolicy, permissionPolicy });
-  const admission = await controlPlane.admitRoute(runId, {
+  const admission = await controlPlane.recordRouteAdmission(runId, admitRoute({
+    run: await controlPlane.getRun(runId),
+    step,
+    attemptId,
     decision,
     resolution,
     capabilities: hostCapabilities,
     capsule: executionCapsule,
-    attemptId,
-    step,
     policies,
     economics,
-  });
+  }));
   if (admission.decision === 'blocked' || admission.decision === 'redecision_required') {
     return { status: 'failed', failureCode: admission.rejectionCode || admission.decision, modelInput, hostDirective, decision, resolution, executionCapsule, admission };
   }
@@ -692,16 +696,17 @@ export const prepareParallelWorkerDispatch = async ({
     permissionPolicy,
   });
   if (!revalidated.valid) {
-    const drifted = await controlPlane.admitRoute(runId, {
+    const drifted = await controlPlane.recordRouteAdmission(runId, admitRoute({
+      run: await controlPlane.getRun(runId),
+      step,
+      attemptId,
       decision,
       resolution,
       capabilities: hostCapabilities,
       capsule: executionCapsule,
-      attemptId,
-      step,
       policies: currentHostPolicies({ registry: modelRegistry, capabilities: hostCapabilities, toolPolicy, permissionPolicy }),
       economics,
-    });
+    }));
     return { status: 'failed', failureCode: revalidated.rejectionCode || 'route-admission-drift', modelInput, hostDirective, decision, resolution, executionCapsule, admission: drifted, drift: revalidated.drift };
   }
 
@@ -910,7 +915,9 @@ const dispatchKernelTurnAttempt = async ({
     })
     ? evaluatedModelInput
     : null;
-  const turn = preloadedTurn || await controlPlane.hostNext(runId, {
+  const turn = preloadedTurn || await prepareHostTurn({
+    controlPlane,
+    runId,
     hostCapabilities,
     actionContext,
     modelInput: reusableModelInput,
@@ -937,6 +944,22 @@ const dispatchKernelTurnAttempt = async ({
   // them would hand completion authority to a provider.
   if (decision.executionClass === null || decision.modelClass === 'kernel') {
     return { schemaVersion: 1, runId, dispatched: false, reason: 'kernel-owned-action', modelInput, hostDirective, receipt: null };
+  }
+
+  const semanticAdmission = admitHostExecutionContract(hostDirective.executionContract, adapter.capabilities || {});
+  if (semanticAdmission.decision !== 'admitted') {
+    return {
+      schemaVersion: 1,
+      runId,
+      dispatched: false,
+      status: 'blocked',
+      reason: semanticAdmission.rejectionCode,
+      missingCapabilities: semanticAdmission.missingCapabilities,
+      modelInput,
+      hostDirective: candidateHostDirective,
+      executionCapsule: turn.executionCapsule || hostDirective.executionCapsule || null,
+      receipt: null,
+    };
   }
 
   const modelRegistry = registry || createModelRegistry({ surface: hostCapabilities.surface, runtimeHome, env, overrides });
@@ -980,15 +1003,16 @@ const dispatchKernelTurnAttempt = async ({
   // drifted admission stops the turn here — no worker runs, and the refusal is
   // persisted rather than looking like a turn that never happened.
   const policies = currentHostPolicies({ registry: modelRegistry, capabilities: hostCapabilities, toolPolicy, permissionPolicy });
-  const admission = await controlPlane.admitRoute(runId, {
+  const admission = await controlPlane.recordRouteAdmission(runId, admitRoute({
+    run: await controlPlane.getRun(runId),
+    attemptId,
     decision,
     resolution,
     capabilities: hostCapabilities,
     capsule: executionCapsule,
-    attemptId,
     policies,
     economics,
-  });
+  }));
   if (admission.decision === 'blocked' || admission.decision === 'redecision_required') {
     return { schemaVersion: 1, runId, dispatched: false, reason: admission.rejectionCode || admission.decision, admission, modelInput, hostDirective: candidateHostDirective, executionCapsule, receipt: null };
   }
@@ -1000,15 +1024,16 @@ const dispatchKernelTurnAttempt = async ({
     permissionPolicy,
   });
   if (!revalidated.valid) {
-    const drifted = await controlPlane.admitRoute(runId, {
+    const drifted = await controlPlane.recordRouteAdmission(runId, admitRoute({
+      run: await controlPlane.getRun(runId),
+      attemptId,
       decision,
       resolution,
       capabilities: adapter.capabilities,
       capsule: executionCapsule,
-      attemptId,
       policies: currentHostPolicies({ registry: modelRegistry, capabilities: adapter.capabilities, toolPolicy, permissionPolicy }),
       economics,
-    });
+    }));
     return { schemaVersion: 1, runId, dispatched: false, reason: revalidated.rejectionCode, admission: drifted, drift: revalidated.drift, modelInput, hostDirective: candidateHostDirective, executionCapsule, receipt: null };
   }
 
@@ -1585,7 +1610,7 @@ export const dispatchKernelTurn = async ({
   }
 
   const hostCapabilities = adapter.capabilities || {};
-  const turn = await controlPlane.hostNext(runId, { hostCapabilities, actionContext });
+  const turn = await prepareHostTurn({ controlPlane, runId, hostCapabilities, actionContext });
   if (turn.status === 'not_found') return turn;
   if (!turn.hostDirective?.modelRouteDecision) return turn;
   const decision = turn.hostDirective.modelRouteDecision;

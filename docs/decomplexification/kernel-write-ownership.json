@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "principle": "semantic authority owns transitions; state-store is the only SQLite persistence implementation",
+  "authorities": [
+    {
+      "id": "work",
+      "semanticOwner": "scripts/kernel/run/work-cursor.mjs",
+      "readModel": "scripts/kernel/run/work-authority.mjs",
+      "persistence": "scripts/kernel/state-store.mjs",
+      "tables": [
+        "runs",
+        "run_steps",
+        "run_step_attempts",
+        "project_workspaces",
+        "worktree_mutation_leases"
+      ],
+      "writeApis": [
+        "replaceRunPlanAtomic",
+        "recordStepAttempt",
+        "updateStepAttempt",
+        "bindStepAttemptReportOperation",
+        "finishStepAttemptWithReportResult",
+        "registerExecutionWorkspace",
+        "checkpointStepReport"
+      ],
+      "invariants": [
+        "cursor is derived from ledger state",
+        "completed Work history is monotonic across replans",
+        "report operation key and payload digest are distinct",
+        "physical worktree lifecycle is Host-owned",
+        "the canonical Attempt checkpoints verified report continuation before Work or cursor advances"
+      ]
+    },
+    {
+      "id": "trust",
+      "semanticOwner": "scripts/kernel/proof/trust-authority.mjs",
+      "persistence": "scripts/kernel/state-store.mjs",
+      "tables": [
+        "run_obligations",
+        "verifications",
+        "review_receipts",
+        "completion_decisions"
+      ],
+      "writeApis": [
+        "recordVerification",
+        "recordReviewReceipt",
+        "persistCompletionDecision"
+      ],
+      "invariants": [
+        "completion is derived from current valid evidence",
+        "review receipt is subject-bound",
+        "completion acceptance is not rewritten by Knowledge or Git housekeeping"
+      ]
+    },
+    {
+      "id": "knowledge",
+      "semanticOwner": "scripts/kernel/knowledge/knowledge-authority.mjs",
+      "persistence": "scripts/kernel/state-store.mjs",
+      "tables": [
+        "knowledge_candidates",
+        "knowledge_review_receipts",
+        "knowledge_commit_receipts",
+        "knowledge_approvals"
+      ],
+      "writeApis": [
+        "recordKnowledgeCandidate",
+        "recordKnowledgeReviewReceipt",
+        "recordKnowledgeCommitReceipt",
+        "recordKnowledgeApproval"
+      ],
+      "invariants": [
+        "Knowledge failure never rewrites Work history",
+        "required Knowledge may keep Task finalization incomplete after code acceptance"
+      ]
+    }
+  ],
+  "retiredOrForbiddenWriters": [
+    "findStepAttemptByReportDigest",
+    "bindStepAttemptReportDigest",
+    "scripts/kernel/workspace/step-worktree-manager.mjs"
+  ],
+  "obsoletePersistenceModules": [
+    "scripts/kernel/persistence/run-repository.mjs",
+    "scripts/kernel/persistence/verification-repository.mjs",
+    "scripts/kernel/persistence/knowledge-repository.mjs"
+  ]
+}

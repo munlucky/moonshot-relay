@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "baselineCommit": "aca19ec85cf06f40860e07ef5006b37b02f7a260",
+  "userChanges": [
+    {
+      "file": "bin/moon-relay-standalone.mjs",
+      "sha256": "19f812566fd7185da1ab2d8f4e6c5b4f74ce5a451cdf9aca257022bfce8d8c7b"
+    },
+    {
+      "file": "scripts/kernel/git/commit-message.mjs",
+      "sha256": "1e90f2176c6e541ab84e994bd3c8b94e9972557e803e0ba383634ba1a586d18f"
+    },
+    {
+      "file": "scripts/kernel/standalone/kernel-commit.mjs",
+      "sha256": "de04cb25216fc5ee3bced5f1a0b0051d1033d78d995e314fcc85b9eaf12468b9"
+    },
+    {
+      "file": "skills/kernel-commit/SKILL.md",
+      "sha256": "3275ef2a130baca78dcca95eabc7b3aa17ffb15781e47bfe2acdd31ec2868cb5"
+    },
+    {
+      "file": "skills/kernel-commit/references/commit-message.md",
+      "sha256": "5d5655babba13d058062116408604bd578e5b0461207576680ae6427c04381ec"
+    },
+    {
+      "file": "tests/kernel-commit-message.test.mjs",
+      "sha256": "aa943a22d4aed7642d70e991d7ffa7b604d1e84cb3c7d7eaf9555352fe6b549c"
+    }
+  ],
+  "focusedVerification": {
+    "command": "node --test tests/kernel-report-replay.test.mjs tests/kernel-run-step-replan.test.mjs tests/kernel-review-claim-recovery.test.mjs tests/kernel-model-capsule-view.test.mjs tests/kernel-state-authority.test.mjs",
+    "tests": 28,
+    "pass": 28,
+    "fail": 0,
+    "durationMs": 25790.6964,
+    "scope": "temporary-state and projection tests; no native Host E2E or full npm test claim"
+  },
+  "hosts": [
+    {
+      "id": "codex",
+      "adapter": "scripts/host/kernel/adapters/codex.mjs",
+      "state": "implemented",
+      "nativeGate": "N-01"
+    },
+    {
+      "id": "claude",
+      "adapter": "scripts/host/kernel/adapters/claude.mjs",
+      "state": "implemented",
+      "nativeGate": "N-02"
+    },
+    {
+      "id": "ade",
+      "adapter": "scripts/host/kernel/adapters/ade.mjs",
+      "state": "implemented",
+      "nativeGate": "N-03"
+    },
+    {
+      "id": "generic",
+      "adapter": "scripts/host/kernel/adapters/fable.mjs",
+      "state": "implemented",
+      "nativeGate": "N-03"
+    },
+    {
+      "id": "gemini",
+      "adapter": null,
+      "state": "not-implemented-at-baseline",
+      "nativeGate": "N-04"
+    }
+  ],
+  "canonicalAuthorities": [
+    "work",
+    "trust",
+    "knowledge"
+  ],
+  "constraints": {
+    "newCanonicalDb": 0,
+    "newWorkflowEngine": 0,
+    "newPluginFramework": 0,
+    "providerSpecificKernelExecutionPolicyBranches": 0,
+    "silentFallback": 0
+  },
+  "userChangesWorkspace": "C:/dev/moonshot-relay",
+  "userChangesVerification": {
+    "method": "Current original-workspace bytes compared with all six recorded start hashes",
+    "verifiedAt": "2026-10-07",
+    "matchedFiles": 6,
+    "refactorWorktreeUsesFixedCommit": true
+  },
+  "refactorProtectedFiles": [
+    {
+      "file": "bin/moon-relay-standalone.mjs",
+      "sha256Lf": "f7e382ccf8b2cfd07b75ef5dbedbdb23b079c4eafd174e8d5bec44e2abc83f3d",
+      "sourceCommit": "aca19ec85cf06f40860e07ef5006b37b02f7a260"
+    },
+    {
+      "file": "scripts/kernel/git/commit-message.mjs",
+      "sha256Lf": "ec230f6472634399a82c74ffa5ad8bd398d3ed3262571c9a5ff68bd182c9dda1",
+      "sourceCommit": "aca19ec85cf06f40860e07ef5006b37b02f7a260"
+    },
+    {
+      "file": "scripts/kernel/standalone/kernel-commit.mjs",
+      "sha256Lf": "b7c0f01402ea2cf0341e2cd9706243733212e2d03a220d4c489c2fd40e230f80",
+      "sourceCommit": "aca19ec85cf06f40860e07ef5006b37b02f7a260"
+    },
+    {
+      "file": "skills/kernel-commit/SKILL.md",
+      "sha256Lf": "7c8e46dffabda11856a8a66342c2d9e52d7399aa80909dc0155565654713b4c7",
+      "sourceCommit": "aca19ec85cf06f40860e07ef5006b37b02f7a260"
+    },
+    {
+      "file": "skills/kernel-commit/references/commit-message.md",
+      "sha256Lf": "bb6a35037acdfaa2faaacc7115597f5072f78a58aae379878cd418b12390723c",
+      "sourceCommit": "aca19ec85cf06f40860e07ef5006b37b02f7a260"
+    },
+    {
+      "file": "tests/kernel-commit-message.test.mjs",
+      "sha256Lf": "c40a34f0403e43e52286d8f6e7695e5cdcb0ace3f2a52593044d0a36e5f7e682",
+      "sourceCommit": "aca19ec85cf06f40860e07ef5006b37b02f7a260"
+    }
+  ]
+}

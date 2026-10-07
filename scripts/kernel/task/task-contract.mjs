@@ -76,6 +76,7 @@ export const normalizeEvidencePlan = (plan) => {
     method: plan.method ? String(plan.method) : null,
     commandRefs: [...new Set(commandRefs)],
     obligationId: plan.obligationId ? String(plan.obligationId) : null,
+    evidenceLevel: ['work', 'integration', 'goal'].includes(plan.evidenceLevel) ? plan.evidenceLevel : null,
     scope: asStringList(plan.scope),
     freshnessInputs: asStringList(plan.freshnessInputs),
     outcome: normalizeCompletionOutcome(plan.outcome) || outcomeForEvidenceMethod(plan.method),
@@ -227,7 +228,7 @@ const RISK_FLAGS = [
   'baselineRequired', 'acceptanceUnverifiable', 'objectiveNonGoalConflict', 'architectureBoundary',
   'irreversibleDecision', 'independentDeliverables', 'longLivedResume', 'safeParallelSplit',
   'testSurfaceAvailable', 'repeatedFailure', 'repeatedBlocker', 'rootCauseAmbiguous',
-  'frontend', 'visualBehavior', 'browserProof',
+  'frontend', 'visualBehavior', 'browserProof', 'knowledgeRequired',
 ];
 
 // The full contract the Kernel persists. Everything the model needs on resume
@@ -250,7 +251,9 @@ export const normalizeTaskContract = (input = {}, { objective, changedFileCount 
   const acceptance = assertEvidencePlans(contract.acceptance || contract.acceptanceCriteria || []);
   const flags = {};
   for (const flag of RISK_FLAGS) {
-    const value = contract[flag] === true || (contract.risk && typeof contract.risk === 'object' && contract.risk[flag] === true);
+    const value = contract[flag] === true
+      || (contract.flags && typeof contract.flags === 'object' && contract.flags[flag] === true)
+      || (contract.risk && typeof contract.risk === 'object' && contract.risk[flag] === true);
     if (value) flags[flag] = true;
   }
   const normalized = {

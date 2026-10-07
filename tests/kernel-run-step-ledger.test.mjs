@@ -32,18 +32,18 @@ const cleanup = async ({ runtimeHome, projectRoot }) => {
   await rm(projectRoot, { recursive: true, force: true });
 };
 
-// T2 so the run's required obligations are exactly the two the steps claim;
-// anything a decomposition leaves unclaimed lands on the last step by design.
+// Work evidence has separate obligation IDs. Mandatory T2 policy checks stay
+// Goal evidence and are settled only at the final boundary.
 export const COMPLEX_CONTRACT = {
   complex: true,
   riskTier: 'T2',
   acceptance: [
-    { acceptance: 'auth rejects expired tokens', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test:ok'], obligationId: 'unit-test' } },
-    { acceptance: 'the suite stays clean', evidencePlan: { class: 'hard', method: 'static-analysis', commandRefs: ['lint'], obligationId: 'static-analysis' } },
+    { acceptance: 'auth rejects expired tokens', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test:ok'], obligationId: 'auth-work' } },
+    { acceptance: 'the suite stays clean', evidencePlan: { class: 'hard', method: 'static-analysis', commandRefs: ['lint'], obligationId: 'tests-work' } },
   ],
   steps: [
-    { objective: 'Implement token expiry', allowedPaths: ['src/auth/**'], acceptanceIds: ['AC-1'], obligationIds: ['unit-test'] },
-    { objective: 'Cover it with a regression test', allowedPaths: ['tests/**'], acceptanceIds: ['AC-2'], obligationIds: ['static-analysis'] },
+    { objective: 'Implement token expiry', allowedPaths: ['src/auth/**'], acceptanceIds: ['AC-1'], obligationIds: ['auth-work'] },
+    { objective: 'Cover it with a regression test', allowedPaths: ['tests/**'], acceptanceIds: ['AC-2'], obligationIds: ['tests-work'] },
   ],
 };
 
@@ -124,10 +124,10 @@ test('K2-8/9: a passed step advances the cursor but only a full plan completes t
       summary: 'token expiry',
       stepId: first.stepId,
       changedPaths: ['src/auth/service.mjs'],
-      verifications: [{ obligationId: 'unit-test', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] }],
+      verifications: [{ obligationId: 'auth-work', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] }],
     });
     assert.equal(step1.step.state, 'passed');
-    assert.equal(step1.executed.filter((entry) => entry.obligationId === 'unit-test').length, 1, 'the first Work Unit records its focused proof');
+    assert.equal(step1.executed.filter((entry) => entry.obligationId === 'auth-work').length, 1, 'the first Work Unit records its focused proof');
     assert.notEqual(step1.status, 'completed', 'one passed step is not a completed run');
     assert.equal(cp.getRunSteps('r-cursor').find((step) => step.stepId === second.stepId).state, 'ready', 'the dependent step is unlocked');
     assert.equal(cp.getCurrentStep('r-cursor').stepId, second.stepId, 'the cursor advanced');
@@ -142,12 +142,12 @@ test('K2-8/9: a passed step advances the cursor but only a full plan completes t
       // evidence for every obligation. A step pass records that the unit of work
       // was done — it never exempts the run from proving itself at the end.
       verifications: [
-        { obligationId: 'static-analysis', commandRef: 'lint', acceptanceCoverage: ['AC-2'] },
-        { obligationId: 'unit-test', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] },
+        { obligationId: 'tests-work', commandRef: 'lint', acceptanceCoverage: ['AC-2'] },
+        { obligationId: 'auth-work', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] },
       ],
     });
     assert.equal(step2.step.state, 'passed');
-    assert.equal(step2.executed.filter((entry) => entry.obligationId === 'unit-test').length, 1, 'later mutation makes the earlier proof stale, so final coverage reruns it');
+    assert.equal(step2.executed.filter((entry) => entry.obligationId === 'auth-work').length, 1, 'later mutation makes the earlier proof stale, so final coverage reruns it');
     assert.equal(allStepsPassed(cp.getRunSteps('r-cursor'), 1), true);
     assert.equal(step2.status, 'completed');
   } finally {
@@ -175,7 +175,7 @@ test('verification boundary: non-final work runs focused proof and final work ru
       summary: 'first work unit',
       stepId: first.stepId,
       changedPaths: ['src/auth/service.mjs'],
-      verifications: [{ obligationId: 'unit-test', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] }],
+      verifications: [{ obligationId: 'auth-work', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] }],
     });
     assert.equal(step1.step.state, 'passed');
     assert.equal(step1.executed.some((entry) => entry.obligationId === 'goal-regression'), false, 'goal proof is deferred while work remains');
@@ -187,8 +187,8 @@ test('verification boundary: non-final work runs focused proof and final work ru
       stepId: second.stepId,
       changedPaths: ['tests/auth.test.mjs'],
       verifications: [
-        { obligationId: 'static-analysis', commandRef: 'lint', acceptanceCoverage: ['AC-2'] },
-        { obligationId: 'unit-test', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] },
+        { obligationId: 'tests-work', commandRef: 'lint', acceptanceCoverage: ['AC-2'] },
+        { obligationId: 'auth-work', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] },
       ],
     });
     assert.equal(step2.step.state, 'passed');
@@ -258,7 +258,7 @@ test('verification boundary: focused failure prevents final goal proof execution
       ...COMPLEX_CONTRACT,
       acceptance: [
         COMPLEX_CONTRACT.acceptance[0],
-        { acceptance: 'the suite stays clean', evidencePlan: { class: 'hard', method: 'static-analysis', commandRefs: ['lint:fail'], obligationId: 'static-analysis' } },
+        { acceptance: 'the suite stays clean', evidencePlan: { class: 'hard', method: 'static-analysis', commandRefs: ['lint:fail'], obligationId: 'tests-work' } },
       ],
       requiredVerifications: [{ obligationId: 'goal-regression', commandRef: 'test:ok', method: 'unit-test' }],
     };
@@ -272,7 +272,7 @@ test('verification boundary: focused failure prevents final goal proof execution
     await mutate(fixture, 'tests/auth.test.mjs', 1);
     const step2 = await cp.report('r-focused-failure', { summary: 'final', stepId: second.stepId, changedPaths: ['tests/auth.test.mjs'] });
     assert.equal(step2.step.state, 'failed');
-    assert.equal(step2.executed.some((entry) => entry.obligationId === 'static-analysis' && entry.status !== 'passed'), true);
+    assert.equal(step2.executed.some((entry) => entry.obligationId === 'tests-work' && entry.status !== 'passed'), true);
     assert.equal(step2.executed.filter((entry) => entry.obligationId === 'goal-regression').length, 0, 'goal proof never runs after focused proof failure');
   } finally {
     await cp.close();
@@ -312,12 +312,12 @@ test('verification boundary: failed final goal regression keeps the Work Unit pa
 });
 
 test('K2: the ledger only decomposes when the work actually calls for it', () => {
-  assert.equal(stepLedgerApplies({ contract: { taskClass: 'feature' }, route: { stages: ['FRAME', 'EXECUTE', 'PROVE', 'CLOSE'] } }).applies, false);
-  assert.equal(stepLedgerApplies({ contract: { taskClass: 'long-running' } }).applies, true);
-  assert.equal(stepLedgerApplies({ contract: { flags: { complex: true } } }).applies, true);
-  assert.equal(stepLedgerApplies({ contract: {}, filesChanged: 12 }).applies, true);
-  assert.equal(stepLedgerApplies({ contract: {}, route: { stages: ['FRAME', 'EXECUTE', 'PROVE', 'CLOSE'] } }).applies, false);
-  assert.equal(stepLedgerApplies({ contract: {}, safeParallelSplit: true }).applies, false);
+  assert.equal(stepLedgerApplies({ contract: { taskClass: 'feature' } }).applies, false);
+  assert.equal(stepLedgerApplies({ contract: { taskClass: 'long-running' } }).applies, false);
+  assert.equal(stepLedgerApplies({ contract: { flags: { complex: true } } }).applies, false);
+  assert.equal(stepLedgerApplies({ contract: { filesChanged: 12 } }).applies, false);
+  assert.equal(stepLedgerApplies({ contract: { flags: { safeParallelSplit: true } } }).applies, false);
+  assert.equal(stepLedgerApplies({ contract: { steps: [{ objective: 'bounded A' }] } }).applies, true);
 });
 
 test('K2: a step is only complete with current-revision evidence for what it owns', () => {

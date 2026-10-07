@@ -350,11 +350,15 @@ test('B9 keeps the Control Plane coordinator surface to next/report', async () =
   assert.deepEqual(calls, ['next', 'report']);
 });
 
-test('B9 routes model policy behind the Host bridge and keeps prompt vocabulary work-facing', () => {
+test('B9 keeps route policy in Host orchestration and keeps prompt vocabulary work-facing', () => {
   const controlPlane = readFileSync(path.join(root, 'scripts/kernel/control-plane.mjs'), 'utf8');
-  assert.match(controlPlane, /createHostRoutingBridge/u);
+  const hostTurn = readFileSync(path.join(root, 'scripts/host/kernel/host-turn.mjs'), 'utf8');
+  const hostRouting = readFileSync(path.join(root, 'scripts/host/kernel/host-routing.mjs'), 'utf8');
+  assert.doesNotMatch(controlPlane, /createHostRoutingBridge|host-routing\.mjs/u);
   assert.doesNotMatch(controlPlane, /from ['"]\.\/run\/model-routing\.mjs['"]/u);
   assert.doesNotMatch(controlPlane, /\b(resolveModelRoute|recommendModelRouting)\s*\(/u);
+  assert.match(hostTurn, /createHostRoutingBridge/u);
+  assert.match(hostRouting, /from ['"]\.\.\/\.\.\/kernel\/run\/model-routing\.mjs['"]/u);
 
   const view = buildModelVisiblePromptView({
     modelInput: {

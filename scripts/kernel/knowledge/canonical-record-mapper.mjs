@@ -33,6 +33,8 @@ export function mapCandidateToCanonicalRecord(candidate, { runId, projectId, rev
     const verification = candidate.verification && typeof candidate.verification === 'object' ? candidate.verification : {};
     record.verification = {
       commandRefs: [...new Set([...(Array.isArray(verification.commandRefs) ? verification.commandRefs : []), ...(verification.commandRef ? [verification.commandRef] : [])].map(String).filter(Boolean))],
+      method: verification.method ? String(verification.method) : null,
+      evidenceLevel: ['work', 'integration', 'goal'].includes(verification.evidenceLevel) ? verification.evidenceLevel : null,
       receiptContractRef: verification.receiptContractRef ? String(verification.receiptContractRef) : null,
       freshnessInputs: [...new Set((Array.isArray(verification.freshnessInputs) ? verification.freshnessInputs : []).map(String).filter(Boolean))],
     };

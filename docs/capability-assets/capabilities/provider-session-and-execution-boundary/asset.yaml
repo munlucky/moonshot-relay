@@ -112,7 +112,7 @@
         "scripts/kernel/workspace/step-worktree-manager.mjs"
       ],
       "generation": "E8-current",
-      "notes": "현재 Host/provider execution boundary와 capsule."
+      "notes": "Immutable E8 implementation paths. Current physical worktree owner is recorded in subcapability implementationRefs."
     },
     "historical": [
       {
@@ -318,7 +318,7 @@
       },
       "implementationRefs": [
         {
-          "path": "scripts/kernel/workspace/step-worktree-manager.mjs",
+          "path": "scripts/host/kernel/workspace/physical-worktree.mjs",
           "commit": null
         },
         {

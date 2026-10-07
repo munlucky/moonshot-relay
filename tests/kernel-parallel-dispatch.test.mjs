@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { runGit } from '../scripts/lib/git-safe.mjs';
 import { observeWorkspaceIdentity } from '../scripts/kernel/run/workspace-identity.mjs';
-import { cleanupExecutionWorkspaces, executionRoot } from '../scripts/kernel/workspace/step-worktree-manager.mjs';
+import { cleanupExecutionWorkspaces, executionRoot } from '../scripts/host/kernel/workspace/physical-worktree.mjs';
 import { dispatchKernelParallel, dispatchKernelStep } from '../scripts/host/kernel/parallel-dispatcher.mjs';
 import { createClaudeAdapter } from '../scripts/host/kernel/adapters/claude.mjs';
 import { createKernelControlPlane } from '../scripts/kernel/control-plane.mjs';
@@ -63,6 +63,10 @@ const makeControlPlane = ({ fixture, failedStepId = null, failMaterialization = 
     getExecutableSteps: async () => ({ mode: 'parallel', steps }),
     getRun: () => run,
     discoverProjectCommands: () => [{ commandRef: 'test:ok' }],
+    registerExecutionWorkspace: (_runId, workspaceRoot) => ({
+      workspaceId: `workspace-${path.basename(workspaceRoot)}`,
+      identity: observeWorkspaceIdentity({ projectRoot: workspaceRoot }).identity,
+    }),
     bindStepAttempt: async (_runId, step) => ({ id: step, attemptId: `attempt-${step}`, bindingId: `binding-${step}` }),
     hostNext: async (_runId, { actionContext }) => {
       const stepId = actionContext.stepId;
@@ -174,6 +178,7 @@ const runDispatch = async ({ failedStepId = null, failMaterialization = false, f
       projectRoot: fixture.projectRoot,
       runtimeHome: fixture.runtimeHome,
       dispatchStep: controlPlane.dispatchStep,
+      prepareHost: async ({ controlPlane: cp, runId, actionContext }) => cp.hostNext(runId, { actionContext }),
       executeIntegrationVerification: async ({ workspaceRoot }) => {
         if (verificationAddsExtraPath) {
           const extraPath = path.join(workspaceRoot, 'src', 'alpha', 'verification-extra.txt');
@@ -230,6 +235,7 @@ test('parallel default worker dispatch keeps its Host envelope out of the provid
       workspace,
       adapter,
       hostCapabilities: capabilities,
+      prepareHost: async ({ controlPlane: cp, runId, actionContext }) => cp.hostNext(runId, { actionContext }),
       prepareDispatch: async ({ hosted }) => ({
         ...hosted,
         resolution: { model: 'fixture-model', effort: 'high' },

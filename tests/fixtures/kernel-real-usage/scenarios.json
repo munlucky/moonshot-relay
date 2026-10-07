@@ -1,0 +1,692 @@
+{
+  "schemaVersion": 1,
+  "sourceEvidence": {
+    "scope": {
+      "roots": [
+        "C:/Users/moon/.codex/sessions/2026/09",
+        "C:/Users/moon/.codex/sessions/2026/10"
+      ],
+      "explicitHistoricalFile": "C:/Users/moon/.codex/sessions/2026/08/20/rollout-2026-08-20T23-40-54-01a01f9e-28e0-7fc2-bc7b-87116af19a80.jsonl",
+      "excludesCurrentChat": true,
+      "method": "JSONL response-item call/output pairing. Pattern hits are observations, not verified defects. No transcript copied."
+    },
+    "inventoryCount": 226,
+    "candidateCallCount": 363,
+    "sampleCount": 177,
+    "compactedRecordCount": 234
+  },
+  "scenarioCount": 20,
+  "scenarios": [
+    {
+      "scenarioId": "S-01",
+      "name": "session-change-resume",
+      "classification": "design-requirement",
+      "source": {
+        "sessionId": null,
+        "runId": null,
+        "fileSha256": null,
+        "callLine": null,
+        "resultLine": null
+      },
+      "observedVersion": {
+        "commit": null,
+        "runtime": null
+      },
+      "observedOutcome": null,
+      "latestRecordedDisposition": "baseline-contract",
+      "expectedContract": "검증된 Task handle 또는 binding으로 같은 Task를 복구하고 multi-active는 ambiguous로 반환한다.",
+      "fixture": "Mapped behavioral case injects the fault and asserts expected state, rejection, or preserved data; no transcript replay.",
+      "ownerWorkUnit": "W-09",
+      "regressionTests": [
+        "kernel-session-run-lifecycle.test.mjs",
+        "kernel-run-locator-fail-soft.test.mjs"
+      ],
+      "behavioralCases": [
+        {
+          "file": "kernel-run-locator-fail-soft.test.mjs",
+          "name": "S-01/S-20: run id is the durable Task handle and does not depend on owner session identity"
+        },
+        {
+          "file": "kernel-session-run-lifecycle.test.mjs",
+          "name": "contract-first invocation resolver deterministically selects every lifecycle mode"
+        }
+      ]
+    },
+    {
+      "scenarioId": "S-02",
+      "name": "context-compaction",
+      "classification": "environment",
+      "source": {
+        "sessionId": "01a07c3e-c84b-7670-bf86-d040e03a30aa",
+        "runId": null,
+        "fileSha256": "8135f6840c1defaad141f7345fccc93bb396f7815706d067ce51801487d6b1dc",
+        "callLine": 724,
+        "resultLine": null
+      },
+      "observedVersion": {
+        "commit": null,
+        "runtime": "unknown"
+      },
+      "observedOutcome": "historical-condition-observed",
+      "latestRecordedDisposition": "observed-historical-condition",
+      "expectedContract": "context 손실이 durable Work Ledger를 변경하지 않는다.",
+      "fixture": "Mapped behavioral case injects the fault and asserts expected state, rejection, or preserved data; no transcript replay.",
+      "ownerWorkUnit": "W-09",
+      "regressionTests": [
+        "kernel-real-goal-golden-e2e.test.mjs"
+      ],
+      "behavioralCases": [
+        {
+          "file": "kernel-real-goal-golden-e2e.test.mjs",
+          "name": "Golden E2E: multi-step plan preserved, step 1 continues to step 2, and goal reaches completion"
+        }
+      ]
+    },
+    {
+      "scenarioId": "S-03",
+      "name": "duplicate-report",
+      "classification": "design-requirement",
+      "source": {
+        "sessionId": null,
+        "runId": null,
+        "fileSha256": null,
+        "callLine": null,
+        "resultLine": null
+      },
+      "observedVersion": {
+        "commit": null,
+        "runtime": null
+      },
+      "observedOutcome": null,
+      "latestRecordedDisposition": "baseline-contract",
+      "expectedContract": "같은 operation key와 같은 payload는 저장된 응답을 반환하고 다른 payload는 immutable conflict로 거부한다.",
+      "fixture": "Mapped behavioral case injects the fault and asserts expected state, rejection, or preserved data; no transcript replay.",
+      "ownerWorkUnit": "W-07",
+      "regressionTests": [
+        "kernel-report-replay.test.mjs"
+      ],
+      "behavioralCases": [
+        {
+          "file": "kernel-report-replay.test.mjs",
+          "name": "pre-bound Host Step Attempt owns durable report replay across restart"
+        },
+        {
+          "file": "kernel-report-replay.test.mjs",
+          "name": "same report operation rejects a different payload without replaying side effects"
+        },
+        {
+          "file": "kernel-report-replay.test.mjs",
+          "name": "same direct payload after a workspace repair creates a fresh Attempt and reruns proof"
+        }
+      ]
+    },
+    {
+      "scenarioId": "S-04",
+      "name": "report-crash-window",
+      "classification": "design-requirement",
+      "source": {
+        "sessionId": null,
+        "runId": null,
+        "fileSha256": null,
+        "callLine": null,
+        "resultLine": null
+      },
+      "observedVersion": {
+        "commit": null,
+        "runtime": null
+      },
+      "observedOutcome": null,
+      "latestRecordedDisposition": "baseline-contract",
+      "expectedContract": "commit 전후 crash를 구분하며 settlement된 report의 proof/review/Git 부수 효과를 재실행하지 않는다.",
+      "fixture": "Mapped behavioral case injects the fault and asserts expected state, rejection, or preserved data; no transcript replay.",
+      "ownerWorkUnit": "W-07",
+      "regressionTests": [
+        "kernel-report-replay.test.mjs"
+      ],
+      "behavioralCases": [
+        {
+          "file": "kernel-report-replay.test.mjs",
+          "name": "pre-bound Host Step Attempt owns durable report replay across restart"
+        },
+        {
+          "file": "kernel-report-replay.test.mjs",
+          "name": "report recovery finishes the same operation after finalization before result persistence"
+        },
+        {
+          "file": "kernel-report-replay.test.mjs",
+          "name": "Git report checkpoint reuses a completed closeout after process restart and rejects external drift"
+        },
+        {
+          "file": "kernel-report-replay.test.mjs",
+          "name": "Git report checkpoint resumes after commit creation without another commit or proof"
+        }
+      ]
+    },
+    {
+      "scenarioId": "S-05",
+      "name": "legacy-canonical-attempt-conflict",
+      "classification": "design-requirement",
+      "source": {
+        "sessionId": null,
+        "runId": null,
+        "fileSha256": null,
+        "callLine": null,
+        "resultLine": null
+      },
+      "observedVersion": {
+        "commit": null,
+        "runtime": null
+      },
+      "observedOutcome": null,
+      "latestRecordedDisposition": "baseline-contract",
+      "expectedContract": "migration 후 하나의 canonical attempt만 사용하고 모호한 identity는 typed repair로 반환한다.",
+      "fixture": "Mapped behavioral case injects the fault and asserts expected state, rejection, or preserved data; no transcript replay.",
+      "ownerWorkUnit": "W-05",
+      "regressionTests": [
+        "kernel-report-identity-migration.test.mjs"
+      ],
+      "behavioralCases": [
+        {
+          "file": "kernel-report-identity-migration.test.mjs",
+          "name": "W-05: terminal legacy report identity migrates to explicit legacy key and preserves durable response"
+        },
+        {
+          "file": "kernel-report-identity-migration.test.mjs",
+          "name": "W-05: report identity data migration rolls back atomically when the new uniqueness invariant cannot be installed"
+        }
+      ]
+    },
+    {
+      "scenarioId": "S-06",
+      "name": "worktree-mismatch",
+      "classification": "expected-guard",
+      "source": {
+        "sessionId": "01a061bc-fa07-7083-a782-38ac2b023fc6",
+        "runId": null,
+        "fileSha256": "11de0b40d60c83aed172ed2476d4dc9604c9109aac703fa2ff9316edc96ad876",
+        "callLine": 3016,
+        "resultLine": null
+      },
+      "observedVersion": {
+        "commit": null,
+        "runtime": "unknown"
+      },
+      "observedOutcome": "historical-condition-observed",
+      "latestRecordedDisposition": "observed-historical-condition",
+      "expectedContract": "잘못된 workspace/source/scope의 mutation을 실행 전에 차단하고 안전한 재검증만 허용한다.",
+      "fixture": "Mapped behavioral case injects the fault and asserts expected state, rejection, or preserved data; no transcript replay.",
+      "ownerWorkUnit": "W-08",
+      "regressionTests": [
+        "kernel-worktree-binding.test.mjs",
+        "kernel-mutation-guard.test.mjs"
+      ],
+      "behavioralCases": [
+        {
+          "file": "kernel-mutation-guard.test.mjs",
+          "name": "host-issued capsule and workspace fencing enforce mutation paths"
+        }
+      ]
+    },
+    {
+      "scenarioId": "S-07",
+      "name": "codex-worktree-recreated",
+      "classification": "design-requirement",
+      "source": {
+        "sessionId": null,
+        "runId": null,
+        "fileSha256": null,
+        "callLine": null,
+        "resultLine": null
+      },
+      "observedVersion": {
+        "commit": null,
+        "runtime": null
+      },
+      "observedOutcome": null,
+      "latestRecordedDisposition": "baseline-contract",
+      "expectedContract": "logical workspace authority와 사용자 diff/index/untracked 상태를 보존하고 새 fencing epoch로 재연결한다.",
+      "fixture": "Mapped behavioral case injects the fault and asserts expected state, rejection, or preserved data; no transcript replay.",
+      "ownerWorkUnit": "W-08",
+      "regressionTests": [
+        "kernel-worktree-binding.test.mjs"
+      ],
+      "behavioralCases": [
+        {
+          "file": "kernel-worktree-binding.test.mjs",
+          "name": "S-07: recreated worktree metadata preserves user index, diff, untracked bytes and fences the old session"
+        }
+      ]
+    },
+    {
+      "scenarioId": "S-08",
+      "name": "parallel-session-conflict",
+      "classification": "expected-guard",
+      "source": {
+        "sessionId": "01a05af8-33cd-7242-867b-28b0880f09f9",
+        "runId": null,
+        "fileSha256": "c50d1084ad451280b05e193f8ea34be195905fb54f507f01810b70ef97c04bca",
+        "callLine": 1083,
+        "resultLine": null
+      },
+      "observedVersion": {
+        "commit": null,
+        "runtime": "unknown"
+      },
+      "observedOutcome": "historical-condition-observed",
+      "latestRecordedDisposition": "observed-historical-condition",
+      "expectedContract": "dependency/scope/lease 기반 admission을 적용하고 stale worker를 차단하며 안전한 순차 대안을 허용한다.",
+      "fixture": "Mapped behavioral case injects the fault and asserts expected state, rejection, or preserved data; no transcript replay.",
+      "ownerWorkUnit": "W-08",
+      "regressionTests": [
+        "kernel-workspace-mutation-lock.test.mjs",
+        "kernel-parallel-fencing.test.mjs"
+      ],
+      "behavioralCases": [
+        {
+          "file": "kernel-workspace-mutation-lock.test.mjs",
+          "name": "workspace mutation locks allow different worktrees and fence the same checkout"
+        },
+        {
+          "file": "kernel-parallel-fencing.test.mjs",
+          "name": "a stale worker report is rejected at the existing Step report fence"
+        }
+      ]
+    },
+    {
+      "scenarioId": "S-09",
+      "name": "reviewer-bridge-missing",
+      "classification": "defect",
+      "source": {
+        "sessionId": "01a05d75-fd70-7192-a3ca-7908219286a6",
+        "runId": null,
+        "fileSha256": "7ae47acb31088e49a759ae08f16abaec68e3b36d6c0c766139af92ed4964846b",
+        "callLine": 3281,
+        "resultLine": null
+      },
+      "observedVersion": {
+        "commit": null,
+        "runtime": "unknown"
+      },
+      "observedOutcome": "historical-condition-observed",
+      "latestRecordedDisposition": "observed-historical-condition",
+      "expectedContract": "동일 보호 계약의 Host 대안을 탐색하고 실제 capability 부재일 때만 필수 review/Goal을 차단한다.",
+      "fixture": "Mapped behavioral case injects the fault and asserts expected state, rejection, or preserved data; no transcript replay.",
+      "ownerWorkUnit": "W-11",
+      "regressionTests": [
+        "kernel-independent-subagent-review.test.mjs"
+      ],
+      "behavioralCases": [
+        {
+          "file": "kernel-independent-subagent-review.test.mjs",
+          "name": "independent subagent transport becomes the last fallback when native reviewer is absent"
+        },
+        {
+          "file": "kernel-independent-subagent-review.test.mjs",
+          "name": "missing independent subagent launcher remains unavailable and cannot claim capability"
+        }
+      ]
+    },
+    {
+      "scenarioId": "S-10",
+      "name": "review-transport-failure",
+      "classification": "environment",
+      "source": {
+        "sessionId": "01a061bc-fa07-7083-a782-38ac2b023fc6",
+        "runId": null,
+        "fileSha256": "11de0b40d60c83aed172ed2476d4dc9604c9109aac703fa2ff9316edc96ad876",
+        "callLine": 4535,
+        "resultLine": null
+      },
+      "observedVersion": {
+        "commit": null,
+        "runtime": "unknown"
+      },
+      "observedOutcome": "historical-condition-observed",
+      "latestRecordedDisposition": "observed-historical-condition",
+      "expectedContract": "구현 Work를 보존하고 review obligation을 유지하며 승인된 transport만 대체한다.",
+      "fixture": "Mapped behavioral case injects the fault and asserts expected state, rejection, or preserved data; no transcript replay.",
+      "ownerWorkUnit": "W-11",
+      "regressionTests": [
+        "kernel-review-host-bridge.test.mjs"
+      ],
+      "behavioralCases": [
+        {
+          "file": "kernel-review-host-bridge.test.mjs",
+          "name": "an unavailable primary reviewer transport falls back without duplicating the review receipt"
+        },
+        {
+          "file": "kernel-review-host-bridge.test.mjs",
+          "name": "when every reviewer transport is unavailable the dispatcher returns one final capability blocker"
+        }
+      ]
+    },
+    {
+      "scenarioId": "S-11",
+      "name": "duplicate-reviewer-race",
+      "classification": "defect",
+      "source": {
+        "sessionId": "01a071e8-6637-7b50-804c-9cb08d38fe7e",
+        "runId": null,
+        "fileSha256": "98ea9325dcbec53dcef8e9ea81cde806b21dbea625419d0994b6859330d57f49",
+        "callLine": 5846,
+        "resultLine": null
+      },
+      "observedVersion": {
+        "commit": null,
+        "runtime": "unknown"
+      },
+      "observedOutcome": "historical-condition-observed",
+      "latestRecordedDisposition": "observed-historical-condition",
+      "expectedContract": "review 실행 시도는 보존하되 현재 subject의 유효 result adoption은 하나만 허용한다.",
+      "fixture": "Mapped behavioral case injects the fault and asserts expected state, rejection, or preserved data; no transcript replay.",
+      "ownerWorkUnit": "W-11",
+      "regressionTests": [
+        "kernel-review-cross-process.test.mjs"
+      ],
+      "behavioralCases": [
+        {
+          "file": "kernel-review-cross-process.test.mjs",
+          "name": "durable review claim converges real adapter dispatch across independent child processes"
+        }
+      ]
+    },
+    {
+      "scenarioId": "S-12",
+      "name": "execution-class-mismatch",
+      "classification": "design-requirement",
+      "source": {
+        "sessionId": null,
+        "runId": null,
+        "fileSha256": null,
+        "callLine": null,
+        "resultLine": null
+      },
+      "observedVersion": {
+        "commit": null,
+        "runtime": null
+      },
+      "observedOutcome": null,
+      "latestRecordedDisposition": "baseline-contract",
+      "expectedContract": "Host admission에서 execution semantic mismatch를 typed rejection으로 처리하고 Core는 model을 선택하지 않는다.",
+      "fixture": "Mapped behavioral case injects the fault and asserts expected state, rejection, or preserved data; no transcript replay.",
+      "ownerWorkUnit": "W-04",
+      "regressionTests": [
+        "kernel-host-semantic-conformance.test.mjs",
+        "kernel-route-admission-drift.test.mjs"
+      ],
+      "behavioralCases": [
+        {
+          "file": "kernel-host-semantic-conformance.test.mjs",
+          "name": "Gemini validates admission before launch and never invents model/session/usage evidence"
+        },
+        {
+          "file": "kernel-route-admission-drift.test.mjs",
+          "name": "K3-6: a permission policy changed after the decision blocks outright"
+        }
+      ]
+    },
+    {
+      "scenarioId": "S-13",
+      "name": "stale-evidence",
+      "classification": "design-requirement",
+      "source": {
+        "sessionId": null,
+        "runId": null,
+        "fileSha256": null,
+        "callLine": null,
+        "resultLine": null
+      },
+      "observedVersion": {
+        "commit": null,
+        "runtime": null
+      },
+      "observedOutcome": null,
+      "latestRecordedDisposition": "baseline-contract",
+      "expectedContract": "source/scope/contract/toolchain 영향 평가 뒤 stale evidence를 Goal completion에 사용하지 않는다.",
+      "fixture": "Mapped behavioral case injects the fault and asserts expected state, rejection, or preserved data; no transcript replay.",
+      "ownerWorkUnit": "W-10",
+      "regressionTests": [
+        "kernel-evidence-semantics.test.mjs"
+      ],
+      "behavioralCases": [
+        {
+          "file": "kernel-evidence-semantics.test.mjs",
+          "name": "S-13: an affected scoped proof becomes stale while an unaffected scope remains reusable"
+        }
+      ]
+    },
+    {
+      "scenarioId": "S-14",
+      "name": "focused-only-pass",
+      "classification": "design-requirement",
+      "source": {
+        "sessionId": null,
+        "runId": null,
+        "fileSha256": null,
+        "callLine": null,
+        "resultLine": null
+      },
+      "observedVersion": {
+        "commit": null,
+        "runtime": null
+      },
+      "observedOutcome": null,
+      "latestRecordedDisposition": "baseline-contract",
+      "expectedContract": "leaf evidence만으로 Goal completion을 허용하지 않고 root evidence를 요구한다.",
+      "fixture": "Mapped behavioral case injects the fault and asserts expected state, rejection, or preserved data; no transcript replay.",
+      "ownerWorkUnit": "W-10",
+      "regressionTests": [
+        "kernel-evidence-semantics.test.mjs"
+      ],
+      "behavioralCases": [
+        {
+          "file": "kernel-evidence-semantics.test.mjs",
+          "name": "S-14: Work-level evidence can cover acceptance but cannot close the Goal without Goal-level proof"
+        },
+        {
+          "file": "kernel-evidence-semantics.test.mjs",
+          "name": "S-14: acceptance cannot downgrade the mandatory root proof to work evidence"
+        }
+      ]
+    },
+    {
+      "scenarioId": "S-15",
+      "name": "full-regression-failure",
+      "classification": "design-requirement",
+      "source": {
+        "sessionId": null,
+        "runId": null,
+        "fileSha256": null,
+        "callLine": null,
+        "resultLine": null
+      },
+      "observedVersion": {
+        "commit": null,
+        "runtime": null
+      },
+      "observedOutcome": null,
+      "latestRecordedDisposition": "baseline-contract",
+      "expectedContract": "root regression 실패 시 Goal completion을 차단하되 완료 Work 이력은 보존한다.",
+      "fixture": "Mapped behavioral case injects the fault and asserts expected state, rejection, or preserved data; no transcript replay.",
+      "ownerWorkUnit": "W-12",
+      "regressionTests": [
+        "kernel-work-unit-recovery-e2e.test.mjs",
+        "kernel-run-step-ledger.test.mjs"
+      ],
+      "behavioralCases": [
+        {
+          "file": "kernel-run-step-ledger.test.mjs",
+          "name": "verification boundary: failed final goal regression keeps the Work Unit passed and routes repair"
+        }
+      ]
+    },
+    {
+      "scenarioId": "S-16",
+      "name": "replan-completed-work-repeated",
+      "classification": "design-requirement",
+      "source": {
+        "sessionId": null,
+        "runId": null,
+        "fileSha256": null,
+        "callLine": null,
+        "resultLine": null
+      },
+      "observedVersion": {
+        "commit": null,
+        "runtime": null
+      },
+      "observedOutcome": null,
+      "latestRecordedDisposition": "baseline-contract",
+      "expectedContract": "replan에서 영향 없는 완료 Work를 carry-forward하여 재구현 dispatch를 0으로 유지한다.",
+      "fixture": "Mapped behavioral case injects the fault and asserts expected state, rejection, or preserved data; no transcript replay.",
+      "ownerWorkUnit": "W-06",
+      "regressionTests": [
+        "kernel-run-step-replan.test.mjs"
+      ],
+      "behavioralCases": [
+        {
+          "file": "kernel-run-step-replan.test.mjs",
+          "name": "S-16: replan preserves completed Work history while new work stays current"
+        },
+        {
+          "file": "kernel-run-step-replan.test.mjs",
+          "name": "scope amendment keeps every pending Work unit and preserves completed history"
+        }
+      ]
+    },
+    {
+      "scenarioId": "S-17",
+      "name": "subagent-dispatch-failure",
+      "classification": "environment",
+      "source": {
+        "sessionId": "01a07c3e-c84b-7670-bf86-d040e03a30aa",
+        "runId": null,
+        "fileSha256": "8135f6840c1defaad141f7345fccc93bb396f7815706d067ce51801487d6b1dc",
+        "callLine": 3156,
+        "resultLine": null
+      },
+      "observedVersion": {
+        "commit": null,
+        "runtime": "unknown"
+      },
+      "observedOutcome": "historical-condition-observed",
+      "latestRecordedDisposition": "observed-historical-condition",
+      "expectedContract": "transport/domain failure를 구분하고 안전한 대안 또는 typed blocker만 반환한다.",
+      "fixture": "Mapped behavioral case injects the fault and asserts expected state, rejection, or preserved data; no transcript replay.",
+      "ownerWorkUnit": "W-04",
+      "regressionTests": [
+        "kernel-subagent-review.test.mjs",
+        "kernel-review-host-bridge.test.mjs"
+      ],
+      "behavioralCases": [
+        {
+          "file": "kernel-review-host-bridge.test.mjs",
+          "name": "a pre-spawn reviewer transport failure can use the next concrete transport"
+        },
+        {
+          "file": "kernel-review-host-bridge.test.mjs",
+          "name": "a valid failing reviewer verdict is terminal and never invokes a fallback reviewer"
+        }
+      ]
+    },
+    {
+      "scenarioId": "S-18",
+      "name": "knowledge-commit-failure",
+      "classification": "design-requirement",
+      "source": {
+        "sessionId": null,
+        "runId": null,
+        "fileSha256": null,
+        "callLine": null,
+        "resultLine": null
+      },
+      "observedVersion": {
+        "commit": null,
+        "runtime": null
+      },
+      "observedOutcome": null,
+      "latestRecordedDisposition": "baseline-contract",
+      "expectedContract": "code accepted 이력은 보존하고 Knowledge가 필수 요청일 때만 Task done을 보류한다.",
+      "fixture": "Mapped behavioral case injects the fault and asserts expected state, rejection, or preserved data; no transcript replay.",
+      "ownerWorkUnit": "W-12",
+      "regressionTests": [
+        "kernel-finalization-knowledge-nonblocking.test.mjs"
+      ],
+      "behavioralCases": [
+        {
+          "file": "kernel-finalization-knowledge-nonblocking.test.mjs",
+          "name": "S-18: required Knowledge can keep Task finalization incomplete without erasing accepted code"
+        }
+      ]
+    },
+    {
+      "scenarioId": "S-19",
+      "name": "git-push-failure",
+      "classification": "design-requirement",
+      "source": {
+        "sessionId": null,
+        "runId": null,
+        "fileSha256": null,
+        "callLine": null,
+        "resultLine": null
+      },
+      "observedVersion": {
+        "commit": null,
+        "runtime": null
+      },
+      "observedOutcome": null,
+      "latestRecordedDisposition": "baseline-contract",
+      "expectedContract": "code accepted 이력을 보존하고 실제 remote 상태 확인 후 누락 delivery만 재시도한다.",
+      "fixture": "Mapped behavioral case injects the fault and asserts expected state, rejection, or preserved data; no transcript replay.",
+      "ownerWorkUnit": "W-12",
+      "regressionTests": [
+        "kernel-git-closeout-retry.test.mjs"
+      ],
+      "behavioralCases": [
+        {
+          "file": "kernel-git-closeout-retry.test.mjs",
+          "name": "S-19: a failed push retries only missing delivery and preserves accepted commit against a real local remote"
+        },
+        {
+          "file": "kernel-git-closeout-retry.test.mjs",
+          "name": "public Git retry blocks external mutation after push_failed and records stale receipt"
+        }
+      ]
+    },
+    {
+      "scenarioId": "S-20",
+      "name": "kernel-process-restart",
+      "classification": "design-requirement",
+      "source": {
+        "sessionId": null,
+        "runId": null,
+        "fileSha256": null,
+        "callLine": null,
+        "resultLine": null
+      },
+      "observedVersion": {
+        "commit": null,
+        "runtime": null
+      },
+      "observedOutcome": null,
+      "latestRecordedDisposition": "baseline-contract",
+      "expectedContract": "이전 transcript 없이 durable Task/Work/attempt에서 재개하고 contract reset을 하지 않는다.",
+      "fixture": "Mapped behavioral case injects the fault and asserts expected state, rejection, or preserved data; no transcript replay.",
+      "ownerWorkUnit": "W-09",
+      "regressionTests": [
+        "kernel-finalization-report-resume.test.mjs",
+        "kernel-real-goal-golden-e2e.test.mjs"
+      ],
+      "behavioralCases": [
+        {
+          "file": "kernel-real-goal-golden-e2e.test.mjs",
+          "name": "Golden E2E: multi-step plan preserved, step 1 continues to step 2, and goal reaches completion"
+        },
+        {
+          "file": "kernel-finalization-report-resume.test.mjs",
+          "name": "a passed step accepts an unchanged PROVE report when completion coverage remains"
+        }
+      ]
+    }
+  ]
+}

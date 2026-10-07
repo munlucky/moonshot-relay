@@ -1,3 +1,4 @@
+import { prepareTestHostTurn, decideTestModelRoute } from './helpers/kernel-host-test-api.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -20,7 +21,7 @@ test('route decisions and usage receipts survive a fresh process', async () => {
   let decisionId;
   try {
     await cp.startRun({ runId: 'r-resume', objective: 'resume routing' });
-    const host = await cp.hostNext('r-resume', { hostCapabilities: CLAUDE });
+    const host = await prepareTestHostTurn(cp, 'r-resume', { hostCapabilities: CLAUDE });
     decisionId = host.hostDirective.modelRouteDecision.decisionId;
     await cp.recordModelUsage('r-resume', {
       decisionId,
@@ -72,7 +73,7 @@ test('a resumed run keeps its escalation instead of silently demoting to value c
     for (let i = 0; i < 3; i += 1) {
       await first.report('r-lock', { summary: `try ${i}`, verifications: [{ obligationId: 'default', commandRef: 'test:fail' }] });
     }
-    const escalated = await first.decideModelRoute('r-lock', { actionKind: 'implement', obligationId: 'default' });
+    const escalated = await decideTestModelRoute(first, 'r-lock', { actionKind: 'implement', obligationId: 'default' });
     assert.equal(escalated.modelClass, 'frontier_reasoning');
   } finally {
     await first.close();
@@ -80,7 +81,7 @@ test('a resumed run keeps its escalation instead of silently demoting to value c
 
   const resumed = await createKernelControlPlane({ runtimeHome, projectRoot });
   try {
-    const decision = await resumed.decideModelRoute('r-lock', { actionKind: 'implement', obligationId: 'default' });
+    const decision = await decideTestModelRoute(resumed, 'r-lock', { actionKind: 'implement', obligationId: 'default' });
     assert.equal(decision.modelClass, 'frontier_reasoning');
     assert.equal(resumed.modelRoutingSummary('r-lock').frontierTurns, 2);
   } finally {

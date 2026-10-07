@@ -156,7 +156,7 @@ test('Kernel Git staging call sites share the staging-policy helper', async () =
   const callSites = [
     'scripts/kernel/standalone/kernel-commit.mjs',
     'scripts/kernel/git/closeout.mjs',
-    'scripts/kernel/workspace/step-worktree-manager.mjs',
+    'scripts/host/kernel/workspace/physical-worktree.mjs',
   ];
   for (const relativePath of callSites) {
     const source = await readFile(path.join(process.cwd(), relativePath), 'utf8');

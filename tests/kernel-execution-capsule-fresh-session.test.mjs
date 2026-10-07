@@ -1,3 +1,4 @@
+import { decideTestModelRoute } from './helpers/kernel-host-test-api.mjs';
 // K1 §6.9-6/7: a capsule must be reproducible from SQLite alone (so a fresh
 // process hands out the same bounded context), and must go stale the moment the
 // workspace it describes moves.
@@ -136,7 +137,7 @@ test('K1: the capsule digest is recorded on the usage receipt of the turn that r
   try {
     await cp.startRun({ runId: 'r-receipt', objective: 'x', taskContract: CONTRACT });
     const capsule = await cp.buildCapsule('r-receipt');
-    const decision = await cp.decideModelRoute('r-receipt', { actionKind: 'implement', obligationId: 'default' });
+    const decision = await decideTestModelRoute(cp, 'r-receipt', { actionKind: 'implement', obligationId: 'default' });
     await cp.recordModelUsage('r-receipt', {
       decisionId: decision.decisionId,
       runId: 'r-receipt',

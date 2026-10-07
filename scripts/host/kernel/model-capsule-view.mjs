@@ -264,6 +264,20 @@ export const MODEL_VISIBLE_PROMPT_FIELDS = Object.freeze([
   'requiredEvidence',
 ]);
 
+export const MODEL_VISIBLE_PROMPT_MAX_BYTES = 65536;
+
+const assertModelVisiblePromptBudget = (prompt) => {
+  const serializedBytes = Buffer.byteLength(JSON.stringify(prompt), 'utf8');
+  if (serializedBytes <= MODEL_VISIBLE_PROMPT_MAX_BYTES) return prompt;
+  throw Object.assign(new Error('model_context_budget_exceeded'), {
+    code: 'MODEL_CONTEXT_BUDGET_EXCEEDED',
+    errorCode: 'MODEL_CONTEXT_BUDGET_EXCEEDED',
+    serializedBytes,
+    maxBytes: MODEL_VISIBLE_PROMPT_MAX_BYTES,
+    nextAction: 'split-work-unit',
+  });
+};
+
 const sanitizePromptView = (value) => {
   const source = isRecord(value) ? value : {};
   return Object.freeze({
@@ -317,14 +331,14 @@ export const buildModelVisiblePromptView = ({ modelInput = {}, capsule = null } 
     own(inputVerification, 'pending'),
     own(own(sourceCapsule, 'verification'), 'obligations'),
   );
-  return sanitizePromptView({
+  return assertModelVisiblePromptBudget(sanitizePromptView({
     objective,
     acceptance: firstProjectedList(acceptanceList, own(input, 'acceptance'), own(sourceCapsule, 'acceptance')),
     constraints: firstProjectedList(stringList, own(input, 'constraints'), own(sourceCapsule, 'constraints')),
     currentWork,
     relevantProjectKnowledge: knowledgeValue(own(input, 'knowledge')) || knowledgeValue(own(own(sourceCapsule, 'repositoryContext'), 'knowledgeRecords')),
     requiredEvidence,
-  });
+  }));
 };
 
 // This is the only text projection sent to a provider. Sanitize again at the

@@ -124,15 +124,16 @@ test('global and report help exit without runtime state, even with invalid bindi
   }
 });
 
-test('broad synthetic work requires defensible scope before implementation', () => {
+test('work-unit decomposition is explicit and is not inferred from acceptance or file counts', () => {
   const contract = { acceptance: ['a', 'b', 'c'] };
   for (const allowedPaths of [[], ['**'], ['*']]) {
-    assert.throws(() => assertImplementationWorkUnitScope({ contract: { ...contract, allowedPaths }, step: { synthetic: true } }), { code: 'work-unit-decomposition-required' });
+    assert.equal(assertImplementationWorkUnitScope({ contract: { ...contract, allowedPaths }, step: { synthetic: true } }).valid, true);
   }
-  assert.throws(() => assertImplementationWorkUnitScope({ contract: { filesChanged: 3 } }), { code: 'work-unit-decomposition-required' });
+  assert.equal(assertImplementationWorkUnitScope({ contract: { filesChanged: 300 } }).valid, true);
   assert.equal(assertImplementationWorkUnitScope({ contract: { acceptance: ['small'] } }).valid, true);
   assert.equal(assertImplementationWorkUnitScope({ contract: { ...contract, allowedPaths: ['src/auth/**'] } }).valid, true);
   assert.equal(assertImplementationWorkUnitScope({ contract: { ...contract, steps: [{ allowedPaths: ['src/auth/**'] }] }, step: { synthetic: false, allowedPaths: ['src/auth/**'] } }).valid, true);
+  assert.throws(() => assertImplementationWorkUnitScope({ contract: { ...contract, strictBoundedScope: true }, step: { synthetic: true } }), { code: 'work-unit-scope-missing' });
 });
 
 test('model view removes duplicate snapshots without altering authority or recovery', () => {

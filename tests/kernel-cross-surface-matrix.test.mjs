@@ -1,3 +1,4 @@
+import { prepareTestHostTurn } from './helpers/kernel-host-test-api.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
@@ -135,7 +136,7 @@ test('Cross-Surface Matrix: Control plane dispatches hostNext cleanly across all
     });
 
     for (const profile of SURFACE_PROFILES) {
-      const hostTurn = await cp.hostNext(runId, {
+      const hostTurn = await prepareTestHostTurn(cp, runId, {
         hostCapabilities: profile.capabilities,
       });
       assert.ok(hostTurn.hostDirective, `hostNext must produce hostDirective for surface ${profile.surface}`);

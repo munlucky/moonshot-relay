@@ -1,3 +1,4 @@
+import { prepareTestHostTurn } from './helpers/kernel-host-test-api.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -56,12 +57,10 @@ const assertNoDispatchState = async (cp, runId, run = null) => {
   assert.deepEqual(cp.listRouteAdmissions(runId), []);
   assert.deepEqual(cp.stateStore.listExecutionCapsules(runId), []);
   assert.deepEqual(cp.stateStore.getStepAttempts(runId), []);
-  assert.deepEqual(cp.stateStore.getAttempts(runId), []);
   const raw = await openSqliteDb(cp.stateStore.dbPath);
   try {
     assert.equal(raw.prepare('SELECT COUNT(*) AS count FROM worktree_mutation_leases WHERE holder_run_id=?').get(runId).count, 0);
     assert.equal(raw.prepare('SELECT COUNT(*) AS count FROM workspace_mutation_locks_v2 WHERE holder_run_id=?').get(runId).count, 0);
-    assert.equal(raw.prepare('SELECT COUNT(*) AS count FROM workspace_mutation_locks WHERE holder_run_id=?').get(runId).count, 0);
   } finally {
     raw.close();
   }
@@ -151,7 +150,7 @@ test('a scoped implementation is still admitted by the control plane', async () 
       objective: 'bounded implementation',
       taskContract: broadContract(['src/**']),
     });
-    const host = await cp.hostNext('r-scoped', { hostCapabilities: HOST });
+    const host = await prepareTestHostTurn(cp, 'r-scoped', { hostCapabilities: HOST });
 
     assert.equal(host.modelInput.action.type, 'implement');
     assert.deepEqual(host.executionCapsule.workUnit.allowedPaths, ['src/**']);
@@ -174,7 +173,7 @@ test('reviewer/read-only turns remain allowed without an implementation scope', 
       objective: 'review the workspace',
       taskContract: { allowedPaths: [] },
     });
-    const review = await cp.hostNext('r-review', {
+    const review = await prepareTestHostTurn(cp, 'r-review', {
       hostCapabilities: HOST,
       actionContext: { actionKind: 'review_engineering' },
     });

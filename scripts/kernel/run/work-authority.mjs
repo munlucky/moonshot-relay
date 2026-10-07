@@ -71,9 +71,19 @@ export const buildWorkAuthorityView = ({
   const planRevision = Number(run.planRevision || 1);
   const currentPlanSteps = (Array.isArray(steps) ? steps : [])
     .filter((candidate) => Number(candidate.planRevision || 1) === planRevision);
-  const current = step || selectCurrentStep(currentPlanSteps, { planRevision });
+  const current = step || selectCurrentStep(steps, { planRevision });
   const currentView = workUnitView(current);
-  const completed = currentPlanSteps.filter((candidate) => candidate.state === 'passed').map((candidate) => String(candidate.stepId));
+  // Work completion is monotonic across replans. A later plan may require new
+  // evidence or replacement work, but it must not erase the fact that a
+  // previous Work Unit completed. Trust Authority independently decides
+  // whether that work's evidence is still fresh for Goal completion.
+  const completedHistory = (Array.isArray(steps) ? steps : [])
+    .filter((candidate) => candidate.state === 'passed')
+    .map((candidate) => String(candidate.stepId));
+  const completedCurrentPlan = currentPlanSteps
+    .filter((candidate) => candidate.state === 'passed')
+    .map((candidate) => String(candidate.stepId));
+  const completed = [...new Set(completedHistory)];
   const remaining = currentPlanSteps
     .filter((candidate) => candidate.state !== 'passed')
     .map((candidate) => String(candidate.stepId));
@@ -85,7 +95,7 @@ export const buildWorkAuthorityView = ({
   };
   const totalAcceptanceCount = Array.isArray(run.acceptanceCriteria) ? run.acceptanceCriteria.length : (run.taskContract?.acceptance?.length || 0);
   const completedAcceptanceIds = new Set(
-    currentPlanSteps
+    (Array.isArray(steps) ? steps : [])
       .filter((s) => s.state === 'passed')
       .flatMap((s) => (Array.isArray(s.acceptanceIds) ? s.acceptanceIds : [])),
   );
@@ -126,8 +136,10 @@ export const buildWorkAuthorityView = ({
     currentWorkUnit: currentView,
     progress: {
       completedWorkUnitIds: completed,
+      completedCurrentPlanWorkUnitIds: completedCurrentPlan,
       remainingWorkUnitIds: remaining,
       completedCount: completed.length,
+      completedCurrentPlanCount: completedCurrentPlan.length,
       remainingCount: remaining.length,
     },
     cursor,

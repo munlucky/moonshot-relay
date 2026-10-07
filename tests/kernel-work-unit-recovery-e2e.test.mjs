@@ -305,7 +305,9 @@ test('Recovery E2E: duplicate report resubmission returns cached idempotent resu
     await mkdir(path.join(fixture.projectRoot, 'src'), { recursive: true });
     await writeFile(path.join(fixture.projectRoot, 'src', 'service.mjs'), 'export const service = "service-ok";\n');
 
+    const attempt = cp.beginAttempt(runId, { stepId: 'step-1-service' });
     const reportPayload = {
+      attemptId: attempt.attemptId,
       stepId: 'step-1-service',
       summary: 'Implemented service',
       changedPaths: ['src/service.mjs'],
@@ -320,6 +322,7 @@ test('Recovery E2E: duplicate report resubmission returns cached idempotent resu
     const secondReport = await cp.report(runId, reportPayload);
 
     // Second report matches first report's key fields without re-executing or erroring
+    assert.equal(secondReport.idempotentReplay, true);
     assert.equal(secondReport.workUnitStatus, firstReport.workUnitStatus);
     assert.equal(secondReport.attemptNumber, firstReport.attemptNumber);
     assert.equal(secondReport.status, firstReport.status);

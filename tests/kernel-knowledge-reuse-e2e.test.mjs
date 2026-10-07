@@ -15,9 +15,10 @@ test('Cross-Run Knowledge Reuse E2E: verifies direct SQLite knowledge context re
   const kernelHome = path.join(tmpDir, '.moon-relay-kernel');
   const projectRoot = path.join(tmpDir, 'project-root');
 
-  const controlPlane = await createKernelControlPlane({
+  let controlPlane = await createKernelControlPlane({
     projectRoot,
     runtimeHome: kernelHome,
+    holder: 'chat-one',
   });
 
   // --- 1. Run 1: Create, Record Proof, Record Typed Candidates & Finalize ---
@@ -105,6 +106,15 @@ test('Cross-Run Knowledge Reuse E2E: verifies direct SQLite knowledge context re
     scripts: { test: 'node -e "process.exit(0)"' },
   }));
 
+  // A new chat/session reopens the same durable project authority. Knowledge
+  // reuse must not depend on the transcript, owner session, or projections.
+  await controlPlane.close();
+  controlPlane = await createKernelControlPlane({
+    projectRoot,
+    runtimeHome: kernelHome,
+    holder: 'chat-two',
+  });
+
   // --- 3. Run 2: Start new Run, verify SQLite revision authority & re-commit ---
   const run2 = await controlPlane.startRun({
     runId: 'run-e2e-2',
@@ -188,6 +198,10 @@ test('Cross-Run Knowledge Reuse E2E: verifies direct SQLite knowledge context re
   const otherPromptBlock = otherContext.knowledgeContext.promptBlock;
   assert.equal(otherPromptBlock.includes('Use JWT stateless session tokens for auth service'), false);
   assert.equal(otherPromptBlock.includes('Authentication service runs on port 4000'), false);
+
+  await controlPlaneOther.close();
+  await controlPlane.close();
+  await rm(tmpDir, { recursive: true, force: true });
 });
 
 test('cross-report proof reuse requires the complete exact freshness identity', () => {

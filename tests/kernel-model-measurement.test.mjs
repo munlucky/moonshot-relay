@@ -1,3 +1,4 @@
+import { decideTestModelRoute } from './helpers/kernel-host-test-api.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
@@ -25,7 +26,7 @@ const withRun = async (fn) => {
 };
 
 const fileReceipt = async (cp, runId, actionKind, session, extra = {}) => {
-  const decision = await cp.decideModelRoute(runId, { actionKind, obligationId: 'default' });
+  const decision = await decideTestModelRoute(cp, runId, { actionKind, obligationId: 'default' });
   if (decision.modelClass === 'kernel') return decision;
   await cp.recordModelUsage(runId, {
     decisionId: decision.decisionId,

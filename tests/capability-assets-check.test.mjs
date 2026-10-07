@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 const root = path.resolve('.');
@@ -27,7 +28,8 @@ test('capability asset base validates manifests, provenance, catalog, subcapabil
   assert.equal(report.traceabilitySummary.traceabilityPct, 100);
   assert.equal(report.traceabilitySummary.withImplementationTrace, 47);
   assert.equal(report.traceabilitySummary.withProofTrace, 47);
-  assert.equal(report.checked.coverageSurfaces, 737);
+  const ledger = JSON.parse(readFileSync(path.join(root, 'docs/capability-assets/coverage-ledger.yaml'), 'utf8'));
+  assert.equal(report.checked.coverageSurfaces, Object.keys(ledger.surfaces).length);
   assert.equal(report.checked.rootBaselineForbidden, true);
   assert.equal(report.checked.canonicalBaselineExists, true);
   assert.equal(report.checked.decomplexificationMaps, true);

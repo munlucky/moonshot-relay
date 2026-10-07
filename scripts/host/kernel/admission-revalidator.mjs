@@ -4,7 +4,7 @@
 // a model profile edited between decision and dispatch would otherwise run a
 // different model than the one the Kernel admitted.
 
-import { policyDigests, revalidateAdmissionAtDispatch } from '../../kernel/routing/route-admission.mjs';
+import { policyDigests, revalidateAdmissionAtDispatch } from './route-admission.mjs';
 
 export const currentHostPolicies = ({
   registry,

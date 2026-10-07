@@ -137,7 +137,7 @@ const refreshFinalizationWorkspaceIdentity = ({ store, runId, projectRoot, prior
 
   const run = store.getRun(runId);
   const observation = observeWorkspaceIdentity({ projectRoot });
-  const authorizedCloseoutRetry = ['commit_created', 'push_failed', 'parity_failed'].includes(priorGitReceipt?.status)
+  const authorizedCloseoutRetry = ['commit_created', 'push_failed', 'parity_failed', 'completed'].includes(priorGitReceipt?.status)
     && isAuthorizedKernelGitCloseoutWorkspace({ repoRoot: projectRoot, commitSha: priorGitReceipt?.commitSha || null });
 
   // The HEAD change made by a Kernel commit whose push/parity stage failed is
@@ -256,6 +256,7 @@ export const finalizeRun = async ({
       runId,
       projectId: run.projectId,
       completionStatus: completionEval.decision,
+      codeAccepted: false,
       knowledgeStatus: 'blocked',
       projectionStatus: 'none',
       gitCloseoutStatus: 'skipped',
@@ -272,7 +273,12 @@ export const finalizeRun = async ({
   let gitCloseoutError = null;
   if (effectiveCloseoutRequest?.requested) {
     try {
-      gitReceipt = await executeKernelGitCloseout({
+      const completedGitRecovery = priorGitReceipt?.status === 'completed'
+        && priorGitReceipt.receiptJson?.reportKey === effectiveCloseoutRequest.reportKey
+        && priorGitReceipt.receiptJson?.verifiedWorkspaceIdentity === effectiveCloseoutRequest.verifiedWorkspaceIdentity
+        && effectiveCloseoutRequest.reportKey
+        && isAuthorizedKernelGitCloseoutWorkspace({ repoRoot: projectRoot, commitSha: priorGitReceipt.commitSha });
+      gitReceipt = completedGitRecovery ? priorGitReceipt.receiptJson : await executeKernelGitCloseout({
         runId,
         projectId: run.projectId,
         stateStore: store,
@@ -453,7 +459,9 @@ export const finalizeRun = async ({
   }
 
   const requestedCloseoutUnfinished = Boolean(effectiveCloseoutRequest?.requested) && gitCloseoutStatus !== 'completed';
-  const finalizationStatus = (gitCloseoutStatus === 'failed' || requestedCloseoutUnfinished)
+  const knowledgeRequired = run.taskContract?.flags?.knowledgeRequired === true;
+  const requiredKnowledgeUnfinished = knowledgeRequired && !['committed', 'no_change'].includes(knowledgeStatus);
+  const finalizationStatus = (gitCloseoutStatus === 'failed' || requestedCloseoutUnfinished || requiredKnowledgeUnfinished)
     ? 'partial'
     : 'completed';
 
@@ -470,6 +478,8 @@ export const finalizeRun = async ({
     runId,
     projectId: run.projectId,
     completionStatus: completionEval.decision,
+    codeAccepted: completionEval.decision === 'accepted',
+    knowledgeRequired,
     knowledgeStatus,
     knowledgeCaptureStatus,
     knowledgeCommitAttempts,
@@ -494,7 +504,9 @@ export const finalizeRun = async ({
     knowledgeCommitError,
     gitCloseoutReceipt: gitReceipt,
     gitCloseoutError,
-    reason: commitReceipt?.reason || null,
+    reason: requiredKnowledgeUnfinished
+      ? 'required_knowledge_incomplete'
+      : commitReceipt?.reason || null,
   };
 
   store.recordFinalizationReceipt(runId, finalizationReceipt);

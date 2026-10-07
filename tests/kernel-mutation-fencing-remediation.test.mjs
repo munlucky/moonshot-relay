@@ -1,3 +1,4 @@
+import { prepareTestHostTurn } from './helpers/kernel-host-test-api.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs';
@@ -38,7 +39,7 @@ test('assertMutationAllowed enforces strict fail-closed fencing logic', async ()
   );
 
   // Acquire lock with valid hostCapabilities
-  const hostRes = await cp.hostNext('run-fencing-1', {
+  const hostRes = await prepareTestHostTurn(cp, 'run-fencing-1', {
     hostCapabilities: { surface: 'cli' },
     actionContext: { actionKind: 'implement' },
   });

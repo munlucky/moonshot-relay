@@ -148,7 +148,11 @@ test('identity migration preserves SQLite state, active binding, multiple legacy
     assert.equal(store.getRunSteps('legacy-package-run')[0].executionWorkspaceId, 'legacy-origin-workspace');
     assert.equal(store.getRunSteps('legacy-origin-run')[0].stepId, 'origin-step');
     assert.equal(store.getRunSteps('legacy-package-run')[0].stepId, 'package-step');
-    assert.equal(store.getActiveSessionBinding({ sessionId: 'codex:legacy-identity', runId: 'legacy-origin-run' }).projectId, canonicalId);
+    assert.equal(store.getActiveRunBinding({
+      projectId: canonicalId,
+      sessionId: 'codex:legacy-identity',
+      runId: 'legacy-origin-run',
+    }).projectId, canonicalId);
     assert.equal(store.getKnowledgeCandidates('legacy-origin-run')[0].projectId, canonicalId);
     assert.equal(store.listKnowledgeRecords({ projectId: canonicalId }).length, 2);
     assert.equal(store.getProjectKnowledgeRevision(canonicalId), 6);

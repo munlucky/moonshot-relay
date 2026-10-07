@@ -4,7 +4,8 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { admitRoute, admissionAllowsDispatch, policyDigests, REJECTION_CODES } from '../scripts/kernel/routing/route-admission.mjs';
+import { admissionAllowsDispatch } from '../scripts/kernel/routing/route-admission.mjs';
+import { admitRoute, policyDigests, REJECTION_CODES } from '../scripts/host/kernel/route-admission.mjs';
 
 const decisionFor = (overrides = {}) => ({
   decisionId: 'route-0123456789abcdef01234567',

@@ -10,8 +10,8 @@
 //
 // No provider model id or provider credential belongs in this module.
 
-import { detectOptionalStagnation, optionalCapabilityActive } from '../run/optional-capabilities.mjs';
-import { recommendModelRouting, resolveModelRoute } from '../run/model-routing.mjs';
+import { detectOptionalStagnation, optionalCapabilityActive } from '../../kernel/run/optional-capabilities.mjs';
+import { recommendModelRouting, resolveModelRoute } from '../../kernel/run/model-routing.mjs';
 
 export const ACTION_FOR_MODEL_ACTION = Object.freeze({
   implement: 'implement',
@@ -26,21 +26,38 @@ export const ACTION_FOR_MODEL_ACTION = Object.freeze({
 export const actionKindForModelAction = (actionType) =>
   ACTION_FOR_MODEL_ACTION[actionType] || 'implement';
 
+const retrySignalsForRun = (store, runId, { obligationId = null } = {}) => {
+  const stepAttempts = store.getStepAttempts(runId);
+  const failedWorkAttempts = stepAttempts.filter((attempt) => attempt.status === 'failed');
+  const verificationHistory = typeof store.getVerificationHistory === 'function'
+    ? store.getVerificationHistory(runId)
+    : store.getVerifications(runId);
+  const failedEvidence = verificationHistory.filter((verification) => (
+    verification.status === 'failed'
+    && (!obligationId || String(verification.obligationId || '') === String(obligationId))
+  ));
+  const retryCount = Math.max(failedWorkAttempts.length, failedEvidence.length);
+  const failedAttemptSignals = Array.from({ length: retryCount }, (_, index) => (
+    failedWorkAttempts[index] || { status: 'failed' }
+  ));
+  return { stepAttempts, verificationHistory, retryCount, failedAttemptSignals };
+};
+
 const buildStagnationSignal = ({ store, detectStepStagnation }) => (runId) => {
   const run = store.getRun(runId);
   if (!run) throw new Error(`Run ${runId} not found`);
-  const attempts = store.getAttempts(runId);
-  const enabled = optionalCapabilityActive('stagnation-escalation', { run, attempts });
+  const retrySignals = retrySignalsForRun(store, runId);
+  const enabled = optionalCapabilityActive('stagnation-escalation', { run, attempts: retrySignals.failedAttemptSignals });
   const runLevel = enabled
     ? detectOptionalStagnation({
       run,
-      attempts,
-      verifications: store.getVerifications(runId),
+      attempts: retrySignals.failedAttemptSignals,
+      verifications: retrySignals.verificationHistory,
     })
     : {
       stagnant: false,
       reason: 'optional-capability-disabled',
-      failedAttempts: attempts.filter((attempt) => attempt.status === 'failed').length,
+      failedAttempts: retrySignals.retryCount,
     };
   const stepLevel = enabled
     ? detectStepStagnation(runId)
@@ -63,11 +80,11 @@ export const createHostRoutingBridge = ({ store, detectStepStagnation = () => ({
     detectStagnation(runId, { threshold } = {}) {
       const run = store.getRun(runId);
       if (!run) throw new Error(`Run ${runId} not found`);
-      const attempts = store.getAttempts(runId);
+      const retrySignals = retrySignalsForRun(store, runId);
       return detectOptionalStagnation({
         run,
-        attempts,
-        verifications: store.getVerifications(runId),
+        attempts: retrySignals.failedAttemptSignals,
+        verifications: retrySignals.verificationHistory,
         threshold,
       });
     },
@@ -78,11 +95,11 @@ export const createHostRoutingBridge = ({ store, detectStepStagnation = () => ({
       const run = store.getRun(runId);
       if (!run) throw new Error(`Run ${runId} not found`);
       const stagnation = stagnationSignal(runId);
-      const attempts = store.getAttempts(runId);
+      const retrySignals = retrySignalsForRun(store, runId);
       return recommendModelRouting({
         riskTier: run.proofTier,
         stagnant: stagnation.stagnant,
-        retryCount: attempts.filter((attempt) => attempt.status === 'failed').length,
+        retryCount: retrySignals.retryCount,
         independentReviewRequired,
       });
     },
@@ -99,15 +116,15 @@ export const createHostRoutingBridge = ({ store, detectStepStagnation = () => ({
     } = {}) {
       const run = store.getRun(runId);
       if (!run) throw new Error(`Run ${runId} not found`);
-      const attempts = store.getAttempts(runId);
+      const retrySignals = retrySignalsForRun(store, runId, { obligationId });
       const priorDecisions = store.listModelRouteDecisions(runId);
       const decision = resolveModelRoute({
         runId,
         actionKind,
         riskTier: run.proofTier,
-        attemptNumber: attempts.length || 1,
+        attemptNumber: retrySignals.retryCount + 1,
         replanCount: run.replanCount || 0,
-        retryCount: attempts.filter((attempt) => attempt.status === 'failed').length,
+        retryCount: retrySignals.retryCount,
         stagnant: stagnationSignal(runId).stagnant,
         protectedObligationFailed,
         planInvalid,

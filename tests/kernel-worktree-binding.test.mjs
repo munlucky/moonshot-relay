@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -46,6 +46,46 @@ const createRepository = async () => {
   runGit(repository, ['worktree', 'add', '-b', 'linked', linkedWorktree, 'HEAD']);
   return { fixtureRoot, repository, linkedWorktree, runtimeHome };
 };
+
+test('S-07: recreated worktree metadata preserves user index, diff, untracked bytes and fences the old session', async () => {
+  const fixture = await createRepository();
+  let store = await openKernelStateStore({ runtimeHome: fixture.runtimeHome });
+  try {
+    const root = fixture.linkedWorktree;
+    await writeFile(path.join(root, 'tracked.txt'), 'staged user content\n');
+    runGit(root, ['add', 'tracked.txt']);
+    await writeFile(path.join(root, 'tracked.txt'), 'unstaged user content\n');
+    await writeFile(path.join(root, 'private.txt'), 'untracked user content\n');
+    const before = resolveKernelWorktreeIdentity({ cwd: root, env: kernelEnv(fixture.runtimeHome) });
+    const staged = runGit(root, ['diff', '--cached', '--binary']);
+    const unstaged = runGit(root, ['diff', '--binary']);
+    const index = await readFile(path.join(before.canonicalGitDir, 'index'));
+    registerKernelWorktreeBinding({ stateStore: store, cwd: root, env: kernelEnv(fixture.runtimeHome) });
+    store.createRun({ runId: 'recreated', sourceIdentity: 'source-recreated', projectId: before.projectId, workspaceId: before.workspaceId, worktreeId: before.worktreeId, objective: 'preserve user work' });
+    const first = store.acquireWorkspaceMutationLockV2({ workspaceId: before.workspaceId, projectId: before.projectId, runId: 'recreated', sessionToken: 'old-session', ttlMs: 60000 });
+    assert.equal(first.acquired, true);
+    // Recreate only Git's worktree attachment. User data and the shared index
+    // stay intact; the official repair operation restores the lost gitfile.
+    await rm(path.join(root, '.git'));
+    await writeFile(path.join(root, '.git'), `gitdir: ${before.canonicalGitDir.replaceAll('\\', '/')}\n`);
+    runGit(fixture.repository, ['worktree', 'repair', root]);
+    const after = resolveKernelWorktreeIdentity({ cwd: root, env: kernelEnv(fixture.runtimeHome) });
+    assert.equal(after.worktreeId, before.worktreeId);
+    assert.equal(after.workspaceId, before.workspaceId);
+    assert.equal(runGit(root, ['diff', '--cached', '--binary']), staged);
+    assert.equal(runGit(root, ['diff', '--binary']), unstaged);
+    assert.deepEqual(await readFile(path.join(after.canonicalGitDir, 'index')), index);
+    assert.equal(await readFile(path.join(root, 'private.txt'), 'utf8'), 'untracked user content\n');
+    store.releaseWorkspaceMutationLockV2({ workspaceId: before.workspaceId, runId: 'recreated', sessionToken: 'old-session', fencingToken: first.lock.fencingToken });
+    store.close();
+    store = await openKernelStateStore({ runtimeHome: fixture.runtimeHome });
+    const fresh = store.acquireWorkspaceMutationLockV2({ workspaceId: after.workspaceId, projectId: after.projectId, runId: 'recreated', sessionToken: 'new-session', ttlMs: 60000 });
+    assert.equal(fresh.acquired, true);
+    assert.ok(fresh.lock.fencingToken > first.lock.fencingToken);
+    assert.throws(() => store.releaseWorkspaceMutationLockV2({ workspaceId: before.workspaceId, runId: 'recreated', sessionToken: 'old-session', fencingToken: first.lock.fencingToken }), /workspace_lock_handoff_failed/);
+    assert.equal(store.getWorktreeMutationLease(after.worktreeId).holderRunId, 'recreated');
+  } finally { store.close(); await rm(fixture.fixtureRoot, { recursive: true, force: true }); }
+});
 
 test('worktree identity is stable across HEAD, branch, provider, and session changes', async () => {
   const fixture = await createRepository();

@@ -1,10 +1,12 @@
 {
   "schemaVersion": 1,
+  "baselineCommit": "aca19ec85cf06f40860e07ef5006b37b02f7a260",
+  "baselineMethod": "git ls-tree and git cat-file --batch; immutable canonical blobs, excluding untracked runtime artifacts",
   "baseline": {
-    "files": 1988,
-    "nonblankLines": 268490,
-    "utf8Bytes": 12156684,
-    "estimatedPromptTokens": 3039171
+    "files": 2008,
+    "nonblankLines": 272810,
+    "utf8Bytes": 12375934,
+    "estimatedPromptTokens": 3093984
   },
   "allowedDelta": {
     "files": 50,

@@ -47,6 +47,35 @@ const isTestFile = (relative) => relative.startsWith('tests/') && (
   || relative.endsWith('.spec.cjs')
 );
 
+// Imported Node test suites are registered by the invoking npm script too.
+// Follow literal local imports only; this is an inventory, never execution.
+const testScriptCoverage = async (paths, scripts) => {
+  const coverage = new Map();
+  for (const [name, command] of scripts) {
+    const pending = paths.filter((relative) => isTestFile(relative) && String(command).includes(relative));
+    const visited = new Set();
+    while (pending.length > 0) {
+      const relative = pending.pop();
+      if (visited.has(relative)) continue;
+      visited.add(relative);
+      if (isTestFile(relative)) {
+        const registered = coverage.get(relative) || new Set();
+        registered.add(name);
+        coverage.set(relative, registered);
+      }
+      const body = await readFile(path.join(sourceRoot, relative), 'utf8');
+      const imports = /\b(?:import\s*(?:[^'";\n]*?\bfrom\s*)?|import\s*\(\s*)['"](\.[^'"]+)['"]/g;
+      for (const match of body.matchAll(imports)) {
+        const target = path.resolve(sourceRoot, path.dirname(relative), match[1]);
+        const child = path.relative(sourceRoot, target).replaceAll('\\', '/');
+        if (child.startsWith('../') || path.isAbsolute(child) || !/\.[cm]?js$/.test(child)) continue;
+        if (existsSync(target)) pending.push(child);
+      }
+    }
+  }
+  return coverage;
+};
+
 const collectReport = async () => {
   // Surface budget authority is the versioned repository surface only. Keep
   // untracked paths visible for diagnosis, but never let them move a budget
@@ -55,6 +84,7 @@ const collectReport = async () => {
   const untracked = untrackedFiles();
   const packageJson = JSON.parse(await readFile(path.join(sourceRoot, 'package.json'), 'utf8'));
   const scripts = Object.entries(packageJson.scripts || {});
+  const scriptCoverage = await testScriptCoverage([...files, ...untracked], scripts);
   let utf8Bytes = 0;
   let nonblankLines = 0;
   const categories = {};
@@ -70,10 +100,7 @@ const collectReport = async () => {
   const tests = files.filter(isTestFile).map((relative) => ({
     path: relative,
     kind: relative.startsWith('tests/fixtures/') ? 'fixture' : 'runnable',
-    scripts: scripts
-      .filter(([, script]) => String(script).includes(relative))
-      .map(([name]) => name)
-      .sort(),
+    scripts: [...(scriptCoverage.get(relative) || [])].sort(),
   }));
   const runnableTests = tests.filter((entry) => entry.kind === 'runnable');
   const fixtureTests = tests.filter((entry) => entry.kind === 'fixture');

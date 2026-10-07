@@ -38,6 +38,25 @@ const plannedContract = (statement = 'the mutation is correct') => ({
   }],
 });
 
+test('S-14: acceptance cannot downgrade the mandatory root proof to work evidence', async () => {
+  const fixture = await setup();
+  const cp = await createKernelControlPlane(fixture);
+  try {
+    const runId = 'root-proof-downgrade';
+    await cp.startRun({ runId, objective: 'reject root proof downgrade', taskContract: {
+      acceptance: [{ acceptance: 'root proof is mandatory', evidencePlan: {
+        class: 'hard', method: 'unit-test', obligationId: 'default', commandRefs: ['test:ok'], evidenceLevel: 'work',
+      } }],
+    } });
+    const before = await cp.assessCompletion(runId);
+    assert.equal(before.obligationStatuses.find((entry) => entry.obligationId === 'default').evidenceLevel, 'goal');
+    assert.equal(before.gates.goalEvidenceSatisfied, false);
+    const result = await cp.report(runId, { summary: 'execute actual root proof' });
+    assert.equal(result.executed.find((entry) => entry.obligationId === 'default').verificationScope, 'goal');
+    assert.equal(result.status, 'completed');
+  } finally { await cp.close(); await cleanup(fixture); }
+});
+
 test('planless proof is automatically bound and executed only when outstanding', async () => {
   const fixture = await setup();
   const cp = await createKernelControlPlane(fixture);
@@ -313,6 +332,187 @@ test('mutation with zero knowledge candidates leaves a structured warning in the
       mutationRevision: 1,
       candidateCount: 0,
     });
+  } finally {
+    await cp.close();
+    await cleanup(fixture);
+  }
+});
+
+test('S-14: Work-level evidence can cover acceptance but cannot close the Goal without Goal-level proof', async () => {
+  const fixture = await setup();
+  const cp = await createKernelControlPlane(fixture);
+  try {
+    const runId = 'r-work-only-proof';
+    await cp.startRun({ runId, objective: 'x', taskContract: plannedContract('work proof is bounded') });
+    await cp.transition(runId, 'EXECUTE');
+    await cp.transition(runId, 'PROVE');
+    await cp.executeProof(runId, {
+      obligationId: 'acceptance-ac-1',
+      commandRef: 'test:ok',
+      acceptanceCoverage: ['AC-1'],
+    });
+
+    const workOnly = await cp.assessCompletion(runId);
+    const acceptance = workOnly.obligationStatuses.find((entry) => entry.obligationId === 'acceptance-ac-1');
+    assert.equal(acceptance.evidenceLevel, 'work');
+    assert.equal(acceptance.satisfied, true);
+    assert.equal(workOnly.gates.acceptanceCovered, true);
+    assert.equal(workOnly.gates.goalEvidenceSatisfied, false);
+    assert.equal(workOnly.readyExceptClose, false);
+
+    await cp.executeProof(runId, {
+      obligationId: 'default',
+      commandRef: 'test:ok',
+      acceptanceCoverage: [],
+    });
+    const rooted = await cp.assessCompletion(runId);
+    const goal = rooted.obligationStatuses.find((entry) => entry.obligationId === 'default');
+    assert.equal(goal.evidenceLevel, 'goal');
+    assert.equal(goal.satisfied, true);
+    assert.equal(rooted.gates.goalEvidenceSatisfied, true);
+    assert.equal(rooted.readyExceptClose, true);
+  } finally {
+    await cp.close();
+    await cleanup(fixture);
+  }
+});
+
+test('S-13: an affected scoped proof becomes stale while an unaffected scope remains reusable', async () => {
+  const fixture = await setup();
+  const cp = await createKernelControlPlane(fixture);
+  try {
+    const runId = 'r-scoped-freshness';
+    await writeFile(path.join(fixture.projectRoot, 'other.mjs'), 'export const other = 0;\n');
+    await cp.startRun({
+      runId,
+      objective: 'x',
+      taskContract: {
+        acceptance: [{
+          acceptance: 'app behavior remains correct',
+          evidencePlan: {
+            class: 'hard',
+            method: 'unit-test',
+            commandRefs: ['test:ok'],
+            scope: ['app.mjs'],
+          },
+        }],
+      },
+    });
+    await cp.transition(runId, 'EXECUTE');
+    await cp.transition(runId, 'PROVE');
+    await cp.executeProof(runId, {
+      obligationId: 'acceptance-ac-1',
+      commandRef: 'test:ok',
+      acceptanceCoverage: ['AC-1'],
+    });
+    await cp.executeProof(runId, { obligationId: 'default', commandRef: 'test:ok', acceptanceCoverage: [] });
+
+    await writeFile(path.join(fixture.projectRoot, 'other.mjs'), 'export const other = 1;\n');
+    const unrelated = await cp.finalizeRun(runId, { changedPaths: ['other.mjs'] });
+    assert.equal(unrelated.finalizationStatus, 'incomplete_gates');
+    let trust = cp.trustAuthority(runId);
+    const scopedAfterUnrelated = trust.evidence.hard.find((entry) => entry.obligationId === 'acceptance-ac-1');
+    const goalAfterUnrelated = trust.evidence.hard.find((entry) => entry.obligationId === 'default');
+    assert.equal(scopedAfterUnrelated.freshness.status, 'fresh');
+    assert.equal(goalAfterUnrelated.freshness.status, 'stale');
+
+    await writeFile(path.join(fixture.projectRoot, 'app.mjs'), 'export const value = 9;\n');
+    await cp.finalizeRun(runId, { changedPaths: ['app.mjs'] });
+    trust = cp.trustAuthority(runId);
+    const scopedAfterAffected = trust.evidence.hard.find((entry) => entry.obligationId === 'acceptance-ac-1');
+    assert.equal(scopedAfterAffected.freshness.status, 'stale');
+    assert.ok(scopedAfterAffected.freshness.reasons.includes('verification-scope-stale'));
+  } finally {
+    await cp.close();
+    await cleanup(fixture);
+  }
+});
+
+test('S-15: a nonzero Goal regression cannot satisfy the Goal completion gate', async () => {
+  const fixture = await setup();
+  const cp = await createKernelControlPlane(fixture);
+  try {
+    const runId = 'r-goal-regression-failed';
+    await cp.startRun({ runId, objective: 'x', taskContract: plannedContract('leaf still passes') });
+    await cp.transition(runId, 'EXECUTE');
+    await cp.transition(runId, 'PROVE');
+    await cp.executeProof(runId, {
+      obligationId: 'acceptance-ac-1',
+      commandRef: 'test:ok',
+      acceptanceCoverage: ['AC-1'],
+    });
+    const run = cp.stateStore.getRun(runId);
+    cp.stateStore.recordVerification(runId, {
+      obligationId: 'default',
+      status: 'passed',
+      evidenceRef: 'proof://goal/nonzero',
+      sourceIdentity: run.sourceIdentity,
+      verifiedSourceIdentity: run.currentWorkspaceIdentity,
+      commandRef: 'test:ok',
+      command: 'npm run test:ok',
+      exitCode: 1,
+      evidenceDigest: `sha256:${'9'.repeat(64)}`,
+      acceptanceCoverage: [],
+      executor: 'kernel-runtime',
+      evidenceClass: 'hard',
+    });
+
+    const completion = await cp.assessCompletion(runId);
+    const goal = completion.obligationStatuses.find((entry) => entry.obligationId === 'default');
+    assert.equal(goal.satisfied, false);
+    assert.equal(completion.gates.goalEvidenceSatisfied, false);
+    assert.equal(completion.readyExceptClose, false);
+  } finally {
+    await cp.close();
+    await cleanup(fixture);
+  }
+});
+
+test('Wave 10: declared integration evidence is a real middle gate and cannot substitute for Goal proof', async () => {
+  const fixture = await setup();
+  const cp = await createKernelControlPlane(fixture);
+  try {
+    const runId = 'r-integration-evidence-level';
+    await cp.startRun({
+      runId,
+      objective: 'verify three-level evidence hierarchy',
+      taskContract: {
+        acceptance: ['three-level verification completes'],
+        requiredVerifications: [{
+          obligationId: 'integration-check',
+          commandRef: 'test:ok',
+          method: 'unit-test',
+          evidenceLevel: 'integration',
+        }],
+      },
+    });
+    await cp.transition(runId, 'EXECUTE');
+    await cp.transition(runId, 'PROVE');
+
+    await cp.executeProof(runId, {
+      obligationId: 'integration-check',
+      commandRef: 'test:ok',
+      acceptanceCoverage: [],
+    });
+    const integrated = await cp.assessCompletion(runId);
+    const integration = integrated.obligationStatuses.find((entry) => entry.obligationId === 'integration-check');
+    assert.equal(integration.evidenceLevel, 'integration');
+    assert.equal(integration.satisfied, true);
+    assert.equal(integrated.gates.integrationEvidenceSatisfied, true);
+    assert.equal(integrated.integrationEvidence.required, true);
+    assert.equal(integrated.integrationEvidence.count, 1);
+    assert.equal(integrated.gates.goalEvidenceSatisfied, false);
+    assert.equal(integrated.readyExceptClose, false);
+
+    await cp.executeProof(runId, {
+      obligationId: 'default',
+      commandRef: 'test:ok',
+      acceptanceCoverage: ['AC-1'],
+    });
+    const rooted = await cp.assessCompletion(runId);
+    assert.equal(rooted.gates.integrationEvidenceSatisfied, true);
+    assert.equal(rooted.gates.goalEvidenceSatisfied, true);
+    assert.equal(rooted.readyExceptClose, true);
   } finally {
     await cp.close();
     await cleanup(fixture);

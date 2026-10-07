@@ -1,3 +1,4 @@
+import { decideTestModelRoute, testStagnationSignal } from './helpers/kernel-host-test-api.mjs';
 // K2-6/7: a step that keeps failing is replanned, not retried forever. A replan
 // supersedes the live steps at a new plan revision instead of editing what was
 // already attempted.
@@ -10,18 +11,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { createKernelControlPlane } from '../scripts/kernel/control-plane.mjs';
 import { allStepsPassed, detectStepStagnation } from '../scripts/kernel/run/run-step-ledger.mjs';
+import { buildWorkAuthorityView } from '../scripts/kernel/run/work-authority.mjs';
 import { openKernelStateStore } from '../scripts/kernel/state-store.mjs';
 
 const CONTRACT = {
   complex: true,
   riskTier: 'T2',
   acceptance: [
-    { acceptance: 'auth rejects expired tokens', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test:ok', 'test:fail'], obligationId: 'unit-test' } },
-    { acceptance: 'the suite stays clean', evidencePlan: { class: 'hard', method: 'static-analysis', commandRefs: ['lint'], obligationId: 'static-analysis' } },
+    { acceptance: 'auth rejects expired tokens', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test:ok', 'test:fail'], obligationId: 'auth-work' } },
+    { acceptance: 'the suite stays clean', evidencePlan: { class: 'hard', method: 'static-analysis', commandRefs: ['lint'], obligationId: 'tests-work' } },
   ],
   steps: [
-    { objective: 'Implement token expiry', allowedPaths: ['src/auth/**'], acceptanceIds: ['AC-1'], obligationIds: ['unit-test'] },
-    { objective: 'Cover it', allowedPaths: ['tests/**'], acceptanceIds: ['AC-2'], obligationIds: ['static-analysis'] },
+    { objective: 'Implement token expiry', allowedPaths: ['src/auth/**'], acceptanceIds: ['AC-1'], obligationIds: ['auth-work'] },
+    { objective: 'Cover it', allowedPaths: ['tests/**'], acceptanceIds: ['AC-2'], obligationIds: ['tests-work'] },
   ],
 };
 
@@ -60,7 +62,7 @@ test('K2-6: three failures on the same step raise stagnation and recommend a rep
         summary: `attempt ${value}`,
         stepId: first.stepId,
         changedPaths: ['src/auth/service.mjs'],
-        verifications: [{ obligationId: 'unit-test', commandRef: 'test:fail' }],
+        verifications: [{ obligationId: 'auth-work', commandRef: 'test:fail' }],
       });
       assert.equal(last.step.state, 'failed');
     }
@@ -86,13 +88,13 @@ test('K2-7: a replan supersedes the live steps and writes the replacement at a n
       summary: 'first unit done',
       stepId: original[0].stepId,
       changedPaths: ['src/auth/service.mjs'],
-      verifications: [{ obligationId: 'unit-test', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] }],
+      verifications: [{ obligationId: 'auth-work', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] }],
     });
 
     const replanned = await cp.replanSteps('r-replan', {
       steps: [
-        { objective: 'Rework expiry with the clock injected', allowedPaths: ['src/auth/**'], acceptanceIds: ['AC-1'], obligationIds: ['unit-test'] },
-        { objective: 'Cover it', allowedPaths: ['tests/**'], acceptanceIds: ['AC-2'], obligationIds: ['static-analysis'] },
+        { objective: 'Rework expiry with the clock injected', allowedPaths: ['src/auth/**'], acceptanceIds: ['AC-1'], obligationIds: ['auth-work'] },
+        { objective: 'Cover it', allowedPaths: ['tests/**'], acceptanceIds: ['AC-2'], obligationIds: ['tests-work'] },
       ],
     });
 
@@ -111,6 +113,41 @@ test('K2-7: a replan supersedes the live steps and writes the replacement at a n
     const stale = await cp.report('r-replan', { summary: 'old plan', stepId: original[1].stepId, changedPaths: [] });
     assert.equal(stale.status, 'step-rejected');
     assert.match(stale.failures[0].errorSummary, /belongs to plan revision 1/);
+  } finally {
+    await cp.close();
+    await cleanup(fixture);
+  }
+});
+
+test('S-16: replan preserves completed Work history while new work stays current', async () => {
+  const fixture = await setup();
+  const cp = await createKernelControlPlane(fixture);
+  try {
+    await cp.startRun({ runId: 'r-monotonic-replan', objective: 'Harden auth', taskContract: CONTRACT });
+    const original = cp.getRunSteps('r-monotonic-replan');
+    await writeFile(path.join(fixture.projectRoot, 'src', 'auth', 'service.mjs'), 'export const v = 1;\n');
+    await cp.report('r-monotonic-replan', {
+      summary: 'auth work complete',
+      stepId: original[0].stepId,
+      changedPaths: ['src/auth/service.mjs'],
+      verifications: [{ obligationId: 'auth-work', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] }],
+    });
+
+    await cp.replanSteps('r-monotonic-replan', {
+      steps: [
+        { objective: 'Rework tests only', allowedPaths: ['tests/**'], acceptanceIds: ['AC-2'], obligationIds: ['tests-work'] },
+      ],
+    });
+
+    const run = await cp.getRun('r-monotonic-replan');
+    const steps = cp.getRunSteps('r-monotonic-replan');
+    const view = buildWorkAuthorityView({ run, steps });
+    assert.ok(view.progress.completedWorkUnitIds.includes(original[0].stepId));
+    assert.equal(view.progress.completedCurrentPlanCount, 0);
+    assert.equal(view.progress.remainingCount, 1);
+    assert.equal(view.goal.coverage.completedAcceptanceCount, 1);
+    assert.equal(view.currentWorkUnit.planRevision, 2);
+    assert.notEqual(view.currentWorkUnit.stepId, original[0].stepId);
   } finally {
     await cp.close();
     await cleanup(fixture);
@@ -150,7 +187,7 @@ test('K2-6: step stagnation escalates the route, without overtaking retry escala
   try {
     await cp.startRun({ runId: 'r-escalate', objective: 'Harden auth', taskContract: CONTRACT });
     const [first] = cp.getRunSteps('r-escalate');
-    assert.equal((await cp.decideModelRoute('r-escalate', { actionKind: 'implement', obligationId: 'unit-test' })).modelClass, 'value_coding');
+    assert.equal((await decideTestModelRoute(cp, 'r-escalate', { actionKind: 'implement', obligationId: 'auth-work' })).modelClass, 'value_coding');
 
     for (const value of [1, 2]) {
       await writeFile(path.join(fixture.projectRoot, 'src', 'auth', 'service.mjs'), `export const v = ${value};\n`);
@@ -158,28 +195,28 @@ test('K2-6: step stagnation escalates the route, without overtaking retry escala
         summary: `attempt ${value}`,
         stepId: first.stepId,
         changedPaths: ['src/auth/service.mjs'],
-        verifications: [{ obligationId: 'unit-test', commandRef: 'test:fail' }],
+        verifications: [{ obligationId: 'auth-work', commandRef: 'test:fail' }],
       });
     }
     // Two failures is a retry, not stagnation: the looser step signals must not
     // overtake the retry threshold, or retry escalation becomes unreachable.
-    assert.equal(cp.stagnationSignal('r-escalate').stagnant, false);
+    assert.equal(testStagnationSignal(cp, 'r-escalate').stagnant, false);
 
     await writeFile(path.join(fixture.projectRoot, 'src', 'auth', 'service.mjs'), 'export const v = 3;\n');
     await cp.report('r-escalate', {
       summary: 'attempt 3',
       stepId: first.stepId,
       changedPaths: ['src/auth/service.mjs'],
-      verifications: [{ obligationId: 'unit-test', commandRef: 'test:fail' }],
+      verifications: [{ obligationId: 'auth-work', commandRef: 'test:fail' }],
     });
 
-    const signal = cp.stagnationSignal('r-escalate');
+    const signal = testStagnationSignal(cp, 'r-escalate');
     assert.equal(signal.stagnant, true);
     assert.equal(signal.stepLevel.signals.consecutiveFailures, true);
 
     // The stuck unit is replanned on the frontier class rather than handed back
     // to the implementer that is stuck.
-    const escalated = await cp.decideModelRoute('r-escalate', { actionKind: 'implement', obligationId: 'unit-test' });
+    const escalated = await decideTestModelRoute(cp, 'r-escalate', { actionKind: 'implement', obligationId: 'auth-work' });
     assert.equal(escalated.actionKind, 'replan');
     assert.equal(escalated.modelClass, 'frontier_reasoning');
     assert.equal(escalated.role, 'planner');
@@ -201,7 +238,7 @@ test('K1/K2: a replan invalidates the superseded step capsule and its scope', as
     // A replan bumps the plan revision without touching the workspace, so the
     // mutation revision and workspace identity are unchanged.
     const replanned = await cp.replanSteps('r-capreplan', {
-      steps: [{ objective: 'Rework in the tests tree', allowedPaths: ['tests/**'], acceptanceIds: ['AC-1'], obligationIds: ['unit-test'] }],
+      steps: [{ objective: 'Rework in the tests tree', allowedPaths: ['tests/**'], acceptanceIds: ['AC-1'], obligationIds: ['auth-work'] }],
     });
     assert.equal(replanned.planRevision, 2);
 
@@ -222,7 +259,7 @@ test('K1/K2: a replan invalidates the superseded step capsule and its scope', as
       summary: 'new step scope',
       stepId: replanned.steps[0].stepId,
       changedPaths: ['tests/auth.test.mjs'],
-      verifications: [{ obligationId: 'unit-test', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] }],
+      verifications: [{ obligationId: 'auth-work', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] }],
     });
     assert.notEqual(unnamed.status, 'scope-rejected', JSON.stringify(unnamed.failures));
     assert.equal(unnamed.step.state, 'passed');
@@ -243,12 +280,12 @@ test('K2: a replacement plan that reuses a declared step id does not swallow the
         complex: true,
         riskTier: 'T2',
         acceptance: [
-          { acceptance: 'auth holds', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test:ok'], obligationId: 'unit-test' } },
-          { acceptance: 'suite holds', evidencePlan: { class: 'hard', method: 'static-analysis', commandRefs: ['lint'], obligationId: 'static-analysis' } },
+          { acceptance: 'auth holds', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test:ok'], obligationId: 'auth-work' } },
+          { acceptance: 'suite holds', evidencePlan: { class: 'hard', method: 'static-analysis', commandRefs: ['lint'], obligationId: 'tests-work' } },
         ],
         steps: [
-          { stepId: 'auth-slice', objective: 'Auth', allowedPaths: ['src/auth/**'], acceptanceIds: ['AC-1'], obligationIds: ['unit-test'] },
-          { stepId: 'test-slice', objective: 'Tests', allowedPaths: ['tests/**'], acceptanceIds: ['AC-2'], obligationIds: ['static-analysis'] },
+          { stepId: 'auth-slice', objective: 'Auth', allowedPaths: ['src/auth/**'], acceptanceIds: ['AC-1'], obligationIds: ['auth-work'] },
+          { stepId: 'test-slice', objective: 'Tests', allowedPaths: ['tests/**'], acceptanceIds: ['AC-2'], obligationIds: ['tests-work'] },
         ],
       },
     });
@@ -259,8 +296,8 @@ test('K2: a replacement plan that reuses a declared step id does not swallow the
     // with no steps at all — which `allStepsPassed` would have read as settled.
     const replanned = await cp.replanSteps('r-idreuse', {
       steps: [
-        { stepId: 'auth-slice', objective: 'Auth again', allowedPaths: ['src/auth/**'], acceptanceIds: ['AC-1'], obligationIds: ['unit-test'] },
-        { stepId: 'test-slice', objective: 'Tests again', allowedPaths: ['tests/**'], acceptanceIds: ['AC-2'], obligationIds: ['static-analysis'] },
+        { stepId: 'auth-slice', objective: 'Auth again', allowedPaths: ['src/auth/**'], acceptanceIds: ['AC-1'], obligationIds: ['auth-work'] },
+        { stepId: 'test-slice', objective: 'Tests again', allowedPaths: ['tests/**'], acceptanceIds: ['AC-2'], obligationIds: ['tests-work'] },
       ],
     });
     assert.equal(replanned.steps.length, 2, 'the replacement plan is not swallowed');
@@ -289,7 +326,7 @@ test('K2: a plan with no steps at the current revision is not a settled plan', a
       summary: 'first unit',
       stepId: first.stepId,
       changedPaths: ['src/auth/service.mjs'],
-      verifications: [{ obligationId: 'unit-test', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] }],
+      verifications: [{ obligationId: 'auth-work', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] }],
     });
 
     // Steps exist, but none at revision 2 — a broken plan, not a finished one.
@@ -337,6 +374,51 @@ test('K2: an atomic replacement rolls back supersession and revision on collisio
     assert.deepEqual(store.getRunSteps('r-atomic-collide').map((step) => step.state), original.map((step) => step.state));
   } finally {
     store.close();
+    await cp.close();
+    await cleanup(fixture);
+  }
+});
+
+
+test('scope amendment keeps every pending Work unit and preserves completed history', async () => {
+  const fixture = await setup();
+  const cp = await createKernelControlPlane(fixture);
+  try {
+    const runId = 'scope-amendment-tail';
+    const contract = { ...CONTRACT, steps: [
+      { stepId: 'auth', objective: 'Implement token expiry', allowedPaths: ['src/auth/**'], acceptanceIds: ['AC-1'], obligationIds: ['auth-work'] },
+      { stepId: 'tests', objective: 'Cover it', allowedPaths: ['tests/**'], acceptanceIds: ['AC-2'], obligationIds: ['tests-work'], dependsOn: ['auth'] },
+      { stepId: 'final', objective: 'Final root proof', allowedPaths: ['tests/**'], acceptanceIds: ['AC-1', 'AC-2'], dependsOn: ['tests'] },
+    ] };
+    await cp.ensureRun({ runId, objective: 'Harden auth', taskContract: contract });
+    const amended = { ...contract, steps: contract.steps.map((step, i) => i === 0
+      ? { ...step, allowedPaths: ['src/auth/**', 'tests/**'] } : step) };
+    await cp.ensureRun({ runId, taskContract: amended });
+    const run = await cp.getRun(runId);
+    const active = cp.getRunSteps(runId).filter((step) => step.planRevision === run.planRevision);
+    assert.deepEqual(active.map((step) => step.objective), contract.steps.map((step) => step.objective));
+    assert.equal(active[1].dependencyIds[0], active[0].stepId);
+    assert.equal(active[2].dependencyIds[0], active[1].stepId);
+    await cp.ensureRun({ runId, taskContract: amended });
+    assert.equal((await cp.getRun(runId)).planRevision, run.planRevision);
+    cp.completeStep(runId, active[0].stepId);
+    const secondAmendment = { ...amended, steps: amended.steps.map((step, i) => i === 1
+      ? { ...step, allowedPaths: ['tests/**', 'src/auth/**'] } : step) };
+    await cp.ensureRun({ runId, taskContract: secondAmendment });
+    const revised = await cp.getRun(runId);
+    const remaining = cp.getRunSteps(runId).filter((step) => step.planRevision === revised.planRevision);
+    assert.deepEqual(remaining.map((step) => step.objective), ['Cover it', 'Final root proof']);
+    assert.equal(cp.stateStore.getRunStep(runId, active[0].stepId).state, 'passed');
+    assert.equal(remaining[0].dependencyIds[0], active[0].stepId);
+    assert.equal(remaining[0].state, 'ready');
+    assert.equal(remaining[1].state, 'planned');
+    assert.equal(cp.getCurrentStep(runId).stepId, remaining[0].stepId);
+    const next = await cp.next(runId);
+    assert.equal(next.workAuthority.currentWorkUnit.stepId, remaining[0].stepId);
+    assert.equal(next.workAuthority.cursor.currentStepId, remaining[0].stepId);
+    assert.ok(next.workAuthority.progress.completedWorkUnitIds.includes(active[0].stepId));
+    assert.equal(next.workAuthority.cursor.stepCount, 2);
+  } finally {
     await cp.close();
     await cleanup(fixture);
   }

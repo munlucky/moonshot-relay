@@ -13,7 +13,7 @@ import {
   executionRoot,
   inspectGitWorkspace,
   prepareExecutionWorkspaces,
-} from '../scripts/kernel/workspace/step-worktree-manager.mjs';
+} from '../scripts/host/kernel/workspace/physical-worktree.mjs';
 
 const makeRepository = async () => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'kernel-parallel-recovery-repo-'));
