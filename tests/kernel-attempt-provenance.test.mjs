@@ -20,17 +20,7 @@ const capabilities = {
 
 test('a dispatched Step carries its existing attempt and capsule credentials', async () => {
   const calls = [];
-  const controlPlane = {
-    bindStepAttempt: async (runId, stepId, binding) => {
-      calls.push({ kind: 'bind', runId, stepId, binding });
-      return {
-        id: 7,
-        attemptId: 'attempt-step-a',
-        bindingId: 'binding-step-a',
-        actorSessionId: 'parent:worker:step-a',
-      };
-    },
-    hostNext: async (runId, context) => {
+  const prepareHost = async ({ runId, ...context }) => {
       calls.push({ kind: 'next', runId, context });
       return {
         runId,
@@ -42,12 +32,23 @@ test('a dispatched Step carries its existing attempt and capsule credentials', a
         hostDirective: {},
         modelInput: { action: { type: 'implement' } },
       };
+  };
+  const controlPlane = {
+    bindStepAttempt: async (runId, stepId, binding) => {
+      calls.push({ kind: 'bind', runId, stepId, binding });
+      return {
+        id: 7,
+        attemptId: 'attempt-step-a',
+        bindingId: 'binding-step-a',
+        actorSessionId: 'parent:worker:step-a',
+      };
     },
     updateStepAttempt: async (id, patch) => calls.push({ kind: 'update', id, patch }),
   };
   const step = { stepId: 'step-a', objective: 'edit a', workProfile: null };
   const outcome = await dispatchKernelStep({
     controlPlane,
+    prepareHost,
     runId: 'run-step-a',
     step,
     workspace,
@@ -71,12 +72,13 @@ test('a dispatched Step carries its existing attempt and capsule credentials', a
 });
 
 test('a provider failure is returned as a failed Step dispatch without synthetic lifecycle state', async () => {
+  const prepareHost = async () => ({ executionCapsule: null, hostDirective: {}, modelInput: { action: { type: 'implement' } } });
   const controlPlane = {
     bindStepAttempt: async () => ({ id: 8, attemptId: 'attempt-step-b', bindingId: 'binding-step-b' }),
-    hostNext: async () => ({ executionCapsule: null, hostDirective: {}, modelInput: { action: { type: 'implement' } } }),
   };
   const outcome = await dispatchKernelStep({
     controlPlane,
+    prepareHost,
     runId: 'run-step-b',
     step: { stepId: 'step-b', objective: 'edit b' },
     workspace,

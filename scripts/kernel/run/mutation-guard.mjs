@@ -130,9 +130,10 @@ export const assertWorkspaceMutationFence = ({
     }
   }
 
-  const lock = effectiveWorkspaceId
-    ? stateStore.getWorkspaceMutationLockV2(effectiveWorkspaceId)
-    : stateStore.getWorkspaceMutationLock(run.projectId);
+  if (!effectiveWorkspaceId) {
+    failForMode(mode, 'mutation_workspace_mismatch', 'delivery_workspace_mismatch', runId);
+  }
+  const lock = stateStore.getWorkspaceMutationLockV2(effectiveWorkspaceId);
   if (!lock) {
     failForMode(mode, 'workspace_mutation_lock_missing', 'delivery_mutation_fence_lost', run.projectId);
   }

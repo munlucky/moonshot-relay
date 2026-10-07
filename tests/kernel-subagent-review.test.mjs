@@ -1,3 +1,4 @@
+import { prepareTestHostTurn } from './helpers/kernel-host-test-api.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
@@ -80,7 +81,7 @@ test('Subagent Review: Action and Host Directive route to native-subagent when i
     assert.match(nextTurn.action.guidance, /native subagent/i, 'Guidance should instruct subagent execution');
 
     // HostDirective check via hostNext()
-    const hostTurn = await cp.hostNext(runId, {
+    const hostTurn = await prepareTestHostTurn(cp, runId, {
       hostCapabilities: { surface: 'codex-desktop', nativeSubagent: true },
     });
     assert.equal(
@@ -214,7 +215,19 @@ test('Subagent Review: dispatchKernelTurn invokes adapter launcher when adapter 
     let launcherCalled = false;
     let launchedMode = null;
     const testAdapter = {
-      capabilities: { surface: 'codex', nativeSubagent: true, supportsSubagentModel: true },
+      capabilities: {
+        surface: 'codex',
+        nativeSubagent: true,
+        supportsSubagentModel: true,
+        semantic: {
+          freshContext: true,
+          workspaceWrite: true,
+          workspaceIsolation: true,
+          parallelExecution: true,
+          independentReview: true,
+          modelSelection: false,
+        },
+      },
       ownerDirectDefault: true,
       nativeDelegationAvailable: true,
       dispatch: async (params) => {

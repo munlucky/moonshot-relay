@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-10-07",
+  "environment": "Windows local Codex Desktop",
+  "policy": "mock/injected launchers prove protocol conformance only; native gates require an actual installed surface",
+  "gates": [
+    {
+      "id": "N-01",
+      "workUnit": "W-14",
+      "host": "codex",
+      "executable": "codex",
+      "observed": "Codex CLI 0.159.2; two actual fresh owner sessions; Kernel Work reports and root proof; actual independent read-only review receipt; next.action.type=done",
+      "status": "native-kernel-e2e-passed",
+      "conformance": "implemented",
+      "boundary": "Isolated two-Work fixture uses the actual source Control Plane and Codex Host adapter. Main refactor completion remains the main Run authority.",
+      "runId": "native-codex-388408fd-b75e-443b-8140-229ce55ef23c",
+      "ownerSessionIds": [
+        "01a1128c-ad37-7592-9f26-7e1c2fbddf91",
+        "01a1128d-3014-7a01-882a-f6038cc66108"
+      ],
+      "reviewerSessionId": "01a1128f-1ff3-7422-bf7c-627b3b2845e7",
+      "reviewReceiptId": "review-receipt-28addbf1d0b88b53988d4fbf",
+      "observedOwnerModel": "gpt-6.1-sol",
+      "observedOwnerEffort": "low",
+      "observedReviewerModel": "gpt-6.1-sol",
+      "observedReviewerEffort": "high"
+    },
+    {
+      "id": "N-02",
+      "workUnit": "W-15",
+      "host": "claude",
+      "executable": "claude",
+      "observed": "Claude Code 2.1.222; actual terminal api_error ConnectionRefused",
+      "status": "blocked-environment",
+      "conformance": "implemented",
+      "reason": "CLI is installed. Current configured API connection is refused. No model execution was observed."
+    },
+    {
+      "id": "N-03",
+      "workUnit": "W-15",
+      "host": "ade",
+      "executable": "ade",
+      "observed": "not tested in this continuation; optional additional Host",
+      "status": "native-unverified",
+      "conformance": "implemented"
+    },
+    {
+      "id": "N-04",
+      "workUnit": "W-16",
+      "host": "gemini",
+      "executable": "gemini",
+      "observed": "Gemini CLI 0.52.0; actual error code 41",
+      "status": "blocked-authentication",
+      "conformance": "implemented",
+      "reason": "Gemini semantic adapter and fresh native CLI launcher are implemented. Actual CLI execution requires a configured Auth method."
+    },
+    {
+      "id": "N-05",
+      "host": "qwen",
+      "executable": "qwen",
+      "observed": "Qwen Code 0.21.15; actual JSON terminal success; session efaa75d8-ee55-4ca8-892d-19054ddafc64; reported backing model gpt-6-luna; input 15905/output 10 tokens",
+      "status": "native-smoke-passed-kernel-e2e-blocked",
+      "boundary": "Actual authenticated prompt succeeds. Full native Kernel E2E is blocked by this installed environment.",
+      "reason": "Three actual authenticated sessions exposed no shell or file-write tool. Official QWEN_CODE_SIMPLE mode exposes those tools but does not load account authentication; explicit openai auth reports Missing API key. No account auth settings were changed."
+    }
+  ],
+  "relatedSurfaces": [
+    {
+      "id": "antigravity",
+      "status": "profile-and-launch-isolation-only",
+      "evidence": [
+        "package/kernel/profiles/antigravity/GEMINI.md",
+        "scripts/switcher/providers/antigravity.mjs",
+        "scripts/switcher/native-provider.mjs"
+      ]
+    }
+  ],
+  "nativeValidationScope": [
+    "codex",
+    "qwen"
+  ],
+  "scopeAuthority": "User confirmed on 2026-10-06 that only Codex and Qwen are available."
+}

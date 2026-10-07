@@ -54,7 +54,7 @@ test('ADE is a first-class native surface with ADE-owned home, executable, and s
     kernelHome: '/tmp/kernel-home',
     baseEnv,
   });
-  assert.equal(roots.providerHome.replaceAll('\\', '/'), '/tmp/ade-home');
+  assert.equal(roots.providerHome.replaceAll('\\', '/'), path.resolve(baseEnv.ADE_HOME).replaceAll('\\', '/'));
 
   const provider = nativeProviderDescriptor({ surface: 'ade_cli', runtimeHome: roots.runtimeHome, env: baseEnv });
   assert.equal(provider.provider, 'ade');
@@ -66,10 +66,10 @@ test('ADE is a first-class native surface with ADE-owned home, executable, and s
   assert.equal(spec.env.MOON_RELAY_KERNEL_PROVIDER, 'ade');
   assert.equal(spec.env.MOON_RELAY_KERNEL_SURFACE, 'ade_cli');
   assert.equal(spec.env.MOON_RELAY_KERNEL_SESSION_ID, 'ade:owner-1');
-  assert.equal(spec.env.ADE_HOME.replaceAll('\\', '/'), '/tmp/ade-home');
-  assert.equal(spec.env.QWEN_HOME.replaceAll('\\', '/'), '/tmp/ade-home');
+  assert.equal(spec.env.ADE_HOME, roots.providerHome);
+  assert.equal(spec.env.QWEN_HOME, roots.providerHome);
   assert.equal(spec.env.QWEN_CODE_DISABLE_WORKFLOWS, '1');
-  assert.equal(spec.env.QWEN_CODE_SYSTEM_DEFAULTS_PATH.replaceAll('\\', '/'), '/tmp/ade-home/qwen-system-defaults.json');
+  assert.equal(spec.env.QWEN_CODE_SYSTEM_DEFAULTS_PATH, path.join(roots.providerHome, 'qwen-system-defaults.json'));
   assert.equal(spec.args.at(spec.args.indexOf('--max-subagent-depth') + 1), '1');
   assert.equal(spec.args.at(spec.args.indexOf('--system-prompt') + 1), ADE_OWNER_SYSTEM_PROMPT);
 

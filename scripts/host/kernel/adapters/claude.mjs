@@ -168,6 +168,14 @@ export const createClaudeAdapter = ({ launch = null, capabilities = {} } = {}) =
     ...capabilities,
     supportsIndependentContext: hasLauncher,
     supportsCrossSurfaceReview: false,
+    semantic: Object.freeze({
+      freshContext: hasLauncher,
+      workspaceWrite: true,
+      workspaceIsolation: true,
+      parallelExecution: hasLauncher,
+      independentReview: hasLauncher,
+      modelSelection: true,
+    }),
   };
   return {
   surface: 'claude',

@@ -33,6 +33,12 @@ test('contract-first invocation resolver deterministically selects every lifecyc
   const stateStore = {
     getActiveOwnerBinding: () => binding,
     getRun: (runId) => run?.runId === runId ? run : null,
+    listRuns: ({ workspaceId: requestedWorkspaceId } = {}) => (
+      run && run.workspaceId === requestedWorkspaceId ? [run] : []
+    ),
+    getLatestRunForWorktree: ({ workspaceId: requestedWorkspaceId } = {}) => (
+      run && run.workspaceId === requestedWorkspaceId ? run : null
+    ),
     getProjectWorkspace: (candidateWorkspaceId) => candidateWorkspaceId === 'workspace-next'
       ? { workspaceId: candidateWorkspaceId, projectId }
       : null,
@@ -80,6 +86,47 @@ test('contract-first invocation resolver deterministically selects every lifecyc
   assert.equal(successor.predecessorRunId, 'run-a');
   assert.match(successor.runId, /^run-[0-9a-f-]{36}$/i);
   assert.equal(resolve(contractB, { workspaceId: 'workspace-next' }).mode, 'create');
+});
+
+test('session binding is an access handle and never selects Task identity', () => {
+  const projectId = 'session-independent-project';
+  const workspaceId = 'session-independent-workspace';
+  const run = {
+    runId: 'run-session-independent',
+    projectId,
+    workspaceId,
+    status: 'active',
+    finalizationStatus: 'pending',
+    taskContract: normalizeTaskContract({
+      objective: 'preserve durable work across host restart',
+      acceptance: ['work resumes from the same Run'],
+    }),
+  };
+  const stateStore = {
+    getActiveOwnerBinding: () => {
+      throw new Error('session binding must not be consulted for Run selection');
+    },
+    getRun: (runId) => runId === run.runId ? run : null,
+    listRuns: ({ workspaceId: requestedWorkspaceId } = {}) => (
+      requestedWorkspaceId === workspaceId ? [run] : []
+    ),
+    getLatestRunForWorktree: ({ workspaceId: requestedWorkspaceId } = {}) => (
+      requestedWorkspaceId === workspaceId ? run : null
+    ),
+  };
+
+  const resolved = resolveBoundInvocation({
+    stateStore,
+    projectId,
+    provider: 'codex',
+    sessionId: 'codex:replacement-host-session',
+    workspaceId,
+    taskContract: run.taskContract,
+  });
+
+  assert.equal(resolved.mode, 'resume');
+  assert.equal(resolved.runId, run.runId);
+  assert.equal(resolved.binding, null);
 });
 
 test('explicit new-task intent fails closed instead of revising an active worktree Run and preserves its holder', () => {
@@ -203,22 +250,25 @@ test('a blocked worktree run is automatically abandoned and lease reclaimed when
 });
 
 test('contract-first invocation resolver fails closed on explicit, provider, and workspace mismatches', () => {
+  const activeRun = {
+    runId: 'run-a',
+    projectId: 'resolver-project',
+    workspaceId: 'resolver-workspace',
+    status: 'active',
+    finalizationStatus: 'pending',
+    taskContract: null,
+  };
   const stateStore = {
     getActiveOwnerBinding: () => ({
       bindingId: 'binding-a',
-      runId: 'run-a',
-      projectId: 'resolver-project',
+      runId: activeRun.runId,
+      projectId: activeRun.projectId,
       sessionId: 'codex:resolver-session',
-      workspaceId: 'resolver-workspace',
+      workspaceId: activeRun.workspaceId,
     }),
-    getRun: (runId) => runId === 'run-a' ? ({
-        runId: 'run-a',
-        projectId: 'resolver-project',
-        workspaceId: 'resolver-workspace',
-        status: 'active',
-        finalizationStatus: 'pending',
-        taskContract: null,
-      }) : null,
+    getRun: (runId) => runId === activeRun.runId ? activeRun : null,
+    listRuns: ({ workspaceId } = {}) => workspaceId === activeRun.workspaceId ? [activeRun] : [],
+    getLatestRunForWorktree: ({ workspaceId } = {}) => workspaceId === activeRun.workspaceId ? activeRun : null,
   };
   const base = {
     stateStore,
@@ -520,6 +570,7 @@ test('rollbackRunInitialization deletes child tables first and succeeds with nes
         bindingType: 'verification',
       });
 
+      const journalBeforeRollback = store.getRunJournal(runId);
       const rollback = store.rollbackRunInitialization(runId, {
         projectId: run.projectId,
         sourceIdentity: run.sourceIdentity,
@@ -527,6 +578,7 @@ test('rollbackRunInitialization deletes child tables first and succeeds with nes
       assert.equal(rollback.status, 'rolled-back');
       assert.equal(rollback.rolledBack, true);
       assert.equal(store.getRun(runId), null);
+      assert.deepEqual(store.getRunJournal(runId), journalBeforeRollback);
     } finally {
       store.close();
     }

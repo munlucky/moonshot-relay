@@ -1,3 +1,4 @@
+import { prepareTestHostTurn } from './helpers/kernel-host-test-api.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
@@ -15,7 +16,7 @@ test('host-issued capsule and workspace fencing enforce mutation paths', async (
   const cp = await createKernelControlPlane({ runtimeHome, projectRoot: root, holder: 'session-one' });
   try {
     await cp.startRun({ runId: 'guard', objective: 'edit src', taskContract: { acceptance: ['works'], allowedPaths: ['src/**'] } });
-    const host = await cp.hostNext('guard', {
+    const host = await prepareTestHostTurn(cp, 'guard', {
       hostCapabilities: { surface: 'codex', supportsSessionModelOverride: true, supportsResolvedModelIdentity: true },
     });
     const stepId = host.executionCapsule.stepId;

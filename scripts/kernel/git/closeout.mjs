@@ -276,7 +276,7 @@ export async function executeKernelGitCloseout({
           status: 'commit_created',
           beforeHeadSha,
           selectedPaths,
-          receiptJson: { runId, projectId, commitSha, branch: currentBranch, commitSubject, commitMessage, status: 'commit_created' },
+          receiptJson: { runId, projectId, commitSha, branch: currentBranch, commitSubject, commitMessage, reportKey: gitCloseoutRequest.reportKey || null, verifiedWorkspaceIdentity: gitCloseoutRequest.verifiedWorkspaceIdentity || null, status: 'commit_created' },
         });
       }
     } finally {
@@ -310,7 +310,7 @@ export async function executeKernelGitCloseout({
             status: 'parity_failed',
             errorCode: 'REMOTE_PARITY_MISMATCH',
             errorMessage: `Remote parity mismatch: local ${commitSha} != remote ${remoteHeadSha}`,
-            receiptJson: { runId, projectId, commitSha, branch: currentBranch, commitSubject, commitMessage, status: 'parity_failed' },
+            receiptJson: { runId, projectId, commitSha, branch: currentBranch, commitSubject, commitMessage, reportKey: gitCloseoutRequest.reportKey || null, verifiedWorkspaceIdentity: gitCloseoutRequest.verifiedWorkspaceIdentity || null, status: 'parity_failed' },
           });
         }
         throw new KernelGitCloseoutError('REMOTE_PARITY_MISMATCH', `Remote parity mismatch on branch ${currentBranch}: local ${commitSha} != remote ${remoteHeadSha}`);
@@ -328,7 +328,7 @@ export async function executeKernelGitCloseout({
           status: 'push_failed',
           errorCode: 'GIT_PUSH_FAILED',
           errorMessage: pushRes.stderr,
-          receiptJson: { runId, projectId, commitSha, branch: currentBranch, commitSubject, commitMessage, status: 'push_failed' },
+          receiptJson: { runId, projectId, commitSha, branch: currentBranch, commitSubject, commitMessage, reportKey: gitCloseoutRequest.reportKey || null, verifiedWorkspaceIdentity: gitCloseoutRequest.verifiedWorkspaceIdentity || null, status: 'push_failed' },
         });
       }
       throw new KernelGitCloseoutError('GIT_PUSH_FAILED', `Git push failed: ${pushRes.stderr}`);
@@ -351,6 +351,8 @@ export async function executeKernelGitCloseout({
     remoteHeadSha,
     parity,
     approvalReceipt: gitCloseoutRequest.approvalReceipt,
+    reportKey: gitCloseoutRequest.reportKey || null,
+    verifiedWorkspaceIdentity: gitCloseoutRequest.verifiedWorkspaceIdentity || null,
     status: 'completed',
   };
 

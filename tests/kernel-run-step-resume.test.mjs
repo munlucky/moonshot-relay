@@ -14,12 +14,12 @@ const CONTRACT = {
   complex: true,
   riskTier: 'T2',
   acceptance: [
-    { acceptance: 'auth rejects expired tokens', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test:ok'], obligationId: 'unit-test' } },
-    { acceptance: 'the suite stays clean', evidencePlan: { class: 'hard', method: 'static-analysis', commandRefs: ['lint'], obligationId: 'static-analysis' } },
+    { acceptance: 'auth rejects expired tokens', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test:ok'], obligationId: 'auth-work' } },
+    { acceptance: 'the suite stays clean', evidencePlan: { class: 'hard', method: 'static-analysis', commandRefs: ['lint'], obligationId: 'tests-work' } },
   ],
   steps: [
-    { objective: 'Implement token expiry', allowedPaths: ['src/auth/**'], acceptanceIds: ['AC-1'], obligationIds: ['unit-test'] },
-    { objective: 'Cover it with a regression test', allowedPaths: ['tests/**'], acceptanceIds: ['AC-2'], obligationIds: ['static-analysis'] },
+    { objective: 'Implement token expiry', allowedPaths: ['src/auth/**'], acceptanceIds: ['AC-1'], obligationIds: ['auth-work'] },
+    { objective: 'Cover it with a regression test', allowedPaths: ['tests/**'], acceptanceIds: ['AC-2'], obligationIds: ['tests-work'] },
   ],
 };
 
@@ -56,7 +56,7 @@ test('K2-4: a fresh process resumes at the step after the last passed one', asyn
       summary: 'token expiry',
       stepId: stepIds[0],
       changedPaths: ['src/auth/service.mjs'],
-      verifications: [{ obligationId: 'unit-test', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] }],
+      verifications: [{ obligationId: 'auth-work', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] }],
     });
     assert.equal(reported.step.state, 'passed');
   } finally {
@@ -110,7 +110,7 @@ test('K2: per-step attempt numbers keep counting across processes', async () => 
       summary: 'missing coverage',
       stepId,
       changedPaths: ['src/auth/service.mjs'],
-      verifications: [{ obligationId: 'unit-test', commandRef: 'test:ok' }],
+      verifications: [{ obligationId: 'auth-work', commandRef: 'test:ok' }],
     });
     assert.equal(failed.step.state, 'failed', 'the unit did not cover its acceptance');
     assert.deepEqual(failed.step.reasons, ['acceptance-uncovered:AC-1']);
@@ -126,7 +126,7 @@ test('K2: per-step attempt numbers keep counting across processes', async () => 
       summary: 'now with coverage',
       stepId,
       changedPaths: ['src/auth/service.mjs'],
-      verifications: [{ obligationId: 'unit-test', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] }],
+      verifications: [{ obligationId: 'auth-work', commandRef: 'test:ok', acceptanceCoverage: ['AC-1'] }],
     });
     assert.equal(retried.step.state, 'passed');
 

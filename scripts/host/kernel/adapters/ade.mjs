@@ -121,6 +121,14 @@ export const createAdeAdapter = ({ spawnAgent = null, nativeAgentHost = globalTh
     freshWorkerRequired: true,
     maxConcurrentWorkers: 1,
     maxNestedAgents: 0,
+    semantic: Object.freeze({
+      freshContext: available,
+      workspaceWrite: available,
+      workspaceIsolation: false,
+      parallelExecution: false,
+      independentReview: available,
+      modelSelection: false,
+    }),
   });
 
   return {

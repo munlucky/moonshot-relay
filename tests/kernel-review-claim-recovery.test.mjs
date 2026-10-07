@@ -134,72 +134,35 @@ test('expired review claims are reclaimed atomically and claim scope follows pla
 });
 
 test('review dispatch fails closed when claim acquisition does not establish ownership', async () => {
-  const workspaceIdentity = `sha256:${'a'.repeat(64)}`;
+  const { cp, runtimeHome, projectRoot } = await setupStore('kernel-review-claim-fail-closed');
   const runId = 'review-claim-fail-closed';
-  const attempt = {
-    id: 1,
-    attemptId: 'attempt-00000000-0000-4000-8000-000000000021',
-    stepId: 'step-1',
-    planRevision: 1,
-    mutationRevision: 0,
-    status: 'started',
-  };
-  const decision = resolveModelRoute({
-    runId,
-    actionKind: 'review_engineering',
-    riskTier: 'T3',
-    currentPlanRevision: 1,
-    obligationId: 'security-review',
-    independentReviewRequired: true,
-  });
-  const capsule = {
-    runId,
-    stepId: 'step-1',
-    planRevision: 1,
-    mutationRevision: 0,
-    subject: { workspaceIdentity, mutationRevision: 0, changedPaths: [] },
-    provenance: { workspaceIdentity, capsuleDigest: `sha256:${'b'.repeat(64)}` },
-  };
-  const finished = [];
-  let providerCalls = 0;
-  const stateStore = {
-    getRun: () => ({ currentWorkspaceIdentity: workspaceIdentity, mutationRevision: 0 }),
-    listReviewReceipts: () => [],
-    getVerifications: () => [],
-    claimReviewAttempt: () => ({ claimed: false, reason: 'no-review-attempt' }),
-    getStepAttempt: () => attempt,
-    finishStepAttempt: (id, options) => { finished.push({ id, options }); return { ...attempt, status: options.status }; },
-  };
-  const controlPlane = {
-    stateStore,
-    hostNext: async () => ({
-      status: 'ready',
-      runId,
-      modelInput: { objective: 'review current changes', action: { type: 'review_engineering' } },
-      hostDirective: { modelRouteDecision: decision, attempt, executionCapsule: capsule },
-      executionCapsule: capsule,
-    }),
-  };
-  const adapter = {
-    surface: 'claude',
-    nativeDelegationAvailable: true,
-    capabilities: { surface: 'claude', supportsIndependentContext: true, supportsReadOnlyReview: true },
-    dispatch: async () => { providerCalls += 1; return { status: 'completed' }; },
-  };
-  const result = await dispatchKernelTurn({
-    controlPlane,
-    runId,
-    adapter,
-    actionContext: { actionKind: 'review_engineering', obligationId: 'security-review' },
-  });
-
-  assert.equal(result.dispatched, false);
-  assert.equal(result.reason, 'no-review-attempt');
-  assert.equal(result.review.blockedReason, 'no-review-attempt');
-  assert.equal(providerCalls, 0);
-  assert.deepEqual(finished, [{ id: attempt.id, options: {
-    status: 'interrupted',
-    failureReasons: ['no-review-attempt'],
-    failureCategory: 'no-review-attempt',
-  } }]);
+  try {
+    await cp.startRun({ runId, objective: 'review current changes', taskContract: {
+      riskTier: 'T3', acceptance: [],
+    } });
+    cp.stateStore.claimReviewAttempt = () => ({ claimed: false, reason: 'no-review-attempt' });
+    let providerCalls = 0;
+    const adapter = {
+      surface: 'claude',
+      nativeDelegationAvailable: true,
+      capabilities: { surface: 'claude', supportsIndependentContext: true, supportsReadOnlyReview: true },
+      dispatch: async () => { providerCalls += 1; return { status: 'completed' }; },
+    };
+    const result = await dispatchKernelTurn({
+      controlPlane: cp, runId, adapter,
+      actionContext: { actionKind: 'review_engineering', obligationId: 'security-review' },
+    });
+    assert.equal(result.dispatched, false);
+    assert.equal(result.reason, 'no-review-attempt');
+    assert.equal(result.review.blockedReason, 'no-review-attempt');
+    assert.equal(providerCalls, 0);
+    const attempts = cp.stateStore.getStepAttempts(runId);
+    assert.equal(attempts.length, 1);
+    assert.equal(attempts[0].status, 'interrupted');
+    assert.deepEqual(attempts[0].failureReasons, ['no-review-attempt']);
+  } finally {
+    await cp.close();
+    await rm(runtimeHome, { recursive: true, force: true });
+    await rm(projectRoot, { recursive: true, force: true });
+  }
 });

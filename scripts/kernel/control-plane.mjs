@@ -1,10 +1,9 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { openKernelStateStore } from './state-store.mjs';
-import { canonicalJson } from './canonical-digest.mjs';
 import { buildContextReceipt } from './context-build.mjs';
 import { resolveProofRoute } from './proof-route.mjs';
-import { buildExecutionAssignmentId, normalizeHostCapabilities, resolveEnforcementStrategy, summarizeModelRouting } from './run/model-route-contract.mjs';
+import { summarizeModelRouting } from './run/model-route-contract.mjs';
 import { buildReleaseEvidencePack } from './evidence-pack.mjs';
 import { projectRunState, buildResumeView } from './state-projector.mjs';
 import { resolveKernelRuntimeHome } from './runtime-home.mjs';
@@ -14,11 +13,11 @@ import { buildCandidateIdentity, gitTreeDigest, sha256Hex } from '../lib/candida
 import { resolveKernelProjectIdentity } from './project-identity.mjs';
 import { ensureKnowledgeStoreDirectories } from './knowledge/store.mjs';
 import { buildProjectKnowledgeContext } from './knowledge/context-load.mjs';
-import { retryGitCloseout as retryGitCloseoutHelper } from './git/closeout.mjs';
+import { isAuthorizedKernelGitCloseoutWorkspace, retryGitCloseout as retryGitCloseoutHelper } from './git/closeout.mjs';
 import { finalizeRun, recordKnowledgeObservations } from './run/finalization.mjs';
 import { normalizeChangedContract } from './change-contract.mjs';
 import { observeWorkspaceIdentity, observeScopedWorkspaceIdentity, deriveRunChangedPaths } from './run/workspace-identity.mjs';
-import { executeTrustedProof, executeApprovedProof, executeWithFlakyRerun, UntrustedCommandError, CommandApprovalRequiredError } from './proof/proof-executor.mjs';
+import { executeTrustedProof, executeApprovedProof, executeWithFlakyRerun, UntrustedCommandError } from './proof/proof-executor.mjs';
 import { NetworkPolicyUnenforceableError } from './proof/network-policy.mjs';
 import { buildNextPayload, normalizeReport, planStatePath, planRouteSteps } from './run/run-loop.mjs';
 import { detectProjectMode } from './task/project-mode.mjs';
@@ -27,7 +26,6 @@ import {
   applyEvidencePlans,
   assertEvidencePlanSubmission,
   normalizeAcceptanceCoverage,
-  mergeContractRevisionWithBindings,
   replaceContractRevisionWithBindings,
   contractBriefing,
   riskSummaryFromContract,
@@ -39,6 +37,7 @@ import {
   selectBoundCommandRef,
   authoritativeVerificationScope,
   deriveVerificationSettlementScope,
+  verificationSettlementRank,
   rebindProofPolicyCommands,
   ObligationBindingError,
 } from './run/obligation-compiler.mjs';
@@ -51,7 +50,7 @@ import { scanRepositoryEvidence } from './task/evidence-scan.mjs';
 import { allStepsPassed, currentStep as selectCurrentStep } from './run/run-step-ledger.mjs';
 import { planRunSteps } from './run/step-planner.mjs';
 import { createWorkCursorApi } from './run/work-cursor.mjs';
-import { admitRoute, admissionAllowsDispatch } from './routing/route-admission.mjs';
+import { admissionAllowsDispatch } from './routing/route-admission.mjs';
 import { captureBaselineProof } from './proof/baseline-proof.mjs';
 import { classifyFailures } from './proof/failure-classify.mjs';
 import { computeCompletionView } from './run/completion-view.mjs';
@@ -72,11 +71,11 @@ import { assertImplementationWorkUnitScope, workUnitScopeFailure } from './run/w
 import { preflightTaskContract } from './run/contract-preflight.mjs';
 import { buildReviewCapsule, capsuleStaleness } from './run/execution-capsule.mjs';
 import { buildHostExecutionContract } from './run/host-execution-contract.mjs';
+import { buildReportOperationKey, compareReportOperation, reportPayloadDigest } from './run/report-identity.mjs';
 import { buildWorkAuthorityView } from './run/work-authority.mjs';
 import { buildTrustAuthorityView } from './proof/trust-authority.mjs';
 import { digestOfChangedFiles, findScopeViolations } from './run/capsule-selection.mjs';
 import { assertOwnerWorkspaceMutationCAS } from './run/mutation-guard.mjs';
-import { actionKindForModelAction, createHostRoutingBridge } from './bridge/host-routing.mjs';
 import { buildCoordinatorSurface } from './bridge/coordinator-surface.mjs';
 
 const canonicalChangedPaths = (paths) => [...new Set((Array.isArray(paths) ? paths : [])
@@ -92,22 +91,6 @@ const canonicalReceiptValue = (value) => {
 const receiptValuesEqual = (left, right, { paths = false } = {}) => JSON.stringify(
   canonicalReceiptValue(paths ? canonicalChangedPaths(left) : left),
 ) === JSON.stringify(canonicalReceiptValue(paths ? canonicalChangedPaths(right) : right));
-
-// Report idempotency is keyed by the complete normalized report, not only by
-// its verification fields. Two attempts can target the same workspace and
-// command while carrying different summaries, judgments, closeout requests,
-// or knowledge observations; collapsing those attempts would erase retry and
-// stagnation evidence. Canonical serialization keeps equivalent object-key
-// orderings on the same key while ignoring unknown caller fields through the
-// report normalizer.
-const reportIdempotencyKey = ({ runId, payload, workspaceIdentity } = {}) => {
-  const normalized = normalizeReport(payload || {});
-  return createHash('sha256').update(canonicalJson({
-    runId,
-    workspaceIdentity: workspaceIdentity || null,
-    report: normalized,
-  })).digest('hex');
-};
 
 // Only executions produced by this module may enter the report-local cache.
 // The WeakMap is deliberately private: a public caller cannot manufacture the
@@ -278,6 +261,13 @@ const workflowEfficiencyMeasurement = ({ run, verifications = [], verificationHi
 
 export const buildKernelMeasurement = ({ run, completion, principles = loadKernelPrinciples(), verifications = [], verificationHistory = [], attempts = [], routeDecisions = [], usageReceipts = [], reviewReceipts = [] }) => {
   const workflowEfficiency = workflowEfficiencyMeasurement({ run, verifications, verificationHistory, attempts, usageReceipts, reviewReceipts });
+  const failedWorkAttempts = attempts.filter((attempt) => attempt.status === 'failed').length;
+  const failedProofExecutions = verificationHistory.filter((verification) => verification.status === 'failed').length;
+  const retryCount = Math.max(
+    Math.max(0, attempts.length - 1),
+    Math.max(0, failedWorkAttempts - 1),
+    Math.max(0, failedProofExecutions - 1),
+  );
   return {
     schemaVersion: 2,
     harnessIdentity: 'moon-relay-kernel',
@@ -299,7 +289,7 @@ export const buildKernelMeasurement = ({ run, completion, principles = loadKerne
     estimatedStaticTokens: Math.ceil(JSON.stringify(principles.principles).length / 4),
     successDecision: observed(completion.decision === 'accepted'),
     falseCompletionDecision: unavailable('false-completion-evaluation-not-run'),
-    retryCount: observed(Math.max(0, attempts.length - 1)),
+    retryCount: observed(retryCount),
     replanCount: observed(run.replanCount || 0),
     userInterventionCount: observed(run.interventionCount || 0),
     evidenceCoverage: observed({ passed: verifications.filter((verification) => verification.status === 'passed').length, total: verifications.length, required: run.requiredObligations.length }),
@@ -365,7 +355,6 @@ const planDiffersFromContract = (steps = [], declared = []) => {
 
 export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRuntimeHome(), relayHome, projectRoot = process.cwd(), holder: holderOption, env = process.env, requireHostBinding = false } = {}) => {
   const store = await openKernelStateStore({ runtimeHome, relayHome });
-  const reportIdempotencyCache = new Map();
   let currentProject = resolveKernelProjectIdentity({
     cwd: projectRoot,
     env: { ...env, MOON_RELAY_KERNEL_HOME: runtimeHome },
@@ -459,7 +448,6 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
         projectRoot,
         projectIdentity: currentProject,
         worktree: currentWorktree,
-        ownerSessionId: hostSessionId,
       });
     } catch {
       return null;
@@ -511,23 +499,65 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
       failureCategory: result.failures?.[0]?.failureCategory || null,
     }, result);
   };
+  const inspectReportOperation = (runId, payload, attempt = null) => {
+    const normalizedReport = normalizeReport(payload || {});
+    const payloadDigest = reportPayloadDigest(normalizedReport);
+    const identified = payload?.reportKey ? store.findStepAttemptByReportKey?.(runId, String(payload.reportKey)) : null;
+    // A direct owner report has no Host-issued attempt credentials on its
+    // first delivery. Resolve an exact retransmission to the persisted owner
+    // Attempt before consulting the current cursor. The digest is only a
+    // lookup; the immutable operation key remains the Attempt identity.
+    const retransmission = !normalizedReport.attemptId && !payload?.reportKey
+      ? store.getStepAttempts(runId).findLast((candidate) => candidate.provenanceKind === 'owner-session'
+        && candidate.reportPayloadDigest === payloadDigest
+        && (candidate.workspaceIdentityEnd || candidate.reportCheckpoint?.observation?.identity) === observeWorkspaceIdentity({ projectRoot }).identity
+        && (!normalizedReport.stepId || candidate.stepId === normalizedReport.stepId)) : null;
+    const canonicalAttempt = attempt || identified || retransmission || (normalizedReport.attemptId
+      ? store.getStepAttemptByAttemptId(normalizedReport.attemptId, { runId })
+      : null);
+    if (!canonicalAttempt?.attemptId) {
+      if (payload?.reportKey) return { normalizedReport, payloadDigest, reportKey: String(payload.reportKey), comparison: { state: 'conflict', errorCode: 'REPORT_OPERATION_NOT_FOUND' } };
+      return { normalizedReport, payloadDigest, attempt: canonicalAttempt, reportKey: null, comparison: { state: 'unseen' } };
+    }
+    const reportKey = buildReportOperationKey({
+      runId,
+      stepId: canonicalAttempt.stepId,
+      planRevision: canonicalAttempt.planRevision || 1,
+      attemptId: canonicalAttempt.attemptId,
+    });
+    const stored = store.findStepAttemptByReportKey?.(runId, reportKey) || null;
+    return {
+      normalizedReport,
+      payloadDigest,
+      attempt: canonicalAttempt,
+      reportKey,
+      stored,
+      comparison: compareReportOperation(stored, payloadDigest),
+    };
+  };
+  const reportOperationConflict = (runId, operation) => ({
+    schemaVersion: 1,
+    runId,
+    status: 'report-conflict',
+    errorCode: operation.comparison.errorCode || 'REPORT_OPERATION_PAYLOAD_CONFLICT',
+    reportKey: operation.reportKey,
+    storedDigest: operation.comparison.storedDigest || null,
+    incomingDigest: operation.comparison.incomingDigest || operation.payloadDigest || null,
+  });
   let deliveryRecoveryInProgress = false;
   // Reconcile terminal bindings and stale mutation locks at the public Kernel
-  // lifecycle boundary. Preserve only a completed binding owned by this host
-  // so a successor contract can perform its atomic handoff; blocked bindings
-  // and terminal bindings from other sessions cannot remain executable.
+  // lifecycle boundary. Terminal Host handles never own Task continuity;
+  // successor lineage is derived from the predecessor Run itself.
   store.reconcileTerminalLifecycle({
     projectId: currentProject.projectId,
-    preserveSessionId: hostSessionId,
   });
   const getHostBinding = ({ runId = null } = {}) => {
-    const canonical = runId
-      ? store.getActiveRunBinding({ projectId: currentProject.projectId, sessionId: hostSessionId, runId })
-      : store.getActiveOwnerBinding({
-          projectId: currentProject.projectId,
-          sessionId: hostSessionId,
-          workspaceId: effectiveWorkspaceId,
-        });
+    if (!runId || !hostSessionId) return null;
+    const canonical = store.getActiveRunBinding({
+      projectId: currentProject.projectId,
+      sessionId: hostSessionId,
+      runId,
+    });
     if (canonical || !legacyHostSessionId || !hostSessionId) return canonical;
     const migrated = store.migrateLegacySessionBinding({
       projectId: currentProject.projectId,
@@ -596,76 +626,6 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
     if (request?.obligationId) return String(request.obligationId);
     if (obligations.some((obligation) => String(obligation?.obligationId || '') === 'default')) return 'default';
     return String(request?.commandRef || '');
-  };
-  const buildWorkUnitScopeRejection = ({ runId, modelInput, capabilities, error }) => {
-    const failure = workUnitScopeFailure(error);
-    const workUnitScope = {
-      valid: false,
-      reason: failure.scopeReason,
-      errorCode: failure.errorCode,
-      allowedPaths: failure.allowedPaths,
-      ...(failure.workspaceWide.length > 0 ? { workspaceWide: failure.workspaceWide } : {}),
-    };
-    const action = modelInput.action
-      ? {
-        ...modelInput.action,
-        workUnitScope,
-        guidance: `${failure.errorSummary} ${modelInput.action.guidance || ''}`.trim(),
-      }
-      : null;
-    return {
-      schemaVersion: 1,
-      runId,
-      status: 'scope-rejected',
-      errorCode: failure.errorCode,
-      failureCode: failure.failureCode,
-      errorSummary: failure.errorSummary,
-      nextAction: failure.nextAction,
-      workUnitScope,
-      modelInput: {
-        ...modelInput,
-        status: 'scope-rejected',
-        errorCode: failure.errorCode,
-        failureCode: failure.failureCode,
-        errorSummary: failure.errorSummary,
-        nextAction: failure.nextAction,
-        workUnitScope,
-        ...(action ? { action } : {}),
-      },
-      executionCapsule: null,
-      hostDirective: {
-        // The dispatcher treats this as a Kernel-owned rejection and returns
-        // before route admission, provider resolution, or worker dispatch.
-        modelRouteDecision: {
-          schemaVersion: 1,
-          runId,
-          actionKind: 'work-unit-scope-guard',
-          role: 'implementer',
-          modelClass: 'kernel',
-          permissions: 'workspace_write',
-          reasonCodes: [failure.errorCode],
-        },
-        executionContract: buildHostExecutionContract({
-          decision: {
-            runId,
-            actionKind: 'work-unit-scope-guard',
-            role: 'implementer',
-            executionClass: null,
-            permissions: 'workspace_write',
-            decisionId: `route-${'0'.repeat(24)}`,
-            reasonCodes: [failure.errorCode],
-          },
-        }),
-        executionAssignment: null,
-        hostCapabilities: capabilities,
-        enforcementStrategy: 'kernel',
-        executionCapsule: null,
-        attemptId: null,
-        attempt: null,
-        mutationLock: null,
-        rejection: failure,
-      },
-    };
   };
   const buildContractPreflightRejection = ({ runId, error, contract = {}, commands = [], obligations = [] }) => {
     const errorCode = error?.errorCode || error?.code || 'contract-preflight-invalid';
@@ -902,7 +862,7 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
       || store.getKnowledgeContextReceipt(currentRun.runId, 'FRAME')?.receiptJson
       || null;
     const steps = typeof store.getRunSteps === 'function'
-      ? store.getRunSteps(currentRun.runId, { planRevision: currentRun.planRevision })
+      ? store.getRunSteps(currentRun.runId)
       : [];
     const resolvedStep = step || selectCurrentStep(steps, { planRevision: currentRun.planRevision });
     const routeDecisions = store.listModelRouteDecisions(currentRun.runId);
@@ -936,7 +896,7 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
     const completion = options.completion || evaluateRunCompletion(currentRun.runId, { obligations });
     const verifications = options.verifications || store.getVerifications(currentRun.runId);
     const steps = typeof store.getRunSteps === 'function'
-      ? store.getRunSteps(currentRun.runId, { planRevision: currentRun.planRevision })
+      ? store.getRunSteps(currentRun.runId)
       : [];
     const workAuthority = options.workAuthority || buildWorkAuthorityView({
       run: currentRun,
@@ -1063,7 +1023,7 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
       // fail intentionally while the current Step is still being completed).
       // An explicit hint remains authoritative and is still honored below.
       const settlementScope = deriveVerificationSettlementScope(obligation);
-      if (settlementScope === 'goal' && !finalWorkUnitCandidate && step) continue;
+      if (settlementScope !== 'focused' && !finalWorkUnitCandidate && step) continue;
       if (settlementScope === 'focused' && !hasHint && stepObligationIds && !stepObligationIds.has(String(obligationId))) continue;
       addRequest(obligation, requested.get(obligationId) || {}, { forceFresh: false, automatic: !hasHint });
     }
@@ -1082,10 +1042,10 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
     for (const request of freshRequests) {
       const obligationId = reportHintObligationId(request, obligations);
       const obligation = byId.get(obligationId);
-      if (deriveVerificationSettlementScope(obligation) === 'goal' && !finalWorkUnitCandidate && step) continue;
+      if (deriveVerificationSettlementScope(obligation) !== 'focused' && !finalWorkUnitCandidate && step) continue;
       addRequest(obligation, request, { forceFresh: true });
     }
-    return requests.sort((left, right) => (left.verificationScope === 'goal') - (right.verificationScope === 'goal'));
+    return requests.sort((left, right) => verificationSettlementRank(left.verificationScope) - verificationSettlementRank(right.verificationScope));
   };
 
   const assertLiveReviewWorkspace = (runId, expectedRun, phase = 'review') => {
@@ -1111,14 +1071,9 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
     return { identity: observation.identity, run: store.getRun(runId) || expectedRun };
   };
 
-  // Work cursor and Host routing are bridges around the coordinator. Their
-  // compatibility methods remain available to existing Host callers, but the
-  // route/stagnation policy is no longer implemented in this module.
+  // Work Cursor exposes the provider-neutral Work primitives used by both the
+  // model-facing next/report surface and the Host execution boundary.
   const workCursorApi = createWorkCursorApi({ store, projectRoot, runtimeHome, worktree: currentWorktree });
-  const hostRouting = createHostRoutingBridge({
-    store,
-    detectStepStagnation: (runId, options) => workCursorApi.detectStepStagnation(runId, options),
-  });
 
   return {
     // Internal Host hooks. They do not add a model-visible command or stage;
@@ -1484,7 +1439,6 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
         projectId,
         sessionId: hostSessionId,
         predecessorRunId: invocation.predecessorRunId,
-        predecessorBindingId: invocation.binding?.bindingId || null,
         successorRun,
         successorBinding,
         obligations,
@@ -1546,7 +1500,6 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
       if (requireHostBinding && !hostSessionId) {
         throw Object.assign(new Error('host_binding_missing'), { code: 'host_binding_missing' });
       }
-      const binding = hostSessionId ? getHostBinding() : null;
       const worktreeLease = effectiveWorktreeId && typeof store.getWorktreeMutationLease === 'function'
         ? store.getWorktreeMutationLease(effectiveWorktreeId)
         : null;
@@ -1564,7 +1517,7 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
           nextAction: 'resolve-conflicting-active-runs',
         });
       }
-      const requested = explicitRunId || envRunId || mutable[0]?.runId || binding?.runId || null;
+      const requested = explicitRunId || envRunId || mutable[0]?.runId || null;
       if (!requested) {
         throw Object.assign(new Error('host_binding_missing'), {
           code: 'host_binding_missing',
@@ -1577,10 +1530,6 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
             },
           },
         });
-      }
-      if (binding && binding.runId === requested) {
-        preflight(requested, 'next');
-        return requested;
       }
       const envProjectId = env.MOON_RELAY_KERNEL_PROJECT_ID || currentProject.projectId;
       if (envProjectId !== currentProject.projectId) throw Object.assign(new Error('run_project_mismatch'), { code: 'run_project_mismatch' });
@@ -1688,21 +1637,31 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
           const currentStep = this.getCurrentStep(runId);
           const amendedStep = resolveDeclaredStepForReplan(activeContract, currentStep);
           const requiresSyntheticReplan = contractChanged && activeContract.steps.length === 0;
-          const requiresScopeReplan = requiresSyntheticReplan || stepScopeChanged(currentStep, amendedStep);
+          const requiresScopeReplan = contractChanged && (requiresSyntheticReplan || stepScopeChanged(currentStep, amendedStep));
           const currentPlan = store.getRunSteps(runId, { planRevision: currentRun.planRevision });
           const requiresCompletedPlanReplan = !currentStep
             && activeContract.steps.length > 0
             && planDiffersFromContract(currentPlan, activeContract.steps);
           if (requiresScopeReplan || requiresCompletedPlanReplan) {
-            await this.replanSteps(runId, {
-              steps: requiresSyntheticReplan
-                ? []
-                : requiresCompletedPlanReplan
-                ? activeContract.steps
-                : [{
-                  ...amendedStep,
-                  dependsOn: [],
-                }],
+            // Replacing one scope must not discard the pending tail of the
+            // contract. Passed rows remain history; only unfinished or changed
+            // units enter the replacement plan.
+            const completed = store.getRunSteps(runId).filter((step) => step.state === 'passed');
+            const completedDeclaration = (declared) => completed.find((step) => (
+              String(step.objective || '') === String(declared.objective || '')
+              && !stepScopeChanged(step, { ...declared, acceptanceIds: step.acceptanceIds, obligationIds: step.obligationIds })
+            ));
+            const replacementSteps = activeContract.steps
+              .filter((declared) => !completedDeclaration(declared))
+              .map((declared) => ({
+                ...declared,
+                ...(Array.isArray(declared.dependsOn) ? { dependsOn: declared.dependsOn.map((id) => {
+                  const dependency = activeContract.steps.find((entry) => entry.stepId === id);
+                  return dependency ? completedDeclaration(dependency)?.stepId || id : id;
+                }) } : {}),
+              }));
+            if (requiresSyntheticReplan || replacementSteps.length > 0) await this.replanSteps(runId, {
+              steps: requiresSyntheticReplan ? [] : replacementSteps,
               resumeBlockedReason: existing.status === 'blocked'
                 && existing.blockedReason === 'unsupported-verification'
                 ? 'unsupported-verification'
@@ -1961,250 +1920,26 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
       return { ...result, status: 'ready', run: escalated };
     },
 
-    // Stagnation detection (§25 P3): repeated failing attempts with no
-    // progress on the same obligation.
-    detectStagnation(runId, { threshold } = {}) {
-      return hostRouting.detectStagnation(runId, { threshold });
-    },
-
-    // Records a replan event (durable, measured). Used when stagnation or a new
-    // risk requires a different approach.
-    async signalReplan(runId) {
-      const updated = store.incrementReplanCount(runId);
-      await projectRunState(updated, { runtimeHome });
-      return updated;
-    },
-
     // K2 §7.9: stagnation is judged per unit of work as well as per run. A step
     // that keeps failing the same way escalates the route even when the run-wide
     // attempt counter has not reached its threshold yet.
-    // Only the step's CONSECUTIVE-FAILURE signal escalates the route. Its looser
-    // signals (a no-op retry, an identical result digest) fire at two attempts,
-    // which would overtake the retry-escalation threshold and make it
-    // unreachable — stagnation outranks retry. Those signals still drive the
-    // replan recommendation. Parallel selection is derived again from the
-    // resulting Step Ledger, so no execution lifecycle needs suspension.
-    stagnationSignal(runId) {
-      return hostRouting.stagnationSignal(runId);
-    },
-
-    // Measurement-based routing recommendation (policy only; no provider call).
-    recommendRouting(runId, { independentReviewRequired = false } = {}) {
-      return hostRouting.recommendRouting(runId, { independentReviewRequired });
-    },
-
-    // Decides the LOGICAL model class for the action the model is about to
-    // perform and persists it before the Host dispatches (§16.5). Provider
-    // identity is never decided here — only the class the Host must satisfy.
-    async decideModelRoute(runId, { actionKind, obligationId = null, independentReviewRequired = false, planInvalid = false, architectureDeviation = false, protectedObligationFailed = false, workProfile = null, complexity = null } = {}) {
-      return hostRouting.decideModelRoute(runId, {
-        actionKind,
-        obligationId,
-        independentReviewRequired,
-        planInvalid,
-        architectureDeviation,
-        protectedObligationFailed,
-        workProfile,
-        complexity,
-      });
-    },
-
-    // Host-only turn API (§8.2). `next` stays exactly as the model sees it;
-    // the routing directive travels beside it, never inside it.
-    async hostNext(runId, { hostCapabilities = {}, actionContext = {}, modelInput: preloadedModelInput = null } = {}) {
-      const run = store.getRun(runId);
-      if (!run) return { schemaVersion: 1, runId, status: 'not_found' };
-      const capabilities = normalizeHostCapabilities(hostCapabilities);
-      let modelInput = preloadedModelInput || await this.next(runId, { stepId: actionContext.stepId || null });
-      if (modelInput.action?.type === 'baseline-required') {
-        await this.captureBaseline(runId, {
-          commandRefs: modelInput.action.commandRefs,
-          timeoutMs: actionContext.baselineTimeoutMs || 120000,
-        });
-        modelInput = await this.next(runId, { stepId: actionContext.stepId || null });
-      }
-      // Contract admission is a pre-dispatch boundary. A malformed persisted
-      // contract must not acquire a mutation lock, route decision, capsule,
-      // attempt, or provider admission while the Host is recovering it.
-      if (modelInput.status === 'contract-rejected') return modelInput;
-      const reviewerTurn = String(actionContext.actionKind || '').startsWith('review');
-      if (['implement', 'fix'].includes(modelInput.action?.type) && !reviewerTurn) {
-        const capsuleStep = actionContext.stepId
-          ? this.ensureRunStepsMigrated(runId).find((entry) => entry.stepId === actionContext.stepId)
-          : this.getCurrentStep(runId);
-        try {
-          assertImplementationWorkUnitScope({
-            step: capsuleStep,
-            contract: run.taskContract,
-            actionType: modelInput.action.type,
-          });
-        } catch (error) {
-          return buildWorkUnitScopeRejection({ runId, modelInput, capabilities, error });
-        }
-      }
-      let mutationLock = null;
-      const workspaceIdForTurn = actionContext.workspaceId || run.workspaceId || effectiveWorkspaceId;
-      if (['implement', 'fix'].includes(modelInput.action?.type)) {
-        const lockResult = store.acquireWorkspaceMutationLockV2({
-          workspaceId: workspaceIdForTurn,
-          projectId: run.projectId,
-          runId,
-          sessionToken: holder,
-          ttlMs: actionContext.mutationLockTtlMs || 60000,
-        });
-        if (!lockResult.acquired) {
-          modelInput.status = 'blocked';
-          modelInput.errorCode = 'workspace_mutation_conflict';
-          modelInput.nextAction = 'create-worktree';
-          modelInput.action = {
-            type: 'blocked',
-            reason: 'workspace_mutation_conflict',
-            guidance: `Workspace is held by run ${lockResult.lock.holderRunId}.`,
-          };
-        } else {
-          mutationLock = lockResult.lock;
-        }
-      }
-      const decision = await this.decideModelRoute(runId, {
-        actionKind: actionContext.actionKind || actionKindForModelAction(modelInput.action?.type),
-        obligationId: actionContext.obligationId ?? modelInput.action?.outstandingObligations?.[0] ?? null,
-        independentReviewRequired: actionContext.independentReviewRequired === true,
-        planInvalid: actionContext.planInvalid === true,
-        architectureDeviation: actionContext.architectureDeviation === true,
-        protectedObligationFailed: actionContext.protectedObligationFailed === true,
-        workProfile: actionContext.workProfile || null,
-        complexity: actionContext.complexity || null,
-      });
-
-      // K1: the worker's bounded context is built here, beside the routing
-      // directive, so the model-visible payload keeps its shape while the Host
-      // gains everything a fresh session needs. Kernel-owned actions dispatch no
-      // worker, so they get no capsule.
-      let executionCapsule = null;
-      if (decision.modelClass !== 'kernel') {
-        const latestImplementationAttempt = decision.role === 'reviewer'
-          ? store.getLatestImplementationAttempt?.(runId)
-          : null;
-        const capsuleStep = actionContext.stepId
-          ? this.ensureRunStepsMigrated(runId).find((entry) => entry.stepId === actionContext.stepId)
-          : this.getCurrentStep(runId)
-            || (latestImplementationAttempt?.stepId ? store.getRunStep(runId, latestImplementationAttempt.stepId) : null);
-        executionCapsule = decision.role === 'reviewer'
-          ? await this.buildReviewerCapsule(runId, {
-            decision,
-            stage: decision.actionKind === 'review_contract' ? 'contract' : 'engineering',
-            obligationId: decision.obligationId,
-            changedPaths: actionContext.changedPaths || [],
-            step: capsuleStep,
-          })
-          : await this.buildCapsule(runId, {
-            role: 'implementer',
-            decision,
-            step: capsuleStep,
-            changedPaths: actionContext.changedPaths || [],
-            workspaceIdentity: actionContext.workspaceIdentity || null,
-          });
-        if (modelInput.action) modelInput.action.capsuleId = executionCapsule.capsuleId;
-      }
-
-      // The attempt is opened after the Kernel has issued the bounded capsule
-      // but before admission/dispatch. Routed workers pass their pre-bound
-      // attempt so the shared path never creates a duplicate row.
-      let attempt = actionContext.attemptId
-        ? store.getStepAttemptByAttemptId(actionContext.attemptId, { runId })
-        : null;
-      if (!attempt && decision.modelClass !== 'kernel' && executionCapsule?.stepId) {
-        attempt = store.getActiveStepAttempt(runId, {
-          stepId: executionCapsule.stepId,
-          capsuleId: executionCapsule.capsuleId,
-        });
-      }
-      if (decision.modelClass !== 'kernel' && executionCapsule?.stepId) {
-        if (attempt) {
-          this.assertAttemptLineage(attempt, { runId, stepId: executionCapsule.stepId, planRevision: run.planRevision, mutationRevision: run.mutationRevision });
-          attempt = this.attachAttemptLineage(attempt.attemptId, {
-            bindingId: attempt.bindingId || store.getRunOwnerBinding?.(runId)?.bindingId || null,
-            capsuleId: executionCapsule.capsuleId,
-            capsuleDigest: executionCapsule.provenance?.capsuleDigest || null,
-            routeDecisionId: decision.decisionId,
-            provenanceKind: attempt.provenanceKind === 'legacy-unattributed' ? 'routed' : attempt.provenanceKind,
-            planRevision: run.planRevision,
-            mutationRevision: run.mutationRevision,
-          });
-        } else {
-          attempt = this.beginAttempt(runId, {
-            stepId: executionCapsule.stepId,
-            bindingId: store.getRunOwnerBinding?.(runId)?.bindingId || null,
-            capsuleId: executionCapsule.capsuleId,
-            capsuleDigest: executionCapsule.provenance?.capsuleDigest || null,
-            routeDecisionId: decision.decisionId,
-            provenanceKind: 'routed',
-            planRevision: run.planRevision,
-            mutationRevision: run.mutationRevision,
-            workspaceIdentityStart: executionCapsule.provenance?.workspaceIdentity || run.currentWorkspaceIdentity,
-            workspaceId: actionContext.workspaceId || run.workspaceId || null,
-            baseWorkspaceIdentity: actionContext.workspaceIdentity || null,
-          });
-        }
-      }
-
-      // The model-visible `next` action carries the provider-neutral execution
-      // mode. Host callers also receive the concrete assignment handle that a
-      // delegated worker report may echo. The owner session is allowed to
-      // execute ordinary work directly; only an explicitly independent review
-      // keeps the orchestrator/worker boundary mandatory.
-      const independentReviewRequired = decision.role === 'reviewer' && decision.independentContextRequired === true;
-      const ownerDirectAllowed = !independentReviewRequired;
-      const hasSubagentCapability = hostCapabilities?.nativeSubagent === true
-        || hostCapabilities?.supportsSubagentModel === true;
-      const nativeDelegationRequested = actionContext.executionMode === 'native-subagent'
-        || actionContext.delegationRequested === true
-        || modelInput.action?.mode === 'subagent'
-        || modelInput.action?.execution?.executionMode === 'native-subagent'
-        || (independentReviewRequired && hasSubagentCapability);
-      const executionAssignment = decision.modelClass === 'kernel'
-        ? null
-        : {
-          ...(nativeDelegationRequested ? { assignmentId: buildExecutionAssignmentId(decision.decisionId) } : {}),
-          role: decision.role,
-          workProfile: decision.workProfile,
-          executionMode: nativeDelegationRequested ? 'native-subagent' : (ownerDirectAllowed ? 'owner-direct' : 'independent-review'),
-          delegation: { mode: ownerDirectAllowed ? 'optional' : 'required', requested: nativeDelegationRequested },
-          freshSessionRequired: decision.independentContextRequired === true
-            || decision.workProfile?.independentContextRequired === true
-            || decision.role === 'reviewer',
-        };
-      const executionContract = buildHostExecutionContract({
-        decision,
-        assignment: executionAssignment,
-        capsule: executionCapsule,
-        attemptId: attempt?.attemptId || null,
-        workUnit: modelInput.action?.step || null,
-      });
-      return {
-        schemaVersion: 1,
-        runId,
-        modelInput,
-        executionCapsule,
-        hostDirective: {
-          modelRouteDecision: decision,
-          executionContract,
-          executionAssignment,
-          hostCapabilities: capabilities,
-          enforcementStrategy: resolveEnforcementStrategy(capabilities, decision),
-          executionCapsule,
-          attemptId: attempt?.attemptId || null,
-          attempt,
-          mutationLock,
-        },
-      };
-    },
-
     assertMutationAllowed(request = {}) {
       return assertMutationAllowed({
         stateStore: store,
         workspaceRoot: fencingWorkspaceRoot,
         ...request,
+      });
+    },
+
+    acquireWorkUnitMutationLock(runId, { workspaceId = null, ttlMs = 60000 } = {}) {
+      const run = store.getRun(runId);
+      if (!run) return { acquired: false, reason: 'run-not-found', lock: null };
+      return store.acquireWorkspaceMutationLockV2({
+        workspaceId: workspaceId || run.workspaceId || effectiveWorkspaceId,
+        projectId: run.projectId,
+        runId,
+        sessionToken: holder,
+        ttlMs,
       });
     },
 
@@ -2741,23 +2476,15 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
       }));
     },
 
-    // K3: the Host asks for admission between the route decision and the actual
-    // dispatch, and the answer is persisted whatever it is. A blocked admission
-    // is evidence that a turn was refused, not an absence of a turn.
-    async admitRoute(runId, { decision, resolution, capabilities = {}, capsule = null, step = null, attemptId = null, policies, economics = {} } = {}) {
+    // Route admission policy is Host-owned. Kernel persists the closed receipt
+    // because Trust needs durable evidence that a dispatch was admitted or
+    // refused, but it does not resolve provider/model/cost policy here.
+    async recordRouteAdmission(runId, admission) {
       const run = store.getRun(runId);
-      if (!run) throw new Error(`Run ${runId} not found`);
-      const admission = admitRoute({
-        run,
-        step: step || this.getCurrentStep(runId),
-        attemptId,
-        decision,
-        resolution,
-        capabilities,
-        capsule,
-        policies,
-        economics,
-      });
+      if (!run) throw new Error('Run not found: ' + runId);
+      if (!admission?.admissionId || admission.runId !== runId) {
+        throw new Error('route_admission_record_invalid');
+      }
       return store.recordRouteAdmission(runId, admission);
     },
 
@@ -3786,7 +3513,7 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
       if (!leaseResult.acquired) {
         return { schemaVersion: 1, runId, status: 'lease-conflict', lease: leaseResult.lease, next: await this.next(runId) };
       }
-      const attempts = store.getAttempts(runId);
+      const attempts = store.getStepAttempts(runId);
       const verifications = store.getVerifications(runId);
       const lastValidEvidence = verifications.filter((verification) => verification.status === 'passed').at(-1) || null;
       return {
@@ -4024,31 +3751,18 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
         return bindingErrorPayload(error, { projectRoot, provider: hostProvider });
       }
       const run = store.getRun(runId);
-      let workspaceObservation = null;
-      try { workspaceObservation = observeWorkspaceIdentity({ projectRoot }); } catch {}
-      const reportKey = reportIdempotencyKey({
-        runId,
-        payload,
-        workspaceIdentity: workspaceObservation?.identity || null,
-      });
-      const durableReplay = typeof store.findStepAttemptByReportDigest === 'function'
-        ? store.findStepAttemptByReportDigest(runId, reportKey)
-        : null;
-      if (durableReplay?.reportResult) {
-        settleDurableReportReplay(durableReplay);
-        return { ...durableReplay.reportResult, idempotentReplay: true };
+      const incomingOperation = inspectReportOperation(runId, payload);
+      if (incomingOperation.comparison.state === 'conflict') {
+        return reportOperationConflict(runId, incomingOperation);
       }
-      if (reportIdempotencyCache.has(reportKey)) {
-        const cached = reportIdempotencyCache.get(reportKey);
-        return {
-          ...cached,
-          next: await this.next(runId),
-        };
+      if (incomingOperation.comparison.state === 'replay') {
+        settleDurableReportReplay(incomingOperation.stored);
+        return { ...incomingOperation.comparison.reportResult, idempotentReplay: true };
       }
       // A completed run is only *done* when finalization also completed
       // (P0-7); a partial finalization stays retryable instead of reporting a
       // success the Kernel did not actually achieve.
-      if (run.status === 'completed' && run.finalizationStatus === 'completed') {
+      if (run.status === 'completed' && run.finalizationStatus === 'completed' && !incomingOperation.attempt?.reportCheckpoint) {
         return { schemaVersion: 1, runId, status: 'completed', workUnitStatus: 'complete', goalStatus: 'complete', next: await this.next(runId) };
       }
 
@@ -4073,27 +3787,30 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
 
     async reportUnderLease(runId, payload, { fencingToken, parallelSettlement = null }) {
       const run = store.getRun(runId);
-      let currentObservation = null;
-      try { currentObservation = observeWorkspaceIdentity({ projectRoot }); } catch {}
-      const reportKey = reportIdempotencyKey({
-        runId,
-        payload,
-        workspaceIdentity: currentObservation?.identity || null,
-      });
-      const durableReplay = typeof store.findStepAttemptByReportDigest === 'function'
-        ? store.findStepAttemptByReportDigest(runId, reportKey)
-        : null;
-      if (durableReplay?.reportResult) {
-        settleDurableReportReplay(durableReplay);
-        return { ...durableReplay.reportResult, idempotentReplay: true };
+      const incomingOperation = inspectReportOperation(runId, payload);
+      let reportKey = incomingOperation.reportKey;
+      const reportPayloadHash = incomingOperation.payloadDigest;
+      if (incomingOperation.comparison.state === 'conflict') {
+        return reportOperationConflict(runId, incomingOperation);
       }
-      if (reportIdempotencyCache.has(reportKey)) {
-        const cached = reportIdempotencyCache.get(reportKey);
-        return {
-          ...cached,
-          idempotentReplay: true,
-          next: await this.next(runId),
-        };
+      if (incomingOperation.comparison.state === 'replay') {
+        settleDurableReportReplay(incomingOperation.stored);
+        return { ...incomingOperation.comparison.reportResult, idempotentReplay: true };
+      }
+      const recoveryCheckpoint = incomingOperation.attempt?.reportCheckpoint;
+      if (recoveryCheckpoint) {
+        const live = observeWorkspaceIdentity({ projectRoot });
+        const gitReceipt = store.getGitCloseoutReceipt(runId);
+        const authorizedGitRecovery = recoveryCheckpoint.report.gitCloseoutRequest?.requested === true
+          && gitReceipt?.receiptJson?.reportKey === recoveryCheckpoint.reportKey
+          && gitReceipt.receiptJson.verifiedWorkspaceIdentity === recoveryCheckpoint.observation.identity
+          && ['commit_created', 'push_failed', 'parity_failed', 'completed'].includes(gitReceipt.status)
+          && isAuthorizedKernelGitCloseoutWorkspace({ repoRoot: projectRoot, commitSha: gitReceipt.commitSha });
+        if (recoveryCheckpoint.planRevision !== run.planRevision || recoveryCheckpoint.mutationRevision !== run.mutationRevision
+          || (live.identity !== run.currentWorkspaceIdentity && !authorizedGitRecovery)) {
+          return { schemaVersion: 1, runId, status: 'report-conflict', errorCode: 'REPORT_CHECKPOINT_STALE' };
+        }
+        return this.settleVerifiedReport(runId, recoveryCheckpoint, { fencingToken });
       }
       recordEfficiency(runId, { increments: { reportCount: 1 } });
       const evidenceRejected = (failures) => {
@@ -4160,7 +3877,7 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
         };
       }
 
-      let report = normalizeReport(payload);
+      let report = incomingOperation.normalizedReport;
       // An omitted changedPaths field carries no caller claim. The Kernel may
       // fill it from the live authoritative observation for follow-up reports
       // (for example, a review/evidence-only report while the same working
@@ -4404,12 +4121,6 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
         }]);
       }
 
-      // Each report is a durable attempt; the number is derived from persisted
-      // rows so retry counting survives restarts.
-      // Compatibility projection only. Completion, retry, and lineage below
-      // use the step attempt returned by the canonical work-attempt authority.
-      const compatibilityAttempt = store.recordAttempt(runId, { attemptNumber: store.nextAttemptNumber(runId), state: run.state, status: 'started' });
-
       const boundAttempt = stepResolution.attempt || null;
       const boundWorkspaceId = report.workspaceId || boundAttempt?.workspaceId || null;
       const boundWorkspace = boundWorkspaceId && store.getProjectWorkspace
@@ -4460,17 +4171,38 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
             mutationRevision: run.mutationRevision,
             workspaceIdentityStart: observation.identity,
             summary: report.summary || null,
-            reportDigest: reportKey,
             changedPaths: report.changedPaths,
             workspaceId: report.workspaceId || null,
             baseWorkspaceIdentity: stepResolution.step?.baseWorkspaceIdentity || null,
           });
         }
-        if (stepAttempt && typeof store.bindStepAttemptReportDigest === 'function') {
-          // Report digest binding belongs to the canonical Step Attempt API.
-          // The numeric `id` is only the legacy attempts-row compatibility
-          // projection and must never identify durable report state.
-          stepAttempt = store.bindStepAttemptReportDigest(stepAttempt.attemptId, reportKey) || stepAttempt;
+        if (stepAttempt) {
+          reportKey = buildReportOperationKey({
+            runId,
+            stepId: stepAttempt.stepId,
+            planRevision: stepAttempt.planRevision || activeStep.planRevision || 1,
+            attemptId: stepAttempt.attemptId,
+          });
+          const existingReportAttempt = store.findStepAttemptByReportKey?.(runId, reportKey) || null;
+          const comparison = compareReportOperation(existingReportAttempt, reportPayloadHash);
+          if (comparison.state === 'conflict') {
+            return reportOperationConflict(runId, { reportKey, payloadDigest: reportPayloadHash, comparison });
+          }
+          if (comparison.state === 'replay') {
+            settleDurableReportReplay(existingReportAttempt);
+            return { ...comparison.reportResult, idempotentReplay: true };
+          }
+          try {
+            stepAttempt = store.bindStepAttemptReportOperation(stepAttempt.attemptId, {
+              reportKey,
+              reportPayloadDigest: reportPayloadHash,
+            }) || stepAttempt;
+          } catch (error) {
+            if (['REPORT_OPERATION_KEY_CONFLICT', 'REPORT_OPERATION_PAYLOAD_CONFLICT'].includes(error?.code)) {
+              return { schemaVersion: 1, runId, status: 'report-conflict', errorCode: error.code, reportKey, incomingDigest: reportPayloadHash };
+            }
+            throw error;
+          }
         }
         // Workspace observation is what advances mutationRevision for a direct
         // report. Bind the active attempt to that observed result before proof
@@ -4487,6 +4219,20 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
             });
         }
       }
+
+      const settleEarlyAttemptResult = (result) => {
+        if (!result || !stepAttempt?.attemptId || !reportKey || typeof store.finishStepAttemptWithReportResult !== 'function') return result;
+        const failureReasons = Array.isArray(result.failures)
+          ? result.failures.map((failure) => failure?.errorSummary).filter(Boolean)
+          : [];
+        store.finishStepAttemptWithReportResult(stepAttempt.attemptId, {
+          status: 'failed',
+          failureReasons,
+          failureCategory: result.status || 'report-rejected',
+          changedPaths: Array.isArray(report.changedPaths) ? report.changedPaths : null,
+        }, result);
+        return result;
+      };
 
       // A report hint is still an explicit claim about an obligation. Reject
       // an unbound command before the Kernel can fall back to an automatic
@@ -4510,7 +4256,7 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
           const detail = `Verification command "${request.commandRef}" is not declared by the project command catalog`;
           store.markRunBlocked(runId, 'unsafe-command');
           await projectRunState(store.getRun(runId), { runtimeHome });
-          return buildBlockedResponse({ runId, reason: 'unsafe-command', detail });
+          return settleEarlyAttemptResult(buildBlockedResponse({ runId, reason: 'unsafe-command', detail }));
         }
         const obligationId = reportHintObligationId(request, declaredObligations);
         const declared = store.getRunObligation(runId, obligationId);
@@ -4528,7 +4274,7 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
           });
         }
       }
-      if (bindingFailures.length > 0) return evidenceRejected(bindingFailures);
+      if (bindingFailures.length > 0) return settleEarlyAttemptResult(evidenceRejected(bindingFailures));
 
       // Proof is Kernel-planned. A model report may contain verification hints,
       // but only an explicit fresh request is allowed to rerun a satisfied or
@@ -4591,7 +4337,7 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
           });
         }
       }
-      if (coverageFailures.length > 0) return evidenceRejected(coverageFailures);
+      if (coverageFailures.length > 0) return settleEarlyAttemptResult(evidenceRejected(coverageFailures));
 
       if (proofRequests.length === 0 && judgmentRequests.length === 0 && preProofCompletion.unsatisfiedObligations.some((o) => o.requiredEvidenceClass === 'hard')) {
         const current = store.getRun(runId);
@@ -4600,7 +4346,7 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
         } catch (error) {
           store.markRunBlocked(runId, 'unsupported-verification');
           await projectRunState(store.getRun(runId), { runtimeHome });
-          return buildBlockedResponse({ runId, reason: 'unsupported-verification', detail: error.message });
+          return settleEarlyAttemptResult(buildBlockedResponse({ runId, reason: 'unsupported-verification', detail: error.message }));
         }
       }
 
@@ -4641,7 +4387,7 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
           || deriveVerificationSettlementScope(store.getRunObligation(runId, failure?.obligationId));
         try {
           for (const request of proofRequests) {
-            if (request.verificationScope === 'goal' && failures.some((failure) => failureSettlementScope(failure) === 'focused')) break;
+            if (failures.some((failure) => verificationSettlementRank(failureSettlementScope(failure)) < verificationSettlementRank(request.verificationScope))) break;
             if (request.verificationScope === 'goal' && !goalRegressionStarted) {
               goalRegressionStarted = true;
               recordEfficiency(runId, { timestamps: { goalRegressionStartedAt: new Date().toISOString() } });
@@ -4834,6 +4580,18 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
         }
       }
 
+      const checkpoint = { schemaVersion: 1, runId, mutationRevision: store.getRun(runId).mutationRevision,
+        planRevision: store.getRun(runId).planRevision, report, executed, failures, observed, observation,
+        workerWorkspace, parallelSettlement, liveWorkspaceObservation, activeStep,
+        stepAttemptId: stepAttempt?.attemptId || null, actualChangedPaths, reportedChangedPaths, reportKey };
+      if (stepAttempt?.attemptId) store.checkpointStepReport(stepAttempt.attemptId, checkpoint);
+      return this.settleVerifiedReport(runId, checkpoint, { fencingToken });
+    },
+
+    async settleVerifiedReport(runId, checkpoint, { fencingToken } = {}) {
+      const { report, executed, failures, observed, observation, workerWorkspace, parallelSettlement,
+        liveWorkspaceObservation, activeStep, actualChangedPaths, reportedChangedPaths, reportKey } = checkpoint;
+      const stepAttempt = checkpoint.stepAttemptId ? store.getStepAttemptByAttemptId(checkpoint.stepAttemptId, { runId }) : null;
       const refreshed = store.getRun(runId);
       const verifications = store.getVerifications(runId);
       const structuredSignals = buildStructuredRunSignals({
@@ -4880,7 +4638,7 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
       const stepsSettled = allStepsPassed(currentSteps, refreshed.planRevision);
 
       let finalization = null;
-      if (failures.length === 0 && outstanding.length === 0 && stepsSettled && refreshed.state === 'PROVE') {
+      if (failures.length === 0 && outstanding.length === 0 && stepsSettled && (refreshed.state === 'PROVE' || refreshed.status === 'completed')) {
         // Only the runner that still holds the lease it acquired may finalize.
         if (!store.isLeaseHeld(runId, { holder, fencingToken })) {
           return { schemaVersion: 1, runId, status: 'lease-conflict', lease: store.getLease(runId), next: await this.next(runId) };
@@ -4900,7 +4658,8 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
           }
         }
         finalization = await this.finalizeRun(runId, {
-          gitCloseoutRequest: report.gitCloseoutRequest,
+          gitCloseoutRequest: report.gitCloseoutRequest ? { ...report.gitCloseoutRequest,
+            reportKey, verifiedWorkspaceIdentity: observation.identity } : null,
           changedPaths: finalizationChangedPaths,
           knowledgeObservations: report.knowledgeObservations,
           structuredSignals,
@@ -4923,8 +4682,6 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
       const status = finalization?.completionStatus === 'accepted'
         ? (finalization.finalizationStatus === 'completed' ? 'completed' : 'finalization-incomplete')
         : failures.length > 0 ? 'evidence-failed' : 'in-progress';
-
-      store.finishAttempt(compatibilityAttempt.id, failures.length > 0 ? 'failed' : 'finished');
 
       // Classify failures against the run's baseline so the model can tell
       // which failures it caused vs. pre-existing/unrelated breakage.
@@ -4959,7 +4716,8 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
         workUnitStatus,
         goalStatus,
         continuation,
-        attemptNumber: stepAttempt?.attemptNumber ?? compatibilityAttempt.attemptNumber,
+        attemptNumber: stepAttempt?.attemptNumber ?? null,
+        reportKey: reportKey || null,
         mutationDetected: observed.changed,
         actualChangedPaths,
         reportedChangedPaths,
@@ -5002,7 +4760,6 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
           }
         }
       }
-      if (reportKey) reportIdempotencyCache.set(reportKey, reportResult);
       return reportResult;
     },
 
@@ -5092,7 +4849,7 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
           completion,
           verifications,
           verificationHistory: store.getVerificationHistory?.(runId) || [],
-          attempts: store.getAttempts(runId),
+          attempts: store.getStepAttempts(runId),
           routeDecisions: store.listModelRouteDecisions(runId),
           usageReceipts: store.listModelUsageReceipts(runId),
           reviewReceipts: store.listReviewReceipts(runId),

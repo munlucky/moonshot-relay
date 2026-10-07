@@ -155,7 +155,7 @@ candidateCapabilities:
   - id: provider-session-and-execution-boundary
     meta: {domain: EXECUTION, candidateStatus: HOST, classificationStatus: pending, relevance: {agent_workflow: true, project_knowledge_lifecycle: false}}
     problem: Bind host/provider sessions, capability admission, execution capsules, and workspace boundaries.
-    sourcePaths: [scripts/kernel/run/host-session.mjs, scripts/kernel/run/session-binding.mjs, scripts/kernel/run/session-holder.mjs, scripts/kernel/run/execution-capsule.mjs, scripts/kernel/bridge/mcp.mjs, scripts/kernel/workspace/step-worktree-manager.mjs]
+    sourcePaths: [scripts/kernel/run/host-session.mjs, scripts/kernel/run/session-binding.mjs, scripts/kernel/run/session-holder.mjs, scripts/kernel/run/execution-capsule.mjs, scripts/kernel/bridge/mcp.mjs, scripts/host/kernel/workspace/physical-worktree.mjs]
     contractPaths: [schemas/kernel.execution-capsule.schema.json, schemas/kernel.session-source.schema.json, schemas/kernel.route-admission.schema.json]
     proofPaths: [tests/kernel-host-loop-e2e.test.mjs, tests/kernel-multi-provider-session.test.mjs, tests/kernel-session-binding.test.mjs, tests/kernel-execution-capsule-fresh-session.test.mjs]
     currentIntegration: {active: true, layer: "Kernel host and provider execution boundary", note: host-local receipt required}

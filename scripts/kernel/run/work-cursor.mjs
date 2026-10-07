@@ -20,6 +20,7 @@ import { projectRunState } from '../state-projector.mjs';
 import { assertAttemptLineage } from './attempt-provenance.mjs';
 import { assertImplementationWorkUnitScope, resolveWorkUnitAllowedPaths } from './work-unit-scope.mjs';
 import { assertRunWorktreeMutationAuthority } from './worktree-binding.mjs';
+import { registerWorkspace } from './workspace-registration.mjs';
 
 const rejectGenericRunAuthority = ({ store, run, worktree, report, stepWorkspaceId = null }) => {
   const reject = (errorCode, errorSummary, obligationId = 'worktree') => ({
@@ -96,8 +97,7 @@ export const createWorkCursorApi = ({ store, projectRoot, runtimeHome, worktree 
   },
 
   // All execution modes enter through this function. It deliberately creates
-  // the canonical step attempt before a provider dispatch or a direct report;
-  // the legacy run-level attempt is only a compatibility projection.
+  // the canonical Work Attempt before a provider dispatch or a direct report.
   beginAttempt(runId, {
     stepId = null,
     attemptId = null,
@@ -275,6 +275,7 @@ export const createWorkCursorApi = ({ store, projectRoot, runtimeHome, worktree 
     const run = store.getRun(runId);
     if (!run) throw new Error(`Run ${runId} not found`);
     const nextRevision = Number(run.planRevision || 1) + 1;
+    const history = store.getRunSteps(runId);
     const replacement = planReplacementSteps({
       run,
       contract: run.taskContract || {},
@@ -283,8 +284,14 @@ export const createWorkCursorApi = ({ store, projectRoot, runtimeHome, worktree 
       deltaSteps: steps,
       // Step ids are unique per run, so a replacement that reuses a declared id
       // is qualified rather than silently colliding with the step it replaces.
-      reservedStepIds: store.getRunSteps(runId).map((step) => step.stepId),
+      reservedStepIds: history.map((step) => step.stepId),
     });
+    // Completed dependencies survive plan replacement. Persist readiness with
+    // the replacement itself so a restart sees the same executable Work.
+    const dependencyHistory = [...history, ...replacement];
+    for (const step of replacement) {
+      if (step.state === 'planned' && dependenciesSatisfied(step, dependencyHistory)) step.state = 'ready';
+    }
     const replaced = store.replaceRunPlanAtomic(runId, {
       currentPlanRevision: run.planRevision,
       nextPlanRevision: nextRevision,
@@ -298,6 +305,13 @@ export const createWorkCursorApi = ({ store, projectRoot, runtimeHome, worktree 
   // The Host may ask for a derived parallel selection. The ledger remains the
   // only progress authority; selection is recomputed from current Step rows,
   // disjoint scopes, and a transient host worker bound.
+  registerExecutionWorkspace(runId, workspaceRoot) {
+    const run = store.getRun(runId);
+    if (!run) throw Object.assign(new Error(`Run ${runId} not found`), { code: 'RUN_NOT_FOUND' });
+    if (!workspaceRoot) throw Object.assign(new Error('execution workspace root is required'), { code: 'EXECUTION_WORKSPACE_ROOT_MISSING' });
+    return registerWorkspace({ stateStore: store, projectId: run.projectId, workspaceRoot });
+  },
+
   getExecutableSteps(runId) {
     const run = store.getRun(runId);
     if (!run) return { steps: [], reason: 'run-not-found', mode: 'sequential' };
@@ -446,6 +460,29 @@ export const createWorkCursorApi = ({ store, projectRoot, runtimeHome, worktree 
     const runnable = deriveParallelBatch(steps, { planRevision: run.planRevision }).steps;
     const active = selectCurrentStep(steps, { planRevision: run.planRevision });
     const liveCount = scoped.filter((step) => !['passed', 'superseded', 'cancelled'].includes(step.state)).length;
+    if (!active && report.attemptId) {
+      const explicitAttempt = store.getStepAttemptByAttemptId(report.attemptId, { runId });
+      const attemptStep = explicitAttempt
+        ? scoped.find((step) => step.stepId === explicitAttempt.stepId)
+        : null;
+      if (!explicitAttempt || explicitAttempt.status !== 'started' || !attemptStep) {
+        return { rejection: [{ obligationId: 'attempt', command: 'kernel report', errorSummary: `Attempt "${report.attemptId}" is not an active attempt for the current plan` }] };
+      }
+      if (report.bindingId && explicitAttempt.bindingId !== report.bindingId) {
+        return { rejection: [{ obligationId: 'binding', command: 'kernel report', errorSummary: 'Report binding does not match the explicit step attempt' }] };
+      }
+      if (report.capsuleId) {
+        const boundCapsuleId = explicitAttempt.capsuleId || (explicitAttempt.capsuleDigest && !String(explicitAttempt.capsuleDigest).startsWith('sha256:') ? explicitAttempt.capsuleDigest : null);
+        if (boundCapsuleId && boundCapsuleId !== report.capsuleId) {
+          return { rejection: [{ obligationId: 'capsule', command: 'kernel report', errorSummary: 'Report capsule does not match the explicit step attempt' }] };
+        }
+      }
+      const incompleteCredentials = rejectIncompleteAttemptCredentials(explicitAttempt, report);
+      if (incompleteCredentials) return incompleteCredentials;
+      const staleAttempt = rejectStaleAttempt(explicitAttempt, attemptStep.stepId);
+      if (staleAttempt) return staleAttempt;
+      return { step: attemptStep, attempt: explicitAttempt, proofRetry: attemptStep.state === 'passed' };
+    }
     if (!active) return { step: null };
     if (liveCount > 1 && runnable.length > 1) {
       return { rejection: [{ obligationId: 'step', command: 'kernel report', errorSummary: `This run has a decomposed plan; name the stepId the report answers (current: ${active.stepId})` }] };

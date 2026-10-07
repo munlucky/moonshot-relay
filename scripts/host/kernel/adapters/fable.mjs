@@ -12,6 +12,14 @@ export const FALLBACK_CAPABILITIES = Object.freeze({
   supportsIndependentContext: false,
   supportsUsageTokens: false,
   supportsResolvedModelIdentity: false,
+  semantic: Object.freeze({
+    freshContext: false,
+    workspaceWrite: true,
+    workspaceIsolation: false,
+    parallelExecution: false,
+    independentReview: false,
+    modelSelection: false,
+  }),
 });
 
 export const createFableAdapter = ({ surface = 'fable', capabilities = {}, launch = null } = {}) => {

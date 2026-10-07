@@ -6,18 +6,15 @@
 import { normalizeWorkUnitAllowedPaths } from './work-unit-scope.mjs';
 import { deriveVerificationSettlementScope } from './obligation-compiler.mjs';
 
-const FILES_CHANGED_THRESHOLD = 8;
-
-export const stepLedgerApplies = ({ contract = {}, route = {}, filesChanged = 0 } = {}) => {
+export const stepLedgerApplies = ({ contract = {} } = {}) => {
+  // The ledger represents an actual Work Graph. Size, duration, file count, or
+  // generic complexity hints are not a graph and must not create a second
+  // lifecycle. Planning may add contract.steps when decomposition is useful;
+  // until then the run stays one bounded synthetic Work Unit.
   const signals = {
-    longRunning: contract.taskClass === 'long-running',
-    complex: contract.flags?.complex === true,
-    manyFiles: Number(filesChanged || contract.filesChanged || 0) > FILES_CHANGED_THRESHOLD,
     declaredDecomposition: Array.isArray(contract.steps) && contract.steps.length > 0,
-    safeParallelSplit: contract.flags?.safeParallelSplit === true || contract.safeParallelSplit === true,
-    independentDeliverables: contract.flags?.independentDeliverables === true || contract.independentDeliverables === true,
   };
-  return { applies: Object.values(signals).some(Boolean), signals };
+  return { applies: signals.declaredDecomposition, signals };
 };
 
 const stepId = (runId, sequence, planRevision) => `step-${planRevision}-${sequence}`;
@@ -47,8 +44,8 @@ const normalizeDeclaredStep = ({ declared, index, runId, planRevision, contract,
 // replacement step collide with the step it replaces.
 const settleGoalBindingsOnFinalStep = ({ steps = [], obligations = [], contract = {} } = {}) => {
   if (steps.length <= 1) return steps;
-  const goalObligationIds = new Set(obligations
-    .filter((obligation) => deriveVerificationSettlementScope(obligation) === 'goal')
+  const finalPhaseObligationIds = new Set(obligations
+    .filter((obligation) => ['integration', 'goal'].includes(deriveVerificationSettlementScope(obligation)))
     .map((obligation) => String(obligation.obligationId)));
   const acceptanceBindings = new Map((contract.acceptance || []).map((acceptance) => [
     String(acceptance.id),
@@ -59,7 +56,7 @@ const settleGoalBindingsOnFinalStep = ({ steps = [], obligations = [], contract 
   for (const step of steps.slice(0, -1)) {
     const deferredAcceptance = (step.acceptanceIds || []).filter((acceptanceId) => {
       const bound = acceptanceBindings.get(String(acceptanceId)) || [];
-      return bound.length > 0 && bound.every((obligation) => deriveVerificationSettlementScope(obligation) === 'goal');
+      return bound.length > 0 && bound.every((obligation) => ['integration', 'goal'].includes(deriveVerificationSettlementScope(obligation)));
     });
     if (deferredAcceptance.length > 0) {
       const deferred = new Set(deferredAcceptance.map(String));
@@ -67,7 +64,7 @@ const settleGoalBindingsOnFinalStep = ({ steps = [], obligations = [], contract 
       final.acceptanceIds = [...new Set([...(final.acceptanceIds || []), ...deferredAcceptance])];
     }
 
-    const deferredObligations = (step.obligationIds || []).filter((obligationId) => goalObligationIds.has(String(obligationId)));
+    const deferredObligations = (step.obligationIds || []).filter((obligationId) => finalPhaseObligationIds.has(String(obligationId)));
     if (deferredObligations.length > 0) {
       const deferred = new Set(deferredObligations.map(String));
       step.obligationIds = (step.obligationIds || []).filter((id) => !deferred.has(String(id)));
@@ -150,7 +147,7 @@ export const planRunSteps = ({
   route = {},
   planRevision = 1,
 } = {}) => {
-  const decision = stepLedgerApplies({ contract, route, filesChanged: contract.filesChanged });
+  const decision = stepLedgerApplies({ contract });
   const declared = Array.isArray(contract.steps) ? contract.steps : [];
 
   if (!decision.applies || declared.length === 0) {

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { ACTIVE_EXECUTION_FILES, auditActiveRuntimeBoundary } from '../scripts/kernel/runtime-boundary-audit.mjs';
 import {
   HOST_EXECUTION_CONTRACT_SCHEMA_VERSION,
+  admitHostExecutionContract,
   buildHostExecutionContract,
   validateHostExecutionContract,
 } from '../scripts/kernel/run/host-execution-contract.mjs';
@@ -170,6 +171,51 @@ test('Static boundary: Kernel emits a provider-neutral HostExecutionContract', (
   assert.equal(validateHostExecutionContract(contract), contract);
 });
 
+
+test('W-04: HostExecutionContract v2 expresses semantic requirements without provider details', () => {
+  const contract = buildHostExecutionContract({
+    decision: {
+      runId: 'run-semantic',
+      decisionId: 'route-semantic-000000000000',
+      actionKind: 'review_engineering',
+      role: 'reviewer',
+      permissions: 'read_only',
+      executionClass: 'review',
+      independentContextRequired: true,
+      workProfile: { executionClass: 'review', complexity: 'complex', independentContextRequired: true },
+    },
+    assignment: {
+      executionMode: 'independent-review',
+      delegation: { mode: 'required', requested: true },
+      freshSessionRequired: true,
+      workProfile: { parallelizable: false },
+    },
+    workUnit: { objective: 'review bounded subject', allowedPaths: ['src/'] },
+  });
+  assert.equal(contract.schemaVersion, 2);
+  assert.deepEqual(contract.requirements, {
+    freshContext: true,
+    workspaceWrite: false,
+    workspaceIsolation: false,
+    parallelExecution: false,
+    independentReview: true,
+    modelSelection: false,
+  });
+  assert.doesNotMatch(JSON.stringify(contract.requirements), /codex|claude|gemini|gpt|opus|modelId/i);
+
+  const blocked = admitHostExecutionContract(contract, {
+    semantic: { freshContext: true, independentReview: false, modelSelection: false },
+  });
+  assert.equal(blocked.decision, 'blocked');
+  assert.deepEqual(blocked.missingCapabilities, ['independentReview']);
+
+  const admitted = admitHostExecutionContract(contract, {
+    semantic: { freshContext: true, independentReview: true, modelSelection: false },
+  });
+  assert.equal(admitted.decision, 'admitted');
+  assert.deepEqual(admitted.missingCapabilities, []);
+});
+
 test('Static boundary: Host validates the boundary before it accepts a directive', () => {
   const directive = {
     modelRouteDecision: {
@@ -192,4 +238,89 @@ test('Static boundary: Host validates the boundary before it accepts a directive
     () => validateHostExecutionContract({ ...normalized.contract, model: 'gpt-6-astra' }),
     /host_execution_contract_provider_field/,
   );
+});
+
+
+test('Wave 4: session bindings are Host access handles and never a Work identity selector', async () => {
+  const store = await readFile(path.resolve('scripts/kernel/state-store.mjs'), 'utf8');
+  const resolver = await readFile(path.resolve('scripts/kernel/run/invocation-resolver.mjs'), 'utf8');
+  const controlPlane = await readFile(path.resolve('scripts/kernel/control-plane.mjs'), 'utf8');
+
+  assert.equal(store.includes('getActiveSessionBinding('), false);
+  assert.equal(store.includes('preserveSessionId'), false);
+  assert.equal(store.includes('incrementReplanCount('), false);
+  assert.equal(resolver.includes('getActiveOwnerBinding'), false);
+  assert.equal(controlPlane.includes('binding?.runId'), false);
+  assert.equal(controlPlane.includes('signalReplan('), false);
+  assert.match(controlPlane, /getActiveRunBinding/);
+});
+
+test('Wave 9: Route admission policy is Host-owned and Kernel keeps only provider-neutral receipt semantics', async () => {
+  const kernelAdmission = await readFile(path.resolve('scripts/kernel/routing/route-admission.mjs'), 'utf8');
+  const hostAdmission = await readFile(path.resolve('scripts/host/kernel/route-admission.mjs'), 'utf8');
+
+  for (const forbidden of [
+    'supportsSubagentModel',
+    'supportsSessionModelOverride',
+    'estimatedCostUnits',
+    'REVIEW_NOT_FRONTIER',
+    'configured-frontier',
+  ]) {
+    assert.equal(kernelAdmission.includes(forbidden), false, `${forbidden} must stay Host-owned`);
+  }
+  assert.match(kernelAdmission, /admissionAllowsDispatch/);
+  assert.match(hostAdmission, /export const admitRoute/);
+  assert.match(hostAdmission, /export const policyDigests/);
+  assert.match(hostAdmission, /revalidateAdmissionAtDispatch/);
+});
+
+test('Wave 16: Host turn/routing orchestration is not reintroduced into the Kernel Control Plane', async () => {
+  const controlPlane = await readFile(path.resolve('scripts/kernel/control-plane.mjs'), 'utf8');
+  const hostTurn = await readFile(path.resolve('scripts/host/kernel/host-turn.mjs'), 'utf8');
+  const hostRouting = await readFile(path.resolve('scripts/host/kernel/host-routing.mjs'), 'utf8');
+
+  for (const forbidden of [
+    'async hostNext(',
+    'async decideModelRoute(',
+    'recommendRouting(runId',
+    'createHostRoutingBridge',
+  ]) {
+    assert.equal(controlPlane.includes(forbidden), false, `${forbidden} must remain Host-owned`);
+  }
+  assert.match(hostTurn, /export const prepareHostTurn/);
+  assert.match(hostRouting, /export const createHostRoutingBridge/);
+});
+
+test('Wave 17: workspace mutation fencing has one canonical lock authority', async () => {
+  const store = await readFile(path.resolve('scripts/kernel/state-store.mjs'), 'utf8');
+  const guard = await readFile(path.resolve('scripts/kernel/run/mutation-guard.mjs'), 'utf8');
+
+  assert.equal(store.includes('CREATE TABLE IF NOT EXISTS workspace_mutation_locks ('), false);
+  for (const forbidden of [
+    'acquireWorkspaceMutationLock({',
+    'getWorkspaceMutationLock(projectId)',
+    'releaseWorkspaceMutationLock({',
+    'renewWorkspaceMutationLock({',
+  ]) {
+    assert.equal(store.includes(forbidden), false, `${forbidden} is a retired project-wide lock API`);
+  }
+  assert.match(store, /workspace_mutation_locks_v2/);
+  assert.match(guard, /getWorkspaceMutationLockV2/);
+  assert.equal(guard.includes('getWorkspaceMutationLock(run.projectId)'), false);
+});
+
+test('Wave 18: canonical Work Attempt is the only durable attempt authority', async () => {
+  const store = await readFile(path.resolve('scripts/kernel/state-store.mjs'), 'utf8');
+  const controlPlane = await readFile(path.resolve('scripts/kernel/control-plane.mjs'), 'utf8');
+  const hostRouting = await readFile(path.resolve('scripts/host/kernel/host-routing.mjs'), 'utf8');
+
+  assert.equal(store.includes('CREATE TABLE IF NOT EXISTS attempts ('), false);
+  for (const forbidden of ['recordAttempt(', 'getAttempts(', 'nextAttemptNumber(', 'finishAttempt(']) {
+    assert.equal(store.includes(forbidden), false, `${forbidden} is a retired run-level attempt API`);
+    assert.equal(controlPlane.includes(forbidden), false, `${forbidden} must not be reintroduced in Control Plane`);
+    assert.equal(hostRouting.includes(forbidden), false, `${forbidden} must not be reintroduced in Host routing`);
+  }
+  assert.match(store, /CREATE TABLE IF NOT EXISTS run_step_attempts/);
+  assert.match(store, /getStepAttempts\(runId/);
+  assert.match(hostRouting, /getStepAttempts\(runId\)/);
 });

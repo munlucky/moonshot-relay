@@ -258,6 +258,20 @@ export const createIndependentSubagentReviewTransport = ({
     supportsIndependentContext: available && capabilities.supportsIndependentContext !== false,
     supportsIndependentSubagentReview: available && capabilities.supportsIndependentSubagentReview !== false,
     supportsSubagentModel: available && capabilities.supportsSubagentModel !== false,
+    semantic: Object.freeze({
+      freshContext: available,
+      workspaceWrite: false,
+      workspaceIsolation: false,
+      parallelExecution: false,
+      independentReview: available,
+      modelSelection: false,
+      ...(capabilities.semantic || {}),
+      // These properties are transport facts. A caller cannot override them
+      // to claim an independent reviewer when no launcher exists.
+      freshContext: available && capabilities.semantic?.freshContext !== false,
+      independentReview: available && capabilities.semantic?.independentReview !== false,
+      workspaceWrite: false,
+    }),
   };
 
   return {

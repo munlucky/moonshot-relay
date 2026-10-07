@@ -295,24 +295,27 @@ test('K4 scenario D: every link of the chain refuses to be forged', async () => 
     assert.equal(forgedCommand.status, 'evidence-rejected');
 
     // 4. Reusing a capsule built before the workspace moved.
+    const staleAttempt = await dispatch(cp, 'r-d', 'implementer-session');
     const staleCapsule = await cp.report('r-d', {
       summary: 'old capsule',
+      attemptId: staleAttempt.attemptId,
       capsuleId,
       stepId: first.stepId,
       changedPaths: ['src/auth/service.mjs'],
     });
-    assert.equal(staleCapsule.status, 'scope-rejected');
-    assert.match(staleCapsule.failures[0].errorSummary, /no longer describes this run/);
+    assert.equal(staleCapsule.status, 'step-rejected');
+    assert.match(staleCapsule.failures[0].errorSummary, /capsule does not match/i);
 
     // 5. Reporting a step that is not the current unit of work.
     const wrongStep = await cp.report('r-d', { summary: 'skipping ahead', stepId: second.stepId, changedPaths: [] });
     assert.equal(wrongStep.status, 'step-rejected');
 
     // 1/3. Changing files the step never claimed.
+    const scopedTurn = await dispatch(cp, 'r-d', 'implementer-session');
     const outOfScope = await cp.report('r-d', {
       summary: 'also billing',
-      capsuleId,
-      attemptId: turn.attemptId,
+      capsuleId: scopedTurn.executionCapsule.capsuleId,
+      attemptId: scopedTurn.attemptId,
       stepId: first.stepId,
       changedPaths: ['src/auth/service.mjs', 'src/billing/invoice.mjs'],
     });

@@ -1,3 +1,4 @@
+import { decideTestModelRoute } from './helpers/kernel-host-test-api.mjs';
 // K4 §9: the new tables are added, never swapped in. A run that started before
 // the ledger, the capsule, and the admission existed keeps working: it gets a
 // recovery cursor at its current state, and its old receipts stay readable.
@@ -100,7 +101,7 @@ test('K4: a usage receipt written before capsules and admissions existed stays v
   const cp = await createKernelControlPlane(fixture);
   try {
     await cp.startRun({ runId: 'r-oldreceipt', objective: 'x', taskContract: { acceptance: ['works'] } });
-    const decision = await cp.decideModelRoute('r-oldreceipt', { actionKind: 'implement', obligationId: 'default' });
+    const decision = await decideTestModelRoute(cp, 'r-oldreceipt', { actionKind: 'implement', obligationId: 'default' });
     // No capsuleId, no admissionId: exactly what a pre-K1/K3 Host filed.
     const receipt = await cp.recordModelUsage('r-oldreceipt', {
       decisionId: decision.decisionId,

@@ -185,6 +185,21 @@ test('Golden E2E: multi-step plan preserved, step 1 continues to step 2, and goa
     assert.equal(next2.workAuthority.goalStatus, 'active');
     assert.equal(next2.workAuthority.currentWorkUnit.stepId, 'step-2-router');
 
+    // Drop the entire owner context. A new process/session has only the
+    // durable Run handle, and must recover the same cursor without transcript.
+    const durableBeforeRestart = cp.stateStore.getKernelDurableState(runId);
+    const journalBeforeRestart = cp.stateStore.getRunJournal(runId);
+    await cp.close();
+    cp = await createKernelControlPlane({
+      runtimeHome: fixture.runtimeHome, projectRoot: fixture.projectRoot,
+      env: { MOON_RELAY_KERNEL_PROVIDER: 'codex', MOON_RELAY_KERNEL_SESSION_ID: 'codex:new-context', MOON_RELAY_KERNEL_RUN_ID: runId },
+    });
+    const recovered = await cp.next(runId);
+    assert.equal(recovered.action.step.stepId, 'step-2-router');
+    assert.deepEqual(recovered.workAuthority.progress.completedWorkUnitIds, ['step-1-service']);
+    assert.equal(cp.stateStore.getKernelDurableState(runId).work.planRevision, durableBeforeRestart.work.planRevision);
+    assert.deepEqual(cp.stateStore.getRunJournal(runId), journalBeforeRestart);
+
     // 3. Implement and report Step 2
     await writeFile(path.join(fixture.projectRoot, 'src', 'router.mjs'), 'export const router = 2;\n');
     const report2 = await cp.report(runId, {

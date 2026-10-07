@@ -552,6 +552,14 @@ export const createCodexAdapter = ({ launch = null, nativeLaunch = null, nativeA
   const nativeDelegationAvailable = Boolean(effectiveNativeLaunch && resolved.supportsSubagentModel === true);
   resolved.supportsIndependentContext = nativeDelegationAvailable;
   resolved.supportsCrossSurfaceReview = false;
+  resolved.semantic = Object.freeze({
+    freshContext: nativeDelegationAvailable,
+    workspaceWrite: true,
+    workspaceIsolation: true,
+    parallelExecution: nativeDelegationAvailable,
+    independentReview: nativeDelegationAvailable,
+    modelSelection: true,
+  });
   const observeParentSession = parentSessionObserver || defaultParentSessionObserver;
   const configuredParentSessionEnvironment = parentSessionEnvironment || parentEnvironment || null;
   return {

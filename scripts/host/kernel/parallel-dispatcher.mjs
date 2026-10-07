@@ -7,9 +7,10 @@ import {
   createStepResultCommit,
   canUseExecutionWorkspace,
   cleanupExecutionWorkspaces,
-} from '../../kernel/workspace/step-worktree-manager.mjs';
+} from './workspace/physical-worktree.mjs';
 import { executeTrustedProof } from '../../kernel/proof/proof-executor.mjs';
 import { buildUsageReceipt } from './usage-receipt.mjs';
+import { prepareHostTurn } from './host-turn.mjs';
 import { buildModelVisiblePromptView } from './model-capsule-view.mjs';
 import { sanitizePersistentPayload } from '../../kernel/persistent-sanitizer.mjs';
 
@@ -127,6 +128,7 @@ const dispatchDefaultStep = async ({ adapter, hosted, dispatchContext = null, wo
     resolution: context.resolution,
     strategy: context.strategy || context.hostDirective?.enforcementStrategy || hosted.hostDirective?.enforcementStrategy || 'isolated',
     executionCapsule: capsule,
+    hostExecutionContract: context.hostExecutionContract || hosted.hostExecutionContract || hosted.hostDirective?.executionContract,
     modelInput,
     modelVisiblePrompt,
     executionContract: context.executionContract || hosted.executionContract || {
@@ -166,6 +168,7 @@ export const dispatchKernelStep = async ({
   actionContext = {},
   dispatchStep = null,
   prepareDispatch = null,
+  prepareHost = prepareHostTurn,
   env = process.env,
   deferReport = false,
 } = {}) => {
@@ -178,8 +181,10 @@ export const dispatchKernelStep = async ({
       baseWorkspaceIdentity: workspace.baseWorkspaceIdentity,
     });
   }
-  const hosted = controlPlane?.hostNext
-    ? await controlPlane.hostNext(runId, {
+  const hosted = controlPlane
+    ? await prepareHost({
+      controlPlane,
+      runId,
       hostCapabilities,
       actionContext: {
         ...actionContext,
@@ -360,6 +365,7 @@ export const dispatchKernelParallel = async ({
   sequentialDispatcher = null,
   dispatchStep = null,
   prepareDispatch = null,
+  prepareHost = prepareHostTurn,
   executeIntegrationVerification = null,
 } = {}) => {
   const executable = await controlPlane.getExecutableSteps(runId);
@@ -400,7 +406,18 @@ export const dispatchKernelParallel = async ({
   }
   let workspaces;
   try {
-    workspaces = await prepareExecutionWorkspaces({ repoRoot, baseCommit: base, runId, projectId: run.projectId, runtimeHome, controlPlane: controlPlane.stateStore, stateStore: controlPlane.stateStore, steps: executable.steps });
+    workspaces = await prepareExecutionWorkspaces({ repoRoot, baseCommit: base, runId, projectId: run.projectId, runtimeHome, steps: executable.steps });
+    if (!controlPlane?.registerExecutionWorkspace) {
+      throw Object.assign(new Error('logical workspace registration authority unavailable'), { code: 'workspace_authority_unavailable' });
+    }
+    const register = (workspace) => ({
+      ...workspace,
+      ...controlPlane.registerExecutionWorkspace(runId, workspace.workspaceRoot),
+    });
+    workspaces = {
+      integration: register(workspaces.integration),
+      steps: workspaces.steps.map(register),
+    };
   } catch (error) {
     return fallback({ sequentialDispatcher, reason: 'execution-workspace-preparation-failed', context: { runId, executable, error } });
   }
@@ -417,6 +434,7 @@ export const dispatchKernelParallel = async ({
     actionContext,
     dispatchStep,
     prepareDispatch,
+    prepareHost,
     env,
     deferReport: true,
   })));

@@ -229,7 +229,7 @@ test('the native Host review bridge ingests the observed outcome into a Kernel r
   }
 });
 
-test('report idempotency only coalesces the same normalized report', async () => {
+test('report idempotency replays one canonical operation and retries with a new attempt identity', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-report-idempotency-'));
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-report-idempotency-state-'));
   await mkdir(path.join(root, '.moon-relay'), { recursive: true });
@@ -240,7 +240,9 @@ test('report idempotency only coalesces the same normalized report', async () =>
   const cp = await createKernelControlPlane({ runtimeHome, projectRoot: root });
   try {
     await cp.startRun({ runId: 'report-idempotency', objective: 'retry reporting' });
+    const firstAttempt = cp.beginAttempt('report-idempotency');
     const firstPayload = {
+      attemptId: firstAttempt.attemptId,
       summary: 'first attempt',
       verifications: [{ obligationId: 'default', commandRef: 'test:fail' }],
     };
@@ -248,10 +250,13 @@ test('report idempotency only coalesces the same normalized report', async () =>
     const duplicate = await cp.report('report-idempotency', firstPayload);
     assert.equal(first.status, 'evidence-failed');
     assert.equal(duplicate.status, 'evidence-failed');
+    assert.equal(duplicate.idempotentReplay, true);
     assert.equal(duplicate.attemptNumber, first.attemptNumber);
 
+    const secondAttempt = cp.beginAttempt('report-idempotency', { stepId: firstAttempt.stepId, retryReason: 'evidence-failed' });
     const retry = await cp.report('report-idempotency', {
       ...firstPayload,
+      attemptId: secondAttempt.attemptId,
       summary: 'second attempt',
     });
     assert.equal(retry.status, 'evidence-failed');

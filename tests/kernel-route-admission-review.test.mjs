@@ -13,7 +13,7 @@ import { dispatchKernelTurn } from '../scripts/host/kernel/turn-dispatcher.mjs';
 import { createModelRegistry } from '../scripts/host/kernel/model-registry.mjs';
 import { createClaudeAdapter } from '../scripts/host/kernel/adapters/claude.mjs';
 import { createCodexAdapter } from '../scripts/host/kernel/adapters/codex.mjs';
-import { REJECTION_CODES } from '../scripts/kernel/routing/route-admission.mjs';
+import { REJECTION_CODES } from '../scripts/host/kernel/route-admission.mjs';
 
 const CONFIGURED = { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'configured-frontier', MOON_RELAY_KERNEL_MODEL_VALUE: 'configured-value' };
 

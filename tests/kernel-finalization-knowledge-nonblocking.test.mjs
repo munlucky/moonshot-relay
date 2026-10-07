@@ -269,6 +269,56 @@ test('Wave 5: Knowledge review rejection defers knowledge without blocking code 
   }
 });
 
+test('S-18: required Knowledge can keep Task finalization incomplete without erasing accepted code', async () => {
+  const fixture = await setup();
+  const cp = await createKernelControlPlane(fixture);
+  try {
+    const runId = 'r-kn-required-incomplete';
+    await writeFile(path.join(fixture.projectRoot, 'feature.mjs'), 'export const feature = 43;\n');
+    await cp.startRun({
+      runId,
+      objective: 'require durable knowledge after code acceptance',
+      taskContract: {
+        riskTier: 'T0',
+        flags: { knowledgeRequired: true },
+        acceptance: [{
+          acceptance: 'feature works',
+          evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test'], obligationId: 'default' },
+        }],
+        allowedPaths: ['feature.mjs'],
+      },
+    });
+    await cp.transition(runId, 'EXECUTE');
+    await cp.transition(runId, 'PROVE');
+    await cp.recordProof(runId, {
+      obligationId: 'default',
+      status: 'passed',
+      evidenceRef: 'ev-required-kn',
+      commandRef: 'test',
+      command: 'npm test',
+      exitCode: 0,
+      evidenceDigest: `sha256:${'f'.repeat(64)}`,
+      acceptanceCoverage: ['feature works'],
+    });
+    const receipt = await cp.finalizeRun(runId, {
+      knowledgeObservations: [
+        { proposedType: 'semantic_fact', statement: 'observation containing raw_transcript_body forbidden leak' },
+      ],
+      changedPaths: ['feature.mjs'],
+    });
+    assert.equal(receipt.completionStatus, 'accepted');
+    assert.equal(receipt.codeAccepted, true);
+    assert.equal(receipt.knowledgeRequired, true);
+    assert.equal(receipt.knowledgeStatus, 'deferred');
+    assert.equal(receipt.finalizationStatus, 'partial');
+    assert.equal(receipt.reason, 'required_knowledge_incomplete');
+    assert.equal(cp.stateStore.getRun(runId).finalizationStatus, 'partial');
+  } finally {
+    await cp.close();
+    await cleanup(fixture);
+  }
+});
+
 test('Wave 5: Restart recovery independently reconciles deferred knowledge from previous run post-finalization', async () => {
   const fixture = await setup();
   const cp1 = await createKernelControlPlane(fixture);

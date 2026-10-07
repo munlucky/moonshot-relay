@@ -1,3 +1,4 @@
+import { decideTestModelRoute } from './helpers/kernel-host-test-api.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
@@ -48,7 +49,7 @@ const cleanupFixture = async ({ runtimeHome, projectRoot }) => {
 const mutate = (projectRoot, value) => writeFile(path.join(projectRoot, 'app.mjs'), `export const v = ${value};\n`);
 
 const routeAndRun = async (cp, runId, actionKind, actorSessionId) => {
-  const decision = await cp.decideModelRoute(runId, { actionKind, obligationId: 'default' });
+  const decision = await decideTestModelRoute(cp, runId, { actionKind, obligationId: 'default' });
   const receipt = await cp.recordModelUsage(runId, {
     decisionId: decision.decisionId,
     runId,

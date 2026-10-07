@@ -1,3 +1,4 @@
+import { decideTestModelRoute } from './helpers/kernel-host-test-api.mjs';
 // K0: a protected or T3 judgment must rest on a Review Receipt whose reviewer
 // lineage the Kernel itself recorded. Two different reviewer STRINGS prove
 // nothing, so that path is closed.
@@ -39,7 +40,7 @@ const cleanup = async ({ runtimeHome, projectRoot }) => {
 const mutate = (projectRoot, value) => writeFile(path.join(projectRoot, 'app.mjs'), `export const v = ${value};\n`);
 
 const routeAndRun = async (cp, runId, actionKind, actorSessionId, extra = {}) => {
-  const decision = await cp.decideModelRoute(runId, { actionKind, obligationId: 'default' });
+  const decision = await decideTestModelRoute(cp, runId, { actionKind, obligationId: 'default' });
   const receipt = await cp.recordModelUsage(runId, {
     decisionId: decision.decisionId,
     runId,
@@ -328,4 +329,32 @@ test('K0: a review receipt is a closed record and its digest is reproducible', (
   assert.throws(() => normalizeReviewReceipt({ ...base, subject: { ...base.subject, workspaceIdentity: 'HEAD' } }), /workspaceIdentity/);
   assert.throws(() => normalizeReviewReceipt({ ...base, rationale: '' }), /rationale/);
   assert.throws(() => normalizeReviewReceipt({ ...base, reviewer: { ...base.reviewer, usageReceiptId: null } }), /routed review receipt requires/);
+});
+
+test('S-11: only one Review Receipt is adopted for the same current subject while later race output is not stored', async () => {
+  const fixture = await setup();
+  const cp = await createKernelControlPlane(fixture);
+  try {
+    await cp.startRun({ runId: 'r-review-adoption', objective: 'review adoption', taskContract: { acceptance: [] } });
+    const first = await forgeReceipt(fixture, 'r-review-adoption', {
+      receiptId: 'review-receipt-aaaaaaaaaaaaaaaaaaaaaaaa',
+      verdict: 'pass',
+      rationale: 'first reviewer result wins subject adoption',
+    });
+    const second = await forgeReceipt(fixture, 'r-review-adoption', {
+      receiptId: 'review-receipt-bbbbbbbbbbbbbbbbbbbbbbbb',
+      verdict: 'fail',
+      rationale: 'late racing reviewer result must not replace adopted result',
+    });
+
+    assert.equal(second.receiptId, first.receiptId);
+    assert.equal(second.verdict, first.verdict);
+    const receipts = cp.stateStore.listReviewReceipts('r-review-adoption', { obligationId: 'security-review' });
+    assert.equal(receipts.length, 1);
+    assert.equal(receipts[0].receiptId, first.receiptId);
+    assert.equal(receipts[0].verdict, 'pass');
+  } finally {
+    await cp.close();
+    await cleanup(fixture);
+  }
 });

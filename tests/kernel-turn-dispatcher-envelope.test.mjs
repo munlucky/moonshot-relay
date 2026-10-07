@@ -1,3 +1,4 @@
+import { prepareTestHostTurn } from './helpers/kernel-host-test-api.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -280,13 +281,6 @@ test('Correction 3: normal bounded mutation turn does not invoke controlPlane.ne
       };
     };
 
-    let hostNextPassedModelInput = null;
-    const origHostNext = cp.hostNext.bind(cp);
-    cp.hostNext = async (rId, opts) => {
-      hostNextPassedModelInput = opts?.modelInput;
-      return origHostNext(rId, opts);
-    };
-
     const adapter = {
       surface: 'codex',
       ownerDirectDefault: true,
@@ -310,8 +304,6 @@ test('Correction 3: normal bounded mutation turn does not invoke controlPlane.ne
     });
 
     assert.equal(nextCalls, 1, `controlPlane.next must be called exactly once, got ${nextCalls}`);
-    assert.ok(hostNextPassedModelInput, 'evaluated modelInput must be passed to hostNext');
-    assert.equal(hostNextPassedModelInput.action?.type, 'implement');
   });
 });
 
@@ -371,7 +363,7 @@ test('Correction 3: baseline-required recalculates modelInput via additional nex
       return { status: 'captured', baselineFailures: [] };
     };
 
-    await cp.hostNext(runId, {
+    await prepareTestHostTurn(cp, runId, {
       hostCapabilities: { surface: 'codex', nativeSubagent: true },
       modelInput: {
         action: { type: 'baseline-required', commandRefs: ['test'] },

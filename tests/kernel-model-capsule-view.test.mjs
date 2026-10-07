@@ -166,3 +166,22 @@ test('the six-field prompt projection recursively drops nested Host control data
   assert.deepEqual(messageView.requiredEvidence, [{ obligationId: 'proof-2' }]);
   assert.doesNotMatch(JSON.stringify(messageView), /nested-leak/u);
 });
+
+test('R-10: model-visible context never truncates required acceptance and fails closed when the bounded Work Unit is too large', () => {
+  const hugeAcceptance = 'required acceptance '.repeat(5000);
+  assert.throws(
+    () => buildModelVisiblePromptView({
+      modelInput: {
+        objective: 'oversized bounded work',
+        acceptance: [{ id: 'AC-HUGE', statement: hugeAcceptance }],
+        action: { type: 'implement', step: { objective: 'one oversized unit', allowedPaths: ['src/**'] } },
+      },
+    }),
+    (error) => {
+      assert.equal(error.code, 'MODEL_CONTEXT_BUDGET_EXCEEDED');
+      assert.equal(error.nextAction, 'split-work-unit');
+      assert.ok(error.serializedBytes > error.maxBytes);
+      return true;
+    },
+  );
+});

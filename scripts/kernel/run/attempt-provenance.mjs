@@ -1,8 +1,8 @@
 // Canonical work-attempt provenance (WP-1/WP-2).
 //
 // `run_step_attempts` is the durable authority for one unit of work. The
-// legacy `attempts` table remains a compatibility projection, but it must not
-// be used to infer capsule, route, usage, or retry lineage.
+// retired run-level `attempts` table is removed during migration. Capsule,
+// route, usage, and retry lineage use the canonical Work attempt exclusively.
 
 import { randomUUID } from 'node:crypto';
 

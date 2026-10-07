@@ -138,6 +138,8 @@ test('partial Git finalization retry reuses the Kernel commit without creating a
       gitCloseoutRequest: { requested: true, mode: 'commit_and_push', approvalReceipt: 'approval-retry' },
       changedPaths: ['change.txt'],
     });
+    assert.equal(first.completionStatus, 'accepted');
+    assert.equal(first.codeAccepted, true);
     assert.equal(first.finalizationStatus, 'partial');
     assert.equal(first.gitCloseoutStatus, 'failed');
     const partialReceipt = cp.stateStore.getGitCloseoutReceipt(runId);
@@ -147,6 +149,8 @@ test('partial Git finalization retry reuses the Kernel commit without creating a
     runGit(repoRoot, ['remote', 'add', 'origin', originRoot]);
     const retried = await cp.report(runId, {});
     assert.equal(retried.status, 'completed');
+    assert.equal(retried.finalization.completionStatus, 'accepted');
+    assert.equal(retried.finalization.codeAccepted, true);
     assert.equal(retried.finalization.finalizationStatus, 'completed');
     assert.equal(retried.finalization.gitCloseoutStatus, 'completed');
     assert.equal(retried.finalization.gitCloseoutReceipt.commitSha, commitSha);

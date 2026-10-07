@@ -7,7 +7,42 @@
 
 import { normalizeExecutionClass } from './execution-class.mjs';
 
-export const HOST_EXECUTION_CONTRACT_SCHEMA_VERSION = 1;
+export const HOST_EXECUTION_CONTRACT_SCHEMA_VERSION = 2;
+
+
+export const HOST_SEMANTIC_CAPABILITY_KEYS = Object.freeze([
+  'freshContext',
+  'workspaceWrite',
+  'workspaceIsolation',
+  'parallelExecution',
+  'independentReview',
+  'modelSelection',
+]);
+
+const semanticRequirements = ({ decision = {}, assignment = null } = {}) => {
+  const resolvedAssignment = assignment || {};
+  return Object.freeze({
+  freshContext: resolvedAssignment.freshSessionRequired === true || decision.independentContextRequired === true,
+  workspaceWrite: decision.permissions === 'workspace_write',
+  workspaceIsolation: resolvedAssignment.workProfile?.parallelizable === true || resolvedAssignment.executionMode === 'parallel',
+  parallelExecution: resolvedAssignment.executionMode === 'parallel',
+  independentReview: decision.role === 'reviewer' && (resolvedAssignment.freshSessionRequired === true || decision.independentContextRequired === true),
+  modelSelection: resolvedAssignment.modelSelectionRequired === true,
+  });
+};
+
+export const admitHostExecutionContract = (contract = {}, hostCapabilities = {}) => {
+  validateHostExecutionContract(contract);
+  const semantic = hostCapabilities?.semantic || {};
+  const missing = HOST_SEMANTIC_CAPABILITY_KEYS
+    .filter((key) => contract.requirements?.[key] === true && semantic[key] !== true);
+  return Object.freeze({
+    schemaVersion: 1,
+    decision: missing.length === 0 ? 'admitted' : 'blocked',
+    missingCapabilities: missing,
+    rejectionCode: missing.length === 0 ? null : 'host_capability_unavailable',
+  });
+};
 
 export const HOST_OWNED_CONCERNS = Object.freeze([
   'provider',
@@ -91,6 +126,7 @@ export const buildHostExecutionContract = ({
       }
       : null,
     executionMode: stringOrNull(assignment?.executionMode),
+    requirements: semanticRequirements({ decision, assignment }),
     delegation: assignment?.delegation
       ? {
         mode: stringOrNull(assignment.delegation.mode),
@@ -124,6 +160,11 @@ export const validateHostExecutionContract = (contract = {}) => {
     throw new Error('host_execution_contract_identity_missing');
   }
   if (contract.executionClass !== null) normalizeExecutionClass(contract.executionClass);
+  for (const key of HOST_SEMANTIC_CAPABILITY_KEYS) {
+    if (typeof contract.requirements?.[key] !== 'boolean') {
+      throw new Error(`host_execution_contract_requirement_invalid:${key}`);
+    }
+  }
   assertProviderNeutral(contract);
   return contract;
 };

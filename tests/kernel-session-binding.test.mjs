@@ -242,20 +242,14 @@ test('terminal lifecycle cleanup deactivates owners and releases stale locks wit
     });
     assert.equal(currentLock.acquired, true);
 
-    const first = store.reconcileTerminalLifecycle({
-      projectId,
-      preserveSessionId: 'codex:current-host',
-    });
+    const first = store.reconcileTerminalLifecycle({ projectId });
     assert.deepEqual(first.deactivatedBindings, []);
     assert.equal(store.getActiveOwnerBinding({ projectId, sessionId: 'codex:old-completed' }), null);
     assert.equal(store.getWorkspaceMutationLockV2('workspace-completed'), null);
     assert.equal(store.getActiveOwnerBinding({ projectId, sessionId: 'codex:current-host' }), null);
     assert.equal(store.getWorkspaceMutationLockV2('workspace-current'), null);
 
-    const second = store.reconcileTerminalLifecycle({
-      projectId,
-      preserveSessionId: 'codex:current-host',
-    });
+    const second = store.reconcileTerminalLifecycle({ projectId });
     assert.deepEqual(second.deactivatedBindings, []);
     assert.deepEqual(second.releasedLocks, []);
   } finally {

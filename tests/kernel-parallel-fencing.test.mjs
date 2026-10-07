@@ -48,6 +48,7 @@ test('a stale worker report is rejected at the existing Step report fence', asyn
     step,
     workspace,
     adapter: { capabilities: {} },
+    prepareHost: async ({ controlPlane: cp, runId, actionContext }) => cp.hostNext(runId, { actionContext }),
     dispatchStep: async () => ({
       status: 'passed',
       resultStatus: 'passed',
@@ -84,6 +85,7 @@ test('a missing worker report fails closed without inventing durable parallel st
     step: { stepId: 'step-no-report', allowedPaths: ['src/**'], obligationIds: ['proof'] },
     workspace: { workspaceRoot: 'C:/kernel-no-report-workspace', workspaceId: 'workspace-no-report', baseWorkspaceIdentity: 'sha256:base' },
     adapter: { capabilities: {} },
+    prepareHost: async ({ controlPlane: cp, runId, actionContext }) => cp.hostNext(runId, { actionContext }),
     dispatchStep: async () => ({ status: 'passed', resultStatus: 'passed' }),
   });
   assert.equal(result.status, 'failed');

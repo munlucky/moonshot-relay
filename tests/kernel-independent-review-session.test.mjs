@@ -1,3 +1,4 @@
+import { decideTestModelRoute } from './helpers/kernel-host-test-api.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -29,7 +30,7 @@ const withT3Run = async (fn) => {
 };
 
 const routeAndRun = async (cp, runId, actionKind, actorSessionId, extra = {}) => {
-  const decision = await cp.decideModelRoute(runId, { actionKind, obligationId: 'default' });
+  const decision = await decideTestModelRoute(cp, runId, { actionKind, obligationId: 'default' });
   const receipt = await cp.recordModelUsage(runId, {
     decisionId: decision.decisionId,
     runId,

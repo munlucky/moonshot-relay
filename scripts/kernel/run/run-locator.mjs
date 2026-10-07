@@ -77,7 +77,6 @@ export const buildRunLocatorRecord = ({
   projectRoot = null,
   projectIdentity = null,
   worktree = null,
-  ownerSessionId = null,
   previous = null,
 } = {}) => {
   if (!run?.runId) throw new Error('run locator requires a runId');
@@ -87,6 +86,7 @@ export const buildRunLocatorRecord = ({
   return {
     schemaVersion: RUN_LOCATOR_SCHEMA_VERSION,
     runId: String(run.runId),
+    taskHandle: String(run.runId),
     runtimeHome: canonicalPath(runtimeHome),
     projectId: run.projectId || projectIdentity?.projectId || null,
     workspaceId: run.workspaceId || worktreeScope.workspaceId || null,
@@ -94,7 +94,6 @@ export const buildRunLocatorRecord = ({
     canonicalRoot: projectIdentity?.canonicalRoot || scope.canonicalRoot || null,
     gitCommonDir: projectIdentity?.gitCommonDir || worktreeScope.gitCommonDir || scope.gitCommonDir || null,
     gitWorktreeDir: worktreeScope.canonicalGitDir || scope.gitWorktreeDir || null,
-    ownerSessionId: ownerSessionId || previous?.ownerSessionId || null,
     status: locatorStatus(run),
     state: run.state || run.currentState || null,
     finalizationStatus: run.finalizationStatus || null,
@@ -109,7 +108,6 @@ export const writeRunLocator = async ({
   projectRoot = null,
   projectIdentity = null,
   worktree = null,
-  ownerSessionId = null,
   locatorRoot = null,
 } = {}) => {
   const filePath = runLocatorPath({ runId: run?.runId, locatorRoot, runtimeHome });
@@ -123,7 +121,6 @@ export const writeRunLocator = async ({
     projectRoot,
     projectIdentity,
     worktree,
-    ownerSessionId,
     previous,
   });
   await atomicWriteText(filePath, `${JSON.stringify(record, null, 2)}\n`);
@@ -137,6 +134,7 @@ const readLocatorFile = (filePath) => {
     return {
       ...record,
       runtimeHome: canonicalPath(record.runtimeHome),
+      taskHandle: record.taskHandle || record.runId,
       projectId: record.projectId || null,
       workspaceId: record.workspaceId || null,
       worktreeId: record.worktreeId || null,
@@ -184,6 +182,7 @@ const runtimeStateDbPath = (runtimeHome) =>
 
 const locatorCandidateSummary = (record, validation = null) => ({
   runId: record.runId,
+  taskHandle: record.taskHandle || record.runId,
   runtimeHome: record.runtimeHome,
   projectId: record.projectId,
   workspaceId: record.workspaceId,

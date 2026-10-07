@@ -19,18 +19,11 @@ const setupProject = async () => {
   return projectRoot;
 };
 
-test('leases and attempts have readers and derive next attempt from persisted rows', async () => {
+test('leases have durable readers and fencing semantics', async () => {
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'krn-lease-home-'));
   const store = await openKernelStateStore({ runtimeHome });
   try {
     store.createRun({ runId: 'r-lease', objective: 'x', sourceIdentity: 'src-lease' });
-    assert.equal(store.nextAttemptNumber('r-lease'), 1);
-    const a1 = store.recordAttempt('r-lease', { attemptNumber: store.nextAttemptNumber('r-lease'), state: 'EXECUTE' });
-    assert.equal(store.nextAttemptNumber('r-lease'), 2);
-    store.finishAttempt(a1.id, 'finished');
-    assert.equal(store.getAttempts('r-lease').length, 1);
-    assert.equal(store.getAttempts('r-lease')[0].status, 'finished');
-
     const first = store.acquireLease('r-lease', { holder: 'host-a:1' });
     assert.equal(first.acquired, true);
     const conflict = store.acquireLease('r-lease', { holder: 'host-b:2' });
