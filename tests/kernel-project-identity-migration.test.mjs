@@ -171,6 +171,26 @@ test('identity migration preserves SQLite state, active binding, multiple legacy
     assert.match(await readFile(path.join(destination, 'receipts', 'origin.json'), 'utf8'), new RegExp(canonicalId));
     await assert.rejects(access(projectKnowledgeDirectory(legacyOrigin, { env: runtimeEnv(runtimeHome) })));
     await assert.rejects(access(projectKnowledgeDirectory(legacyPackage, { env: runtimeEnv(runtimeHome) })));
+
+    await seedKnowledge(runtimeHome, legacyOrigin, 7, 'late-origin');
+    store.registerProjectIdentity({ projectId: canonicalId, canonicalRoot: projectRoot,
+      identityDigest: 'digest-canonical-memory', legacyAliases: [{ projectId: legacyOrigin, source: 'origin' }] });
+    assert.match(await readFile(path.join(destination, 'knowledge', 'semantic', 'verified-facts.jsonl'), 'utf8'), /fact-late-origin/);
+    await assert.rejects(access(projectKnowledgeDirectory(legacyOrigin, { env: runtimeEnv(runtimeHome) })));
+
+    const latePathId = 'path-late-same-root';
+    const latePathRoot = await seedKnowledge(runtimeHome, latePathId, 8, 'late-path');
+    await mkdir(path.join(destination, 'codebase'), { recursive: true });
+    await mkdir(path.join(latePathRoot, 'codebase'), { recursive: true });
+    await writeFile(path.join(destination, 'codebase', 'codebase-map.json'), JSON.stringify({ source: 'canonical' }));
+    await writeFile(path.join(latePathRoot, 'codebase', 'codebase-map.json'), JSON.stringify({ source: 'legacy' }));
+    registerWorkspace(store, 'late-path-workspace', latePathId, projectRoot);
+    store.registerProjectIdentity({ projectId: canonicalId, canonicalRoot: projectRoot,
+      identityDigest: 'digest-canonical-memory', legacyAliases: [{ projectId: latePathId, source: 'path-hash' }] });
+    assert.match(await readFile(path.join(destination, 'knowledge', 'semantic', 'verified-facts.jsonl'), 'utf8'), /fact-late-path/);
+    assert.deepEqual(JSON.parse(await readFile(path.join(destination, 'codebase', 'codebase-map.json'), 'utf8')), { source: 'canonical' });
+    assert.equal(store.getProjectIdentity({ alias: `project-id:${latePathId}` }).projectId, canonicalId);
+    await assert.rejects(access(projectKnowledgeDirectory(latePathId, { env: runtimeEnv(runtimeHome) })));
   } finally {
     store.close();
     await rm(runtimeHome, { recursive: true, force: true });

@@ -3,7 +3,7 @@ import os from 'node:os';
 import { readFile } from 'node:fs/promises';
 import { chmod } from 'node:fs/promises';
 import path from 'node:path';
-import { resolveKernelProjectIdentity, stableHash } from './project-identity.mjs';
+import { identityInspectionCanonicalRoot, resolveKernelProjectIdentity, stableHash } from './project-identity.mjs';
 import { openKernelStateStore } from './state-store.mjs';
 import { ensureKnowledgeStoreDirectories, projectKnowledgeDirectory } from './knowledge/store.mjs';
 import { canonicalPath, resolveKernelRuntimeHome } from './runtime-home.mjs';
@@ -192,7 +192,7 @@ export const inspectKernelProjectIdentity = async ({ projectRoot = process.cwd()
   try {
     const state = store.inspectProjectIdentity({
       projectId: identity.projectId,
-      canonicalRoot: identity.canonicalRoot,
+      canonicalRoot: identityInspectionCanonicalRoot(identity),
       gitCommonDir: identity.gitCommonDir,
       legacyCandidates: uniqueCandidates(identity),
     });
@@ -242,7 +242,7 @@ const loadRepairContext = async ({ projectRoot, runtimeHome, env }) => {
   const preflight = await (async () => {
     const state = store.inspectProjectIdentity({
       projectId: identity.projectId,
-      canonicalRoot: identity.canonicalRoot,
+      canonicalRoot: identityInspectionCanonicalRoot(identity),
       gitCommonDir: identity.gitCommonDir,
       legacyCandidates: uniqueCandidates(identity),
     });

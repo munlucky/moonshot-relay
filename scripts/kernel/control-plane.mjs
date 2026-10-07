@@ -10,7 +10,7 @@ import { resolveKernelRuntimeHome } from './runtime-home.mjs';
 import { KERNEL_POLICY, KernelPrinciplesError, loadKernelPrinciples } from './policy.mjs';
 import { resolveKernelCapabilities } from './capability-resolver.mjs';
 import { buildCandidateIdentity, gitTreeDigest, sha256Hex } from '../lib/candidate-identity.mjs';
-import { resolveKernelProjectIdentity } from './project-identity.mjs';
+import { identityInspectionCanonicalRoot, resolveKernelProjectIdentity } from './project-identity.mjs';
 import { ensureKnowledgeStoreDirectories } from './knowledge/store.mjs';
 import { buildProjectKnowledgeContext } from './knowledge/context-load.mjs';
 import { isAuthorizedKernelGitCloseoutWorkspace, retryGitCloseout as retryGitCloseoutHelper } from './git/closeout.mjs';
@@ -365,7 +365,7 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
   const fencingWorkspaceRoot = path.resolve(currentProject.canonicalRoot);
   const identityState = store.inspectProjectIdentity({
     projectId: currentProject.projectId,
-    canonicalRoot: currentProject.canonicalRoot,
+    canonicalRoot: identityInspectionCanonicalRoot(currentProject),
     gitCommonDir: currentProject.gitCommonDir,
     legacyCandidates: (currentProject.legacyAliases || []).filter((candidate) => candidate?.projectId),
   });
@@ -393,10 +393,9 @@ export const createKernelControlPlane = async ({ runtimeHome = resolveKernelRunt
       },
     });
   }
-  const persistedIdentity = identityState.currentIdentity || store.registerProjectIdentity({
+  const persistedIdentity = store.registerProjectIdentity({
     ...currentProject,
-    legacyProjectIds: [],
-    legacyAliases: [],
+    projectId: identityState.currentIdentity?.projectId || currentProject.projectId,
   });
   currentProject = {
     ...currentProject,

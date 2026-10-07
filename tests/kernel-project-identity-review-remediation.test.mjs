@@ -179,6 +179,7 @@ test('the same origin alias from another repository fails closed without Git com
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-identity-origin-collision-'));
   const firstRoot = path.join(runtimeHome, 'origin-first');
   const secondRoot = path.join(runtimeHome, 'origin-second');
+  const origin = 'https://github.com/example/shared-origin';
   const store = await openKernelStateStore({ runtimeHome });
   try {
     await mkdir(firstRoot, { recursive: true });
@@ -188,7 +189,7 @@ test('the same origin alias from another repository fails closed without Git com
       canonicalRoot: firstRoot,
       identitySource: 'workspace_root',
       identityDigest: 'digest-origin-first',
-      aliases: ['https://github.com/example/shared-origin'],
+      aliases: [origin],
     });
 
     assert.throws(() => store.registerProjectIdentity({
@@ -196,9 +197,11 @@ test('the same origin alias from another repository fails closed without Git com
       canonicalRoot: secondRoot,
       identitySource: 'workspace_root',
       identityDigest: 'digest-origin-second',
-      aliases: ['https://github.com/example/shared-origin'],
+      aliases: [origin],
     }), (error) => error.code === 'project_identity_alias_ownership_unproven');
     assert.equal(store.getProjectIdentity({ projectId: 'origin-second-project' }), null);
+    assert.equal(store.registerProjectIdentity({ projectId: 'origin-first-project', canonicalRoot: secondRoot,
+      identitySource: 'account_alias_registry', identityDigest: 'x', aliases: [origin] }).projectId, 'origin-first-project');
   } finally {
     store.close();
     await rm(runtimeHome, { recursive: true, force: true });

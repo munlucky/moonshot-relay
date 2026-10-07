@@ -3145,6 +3145,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
             .filter(Boolean);
           const projectMatches = [...new Map(aliasMatches.map((match) => [match.project_id, match])).values()];
           const compatibleProjectMatches = projectMatches.filter((match) => {
+            if (identitySource === 'account_alias_registry' && match.project_id === projectId) return true;
             if (canonicalIdentityRoot(match.canonical_root) === canonicalRoot) return true;
             if (!incomingGitCommonDir) return false;
             return Boolean(db.prepare(`
@@ -3203,6 +3204,30 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         let canonicalProjectId = row?.project_id || projectId;
         if (!row && canonicalProjectId !== projectId) {
           throw Object.assign(new Error('project_identity_conflict'), { code: 'project_identity_conflict' });
+        }
+
+        if (row) {
+          const ownedLegacyIds = candidates.filter((candidate) => {
+            const legacyIdentity = db.prepare('SELECT 1 FROM project_identities WHERE project_id=?').get(candidate.projectId);
+            const owner = db.prepare('SELECT project_id FROM project_identity_aliases WHERE alias=?').get(`project-id:${candidate.projectId}`);
+            const sameRootWorkspace = Boolean(db.prepare(`
+              SELECT 1 FROM project_workspaces WHERE project_id=? AND canonical_root=? LIMIT 1
+            `).get(candidate.projectId, canonicalRoot));
+            return !legacyIdentity
+              && (owner?.project_id === row.project_id || sameRootWorkspace)
+              && hasProjectData(candidate.projectId);
+          }).map((candidate) => candidate.projectId);
+          migration = prepareProjectKnowledgeNamespaceMigration({
+            runtimeHome,
+            legacyProjectIds: ownedLegacyIds,
+            projectId: row.project_id,
+            canonicalRoot: row.canonical_root,
+            identityDigest: row.identity_digest,
+          });
+          for (const legacyId of ownedLegacyIds) {
+            migrateProjectId(legacyId, row.project_id);
+            incomingAliases.push(projectIdentityAlias(`project-id:${legacyId}`));
+          }
         }
 
         // A state created before immutable identity persistence may already use

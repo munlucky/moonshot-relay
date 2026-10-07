@@ -410,6 +410,8 @@ const readRevision = (filePath, fallbackProjectId) => {
   }
 };
 
+const isRebuildableNamespaceProjection = (relative) => String(relative || '').replaceAll('\\', '/').startsWith('codebase/');
+
 const mergeNamespaceFile = (source, destination, relative, canonicalId) => {
   if (!fs.existsSync(destination)) {
     fs.mkdirSync(path.dirname(destination), { recursive: true });
@@ -447,6 +449,12 @@ const mergeNamespaceFile = (source, destination, relative, canonicalId) => {
     }, null, 2), 'utf8');
     return;
   }
+
+  // Codebase indexes are derived projections over the repository. When both
+  // namespaces contain one, the canonical namespace already has the active
+  // projection and can rebuild it after migration. Never let stale derived
+  // bytes block migration of authoritative SQLite/typed-knowledge state.
+  if (isRebuildableNamespaceProjection(relative)) return;
 
   throw new KernelKnowledgeStoreError('KNOWLEDGE_NAMESPACE_CONFLICT', `Conflicting knowledge file during identity migration: ${relative}`);
 };

@@ -69,7 +69,10 @@ test('public Kernel control-plane bootstrap reconciles terminal bindings from pr
     runtimeHome,
     projectRoot: process.cwd(),
   });
-  const projectId = resolveKernelProjectIdentity({ cwd: process.cwd() }).projectId;
+  const projectId = resolveKernelProjectIdentity({
+    cwd: process.cwd(),
+    env: { ...process.env, MOON_RELAY_KERNEL_HOME: runtimeHome },
+  }).projectId;
   try {
     first.stateStore.createRun({
       runId: 'cp-terminal-binding',

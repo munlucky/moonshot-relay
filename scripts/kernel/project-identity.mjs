@@ -40,6 +40,13 @@ export function stableHash(value) {
   return crypto.createHash('sha256').update(String(value)).digest('hex');
 }
 
+// A persisted account alias is already an explicit project-to-root binding.
+// Inspection must prefer that immutable project id instead of rejecting a
+// legitimate checkout because its current root differs from the original row.
+export function identityInspectionCanonicalRoot(identity = {}) {
+  return identity.identitySource === 'account_alias_registry' ? null : identity.canonicalRoot;
+}
+
 export function pathHashId(cwd) {
   let root = path.resolve(cwd);
   try { root = fs.realpathSync(root); } catch {}
