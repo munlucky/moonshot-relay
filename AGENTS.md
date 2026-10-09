@@ -6,7 +6,8 @@ This repository's canonical source is the tracked root-level harness source, not
 
 ## Source Boundaries
 
-- Canonical source: `skills/`, `agents/`, `rules/`, `bin/`, `tools/`, `schemas/`, `templates/`, `tests/`, `docs/public/`, and allowlisted support scripts under `scripts/`.
+- Kernel/Host canonical code: `src/`; build mapping and dependency authority: `package/source-layout.json`. Run `npm ci` in a clean checkout and edit source, not generated runtime files.
+- Other canonical source (excluding generated outputs): `skills/`, `agents/`, `rules/`, `bin/`, `tools/`, `schemas/`, `templates/`, `tests/`, `docs/public/`, and allowlisted support scripts under `scripts/`.
 - Local runtime profiles: root `.claude/`, `.codex/`, and `.qwen/`. These may contain generated verdicts, local profile output, or installed compatibility files and are not required for a clean source checkout.
 - Shared runtime home: resolve through `MOONSHOT_RELAY_HOME`; default `~/.moonshot-relay`.
 
@@ -51,6 +52,7 @@ knowledgeAnchors:
 ## References
 
 - `README.md`
+- `docs/public/development.md`
 - `docs/public/repository-layout.md`
 - `docs/public/installer-usage.md`
 - `docs/public/guidelines/knowledge-repository-ops.md`

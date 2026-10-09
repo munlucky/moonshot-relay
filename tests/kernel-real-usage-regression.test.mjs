@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { openKernelStateStore } from '../scripts/kernel/state-store.mjs';
 import { openSqliteDb } from '../scripts/kernel/sqlite-adapter.mjs';
 import { test } from 'node:test';
@@ -129,19 +130,18 @@ test('real-usage corpus preserves observed failure families without copying tran
   assert.doesNotMatch(serialized, /invocationExcerpt|replacement_history|response_item|custom_tool_call_output/);
 });
 
-test('refactor baseline records preserved user changes, Host surface and complexity budget', async () => {
+test('historical refactor baseline records user changes, Host surface and complexity budget', async () => {
   const baseline = await readJson(baselineUrl);
   assert.equal(baseline.baselineCommit, 'aca19ec85cf06f40860e07ef5006b37b02f7a260');
   assert.equal(baseline.userChanges.length, 6);
   for (const change of baseline.userChanges) {
     assert.match(change.sha256, /^[a-f0-9]{64}$/);
-    const original = path.join(baseline.userChangesWorkspace, change.file);
-    if (existsSync(original)) assert.equal(createHash('sha256').update(await readFile(original)).digest('hex'), change.sha256, `original user bytes: ${change.file}`);
   }
+  assert.equal(baseline.userChangesVerification.matchedFiles, baseline.userChanges.length);
+  assert.equal(baseline.userChangesVerification.refactorWorktreeUsesFixedCommit, true);
   assert.equal(baseline.refactorProtectedFiles.length, 6);
   for (const change of baseline.refactorProtectedFiles) {
-    const bytes = (await readFile(new URL(`../${change.file}`, import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
-    assert.equal(createHash('sha256').update(bytes).digest('hex'), change.sha256Lf, `fixed-commit worktree bytes: ${change.file}`);
+    assert.match(change.sha256Lf, /^[a-f0-9]{64}$/);
     assert.equal(change.sourceCommit, baseline.baselineCommit);
   }
   assert.deepEqual(baseline.canonicalAuthorities, ['work', 'trust', 'knowledge']);
@@ -154,4 +154,24 @@ test('refactor baseline records preserved user changes, Host surface and complex
     providerSpecificKernelExecutionPolicyBranches: 0,
     silentFallback: 0,
   });
+});
+
+test('historical protected-file hashes match their recorded immutable commit', async (t) => {
+  const baseline = await readJson(baselineUrl);
+  const options = { cwd: fileURLToPath(new URL('..', import.meta.url)), encoding: 'utf8', windowsHide: true };
+  const available = spawnSync('git', ['cat-file', '-e', `${baseline.baselineCommit}^{commit}`], options);
+  if (available.status !== 0) {
+    t.skip('Historical commit is unavailable in this source export or shallow checkout.');
+    return;
+  }
+  // This artifact describes a past refactor. Comparing it with today's source
+  // or a machine-specific workspace would freeze unrelated future changes.
+  // Current behavior is covered by the registered reliability suites; generated
+  // output integrity is covered by build:check and source-runtime tests.
+  for (const change of baseline.refactorProtectedFiles) {
+    const original = spawnSync('git', ['show', `${change.sourceCommit}:${change.file}`], options);
+    assert.equal(original.status, 0, original.stderr);
+    const bytes = original.stdout.replaceAll('\r\n', '\n');
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), change.sha256Lf, `historical bytes: ${change.file}`);
+  }
 });

@@ -4,6 +4,8 @@ This repository separates canonical source, local runtime profiles, generated pa
 
 ## Canonical Source
 
+Kernel/Host source lives in `src/`. `package/source-layout.json` owns source/output mappings and dependency boundaries. `tools/build/` generates the `.mjs` runtime. See [development.md](development.md).
+
 Durable source files live in the root-level source directories:
 
 - `skills/` for skill definitions
@@ -24,6 +26,10 @@ Durable source files live in the root-level source directories:
 - `.github/` for CI/security source configuration and `required-checks.json` check-name fixtures
 
 Do not add new canonical source under root `.claude/`, `.codex/`, or `.qwen/`. Those directories are local runtime profiles and must not be tracked by Git. References to `.claude/...`, `.codex/...`, or `.qwen/...` are valid when they describe installed payloads, local runtime wrapper entrypoints, active local profile contracts, or legacy generated-state cleanup. They are not valid when they tell contributors to edit `.claude/skills`, `.claude/agents`, `.claude/scripts`, `.claude/bin`, `.claude/tools`, `.claude/schemas`, `.claude/templates`, `.codex/skills`, or `.qwen/skills` as the durable source of truth.
+
+## Generated Kernel Runtime
+
+`scripts/kernel/`, `scripts/host/kernel/`, and the shared/CLI output files declared in `package/source-layout.json` are generated compatibility paths. Edit `src/` instead. `npm ci` builds them through prepare; `npm run build` refreshes them. `dist/runtime-build.json` is an ignored build receipt. Package and installer entrypoints reject stale checkout output. Installed payloads execute without source or the TypeScript compiler. Other scripts/bin/tool paths retain their existing ownership.
 
 ## Local Runtime Profile
 

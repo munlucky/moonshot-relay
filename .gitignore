@@ -61,3 +61,13 @@ package/claude/profile/
 package/codex/profile/
 package/moonshot-relay/profile/
 package/antigravity/profile/
+
+# Generated Kernel/Host runtime. Canonical source is src/.
+/scripts/kernel/
+/scripts/host/kernel/
+/scripts/lib/candidate-identity.mjs
+/scripts/lib/git-safe.mjs
+/scripts/lib/skills-lock.mjs
+/bin/moon-relay-kernel.mjs
+/bin/moon-relay-standalone.mjs
+/scripts/lib/runtime-build.mjs

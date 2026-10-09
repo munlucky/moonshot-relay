@@ -12,7 +12,7 @@
       "skillPath": "skills/project-memory",
       "entrypoint": "scripts/kernel/standalone/project-memory.mjs",
       "exportName": "runProjectMemory",
-      "contentHash": "80ea974628b907bd1202c9947807658c5f125619e27b8b9f1cf7eb31d2c6904e",
+      "contentHash": "d530fb7afd4020dbd72cdfc70ed6747e068b9d88024f3a66d4fb6e928bbdf15b",
       "cli": {
         "enabled": true,
         "binName": "project-memory"
@@ -35,7 +35,7 @@
       "skillPath": "skills/kernel-commit",
       "entrypoint": "scripts/kernel/standalone/kernel-commit.mjs",
       "exportName": "kernelCommit",
-      "contentHash": "b2694cd0d0f48115b8b5a1b0df51293e7eb0be206aca102ab6db23604a8b37b7",
+      "contentHash": "4cbf9cdf6f63554a37516fbb8dff733bce47deb83ea42d542b767b1cf0666907",
       "cli": {
         "enabled": true,
         "binName": "kernel-commit"
@@ -60,7 +60,7 @@
       "skillPath": "skills/codebase-understanding",
       "entrypoint": "scripts/kernel/standalone/codebase-understanding.mjs",
       "exportName": "runCodebaseUnderstanding",
-      "contentHash": "9c3ad9b061a84c01c8b63012828708c33045c040aeb99a23cef2cba411a1afc1",
+      "contentHash": "1f81fda54b1af51e043c5ada28a7c2ec7b6d6292db5b8b38a8f0e532815bd203",
       "cli": {
         "enabled": true,
         "binName": "codebase-understanding"
@@ -81,7 +81,7 @@
       "skillPath": "skills/explain-diff-html",
       "entrypoint": "scripts/kernel/standalone/explain-diff-html.mjs",
       "exportName": "runExplainDiffHtml",
-      "contentHash": "b880ec0cfae15ff7fa929fac33ab5e999a0627e7c07f4faef7174ef2df376c8c",
+      "contentHash": "dca4085eb66ac547e1aa3ef8007cda96469753c04acce9eb0f7f26d590b0dbe4",
       "cli": {
         "enabled": true,
         "binName": "explain-diff-html"
@@ -103,7 +103,7 @@
       "skillPath": "skills/ui-audit",
       "entrypoint": "scripts/kernel/standalone/ui-audit.mjs",
       "exportName": "runUiAudit",
-      "contentHash": "db6435aac71ad5df1555ff30cfb3a5e7d047479501640cd1fcf889ed83fa27cc",
+      "contentHash": "ef3af3a64ea6a91ddefbb944e416751cb16544fbead20ad0230eaa396d7a9bbf",
       "cli": {
         "enabled": true,
         "binName": "ui-audit"
@@ -124,7 +124,7 @@
       "skillPath": "skills/product-definition",
       "entrypoint": "scripts/kernel/standalone/product-definition.mjs",
       "exportName": "runProductDefinition",
-      "contentHash": "d91e49cab5ce320aa3437af738c0abd4df8992cbcdeff6d28c62d93b3b065c11",
+      "contentHash": "ccae0a0586de53f4eaacc74e791c6c1a0dac10f89a8da7034f3ec38c2e844de2",
       "cli": {
         "enabled": true,
         "binName": "product-definition"
@@ -145,7 +145,7 @@
       "skillPath": "skills/architecture-artifacts",
       "entrypoint": "scripts/kernel/standalone/architecture-artifacts.mjs",
       "exportName": "runArchitectureArtifacts",
-      "contentHash": "701ad37867baedf94413c9a9d02c10e8b86e2a3c22dbaf97883fd0d7bd29546b",
+      "contentHash": "041fd08225c6de699cdc0440435c3dab6c0a0508820b81aac33039aafc9ec7aa",
       "cli": {
         "enabled": true,
         "binName": "architecture-artifacts"
@@ -166,7 +166,7 @@
       "skillPath": "skills/codebase-master-guide",
       "entrypoint": "scripts/kernel/standalone/codebase-master-guide.mjs",
       "exportName": "runCodebaseMasterGuide",
-      "contentHash": "5cc667ab4901927765ef6f53f5da70f0efc47fea8fe43bbb8c6660c44c8154e2",
+      "contentHash": "9d3ccfbbad9c5583f3f3c023760403492ebe252c3bf6ba94f9249de262617225",
       "cli": {
         "enabled": true,
         "binName": "codebase-master-guide"

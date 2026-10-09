@@ -11,6 +11,7 @@ const root = process.cwd();
 const fromRoot = (...segments) => path.join(root, ...segments);
 
 const canonicalDirs = [
+  'src',
   'skills',
   'agents',
   'rules',
@@ -36,6 +37,7 @@ const archiveDirs = [
 ];
 
 const canonicalSourceMinimums = new Map([
+  ['src', 5],
   ['skills', 10],
   ['agents', 5],
   ['rules', 5],

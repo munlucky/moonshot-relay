@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "modules": [
+    { "id": "kernel", "source": "src/kernel", "output": "scripts/kernel", "exclusiveOutput": true, "dependencies": ["kernel", "shared"] },
+    { "id": "host", "source": "src/host/kernel", "output": "scripts/host/kernel", "exclusiveOutput": true, "dependencies": ["host", "kernel", "shared"] },
+    { "id": "shared", "source": "src/shared", "output": "scripts/lib", "exclusiveOutput": false, "dependencies": ["shared"] },
+    { "id": "cli", "source": "src/cli", "output": "bin", "exclusiveOutput": false, "dependencies": ["kernel", "host", "shared"] }
+  ],
+  "exceptions": [
+    { "from": "src/kernel/bridge/mcp.mjs", "to": "src/host/kernel/lifecycle-bridge.mjs", "reason": "Existing MCP composition root connects Kernel contracts to the Host." },
+    { "from": "src/shared/skills-lock.mjs", "to": "src/kernel/standalone/catalog.mjs", "reason": "Existing package lock auditor consumes the standalone catalog. This is packaging composition, not a domain dependency." }
+  ],
+  "externalImports": []
+}

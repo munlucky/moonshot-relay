@@ -1,5 +1,7 @@
 # Installer Usage
 
+For a source checkout, run `npm ci` first. It builds the Kernel/Host runtime from `src/`. After source edits, run `npm run build`. Installers reject stale build output. Published runtime packages already contain executable `.mjs` files and do not require TypeScript. See [development.md](development.md).
+
 `install-claude.sh` is a macOS/Git Bash compatibility installer for Moonshot Relay runtime profiles. The primary cross-platform account-root installer is `node bin/moonshot-relay.mjs install --runtime all` or `npx -y github:munlucky/moonshot-relay install`. Use `--project` only when a downstream repository needs project-local `.claude/` and `.codex/` compatibility payloads.
 
 The default mode is account-root installation into the shared Moonshot Relay home (`~/.moonshot-relay`) plus the local Claude/Codex/Qwen homes (`~/.claude`, `~/.codex`, `~/.qwen`) and the Antigravity IDE profile (`~/.gemini/antigravity`) with its global skill discovery root (`~/.gemini/config`).

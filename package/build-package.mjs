@@ -17,6 +17,7 @@ import {
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { assertRuntimeBuild } from '../scripts/lib/runtime-build.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const packageRoot = path.dirname(scriptPath);
@@ -46,6 +47,7 @@ const runtimeSpecs = {
       'package-lock.json',
       'skills.lock.json',
       'scripts/catalog-check.mjs',
+      'scripts/lib/runtime-build.mjs',
       'scripts/skill-router.mjs',
       'scripts/lint-skills.mjs',
       'scripts/architecture-context-build.mjs',
@@ -548,6 +550,7 @@ const materializeRuntime = async (runtime, options) => {
 
 const main = async () => {
   const options = parseArgs(process.argv.slice(2));
+  await assertRuntimeBuild(repoRoot);
   const runtimes = options.runtime === 'all' ? allRuntimeNames : [options.runtime];
   const results = [];
 

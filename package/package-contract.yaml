@@ -3,6 +3,8 @@ contractId: repository-physical-structure-refactor-phase-02
 description: "Canonical source and package payload contract for Claude, Codex, Qwen, and Antigravity runtime profiles."
 
 canonicalSource:
+  kernelRuntime: src/ # built according to package/source-layout.json
+  runtimeBuild: tools/build/
   catalog: catalog/
   skills: skills/
   agents: agents/

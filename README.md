@@ -20,9 +20,15 @@
 - 프로젝트 지식 메모리는 account-root project knowledge namespace를 기본 backend로 사용합니다. 프로젝트 로컬 `.moonshot-relay/cache/memorygraph/**`는 seed/cache 입력이며 버전 관리/기본 agent context에서 제외합니다.
 - 코드 구조 분석은 `code-review-graph` MCP를 stage-gated + lazy update 방식으로 사용하며 `.code-review-graph/`에 저장하고 자동 build/watch 없이 실행
 
+## Kernel 개발
+
+Kernel/Host 코드는 `src/`에서 수정합니다. `npm ci`는 개발 의존성을 설치하고 기존 경로에 `.mjs` 런타임을 빌드합니다. 수정 뒤 `npm run build`, `npm run test:source-runtime`을 실행합니다. 생성된 `scripts/kernel/`, `scripts/host/kernel/`와 매핑된 CLI 파일은 직접 수정하지 않습니다.
+
+[개발 명령과 원본 경계](docs/public/development.md) · [구조 결정과 Futures 적용 지도](docs/public/roadmaps/source-runtime-separation/ARCHITECTURE.md)
+
 ## Repository Source Model
 
-- Canonical source: `skills/`, `agents/`, `rules/`, `bin/`, `tools/`, `schemas/`, `templates/`, `tests/`, `tests/fixtures/`, `docs/public/`, plus allowlisted installer/MCP/memory/closeout support scripts under `scripts/`
+- Canonical source (Kernel/Host runtime uses `src/`; generated mappings are excluded): `skills/`, `agents/`, `rules/`, `bin/`, `tools/`, `schemas/`, `templates/`, `tests/`, `tests/fixtures/`, `docs/public/`, plus allowlisted installer/MCP/memory/closeout support scripts under `scripts/`
 - Development profile: `.claude/`, `.codex/`, and `.qwen/` for local agent runtime compatibility
 - Package payloads: `package/claude/profile/`, `package/codex/profile/`, `package/qwen/profile/`, `.claude-plugin/`, `.codex-plugin/`
 - Generated state: `.moonshot-relay/`, legacy `.moonshot-state/`, `.claude/logs/`, `.claude/cache/`, `.claude/traces/`, `.claude/browser-artifacts/`, `.claude/browser-runtime/`, `.claude/memorygraph/`, sqlite files, and verdict JSON
@@ -56,7 +62,7 @@ moonshot-relay/
 └── AGENTS.md
 ```
 
-Root-level `skills/`, `agents/`, `rules/`, `bin/`, `tools/`, `schemas/`, `templates/`, `tests/`, `docs/public/`, and allowlisted support files under `scripts/` are the canonical source directories. Root `.claude/`, `.codex/`, and `.qwen/` are local runtime profiles and may be absent or contain only ignored runtime artifacts in a clean source checkout.
+Kernel/Host runtime source is `src/`; generated mappings in `package/source-layout.json` are outputs. Other root-level `skills/`, `agents/`, `rules/`, `bin/`, `tools/`, `schemas/`, `templates/`, `tests/`, `docs/public/`, and allowlisted support files under `scripts/` are the canonical source directories. Root `.claude/`, `.codex/`, and `.qwen/` are local runtime profiles and may be absent or contain only ignored runtime artifacts in a clean source checkout.
 
 Regression fixture JSON and sample artifacts belong under `tests/fixtures/`; they are not runtime output and are not included in installed package payloads.
 
