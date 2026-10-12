@@ -8,6 +8,48 @@ import {
 } from '../../kernel/standalone/artifact-utils.js';
 import { writePreworkPackage } from '../../kernel/standalone/prework.js';
 
+interface FuturesArchitectureCandidate {
+  kind: 'architecture-planning';
+  affectedPaths: readonly string[];
+}
+
+interface FuturesRestoreEscalationCandidate {
+  kind: 'bounded-restore';
+  allowedPaths: readonly string[];
+}
+
+type FuturesEscalationCandidate =
+  | FuturesArchitectureCandidate
+  | FuturesRestoreEscalationCandidate;
+
+interface FuturesArchitectureSubject {
+  revision: string;
+  contentDigest: string;
+}
+
+export type FuturesArchitectureHandoff =
+  | Readonly<{
+    status: 'ready';
+    kind: 'architecture-prework-handoff';
+    authority: 'prework-only';
+    objective: string;
+    affectedPaths: readonly string[];
+    unresolvedRequirements: readonly string[];
+    escalationReasons: readonly string[];
+    source: Readonly<{
+      reviewReceiptId: string;
+      assessmentDigest: string;
+      revision: string;
+      contentDigest: string;
+    }>;
+  }>
+  | Readonly<{
+    status: 'blocked';
+    kind: 'architecture-prework-handoff';
+    authority: 'prework-only';
+    reasons: readonly string[];
+  }>;
+
 interface ArchitectureArtifactsInput {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
@@ -15,7 +57,82 @@ interface ArchitectureArtifactsInput {
   output?: string | null;
   target?: string | null;
   observeWorkspaceIdentity?: WorkspaceIdentityObserver | null;
+  handoff?: FuturesArchitectureHandoff | null;
 }
+
+const uniqueText = (value: readonly unknown[] = []): string[] => (
+  [...new Set(value.map(String).map((entry) => entry.trim()).filter(Boolean))]
+);
+
+const SHA256 = /^sha256:[a-f0-9]{64}$/;
+
+export const buildFuturesArchitectureHandoff = ({
+  candidate,
+  reviewReceiptId,
+  assessmentDigest,
+  subject,
+  currentRevision,
+  currentContentDigest,
+  unresolvedRequirements = [],
+  escalationReasons = [],
+  objective = 'Resolve the reviewed architecture escalation before implementation resumes.',
+}: {
+  candidate: FuturesEscalationCandidate;
+  reviewReceiptId: string;
+  assessmentDigest: string;
+  subject: FuturesArchitectureSubject;
+  currentRevision: string | number;
+  currentContentDigest: string;
+  unresolvedRequirements?: readonly string[];
+  escalationReasons?: readonly string[];
+  objective?: string;
+}): FuturesArchitectureHandoff => {
+  const reasons: string[] = [];
+  const normalizedEscalationReasons = uniqueText(escalationReasons);
+  const architectureCandidate = candidate?.kind === 'architecture-planning';
+  const restoreCandidate = candidate?.kind === 'bounded-restore';
+  if (!architectureCandidate && !restoreCandidate) {
+    reasons.push('architecture-candidate-required');
+  }
+  if (restoreCandidate && normalizedEscalationReasons.length === 0) {
+    reasons.push('restore-escalation-reason-required');
+  }
+  if (!String(reviewReceiptId || '').trim()) reasons.push('review-receipt-required');
+  if (!SHA256.test(String(assessmentDigest || ''))) reasons.push('assessment-digest-invalid');
+  if (String(subject?.revision || '') !== String(currentRevision)) {
+    reasons.push('architecture-handoff-stale-revision');
+  }
+  if (String(subject?.contentDigest || '') !== String(currentContentDigest || '')) {
+    reasons.push('architecture-handoff-stale-content');
+  }
+  if (reasons.length > 0) {
+    return Object.freeze({
+      status: 'blocked' as const,
+      kind: 'architecture-prework-handoff' as const,
+      authority: 'prework-only' as const,
+      reasons: Object.freeze([...new Set(reasons)].sort()),
+    });
+  }
+
+  return Object.freeze({
+    status: 'ready' as const,
+    kind: 'architecture-prework-handoff' as const,
+    authority: 'prework-only' as const,
+    objective: String(objective || '').trim()
+      || 'Resolve the reviewed architecture escalation before implementation resumes.',
+    affectedPaths: Object.freeze(uniqueText(
+      architectureCandidate ? candidate.affectedPaths : candidate.allowedPaths,
+    )),
+    unresolvedRequirements: Object.freeze(uniqueText(unresolvedRequirements)),
+    escalationReasons: Object.freeze(normalizedEscalationReasons),
+    source: Object.freeze({
+      reviewReceiptId: String(reviewReceiptId),
+      assessmentDigest: String(assessmentDigest),
+      revision: String(subject.revision),
+      contentDigest: String(subject.contentDigest),
+    }),
+  });
+};
 
 const doc = (
   title: string,
@@ -49,10 +166,23 @@ export async function runArchitectureArtifacts({
   output = null,
   target = null,
   observeWorkspaceIdentity = null,
+  handoff = null,
 }: ArchitectureArtifactsInput = {}) {
   const project = resolveStandaloneProject({ cwd, env });
-  const requestedObjective = String(objective || '').trim()
-    || 'Define an architecture boundary for the requested product outcome.';
+  if (handoff?.status === 'blocked') {
+    return {
+      status: 'blocked' as const,
+      projectId: project.projectId,
+      reasons: handoff.reasons,
+      authority: 'task-contract-seed-only' as const,
+      sourceMutation: false,
+      completionDecision: null,
+    };
+  }
+  const requestedObjective = handoff?.status === 'ready'
+    ? handoff.objective
+    : String(objective || '').trim()
+      || 'Define an architecture boundary for the requested product outcome.';
   const before = workspaceSnapshot(
     project.projectRoot,
     observeWorkspaceIdentity,
@@ -73,8 +203,24 @@ export async function runArchitectureArtifacts({
     objective: requestedObjective,
     kind: 'architecture-artifacts',
     files: greenfieldFiles(requestedObjective),
-    constraints: ['Architecture artifacts do not authorize source mutation.'],
-    nonGoals: ['This package is not a Task Contract and cannot complete a Kernel run.'],
+    acceptance: handoff?.status === 'ready'
+      ? [...handoff.unresolvedRequirements]
+      : [],
+    constraints: [
+      'Architecture artifacts do not authorize source mutation.',
+      ...(handoff?.status === 'ready' && handoff.affectedPaths.length > 0
+        ? [`Reviewed affected paths: ${handoff.affectedPaths.join(', ')}`]
+        : []),
+      ...(handoff?.status === 'ready' && handoff.escalationReasons.length > 0
+        ? [`Restore escalation reasons: ${handoff.escalationReasons.join(', ')}`]
+        : []),
+    ],
+    nonGoals: [
+      'This package is not a Task Contract and cannot complete a Kernel run.',
+      ...(handoff?.status === 'ready'
+        ? ['This architecture handoff does not advance the current Work cursor or implementation approval boundary.']
+        : []),
+    ],
   });
   const after = workspaceSnapshot(
     project.projectRoot,
@@ -91,6 +237,7 @@ export async function runArchitectureArtifacts({
     seedPath: packageResult.seedPath,
     authority: 'task-contract-seed-only',
     sourceMutation: false,
+    handoffContext: handoff?.status === 'ready' ? handoff : null,
     validation: {
       status: 'generated',
       mode: target

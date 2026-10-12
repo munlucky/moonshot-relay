@@ -4,7 +4,11 @@ import { requiredIndex } from '../../shared/required-index.js';
 // long or complex work is decomposed, and even then the decomposition comes from
 // the contract and the route — never from a free-form plan the model narrated.
 
-import { normalizeWorkUnitAllowedPaths } from '../../contracts/work-unit-scope.js';
+import {
+  classifyWorkUnitScope,
+  normalizeWorkUnitAllowedPaths,
+  WorkUnitScopeError,
+} from '../../contracts/work-unit-scope.js';
 import {
   deriveVerificationSettlementScope,
   type VerificationObligationLike,
@@ -348,4 +352,107 @@ export const planReplacementSteps = ({
   }).map((step) => (
     step.dependencyIds.length === 0 ? { ...step, state: 'ready' as const } : step
   ));
+};
+
+
+export interface FuturesBoundedRestoreCandidate {
+  kind: 'bounded-restore';
+  allowedPaths: readonly string[];
+}
+
+export interface FuturesBoundedRestoreWorkUnit {
+  kind: 'bounded-restore-work-unit';
+  sourceMutationRevision: number;
+  replacementStep: Readonly<{
+    objective: string;
+    allowedPaths: readonly string[];
+    acceptanceIds: readonly string[];
+    obligationIds: readonly string[];
+    expectedOutputs: readonly string[];
+  }>;
+  behaviorInvariants: readonly string[];
+  stopConditions: readonly [
+    'scope-violation',
+    'behavior-invariant-changed',
+    'fresh-regression-proof-failed',
+  ];
+  proofPolicy: Readonly<{
+    requiresFreshRegression: true;
+    minimumMutationRevisionExclusive: number;
+    priorRevisionEvidenceAllowed: false;
+  }>;
+}
+
+const uniqueRestoreText = (value: readonly unknown[] = []): string[] => (
+  [...new Set(value.map(String).map((entry) => entry.trim()).filter(Boolean))]
+);
+
+export const buildFuturesBoundedRestoreWorkUnit = ({
+  candidate,
+  sourceMutationRevision,
+  behaviorInvariants = [],
+  regressionObligationIds = [],
+  acceptanceIds = [],
+  objective = 'Restore reviewed behavior within the bounded changed-path scope.',
+}: {
+  candidate: FuturesBoundedRestoreCandidate;
+  sourceMutationRevision: number;
+  behaviorInvariants?: readonly string[];
+  regressionObligationIds?: readonly string[];
+  acceptanceIds?: readonly string[];
+  objective?: string;
+}): Readonly<FuturesBoundedRestoreWorkUnit> => {
+  if (!candidate || candidate.kind !== 'bounded-restore') {
+    throw Object.assign(new Error('bounded_restore_candidate_required'), {
+      code: 'BOUNDED_RESTORE_CANDIDATE_REQUIRED',
+    });
+  }
+  if (!Number.isInteger(sourceMutationRevision) || sourceMutationRevision < 0) {
+    throw Object.assign(new Error('bounded_restore_source_revision_invalid'), {
+      code: 'BOUNDED_RESTORE_SOURCE_REVISION_INVALID',
+    });
+  }
+
+  const scope = classifyWorkUnitScope({
+    allowedPaths: candidate.allowedPaths,
+    strict: true,
+  });
+  if (!scope.valid) throw new WorkUnitScopeError(scope);
+
+  const invariants = uniqueRestoreText(behaviorInvariants);
+  if (invariants.length === 0) {
+    throw Object.assign(new Error('bounded_restore_behavior_invariant_required'), {
+      code: 'BOUNDED_RESTORE_BEHAVIOR_INVARIANT_REQUIRED',
+    });
+  }
+  const obligations = uniqueRestoreText(regressionObligationIds);
+  if (obligations.length === 0) {
+    throw Object.assign(new Error('bounded_restore_regression_obligation_required'), {
+      code: 'BOUNDED_RESTORE_REGRESSION_OBLIGATION_REQUIRED',
+    });
+  }
+
+  return Object.freeze({
+    kind: 'bounded-restore-work-unit' as const,
+    sourceMutationRevision,
+    replacementStep: Object.freeze({
+      objective: String(objective || '').trim()
+        || 'Restore reviewed behavior within the bounded changed-path scope.',
+      allowedPaths: Object.freeze([...scope.allowedPaths]),
+      acceptanceIds: Object.freeze(uniqueRestoreText(acceptanceIds)),
+      obligationIds: Object.freeze(obligations),
+      expectedOutputs: Object.freeze(['fresh-regression-proof']),
+    }),
+    behaviorInvariants: Object.freeze(invariants),
+    stopConditions: Object.freeze([
+      'scope-violation',
+      'behavior-invariant-changed',
+      'fresh-regression-proof-failed',
+    ] as const),
+    proofPolicy: Object.freeze({
+      requiresFreshRegression: true as const,
+      minimumMutationRevisionExclusive: sourceMutationRevision,
+      priorRevisionEvidenceAllowed: false as const,
+    }),
+  });
 };

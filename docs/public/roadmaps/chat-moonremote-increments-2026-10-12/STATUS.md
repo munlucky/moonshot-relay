@@ -22,8 +22,8 @@
 | [C12](cards/C12.md) | W2 | Futures Evidence 순수 수집 계약 | C11 | COMPLETE |
 | [C13](cards/C13.md) | W2 | Green Yellow Red 평가와 mutation 제한 | C12 | COMPLETE |
 | [C14](cards/C14.md) | W2 | Fresh review와 기존 Work 경로 연결 | C13 | COMPLETE |
-| [C15](cards/C15.md) | W3 | Bounded Restore 실행과 fresh regression | C14 | NOT_STARTED |
-| [C16](cards/C16.md) | W3 | Architecture escalation 기존 경로 재사용 | C15 | NOT_STARTED |
+| [C15](cards/C15.md) | W3 | Bounded Restore 실행과 fresh regression | C14 | COMPLETE |
+| [C16](cards/C16.md) | W3 | Architecture escalation 기존 경로 재사용 | C15 | COMPLETE |
 | [C17](cards/C17.md) | W4 | Knowledge type 표현 가능성 판정 | C16 | NOT_STARTED |
 | [C18](cards/C18.md) | W4 | 최소 Procedure 표현과 점진적 로드 | C17 | NOT_STARTED |
 | [C19](cards/C19.md) | W5 | Feedback root-cause 분류 계약 | C18 | NOT_STARTED |
@@ -349,4 +349,37 @@ checks: current diff/package mapping c3e00000-0000-4000-8000-000000000012 exit 0
 liveEval: 미실행; C14는 기존 ReviewReceipt/Work authority 연결의 deterministic integration 범위
 remaining: C14 없음. 다음 카드 자동 진입 금지
 nextCard: C15
+```
+
+
+```text
+card: C15
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: f3ee56d921ea53bbeb28efd49bf7dd9aceb1eecf
+resultHeadOrDiffDigest: sha256:b9ce7115427a04dfc095d632de1ff0fbaccf4431bfc8eb386f219f33dc6574da
+taskId: c7bca2f1-f672-4dc0-9441-0991418e5443
+kernelRunId: 없음; Kernel 모드 미사용
+scope: src/kernel/run/step-planner.ts; tests/kernel-futures-bounded-restore.test.ts; generated tests/kernel-futures-bounded-restore.test.mjs; 기존 mutation-guard/evidence-reuse는 변경 없이 회귀 검증
+acceptance: AC-1 reviewed Yellow bounded-restore를 기존 planReplacementSteps가 소비하는 bounded replacement Work Unit으로 변환하고 observed allowedPaths 밖을 확대하지 않음; behavior invariant와 scope/invariant/fresh-proof stop condition을 보존. AC-2 기존 mutation guard가 scope 밖 mutation 및 destructive reset을 차단하고 exact evidence identity가 달라지면 이전 proof 재사용을 거부; 새 rollback engine/명령/stage 없음. AC-3 typecheck/build/build:tests 및 C15 focused 17/17, W3 integration 59/59, build:check/build:tests:check/check:boundaries 통과. AC-4 STATUS/checkpoint에 변경·증거·다음 카드 기록
+checks: typecheck d3a00000-0000-4000-8000-000000000023 exit 0; build d3a00000-0000-4000-8000-000000000024 exit 0 (294 files, 787 edges); build:tests d3a00000-0000-4000-8000-000000000025 exit 0 (271 tests, 8 helpers); C15 focused d3a00000-0000-4000-8000-000000000016 exit 0 (17/17); W3 integration d3a00000-0000-4000-8000-000000000026 exit 0 (59/59); build:check d3a00000-0000-4000-8000-000000000027 exit 0; build:tests:check d3a00000-0000-4000-8000-000000000028 exit 0; check:boundaries d3a00000-0000-4000-8000-000000000029 exit 0
+liveEval: 미실행; deterministic Work/Host mutation/proof integration 범위
+remaining: C15 없음
+nextCard: C16 (같은 W3에서 자동 진행 완료)
+```
+
+```text
+card: C16
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: f3ee56d921ea53bbeb28efd49bf7dd9aceb1eecf
+resultHeadOrDiffDigest: sha256:b9ce7115427a04dfc095d632de1ff0fbaccf4431bfc8eb386f219f33dc6574da
+taskId: c7bca2f1-f672-4dc0-9441-0991418e5443
+kernelRunId: 없음; Kernel 모드 미사용
+scope: src/application/kernel-standalone/architecture-artifacts.ts; tests/kernel-futures-architecture-handoff.test.ts; generated tests/kernel-futures-architecture-handoff.test.mjs; 기존 replan/architecture handoff는 변경 없이 재사용
+acceptance: AC-1 reviewed Red 또는 실패 사유가 명시된 bounded restore만 기존 architecture pre-work handoff로 정규화; reviewed affected paths, unresolved requirements, escalation reason과 review/assessment identity를 보존. AC-2 stale revision/content, missing review, invalid candidate/digest, reason 없는 restore escalation은 fail-closed; handoff는 prework-only이며 source mutation, Work cursor 전진, completion 권위를 갖지 않음. AC-3 C16+기존 replan/architecture focused 21/21 및 W3 integration 59/59, typecheck/build/build checks/boundary 모두 통과. AC-4 STATUS/checkpoint에 evidence와 W3 종료를 기록
+checks: initial C16 focused d3a00000-0000-4000-8000-000000000017은 fixture observer 누락으로 20/21; 기존 API 계약에 맞게 fixture만 수정 후 d3a00000-0000-4000-8000-000000000019 exit 0 (21/21); final W3 integration d3a00000-0000-4000-8000-000000000026 exit 0 (59/59); final policy/complexity scan d3a00000-0000-4000-8000-000000000030 exit 0; scoped digest d3a00000-0000-4000-8000-000000000031 exit 0
+liveEval: 미실행; 기존 architecture pre-work/Task Contract Seed 경계 재사용 범위
+remaining: W3 없음. 다음 Wave 자동 진입 금지
+nextCard: C17 (W4는 사용자 확인 후 별도 요청)
 ```
