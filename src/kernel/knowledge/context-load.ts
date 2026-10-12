@@ -4,6 +4,7 @@ import { resolveKernelRuntimeHome } from '../runtime-home.js';
 import { writeAtomicJson } from './store.js';
 import {
   renderPromptBlock,
+  renderKnowledgePromptEntry,
   computeContextDigest,
   deepRedact,
   type KnowledgePromptEntry,
@@ -31,6 +32,7 @@ interface KnowledgeRecordLike extends UnknownRecord {
   to?: string | null;
   relation?: string | null;
   evidence?: { refs?: unknown[] | null } | null;
+  practiceJson?: unknown;
 }
 
 interface KnowledgeStateStore {
@@ -128,6 +130,50 @@ const isRecord = (value: unknown): value is UnknownRecord => (
 const isValidStage = (value: string): value is Stage => (
   (VALID_STAGES as readonly string[]).includes(value)
 );
+
+const procedureParts = (record: KnowledgeRecordLike): {
+  metadata: UnknownRecord;
+  body: UnknownRecord;
+} | null => {
+  if (record.type !== 'episodic_observation' || !isRecord(record.practiceJson)) {
+    return null;
+  }
+  if (record.practiceJson.kind !== 'procedure') return null;
+  const metadata = isRecord(record.practiceJson.metadata)
+    ? record.practiceJson.metadata
+    : {};
+  const body = isRecord(record.practiceJson.body)
+    ? record.practiceJson.body
+    : {};
+  return { metadata, body };
+};
+
+const procedureSearchView = (
+  record: KnowledgeRecordLike,
+): KnowledgeRecordLike => {
+  const procedure = procedureParts(record);
+  if (!procedure) return record;
+  return {
+    ...record,
+    practiceJson: {
+      kind: 'procedure',
+      metadata: procedure.metadata,
+    },
+  };
+};
+
+const procedureScopeMatches = (
+  record: KnowledgeRecordLike,
+  changedPaths: readonly string[],
+): boolean => {
+  if (!procedureParts(record)) return true;
+  if (!record.scope || record.scope.length === 0 || changedPaths.length === 0) {
+    return true;
+  }
+  return changedPaths.some((changedPath) => (
+    matchPathScope(changedPath, record.scope || [])
+  ));
+};
 
 const errorCodeOf = (error: unknown): string => {
   if (error instanceof Error && error.name) {
@@ -230,6 +276,25 @@ export async function buildProjectKnowledgeContext({
       return false;
     }
 
+    const procedure = procedureParts(record);
+    if (procedure?.metadata.validUntil) {
+      const validUntil = Date.parse(String(procedure.metadata.validUntil));
+      if (!Number.isFinite(validUntil)) {
+        staleOrUnavailable.push({
+          id: record.id || 'unknown',
+          reason: 'procedure_valid_until_invalid',
+        });
+        return false;
+      }
+      if (validUntil <= Date.now()) {
+        staleOrUnavailable.push({
+          id: record.id || 'unknown',
+          reason: 'procedure_expired',
+        });
+        return false;
+      }
+    }
+
     // Filter 1.5: freshness (§21.3). When the project filesystem is available,
     // a cheap re-verify decides keep-vs-stale. A record whose referenced source
     // vanished ('stale') or drifted ('needs_deep_verify') is omitted from the
@@ -268,11 +333,23 @@ export async function buildProjectKnowledgeContext({
     });
   }
 
-  // Filter 3: Relevance scoring & ranking (score > 0 || isGlobal === true).
+  // Filter 3: Procedure scope, then metadata-only relevance scoring.
   selectedFacts = selectedFacts
+    .filter((fact) => {
+      if (procedureScopeMatches(fact, changedPaths)) return true;
+      omittedByPolicy.push({
+        id: fact.id || 'unknown',
+        reason: 'procedure_scope_outside',
+      });
+      return false;
+    })
     .map((fact) => ({
       fact,
-      score: scoreRelevance({ item: fact, objective, paths: changedPaths }),
+      score: scoreRelevance({
+        item: procedureSearchView(fact),
+        objective,
+        paths: changedPaths,
+      }),
     }))
     .filter(({ fact, score }) => (
       score > 0
@@ -307,7 +384,7 @@ export async function buildProjectKnowledgeContext({
   const budgetedFacts: KnowledgeRecordLike[] = [];
   let currentLength = 0;
   for (const fact of selectedFacts) {
-    const factLength = (fact.statement || JSON.stringify(fact)).length + 10;
+    const factLength = renderKnowledgePromptEntry(fact).length + 10;
     if (currentLength + factLength > maxChars) {
       omittedByPolicy.push({
         id: fact.id || 'unknown',
@@ -348,9 +425,10 @@ export async function buildProjectKnowledgeContext({
   const usableRecordCount = Object.values(selectedCounts)
     .reduce((sum, count) => sum + count, 0);
   const omittedCounts = {
-    stale: staleOrUnavailable.filter(
-      (entry) => String(entry.reason || '').startsWith('freshness_'),
-    ).length,
+    stale: staleOrUnavailable.filter((entry) => {
+      const reason = String(entry.reason || '');
+      return reason.startsWith('freshness_') || reason.startsWith('procedure_');
+    }).length,
     unavailable: staleOrUnavailable.filter((entry) => (
       String(entry.reason || '').includes('unavailable')
       || String(entry.reason || '').includes('load_failed')

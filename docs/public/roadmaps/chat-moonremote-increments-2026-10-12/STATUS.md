@@ -24,8 +24,8 @@
 | [C14](cards/C14.md) | W2 | Fresh review와 기존 Work 경로 연결 | C13 | COMPLETE |
 | [C15](cards/C15.md) | W3 | Bounded Restore 실행과 fresh regression | C14 | COMPLETE |
 | [C16](cards/C16.md) | W3 | Architecture escalation 기존 경로 재사용 | C15 | COMPLETE |
-| [C17](cards/C17.md) | W4 | Knowledge type 표현 가능성 판정 | C16 | NOT_STARTED |
-| [C18](cards/C18.md) | W4 | 최소 Procedure 표현과 점진적 로드 | C17 | NOT_STARTED |
+| [C17](cards/C17.md) | W4 | Knowledge type 표현 가능성 판정 | C16 | COMPLETE |
+| [C18](cards/C18.md) | W4 | 최소 Procedure 표현과 점진적 로드 | C17 | COMPLETE |
 | [C19](cards/C19.md) | W5 | Feedback root-cause 분류 계약 | C18 | NOT_STARTED |
 | [C20](cards/C20.md) | W5 | 분류 결과를 기존 candidate lifecycle에 연결 | C19 | NOT_STARTED |
 | [C21](cards/C21.md) | W6 | Improvement Pair identity와 원자성 | C20 | NOT_STARTED |
@@ -382,4 +382,36 @@ checks: initial C16 focused d3a00000-0000-4000-8000-000000000017은 fixture obse
 liveEval: 미실행; 기존 architecture pre-work/Task Contract Seed 경계 재사용 범위
 remaining: W3 없음. 다음 Wave 자동 진입 금지
 nextCard: C17 (W4는 사용자 확인 후 별도 요청)
+```
+
+```text
+card: C17
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: 483598cdddc82361bbb347b60ec6a65f5debd1d9
+resultHeadOrDiffDigest: sha256:cb6976e99fadb8c7f31e1b0fd4cddcb5585f9fc16a4295ce568ffe8d126b3af5
+taskId: 93721595-fa03-4778-9405-35c3559a9339
+kernelRunId: 없음; Kernel 모드 미사용
+scope: tests/kernel-knowledge-procedure-representation.test.ts; generated tests/kernel-knowledge-procedure-representation.test.mjs; schema/product source 변경 없음
+acceptance: AC-1 대표 procedure 3개를 기존 episodic_observation + practiceJson으로 prerequisites/steps/verification/scope/prohibitions/validUntil까지 schema round-trip하고 known_failure_pattern/일반 episodic observation과 구분됨을 고정. AC-2 tacit_practice가 이미 episodic_observation으로 canonical mapping되고 추가 필드를 보존하므로 새 generic procedure type/schema/migration 불필요. AC-3 build:tests, source validator/schema codec/context focused 12/12, typecheck, build:tests:check 통과. AC-4 STATUS/checkpoint에 변경·증거·nextCard 기록
+checks: build:tests c1700000-0000-4000-8000-000000000006 exit 0 (272 tests, 8 helpers); focused c1700000-0000-4000-8000-000000000007 exit 0 (12/12); typecheck c1700000-0000-4000-8000-000000000008 exit 0; build:tests:check c1700000-0000-4000-8000-000000000009 exit 0; scoped digest/diff c1700000-0000-4000-8000-000000000010 exit 0
+liveEval: 미실행; deterministic record/schema/retrieval 표현 가능성 판정 범위
+remaining: C17 없음
+nextCard: C18 (사용자 Wave4 요청에 따라 별도 task로 진행)
+```
+
+```text
+card: C18
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: 483598cdddc82361bbb347b60ec6a65f5debd1d9
+resultHeadOrDiffDigest: sha256:41dc089fafe390ceaf8d2b0d954ea93d26e75a4da52511ffe80f1a452852b65f
+taskId: 864bb1aa-fe5f-4196-a75b-d53cfbe7c7d8
+kernelRunId: 없음; Kernel 모드 미사용
+scope: src/kernel/knowledge/context-load.ts; src/kernel/knowledge/context-render.ts; tests/kernel-knowledge-procedure-context.test.ts; generated tests/kernel-knowledge-procedure-context.test.mjs; C17 representation fixture 포함; schema/persistence 변경 없음
+acceptance: AC-1 C17의 episodic_observation + practiceJson을 재사용하고 procedure 검색은 body를 제거한 metadata view로 기존 relevance를 계산한 뒤 최종 선택된 본문만 렌더; validUntil 만료/invalid, superseded, changedPaths 범위 밖 procedure를 fail-closed 제외하고 procedure body 크기도 기존 stage budget에 포함. AC-2 모든 procedure를 always-loaded prompt에 넣지 않고 기존 FRAME/EXECUTE stage policy + scope/relevance/budget을 재사용; 새 procedure type/vector DB/service/persistence API/migration 없음. AC-3 typecheck, build, build:tests, focused context/freshness/validator 20/20, build:check, build:tests:check, check:boundaries 통과. AC-4 STATUS/checkpoint에 변경·증거·W4 종료 기록
+checks: typecheck c1800000-0000-4000-8000-000000000006 exit 0; build c1800000-0000-4000-8000-000000000007 exit 0 (294 files, 787 edges); build:tests c1800000-0000-4000-8000-000000000011 exit 0 (273 tests, 8 helpers); focused c1800000-0000-4000-8000-000000000012 exit 0 (20/20; 이전 c180...010의 19/20은 stale count fixture 기대값 오류로 제품 변경 없이 수정); build:check c1800000-0000-4000-8000-000000000014 exit 0; build:tests:check c1800000-0000-4000-8000-000000000015 exit 0; check:boundaries c1800000-0000-4000-8000-000000000016 exit 0; complexity/diff c1800000-0000-4000-8000-000000000017 exit 0; W4 scoped digest c1800000-0000-4000-8000-000000000018 exit 0
+liveEval: 미실행; deterministic knowledge context/retrieval 경계
+remaining: W4 없음
+nextCard: C19 (W5는 별도 사용자 요청 후 시작)
 ```

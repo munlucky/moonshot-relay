@@ -9,6 +9,7 @@ export interface KnowledgePromptEntry extends UnknownRecord {
   from?: string | null;
   relation?: string | null;
   to?: string | null;
+  practiceJson?: unknown;
 }
 
 export interface RenderPromptBlockInput {
@@ -70,10 +71,50 @@ export function deepRedact(value: unknown): unknown {
   return result;
 }
 
-const renderEntry = (entry: KnowledgePromptEntry): string => (
-  entry.statement
-    ? entry.statement
-    : JSON.stringify(entry)
+const asRecord = (value: unknown): UnknownRecord | null => (
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? value as UnknownRecord
+    : null
+);
+
+const stringList = (value: unknown): string[] => (
+  Array.isArray(value)
+    ? value.map(String).map((item) => item.trim()).filter(Boolean)
+    : []
+);
+
+const renderProcedureEntry = (entry: KnowledgePromptEntry): string | null => {
+  const practice = asRecord(entry.practiceJson);
+  if (practice?.kind !== 'procedure') return null;
+  const metadata = asRecord(practice.metadata);
+  const body = asRecord(practice.body);
+  if (!body) return entry.statement || null;
+
+  const sections: string[] = [];
+  const title = metadata?.title ? String(metadata.title).trim() : '';
+  const summary = entry.statement || (metadata?.summary ? String(metadata.summary).trim() : '');
+  if (title) sections.push(`Procedure: ${title}`);
+  if (summary) sections.push(summary);
+
+  for (const [label, field] of [
+    ['Prerequisites', 'prerequisites'],
+    ['Steps', 'steps'],
+    ['Verification', 'verification'],
+    ['Prohibitions', 'prohibitions'],
+  ] as const) {
+    const values = stringList(body[field]);
+    if (values.length > 0) sections.push(`${label}: ${values.join(' -> ')}`);
+  }
+
+  return sections.length > 0 ? sections.join(' | ') : null;
+};
+
+export const renderKnowledgePromptEntry = (
+  entry: KnowledgePromptEntry,
+): string => (
+  renderProcedureEntry(entry)
+  || entry.statement
+  || JSON.stringify(entry)
 );
 
 export function renderPromptBlock({
@@ -97,7 +138,7 @@ export function renderPromptBlock({
   if (semanticFacts.length > 0) {
     lines.push('\n### Verified Facts:');
     for (const fact of semanticFacts) {
-      lines.push(`- ${redactSecrets(renderEntry(fact))}`);
+      lines.push(`- ${redactSecrets(renderKnowledgePromptEntry(fact))}`);
     }
   }
 
@@ -106,7 +147,7 @@ export function renderPromptBlock({
     for (const constraint of ontologyConstraints) {
       lines.push(
         `- [${constraint.severity || 'invariant'}] ${redactSecrets(
-          renderEntry(constraint),
+          renderKnowledgePromptEntry(constraint),
         )}`,
       );
     }
