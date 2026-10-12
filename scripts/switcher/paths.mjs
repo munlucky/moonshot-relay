@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { lstat, mkdir, readFile, stat } from 'node:fs/promises';
 import os from 'node:os';
 import { KERNEL_RUNTIME_ID, SURFACES } from './constants.mjs';
-import { canonicalPath } from '../kernel/runtime-home.mjs';
+import { canonicalPath } from '../kernel/runtime-home.js';
 
 const home = () => process.env.MOON_HARNESS_SWITCHER_HOME || path.join(process.env.USERPROFILE || os.homedir(), '.moon-harness-switcher');
 export const switcherHome = () => path.resolve(home());

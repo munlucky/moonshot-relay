@@ -1,18 +1,2 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import path from 'node:path';
-import os from 'node:os';
-import { mkdtemp } from 'node:fs/promises';
-import { executeKernelGitCloseout } from '../scripts/kernel/git/closeout.mjs';
-
-test('Kernel Git Closeout E2E skips cleanly without explicit request', async () => {
-  const tmp = await mkdtemp(path.join(os.tmpdir(), 'kernel-git-e2e-'));
-  const receipt = await executeKernelGitCloseout({
-    runId: 'git-e2e-run',
-    projectId: 'test-git-proj',
-    repoRoot: tmp,
-    gitCloseoutRequest: null,
-  });
-
-  assert.equal(receipt.status, 'skipped');
-});
+// Generated test entrypoint. Edit tests/kernel-git-closeout-e2e.test.ts.
+export * from "../dist/tests/kernel-git-closeout-e2e.test.mjs";

@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "rootDir": "tools/build",
+    "newLine": "lf"
+  },
+  "include": ["tools/build/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

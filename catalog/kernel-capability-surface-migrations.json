@@ -1,0 +1,2997 @@
+{
+  "schemaVersion": 1,
+  "kind": "typed-capability-surface-migrations",
+  "baselineCommit": "9701a86d2225c938f13982a7e0f7f43a7f9bc10e",
+  "migrations": {
+    "scripts/host/kernel/adapters/ade.mjs": {
+      "source": "src/host/kernel/adapters/ade.ts",
+      "output": "scripts/host/kernel/adapters/ade.js"
+    },
+    "scripts/host/kernel/adapters/claude.mjs": {
+      "source": "src/host/kernel/adapters/claude.ts",
+      "output": "scripts/host/kernel/adapters/claude.js"
+    },
+    "scripts/host/kernel/adapters/codex.mjs": {
+      "source": "src/host/kernel/adapters/codex.ts",
+      "output": "scripts/host/kernel/adapters/codex.js"
+    },
+    "scripts/host/kernel/adapters/fable.mjs": {
+      "source": "src/host/kernel/adapters/fable.ts",
+      "output": "scripts/host/kernel/adapters/fable.js"
+    },
+    "scripts/host/kernel/adapters/gemini-cli.mjs": {
+      "source": "src/host/kernel/adapters/gemini-cli.ts",
+      "output": "scripts/host/kernel/adapters/gemini-cli.js"
+    },
+    "scripts/host/kernel/adapters/gemini.mjs": {
+      "source": "src/host/kernel/adapters/gemini.ts",
+      "output": "scripts/host/kernel/adapters/gemini.js"
+    },
+    "scripts/host/kernel/ade-context-policy.mjs": {
+      "source": "src/host/kernel/ade-context-policy.ts",
+      "output": "scripts/host/kernel/ade-context-policy.js"
+    },
+    "scripts/host/kernel/admission-revalidator.mjs": {
+      "source": "src/host/kernel/admission-revalidator.ts",
+      "output": "scripts/host/kernel/admission-revalidator.js"
+    },
+    "scripts/host/kernel/cache-replay.mjs": {
+      "source": "src/host/kernel/cache-replay.ts",
+      "output": "scripts/host/kernel/cache-replay.js"
+    },
+    "scripts/host/kernel/claude-effort-policy.mjs": {
+      "source": "src/host/kernel/claude-effort-policy.ts",
+      "output": "scripts/host/kernel/claude-effort-policy.js"
+    },
+    "scripts/host/kernel/codex-actor-router.mjs": {
+      "source": "src/host/kernel/codex-actor-router.ts",
+      "output": "scripts/host/kernel/codex-actor-router.js"
+    },
+    "scripts/host/kernel/codex-agents-policy.mjs": {
+      "source": "src/host/kernel/codex-agents-policy.ts",
+      "output": "scripts/host/kernel/codex-agents-policy.js"
+    },
+    "scripts/host/kernel/codex-model-policy.mjs": {
+      "source": "src/host/kernel/codex-model-policy.ts",
+      "output": "scripts/host/kernel/codex-model-policy.js"
+    },
+    "scripts/host/kernel/codex-session-observer.mjs": {
+      "source": "src/host/kernel/codex-session-observer.ts",
+      "output": "scripts/host/kernel/codex-session-observer.js"
+    },
+    "scripts/host/kernel/common-model-policy.mjs": {
+      "source": "src/host/kernel/common-model-policy.ts",
+      "output": "scripts/host/kernel/common-model-policy.js"
+    },
+    "scripts/host/kernel/host-boundary.mjs": {
+      "source": "src/host/kernel/host-boundary.ts",
+      "output": "scripts/host/kernel/host-boundary.js"
+    },
+    "scripts/host/kernel/host-routing.mjs": {
+      "source": "src/host/kernel/host-routing.ts",
+      "output": "scripts/host/kernel/host-routing.js"
+    },
+    "scripts/host/kernel/host-turn.mjs": {
+      "source": "src/host/kernel/host-turn.ts",
+      "output": "scripts/host/kernel/host-turn.js"
+    },
+    "scripts/host/kernel/independent-subagent-review.mjs": {
+      "source": "src/host/kernel/independent-subagent-review.ts",
+      "output": "scripts/host/kernel/independent-subagent-review.js"
+    },
+    "scripts/host/kernel/lifecycle-bridge.mjs": {
+      "source": "src/host/kernel/lifecycle-bridge.ts",
+      "output": "scripts/host/kernel/lifecycle-bridge.js"
+    },
+    "scripts/host/kernel/model-capsule-view.mjs": {
+      "source": "src/host/kernel/model-capsule-view.ts",
+      "output": "scripts/host/kernel/model-capsule-view.js"
+    },
+    "scripts/host/kernel/model-registry.mjs": {
+      "source": "src/host/kernel/model-registry.ts",
+      "output": "scripts/host/kernel/model-registry.js"
+    },
+    "scripts/host/kernel/parallel-dispatcher.mjs": {
+      "source": "src/host/kernel/parallel-dispatcher.ts",
+      "output": "scripts/host/kernel/parallel-dispatcher.js"
+    },
+    "scripts/host/kernel/prompt-envelope.mjs": {
+      "source": "src/host/kernel/prompt-envelope.ts",
+      "output": "scripts/host/kernel/prompt-envelope.js"
+    },
+    "scripts/host/kernel/prompts/claude-opus-5.mjs": {
+      "source": "src/host/kernel/prompts/claude-opus-5.ts",
+      "output": "scripts/host/kernel/prompts/claude-opus-5.js"
+    },
+    "scripts/host/kernel/prompts/codex-gpt-5p6.mjs": {
+      "source": "src/host/kernel/prompts/codex-gpt-5p6.ts",
+      "output": "scripts/host/kernel/prompts/codex-gpt-5p6.js"
+    },
+    "scripts/host/kernel/prompts/common-execution.mjs": {
+      "source": "src/host/kernel/prompts/common-execution.ts",
+      "output": "scripts/host/kernel/prompts/common-execution.js"
+    },
+    "scripts/host/kernel/provider-prompt-policy.mjs": {
+      "source": "src/host/kernel/provider-prompt-policy.ts",
+      "output": "scripts/host/kernel/provider-prompt-policy.js"
+    },
+    "scripts/host/kernel/review-readiness.mjs": {
+      "source": "src/host/kernel/review-readiness.ts",
+      "output": "scripts/host/kernel/review-readiness.js"
+    },
+    "scripts/host/kernel/review-transport-resolver.mjs": {
+      "source": "src/host/kernel/review-transport-resolver.ts",
+      "output": "scripts/host/kernel/review-transport-resolver.js"
+    },
+    "scripts/host/kernel/route-admission.mjs": {
+      "source": "src/host/kernel/route-admission.ts",
+      "output": "scripts/host/kernel/route-admission.js"
+    },
+    "scripts/host/kernel/session-affinity.mjs": {
+      "source": "src/host/kernel/session-affinity.ts",
+      "output": "scripts/host/kernel/session-affinity.js"
+    },
+    "scripts/host/kernel/tool-manifest.mjs": {
+      "source": "src/host/kernel/tool-manifest.ts",
+      "output": "scripts/host/kernel/tool-manifest.js"
+    },
+    "scripts/host/kernel/turn-dispatcher.mjs": {
+      "source": "src/host/kernel/turn-dispatcher.ts",
+      "output": "scripts/host/kernel/turn-dispatcher.js"
+    },
+    "scripts/host/kernel/usage-receipt.mjs": {
+      "source": "src/host/kernel/usage-receipt.ts",
+      "output": "scripts/host/kernel/usage-receipt.js"
+    },
+    "scripts/host/kernel/workspace/physical-worktree.mjs": {
+      "source": "src/host/kernel/workspace/physical-worktree.ts",
+      "output": "scripts/host/kernel/workspace/physical-worktree.js"
+    },
+    "scripts/kernel/artifact-paths.mjs": {
+      "source": "src/kernel/artifact-paths.ts",
+      "output": "scripts/kernel/artifact-paths.js"
+    },
+    "scripts/kernel/bridge/coordinator-surface.mjs": {
+      "source": "src/kernel/bridge/coordinator-surface.ts",
+      "output": "scripts/kernel/bridge/coordinator-surface.js"
+    },
+    "scripts/kernel/bridge/mcp.mjs": {
+      "source": "src/kernel/bridge/mcp.ts",
+      "output": "scripts/kernel/bridge/mcp.js"
+    },
+    "scripts/kernel/canonical-digest.mjs": {
+      "source": "src/shared/canonical-digest.ts",
+      "output": "scripts/lib/canonical-digest.js"
+    },
+    "scripts/kernel/capability-guidance.mjs": {
+      "source": "src/kernel/capability-guidance.ts",
+      "output": "scripts/kernel/capability-guidance.js"
+    },
+    "scripts/kernel/capability-resolver.mjs": {
+      "source": "src/kernel/capability-resolver.ts",
+      "output": "scripts/kernel/capability-resolver.js"
+    },
+    "scripts/kernel/change-contract.mjs": {
+      "source": "src/kernel/change-contract.ts",
+      "output": "scripts/kernel/change-contract.js"
+    },
+    "scripts/kernel/codebase/build-index.mjs": {
+      "source": "src/host/kernel/codebase/codebase-index.ts",
+      "output": "scripts/host/kernel/codebase/codebase-index.js"
+    },
+    "scripts/kernel/codebase/candidate-extract.mjs": {
+      "source": "src/host/kernel/codebase/codebase-index.ts",
+      "output": "scripts/host/kernel/codebase/codebase-index.js"
+    },
+    "scripts/kernel/codebase/incremental-refresh.mjs": {
+      "source": "src/host/kernel/codebase/codebase-index.ts",
+      "output": "scripts/host/kernel/codebase/codebase-index.js"
+    },
+    "scripts/kernel/codebase/manifest.mjs": {
+      "source": "src/host/kernel/codebase/codebase-index.ts",
+      "output": "scripts/host/kernel/codebase/codebase-index.js"
+    },
+    "scripts/kernel/codebase/query.mjs": {
+      "source": "src/host/kernel/codebase/codebase-index.ts",
+      "output": "scripts/host/kernel/codebase/codebase-index.js"
+    },
+    "scripts/kernel/context-build.mjs": {
+      "source": "src/kernel/context-build.ts",
+      "output": "scripts/kernel/context-build.js"
+    },
+    "scripts/kernel/context-receipt.mjs": {
+      "source": "src/contracts/context-receipt.ts",
+      "output": "scripts/contracts/context-receipt.js"
+    },
+    "scripts/kernel/context-segments.mjs": {
+      "source": "src/host/kernel/context-segments.ts",
+      "output": "scripts/host/kernel/context-segments.js"
+    },
+    "scripts/kernel/control-plane.mjs": {
+      "source": "src/kernel/control-plane.ts",
+      "output": "scripts/kernel/control-plane.js"
+    },
+    "scripts/kernel/durable-write.mjs": {
+      "source": "src/kernel/durable-write.ts",
+      "output": "scripts/kernel/durable-write.js"
+    },
+    "scripts/kernel/eval/model-routing-eval.mjs": {
+      "source": "src/host-tooling/kernel-eval/model-routing-eval.ts",
+      "output": "scripts/kernel/eval/model-routing-eval.js"
+    },
+    "scripts/kernel/eval/sentinel-eval.mjs": {
+      "source": "src/host-tooling/kernel-eval/sentinel-eval.ts",
+      "output": "scripts/kernel/eval/sentinel-eval.js"
+    },
+    "scripts/kernel/evidence-pack.mjs": {
+      "source": "src/kernel/evidence-pack.ts",
+      "output": "scripts/kernel/evidence-pack.js"
+    },
+    "scripts/kernel/git/closeout.mjs": {
+      "source": "src/kernel/git/closeout.ts",
+      "output": "scripts/kernel/git/closeout.js"
+    },
+    "scripts/kernel/git/commit-message.mjs": {
+      "source": "src/kernel/git/commit-message.ts",
+      "output": "scripts/kernel/git/commit-message.js"
+    },
+    "scripts/kernel/git/remote-parity.mjs": {
+      "source": "src/host/kernel/git/remote-parity.ts",
+      "output": "scripts/host/kernel/git/remote-parity.js"
+    },
+    "scripts/kernel/git/staging-policy.mjs": {
+      "source": "src/kernel/git/staging-policy.ts",
+      "output": "scripts/kernel/git/staging-policy.js"
+    },
+    "scripts/kernel/installer.mjs": {
+      "source": "src/kernel/installer.ts",
+      "output": "scripts/kernel/installer.js"
+    },
+    "scripts/kernel/knowledge-ingestion/candidate-extract.mjs": {
+      "source": "src/kernel/knowledge-ingestion/candidate-extract.ts",
+      "output": "scripts/kernel/knowledge-ingestion/candidate-extract.js"
+    },
+    "scripts/kernel/knowledge-ingestion/conflict.mjs": {
+      "source": "src/kernel/knowledge-ingestion/conflict.ts",
+      "output": "scripts/kernel/knowledge-ingestion/conflict.js"
+    },
+    "scripts/kernel/knowledge-ingestion/deduplicate.mjs": {
+      "source": "src/kernel/knowledge-ingestion/deduplicate.ts",
+      "output": "scripts/kernel/knowledge-ingestion/deduplicate.js"
+    },
+    "scripts/kernel/knowledge-ingestion/import.mjs": {
+      "source": "src/kernel/knowledge-ingestion/import.ts",
+      "output": "scripts/kernel/knowledge-ingestion/import.js"
+    },
+    "scripts/kernel/knowledge-ingestion/normalize.mjs": {
+      "source": "src/kernel/knowledge-ingestion/normalize.ts",
+      "output": "scripts/kernel/knowledge-ingestion/normalize.js"
+    },
+    "scripts/kernel/knowledge-ingestion/redact.mjs": {
+      "source": "src/kernel/knowledge-ingestion/redact.ts",
+      "output": "scripts/kernel/knowledge-ingestion/redact.js"
+    },
+    "scripts/kernel/knowledge-ingestion/transaction.mjs": {
+      "source": "src/kernel/knowledge-ingestion/transaction.ts",
+      "output": "scripts/kernel/knowledge-ingestion/transaction.js"
+    },
+    "scripts/kernel/knowledge-ingestion/verify.mjs": {
+      "source": "src/kernel/knowledge-ingestion/verify.ts",
+      "output": "scripts/kernel/knowledge-ingestion/verify.js"
+    },
+    "scripts/kernel/knowledge/architecture-resolve.mjs": {
+      "source": "src/kernel/knowledge/architecture-resolve.ts",
+      "output": "scripts/kernel/knowledge/architecture-resolve.js"
+    },
+    "scripts/kernel/knowledge/candidate-extract.mjs": {
+      "source": "src/kernel/knowledge/candidate-extract.ts",
+      "output": "scripts/kernel/knowledge/candidate-extract.js"
+    },
+    "scripts/kernel/knowledge/candidate-review.mjs": {
+      "source": "src/kernel/knowledge/candidate-review.ts",
+      "output": "scripts/kernel/knowledge/candidate-review.js"
+    },
+    "scripts/kernel/knowledge/canonical-record-mapper.mjs": {
+      "source": "src/kernel/knowledge/canonical-record-mapper.ts",
+      "output": "scripts/kernel/knowledge/canonical-record-mapper.js"
+    },
+    "scripts/kernel/knowledge/capture.mjs": {
+      "source": "src/kernel/knowledge/capture.ts",
+      "output": "scripts/kernel/knowledge/capture.js"
+    },
+    "scripts/kernel/knowledge/change-diff.mjs": {
+      "source": "src/kernel/knowledge/change-diff.ts",
+      "output": "scripts/kernel/knowledge/change-diff.js"
+    },
+    "scripts/kernel/knowledge/commit.mjs": {
+      "source": "src/kernel/knowledge/commit.ts",
+      "output": "scripts/kernel/knowledge/commit.js"
+    },
+    "scripts/kernel/knowledge/context-load.mjs": {
+      "source": "src/kernel/knowledge/context-load.ts",
+      "output": "scripts/kernel/knowledge/context-load.js"
+    },
+    "scripts/kernel/knowledge/context-render.mjs": {
+      "source": "src/kernel/knowledge/context-render.ts",
+      "output": "scripts/kernel/knowledge/context-render.js"
+    },
+    "scripts/kernel/knowledge/evidence-binder.mjs": {
+      "source": "src/kernel/knowledge/candidate-review.ts",
+      "output": "scripts/kernel/knowledge/candidate-review.js"
+    },
+    "scripts/kernel/knowledge/freshness.mjs": {
+      "source": "src/kernel/knowledge/freshness.ts",
+      "output": "scripts/kernel/knowledge/freshness.js"
+    },
+    "scripts/kernel/knowledge/knowledge-authority.mjs": {
+      "source": "src/kernel/knowledge/knowledge-authority.ts",
+      "output": "scripts/kernel/knowledge/knowledge-authority.js"
+    },
+    "scripts/kernel/knowledge/ontology-evaluate.mjs": {
+      "source": "src/kernel/knowledge/ontology-evaluate.ts",
+      "output": "scripts/kernel/knowledge/ontology-evaluate.js"
+    },
+    "scripts/kernel/knowledge/ontology-gate.mjs": {
+      "source": "src/kernel/knowledge/ontology-gate.ts",
+      "output": "scripts/kernel/knowledge/ontology-gate.js"
+    },
+    "scripts/kernel/knowledge/path-scope.mjs": {
+      "source": "src/kernel/knowledge/path-scope.ts",
+      "output": "scripts/kernel/knowledge/path-scope.js"
+    },
+    "scripts/kernel/knowledge/projection.mjs": {
+      "source": "src/kernel/knowledge/projection.ts",
+      "output": "scripts/kernel/knowledge/projection.js"
+    },
+    "scripts/kernel/knowledge/receipt.mjs": {
+      "source": "src/kernel/knowledge/receipt.ts",
+      "output": "scripts/kernel/knowledge/receipt.js"
+    },
+    "scripts/kernel/knowledge/records.mjs": {
+      "source": "src/kernel/knowledge/records.ts",
+      "output": "scripts/kernel/knowledge/records.js"
+    },
+    "scripts/kernel/knowledge/revision.mjs": {
+      "source": "src/kernel/persistence/knowledge-lifecycle-store.ts",
+      "output": "scripts/kernel/persistence/knowledge-lifecycle-store.js"
+    },
+    "scripts/kernel/knowledge/store.mjs": {
+      "source": "src/kernel/knowledge/store.ts",
+      "output": "scripts/kernel/knowledge/store.js"
+    },
+    "scripts/kernel/knowledge/supersession.mjs": {
+      "source": "src/kernel/knowledge/supersession.ts",
+      "output": "scripts/kernel/knowledge/supersession.js"
+    },
+    "scripts/kernel/knowledge/tacit-resolve.mjs": {
+      "source": "src/kernel/knowledge/tacit-resolve.ts",
+      "output": "scripts/kernel/knowledge/tacit-resolve.js"
+    },
+    "scripts/kernel/knowledge/topology-projection.mjs": {
+      "source": "src/kernel/knowledge/topology-projection.ts",
+      "output": "scripts/kernel/knowledge/topology-projection.js"
+    },
+    "scripts/kernel/legacy-hydration-cleanup.mjs": {
+      "source": "src/kernel/legacy-hydration-cleanup.ts",
+      "output": "scripts/kernel/legacy-hydration-cleanup.js"
+    },
+    "scripts/kernel/package-build.mjs": {
+      "source": "src/kernel/package-build.ts",
+      "output": "scripts/kernel/package-build.js"
+    },
+    "scripts/kernel/persistence/durable-state.mjs": {
+      "source": "src/kernel/persistence/durable-state.ts",
+      "output": "scripts/kernel/persistence/durable-state.js"
+    },
+    "scripts/kernel/persistence/run-journal.mjs": {
+      "source": "src/kernel/persistence/run-journal.ts",
+      "output": "scripts/kernel/persistence/run-journal.js"
+    },
+    "scripts/kernel/persistent-sanitizer.mjs": {
+      "source": "src/shared/persistent-sanitizer.ts",
+      "output": "scripts/lib/persistent-sanitizer.js"
+    },
+    "scripts/kernel/policy.mjs": {
+      "source": "src/kernel/policy.ts",
+      "output": "scripts/kernel/policy.js"
+    },
+    "scripts/kernel/profile-build.mjs": {
+      "source": "src/kernel/profile-build.ts",
+      "output": "scripts/kernel/profile-build.js"
+    },
+    "scripts/kernel/profile-doctor.mjs": {
+      "source": "src/kernel/profile-doctor.ts",
+      "output": "scripts/kernel/profile-doctor.js"
+    },
+    "scripts/kernel/profile-install.mjs": {
+      "source": "src/kernel/profile-install.ts",
+      "output": "scripts/kernel/profile-install.js"
+    },
+    "scripts/kernel/profile-projection.mjs": {
+      "source": "src/kernel/profile-projection.ts",
+      "output": "scripts/kernel/profile-projection.js"
+    },
+    "scripts/kernel/project-hydrate.mjs": {
+      "source": "src/kernel/project-hydrate.ts",
+      "output": "scripts/kernel/project-hydrate.js"
+    },
+    "scripts/kernel/project-identity-preflight.mjs": {
+      "source": "src/kernel/project-identity-preflight.ts",
+      "output": "scripts/kernel/project-identity-preflight.js"
+    },
+    "scripts/kernel/project-identity.mjs": {
+      "source": "src/kernel/project-identity.ts",
+      "output": "scripts/kernel/project-identity.js"
+    },
+    "scripts/kernel/proof-route.mjs": {
+      "source": "src/kernel/proof-route.ts",
+      "output": "scripts/kernel/proof-route.js"
+    },
+    "scripts/kernel/proof/baseline-proof.mjs": {
+      "source": "src/kernel/proof/baseline-proof.ts",
+      "output": "scripts/kernel/proof/baseline-proof.js"
+    },
+    "scripts/kernel/proof/command-catalog.mjs": {
+      "source": "src/contracts/command-catalog.ts",
+      "output": "scripts/contracts/command-catalog.js"
+    },
+    "scripts/kernel/proof/domain-policy.mjs": {
+      "source": "src/kernel/proof/domain-policy.ts",
+      "output": "scripts/kernel/proof/domain-policy.js"
+    },
+    "scripts/kernel/proof/evidence-reuse.mjs": {
+      "source": "src/kernel/proof/evidence-reuse.ts",
+      "output": "scripts/kernel/proof/evidence-reuse.js"
+    },
+    "scripts/kernel/proof/failure-classify.mjs": {
+      "source": "src/kernel/proof/failure-classify.ts",
+      "output": "scripts/kernel/proof/failure-classify.js"
+    },
+    "scripts/kernel/proof/network-policy.mjs": {
+      "source": "src/host/kernel/proof/network-policy.ts",
+      "output": "scripts/host/kernel/proof/network-policy.js"
+    },
+    "scripts/kernel/proof/process-tree.mjs": {
+      "source": "src/host/kernel/proof/process-tree.ts",
+      "output": "scripts/host/kernel/proof/process-tree.js"
+    },
+    "scripts/kernel/proof/proof-executor.mjs": {
+      "source": "src/host/kernel/proof/proof-executor.ts",
+      "output": "scripts/host/kernel/proof/proof-executor.js"
+    },
+    "scripts/kernel/proof/protected-obligations.mjs": {
+      "source": "src/kernel/proof/protected-obligations.ts",
+      "output": "scripts/kernel/proof/protected-obligations.js"
+    },
+    "scripts/kernel/proof/review-pipeline.mjs": {
+      "source": "src/kernel/proof/review-pipeline.ts",
+      "output": "scripts/kernel/proof/review-pipeline.js"
+    },
+    "scripts/kernel/proof/review-receipt.mjs": {
+      "source": "src/kernel/proof/review-receipt.ts",
+      "output": "scripts/kernel/proof/review-receipt.js"
+    },
+    "scripts/kernel/proof/static-analysis.mjs": {
+      "source": "src/host-tooling/kernel-eval/static-analysis.ts",
+      "output": "scripts/kernel/eval/static-analysis.js"
+    },
+    "scripts/kernel/proof/trust-authority.mjs": {
+      "source": "src/kernel/proof/trust-authority.ts",
+      "output": "scripts/kernel/proof/trust-authority.js"
+    },
+    "scripts/kernel/risk-surfaces.mjs": {
+      "source": "src/kernel/risk-surfaces.ts",
+      "output": "scripts/kernel/risk-surfaces.js"
+    },
+    "scripts/kernel/route.mjs": {
+      "source": "src/kernel/route.ts",
+      "output": "scripts/kernel/route.js"
+    },
+    "scripts/kernel/routing/route-admission.mjs": {
+      "source": "src/kernel/routing/route-admission.ts",
+      "output": "scripts/kernel/routing/route-admission.js"
+    },
+    "scripts/kernel/run/attempt-provenance.mjs": {
+      "source": "src/kernel/run/attempt-provenance.ts",
+      "output": "scripts/kernel/run/attempt-provenance.js"
+    },
+    "scripts/kernel/run/binding-preflight.mjs": {
+      "source": "src/kernel/run/binding-preflight.ts",
+      "output": "scripts/kernel/run/binding-preflight.js"
+    },
+    "scripts/kernel/run/capsule-selection.mjs": {
+      "source": "src/kernel/run/capsule-selection.ts",
+      "output": "scripts/kernel/run/capsule-selection.js"
+    },
+    "scripts/kernel/run/completion-outcomes.mjs": {
+      "source": "src/contracts/completion-outcomes.ts",
+      "output": "scripts/contracts/completion-outcomes.js"
+    },
+    "scripts/kernel/run/completion-view.mjs": {
+      "source": "src/kernel/proof/completion-view.ts",
+      "output": "scripts/kernel/proof/completion-view.js"
+    },
+    "scripts/kernel/run/contract-preflight.mjs": {
+      "source": "src/kernel/run/contract-preflight.ts",
+      "output": "scripts/kernel/run/contract-preflight.js"
+    },
+    "scripts/kernel/run/execution-capsule.mjs": {
+      "source": "src/kernel/run/execution-capsule.ts",
+      "output": "scripts/kernel/run/execution-capsule.js"
+    },
+    "scripts/kernel/run/execution-class.mjs": {
+      "source": "src/contracts/execution-class.ts",
+      "output": "scripts/contracts/execution-class.js"
+    },
+    "scripts/kernel/run/finalization.mjs": {
+      "source": "src/kernel/run/finalization.ts",
+      "output": "scripts/kernel/run/finalization.js"
+    },
+    "scripts/kernel/run/host-execution-contract.mjs": {
+      "source": "src/contracts/host-execution-contract.ts",
+      "output": "scripts/contracts/host-execution-contract.js"
+    },
+    "scripts/kernel/run/host-session.mjs": {
+      "source": "src/host/kernel/host-session.ts",
+      "output": "scripts/host/kernel/host-session.js"
+    },
+    "scripts/kernel/run/invocation-resolver.mjs": {
+      "source": "src/kernel/run/invocation-resolver.ts",
+      "output": "scripts/kernel/run/invocation-resolver.js"
+    },
+    "scripts/kernel/run/model-route-contract.mjs": {
+      "source": "src/kernel/run/model-route-contract.ts",
+      "output": "scripts/kernel/run/model-route-contract.js"
+    },
+    "scripts/kernel/run/model-routing.mjs": {
+      "source": "src/kernel/run/model-routing.ts",
+      "output": "scripts/kernel/run/model-routing.js"
+    },
+    "scripts/kernel/run/model-view.mjs": {
+      "source": "src/kernel/run/model-view.ts",
+      "output": "scripts/kernel/run/model-view.js"
+    },
+    "scripts/kernel/run/mutation-guard.mjs": {
+      "source": "src/kernel/run/mutation-guard.ts",
+      "output": "scripts/kernel/run/mutation-guard.js"
+    },
+    "scripts/kernel/run/obligation-compiler.mjs": {
+      "source": "src/kernel/run/obligation-compiler.ts",
+      "output": "scripts/kernel/run/obligation-compiler.js"
+    },
+    "scripts/kernel/run/optional-capabilities.mjs": {
+      "source": "src/kernel/run/optional-capabilities.ts",
+      "output": "scripts/kernel/run/optional-capabilities.js"
+    },
+    "scripts/kernel/run/provider-mutation-adapter.mjs": {
+      "source": "src/host/kernel/provider-mutation-adapter.ts",
+      "output": "scripts/host/kernel/provider-mutation-adapter.js"
+    },
+    "scripts/kernel/run/report-identity.mjs": {
+      "source": "src/kernel/run/report-identity.ts",
+      "output": "scripts/kernel/run/report-identity.js"
+    },
+    "scripts/kernel/run/required-host-capabilities.mjs": {
+      "source": "src/kernel/run/required-host-capabilities.ts",
+      "output": "scripts/kernel/run/required-host-capabilities.js"
+    },
+    "scripts/kernel/run/run-identity.mjs": {
+      "source": "src/kernel/run/run-identity.ts",
+      "output": "scripts/kernel/run/run-identity.js"
+    },
+    "scripts/kernel/run/run-locator.mjs": {
+      "source": "src/kernel/run/run-locator.ts",
+      "output": "scripts/kernel/run/run-locator.js"
+    },
+    "scripts/kernel/run/run-loop.mjs": {
+      "source": "src/kernel/run/run-loop.ts",
+      "output": "scripts/kernel/run/run-loop.js"
+    },
+    "scripts/kernel/run/run-step-ledger.mjs": {
+      "source": "src/kernel/run/run-step-ledger.ts",
+      "output": "scripts/kernel/run/run-step-ledger.js"
+    },
+    "scripts/kernel/run/session-binding.mjs": {
+      "source": "src/kernel/run/session-binding.ts",
+      "output": "scripts/kernel/run/session-binding.js"
+    },
+    "scripts/kernel/run/session-holder.mjs": {
+      "source": "src/host/kernel/session-holder.ts",
+      "output": "scripts/host/kernel/session-holder.js"
+    },
+    "scripts/kernel/run/step-planner.mjs": {
+      "source": "src/kernel/run/step-planner.ts",
+      "output": "scripts/kernel/run/step-planner.js"
+    },
+    "scripts/kernel/run/successor-key.mjs": {
+      "source": "src/kernel/run/successor-key.ts",
+      "output": "scripts/kernel/run/successor-key.js"
+    },
+    "scripts/kernel/run/work-authority.mjs": {
+      "source": "src/kernel/run/work-authority.ts",
+      "output": "scripts/kernel/run/work-authority.js"
+    },
+    "scripts/kernel/run/work-cursor.mjs": {
+      "source": "src/kernel/run/work-cursor.ts",
+      "output": "scripts/kernel/run/work-cursor.js"
+    },
+    "scripts/kernel/run/work-unit-scope.mjs": {
+      "source": "src/contracts/work-unit-scope.ts",
+      "output": "scripts/contracts/work-unit-scope.js"
+    },
+    "scripts/kernel/run/workspace-identity.mjs": {
+      "source": "src/host/kernel/workspace/workspace-identity.ts",
+      "output": "scripts/host/kernel/workspace/workspace-identity.js"
+    },
+    "scripts/kernel/run/workspace-registration.mjs": {
+      "source": "src/kernel/run/workspace-registration.ts",
+      "output": "scripts/kernel/run/workspace-registration.js"
+    },
+    "scripts/kernel/run/worktree-binding.mjs": {
+      "source": "src/host/kernel/workspace/worktree-resolution.ts",
+      "output": "scripts/host/kernel/workspace/worktree-resolution.js"
+    },
+    "scripts/kernel/runtime-home.mjs": {
+      "source": "src/kernel/runtime-home.ts",
+      "output": "scripts/kernel/runtime-home.js"
+    },
+    "scripts/kernel/runtime-resolver.mjs": {
+      "source": "src/kernel/runtime-resolver.ts",
+      "output": "scripts/kernel/runtime-resolver.js"
+    },
+    "scripts/kernel/sqlite-adapter.mjs": {
+      "source": "src/kernel/sqlite-adapter.ts",
+      "output": "scripts/kernel/sqlite-adapter.js"
+    },
+    "scripts/kernel/standalone/artifact-utils.mjs": {
+      "source": "src/kernel/standalone/artifact-utils.ts",
+      "output": "scripts/kernel/standalone/artifact-utils.js"
+    },
+    "scripts/kernel/standalone/catalog.mjs": {
+      "source": "src/kernel/standalone/catalog.ts",
+      "output": "scripts/kernel/standalone/catalog.js"
+    },
+    "scripts/kernel/standalone/common.mjs": {
+      "source": "src/kernel/standalone/common.ts",
+      "output": "scripts/kernel/standalone/common.js"
+    },
+    "scripts/kernel/standalone/prework.mjs": {
+      "source": "src/kernel/standalone/prework.ts",
+      "output": "scripts/kernel/standalone/prework.js"
+    },
+    "scripts/kernel/standalone/session-providers/claude.mjs": {
+      "source": "src/host/kernel/knowledge-input/session-provider.ts",
+      "output": "scripts/host/kernel/knowledge-input/session-provider.js"
+    },
+    "scripts/kernel/standalone/session-providers/codex.mjs": {
+      "source": "src/host/kernel/knowledge-input/session-provider.ts",
+      "output": "scripts/host/kernel/knowledge-input/session-provider.js"
+    },
+    "scripts/kernel/standalone/session-providers/generic.mjs": {
+      "source": "src/host/kernel/knowledge-input/session-provider.ts",
+      "output": "scripts/host/kernel/knowledge-input/session-provider.js"
+    },
+    "scripts/kernel/standalone/session-providers/index.mjs": {
+      "source": "src/host/kernel/knowledge-input/session-provider.ts",
+      "output": "scripts/host/kernel/knowledge-input/session-provider.js"
+    },
+    "scripts/kernel/standalone/session-providers/normalize.mjs": {
+      "source": "src/host/kernel/knowledge-input/session-provider.ts",
+      "output": "scripts/host/kernel/knowledge-input/session-provider.js"
+    },
+    "scripts/kernel/standalone/session-providers/resolver.mjs": {
+      "source": "src/host/kernel/knowledge-input/session-provider.ts",
+      "output": "scripts/host/kernel/knowledge-input/session-provider.js"
+    },
+    "scripts/kernel/state-projector.mjs": {
+      "source": "src/kernel/state-projector.ts",
+      "output": "scripts/kernel/state-projector.js"
+    },
+    "scripts/kernel/state-store.mjs": {
+      "source": "src/kernel/state-store.ts",
+      "output": "scripts/kernel/state-store.js"
+    },
+    "scripts/kernel/task/evidence-plan.mjs": {
+      "source": "src/kernel/task/evidence-plan.ts",
+      "output": "scripts/kernel/task/evidence-plan.js"
+    },
+    "scripts/kernel/task/evidence-scan.mjs": {
+      "source": "src/host/kernel/workspace/repository-observation.ts",
+      "output": "scripts/host/kernel/workspace/repository-observation.js"
+    },
+    "scripts/kernel/task/greenfield-bootstrap.mjs": {
+      "source": "src/kernel/task/greenfield-bootstrap.ts",
+      "output": "scripts/kernel/task/greenfield-bootstrap.js"
+    },
+    "scripts/kernel/task/migration-workflow.mjs": {
+      "source": "src/kernel/task/migration-workflow.ts",
+      "output": "scripts/kernel/task/migration-workflow.js"
+    },
+    "scripts/kernel/task/project-mode.mjs": {
+      "source": "src/kernel/task/project-mode.ts",
+      "output": "scripts/kernel/task/project-mode.js"
+    },
+    "scripts/kernel/task/task-contract.mjs": {
+      "source": "src/kernel/task/task-contract.ts",
+      "output": "scripts/kernel/task/task-contract.js"
+    },
+    "scripts/kernel/transition.mjs": {
+      "source": "src/kernel/transition.ts",
+      "output": "scripts/kernel/transition.js"
+    },
+    "scripts/kernel/upstream-registry.mjs": {
+      "source": "src/host/kernel/upstream-registry.ts",
+      "output": "scripts/host/kernel/upstream-registry.js"
+    }
+  },
+  "surfaces": {
+    "src/application/kernel-cli/account-install.ts": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "scripts/application/kernel-cli/account-install.js": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "src/application/kernel-cli/main.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/application/kernel-cli/main.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/application/kernel-cli/standalone.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/application/kernel-cli/standalone.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/application/kernel-standalone/architecture-artifacts.ts": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "src/application/kernel-standalone/codebase-master-guide.ts": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "src/application/kernel-standalone/codebase-understanding.ts": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "src/application/kernel-standalone/explain-diff-html.ts": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "src/application/kernel-standalone/kernel-commit.ts": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "src/application/kernel-standalone/product-definition.ts": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "src/application/kernel-standalone/project-memory.ts": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "src/application/kernel-standalone/ui-audit.ts": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "src/cli/codebase-master-guide.ts": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "bin/codebase-master-guide.mjs": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "src/cli/codebase-understanding.ts": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "bin/codebase-understanding.mjs": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "src/cli/kernel-commit.ts": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "bin/kernel-commit.mjs": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "src/cli/moon-relay-kernel.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/cli/moon-relay-standalone.ts": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "src/cli/moonshot-relay.ts": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "src/cli/project-memory.ts": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "bin/project-memory.mjs": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "src/contracts/command-catalog.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/command-catalog.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/completion-outcomes.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/completion-outcomes.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/context-receipt.ts": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "scripts/contracts/context-receipt.js": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "src/contracts/execution-class.ts": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/contracts/execution-class.js": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "src/contracts/generated/kernel.applicable-knowledge-slice.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/contracts/generated/kernel.applicable-knowledge-slice.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/contracts/generated/kernel.attempt-provenance.ts": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "scripts/contracts/generated/kernel.attempt-provenance.js": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "src/contracts/generated/kernel.codebase-index-manifest.ts": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "scripts/contracts/generated/kernel.codebase-index-manifest.js": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "src/contracts/generated/kernel.context-receipt.ts": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "scripts/contracts/generated/kernel.context-receipt.js": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "src/contracts/generated/kernel.durable-state.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/generated/kernel.durable-state.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/generated/kernel.eval-case.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/contracts/generated/kernel.eval-case.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/contracts/generated/kernel.execution-capsule.ts": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "scripts/contracts/generated/kernel.execution-capsule.js": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "src/contracts/generated/kernel.git-closeout-receipt.ts": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "scripts/contracts/generated/kernel.git-closeout-receipt.js": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "src/contracts/generated/kernel.git-closeout-request.ts": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "scripts/contracts/generated/kernel.git-closeout-request.js": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "src/contracts/generated/kernel.knowledge-candidate.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/contracts/generated/kernel.knowledge-candidate.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/contracts/generated/kernel.knowledge-commit-receipt.ts": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "scripts/contracts/generated/kernel.knowledge-commit-receipt.js": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "src/contracts/generated/kernel.knowledge-contract.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/contracts/generated/kernel.knowledge-contract.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/contracts/generated/kernel.knowledge-import-receipt.ts": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "scripts/contracts/generated/kernel.knowledge-import-receipt.js": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "src/contracts/generated/kernel.knowledge-import.ts": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "scripts/contracts/generated/kernel.knowledge-import.js": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "src/contracts/generated/kernel.knowledge-record.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/contracts/generated/kernel.knowledge-record.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/contracts/generated/kernel.knowledge-review-result.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/contracts/generated/kernel.knowledge-review-result.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/contracts/generated/kernel.measurement.ts": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/contracts/generated/kernel.measurement.js": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "src/contracts/generated/kernel.model-route.ts": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/contracts/generated/kernel.model-route.js": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "src/contracts/generated/kernel.model-usage.ts": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/contracts/generated/kernel.model-usage.js": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "src/contracts/generated/kernel.qa-report.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/generated/kernel.qa-report.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/generated/kernel.release-evidence.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/generated/kernel.release-evidence.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/generated/kernel.review-capsule.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/generated/kernel.review-capsule.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/generated/kernel.review-receipt.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/generated/kernel.review-receipt.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/generated/kernel.route-admission.ts": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/contracts/generated/kernel.route-admission.js": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "src/contracts/generated/kernel.run-summary.ts": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "scripts/contracts/generated/kernel.run-summary.js": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "src/contracts/generated/kernel.runtime-manifest.ts": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "scripts/contracts/generated/kernel.runtime-manifest.js": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "src/contracts/generated/kernel.runtime-state.ts": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "scripts/contracts/generated/kernel.runtime-state.js": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "src/contracts/generated/kernel.session-source.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/contracts/generated/kernel.session-source.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/contracts/generated/kernel.state-projection.ts": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "scripts/contracts/generated/kernel.state-projection.js": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "src/contracts/generated/kernel.task-contract.ts": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "scripts/contracts/generated/kernel.task-contract.js": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "src/contracts/generated/kernel.task-snapshot.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/generated/kernel.task-snapshot.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/generated/kernel.track.ts": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "scripts/contracts/generated/kernel.track.js": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "src/contracts/generated/kernel.work-authority.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/generated/kernel.work-authority.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/generated/kernel.workflow-state.ts": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "scripts/contracts/generated/kernel.workflow-state.js": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "src/contracts/git-closeout.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/git-closeout.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/host-execution-contract.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/contracts/host-execution-contract.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/contracts/host-session.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/host-session.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/knowledge-input.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/knowledge-input.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/model-execution.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/model-execution.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/model-route.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/model-route.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/optional-capabilities.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/optional-capabilities.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/project-command.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/project-command.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/proof-environment.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/proof-environment.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/proof-execution.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/proof-execution.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/repository-observation.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/repository-observation.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/review.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/review.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/schema-codec.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/schema-codec.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/schema-definitions.generated.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/schema-definitions.generated.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/task-contract-seed.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/task-contract-seed.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/verification-settlement.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/verification-settlement.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/work-unit-scope.ts": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "scripts/contracts/work-unit-scope.js": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "src/contracts/workspace-observation.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/workspace-observation.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/contracts/worktree-authority.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/worktree-authority.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/host-tooling/kernel-eval/model-routing-eval.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/eval/model-routing-eval.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/host-tooling/kernel-eval/sentinel-eval.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/eval/sentinel-eval.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/host-tooling/kernel-eval/static-analysis.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/kernel/eval/static-analysis.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/host-tooling/kernel-public/optimization-cycle.ts": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "src/host-tooling/kernel-public/runtime-boundary-audit.ts": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "src/host-tooling/kernel-public/unification-audit.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/host/kernel/adapter-dispatch.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/adapter-dispatch.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/adapters/ade.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/adapters/ade.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/adapters/claude.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/adapters/claude.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/adapters/codex.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/adapters/codex.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/adapters/fable.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/adapters/fable.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/adapters/gemini-cli.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/adapters/gemini-cli.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/adapters/gemini.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/adapters/gemini.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/ade-context-policy.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/ade-context-policy.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/admission-revalidator.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/admission-revalidator.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/cache-replay.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/cache-replay.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/claude-effort-policy.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/claude-effort-policy.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/codebase/codebase-index.ts": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "scripts/host/kernel/codebase/codebase-index.js": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "src/host/kernel/codex-actor-router.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/codex-actor-router.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/codex-agents-policy.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/codex-agents-policy.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/codex-model-policy.ts": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/host/kernel/codex-model-policy.js": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "src/host/kernel/codex-session-observer.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/codex-session-observer.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/common-model-policy.ts": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/host/kernel/common-model-policy.js": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "src/host/kernel/context-segments.ts": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "scripts/host/kernel/context-segments.js": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "src/host/kernel/control-plane-runtime.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/control-plane-runtime.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/git/closeout-operations.ts": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "scripts/host/kernel/git/closeout-operations.js": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "src/host/kernel/git/remote-parity.ts": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "scripts/host/kernel/git/remote-parity.js": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "src/host/kernel/git/staging.ts": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "scripts/host/kernel/git/staging.js": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "src/host/kernel/host-boundary.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/host-boundary.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/host-routing.ts": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/host/kernel/host-routing.js": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "src/host/kernel/host-session.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/host-session.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/host-turn.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/host-turn.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/independent-subagent-review.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/independent-subagent-review.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/knowledge-input/session-provider.ts": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "scripts/host/kernel/knowledge-input/session-provider.js": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "src/host/kernel/lifecycle-bridge.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/lifecycle-bridge.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/mcp-composition.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/mcp-composition.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/model-capsule-view.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/model-capsule-view.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/model-registry.ts": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/host/kernel/model-registry.js": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "src/host/kernel/model-route-policy.ts": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/host/kernel/model-route-policy.js": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "src/host/kernel/model-routing.ts": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/host/kernel/model-routing.js": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "src/host/kernel/parallel-dispatcher.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/parallel-dispatcher.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/process-observation.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/process-observation.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/profile-target.ts": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "scripts/host/kernel/profile-target.js": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "src/host/kernel/prompt-envelope.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/prompt-envelope.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/prompts/claude-opus-5.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/prompts/claude-opus-5.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/prompts/codex-gpt-5p6.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/prompts/codex-gpt-5p6.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/prompts/common-execution.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/prompts/common-execution.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/proof/environment-observation.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/host/kernel/proof/environment-observation.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/host/kernel/proof/network-policy.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/host/kernel/proof/network-policy.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/host/kernel/proof/process-tree.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/host/kernel/proof/process-tree.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/host/kernel/proof/project-command-observation.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/host/kernel/proof/project-command-observation.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/host/kernel/proof/proof-executor.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/host/kernel/proof/proof-executor.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/host/kernel/provider-mutation-adapter.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/host/kernel/provider-mutation-adapter.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/host/kernel/provider-prompt-policy.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/provider-prompt-policy.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/review-readiness.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/review-readiness.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/review-transport-resolver.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/review-transport-resolver.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/route-admission.ts": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/host/kernel/route-admission.js": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "src/host/kernel/session-affinity.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/session-affinity.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/session-holder.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/session-holder.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/tool-manifest.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/tool-manifest.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/turn-dispatcher.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/turn-dispatcher.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/upstream-registry.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/host/kernel/upstream-registry.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/host/kernel/usage-receipt.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/usage-receipt.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/workspace/contract-path-access.ts": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "scripts/host/kernel/workspace/contract-path-access.js": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "src/host/kernel/workspace/mutation-observation.ts": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "scripts/host/kernel/workspace/mutation-observation.js": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "src/host/kernel/workspace/physical-worktree.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/workspace/physical-worktree.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/workspace/repository-observation.ts": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "scripts/host/kernel/workspace/repository-observation.js": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "src/host/kernel/workspace/stable-workspace.ts": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "scripts/host/kernel/workspace/stable-workspace.js": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "src/host/kernel/workspace/workspace-identity.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/host/kernel/workspace/workspace-identity.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/host/kernel/workspace/worktree-resolution.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/host/kernel/workspace/worktree-resolution.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/artifact-paths.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/artifact-paths.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/bridge/coordinator-surface.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/bridge/coordinator-surface.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/bridge/mcp.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/kernel/bridge/mcp.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/kernel/capability-guidance.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/capability-guidance.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/capability-resolver.ts": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/kernel/capability-resolver.js": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "src/kernel/change-contract.ts": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "scripts/kernel/change-contract.js": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "src/kernel/context-build.ts": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "scripts/kernel/context-build.js": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "src/kernel/control-plane.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/control-plane.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/durable-write.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/durable-write.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/evidence-pack.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/kernel/evidence-pack.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/kernel/git/closeout.ts": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "scripts/kernel/git/closeout.js": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "src/kernel/git/commit-message.ts": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "scripts/kernel/git/commit-message.js": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "src/kernel/git/staging-policy.ts": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "scripts/kernel/git/staging-policy.js": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "src/kernel/host-services.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/host-services.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/installer.ts": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "scripts/kernel/installer.js": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "src/kernel/knowledge-ingestion/candidate-extract.ts": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "scripts/kernel/knowledge-ingestion/candidate-extract.js": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "src/kernel/knowledge-ingestion/conflict.ts": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "scripts/kernel/knowledge-ingestion/conflict.js": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "src/kernel/knowledge-ingestion/deduplicate.ts": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "scripts/kernel/knowledge-ingestion/deduplicate.js": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "src/kernel/knowledge-ingestion/import.ts": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "scripts/kernel/knowledge-ingestion/import.js": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "src/kernel/knowledge-ingestion/normalize.ts": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "scripts/kernel/knowledge-ingestion/normalize.js": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "src/kernel/knowledge-ingestion/redact.ts": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "scripts/kernel/knowledge-ingestion/redact.js": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "src/kernel/knowledge-ingestion/transaction.ts": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "scripts/kernel/knowledge-ingestion/transaction.js": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "src/kernel/knowledge-ingestion/verify.ts": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "scripts/kernel/knowledge-ingestion/verify.js": {
+      "classification": "capability",
+      "capability": "knowledge-ingestion-and-evidence-graph"
+    },
+    "src/kernel/knowledge/architecture-resolve.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/architecture-resolve.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/knowledge/candidate-extract.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/candidate-extract.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/knowledge/candidate-review.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/candidate-review.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/knowledge/canonical-record-mapper.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/canonical-record-mapper.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/knowledge/capture.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/capture.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/knowledge/change-diff.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/change-diff.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/knowledge/commit.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/commit.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/knowledge/context-load.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/context-load.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/knowledge/context-render.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/context-render.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/knowledge/freshness.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/freshness.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/knowledge/knowledge-authority.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/knowledge-authority.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/knowledge/ontology-evaluate.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/ontology-evaluate.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/knowledge/ontology-gate.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/ontology-gate.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/knowledge/path-scope.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/path-scope.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/knowledge/projection.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/projection.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/knowledge/receipt.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/receipt.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/knowledge/records.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/records.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/knowledge/store.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/store.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/knowledge/supersession.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/supersession.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/knowledge/tacit-resolve.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/tacit-resolve.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/knowledge/topology-projection.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/topology-projection.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/legacy-hydration-cleanup.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/legacy-hydration-cleanup.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/package-build.ts": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "scripts/kernel/package-build.js": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "src/kernel/persistence/durable-state.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/persistence/durable-state.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/persistence/finalization-store.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/kernel/persistence/finalization-store.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/kernel/persistence/host-execution-store.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/persistence/host-execution-store.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/persistence/knowledge-lifecycle-store.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/persistence/knowledge-lifecycle-store.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/persistence/knowledge-migration-recovery.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/persistence/knowledge-migration-recovery.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/persistence/project-identity-store.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/persistence/project-identity-store.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/persistence/run-journal.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/persistence/run-journal.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/persistence/schema-migrations.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/persistence/schema-migrations.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/persistence/schema.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/persistence/schema.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/persistence/state-store-contracts.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/persistence/state-store-contracts.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/persistence/trust-store.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/kernel/persistence/trust-store.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/kernel/persistence/work-attempt-store.ts": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "scripts/kernel/persistence/work-attempt-store.js": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "src/kernel/persistence/work-lifecycle-store.ts": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "scripts/kernel/persistence/work-lifecycle-store.js": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "src/kernel/persistence/work-store.ts": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "scripts/kernel/persistence/work-store.js": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "src/kernel/policy.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/policy.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/profile-build.ts": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "scripts/kernel/profile-build.js": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "src/kernel/profile-doctor.ts": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "scripts/kernel/profile-doctor.js": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "src/kernel/profile-install.ts": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "scripts/kernel/profile-install.js": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "src/kernel/profile-projection.ts": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "scripts/kernel/profile-projection.js": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "src/kernel/project-hydrate.ts": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "scripts/kernel/project-hydrate.js": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "src/kernel/project-identity-preflight.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/project-identity-preflight.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/project-identity.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/project-identity.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/proof-route.ts": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/kernel/proof-route.js": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "src/kernel/proof/baseline-proof.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/kernel/proof/baseline-proof.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/kernel/proof/completion-provenance.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/kernel/proof/completion-provenance.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/kernel/proof/completion-view.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/proof/completion-view.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/proof/domain-policy.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/kernel/proof/domain-policy.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/kernel/proof/evidence-reuse.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/kernel/proof/evidence-reuse.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/kernel/proof/failure-classify.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/kernel/proof/failure-classify.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/kernel/proof/protected-obligations.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/kernel/proof/protected-obligations.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/kernel/proof/review-pipeline.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/kernel/proof/review-pipeline.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/kernel/proof/review-receipt.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/kernel/proof/review-receipt.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/kernel/proof/trust-authority.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/kernel/proof/trust-authority.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/kernel/risk-surfaces.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/risk-surfaces.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/route.ts": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/kernel/route.js": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "src/kernel/routing/route-admission.ts": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/kernel/routing/route-admission.js": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "src/kernel/run/attempt-provenance.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/run/attempt-provenance.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/run/binding-preflight.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/run/binding-preflight.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/run/capsule-selection.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/run/capsule-selection.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/run/contract-preflight.ts": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "scripts/kernel/run/contract-preflight.js": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "src/kernel/run/control-plane-helpers.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/run/control-plane-helpers.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/run/execution-capsule.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/kernel/run/execution-capsule.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/kernel/run/finalization.ts": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "scripts/kernel/run/finalization.js": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "src/kernel/run/invocation-resolver.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/run/invocation-resolver.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/run/lease-policy.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/run/lease-policy.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/run/measurement.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/run/measurement.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/run/model-route-contract.ts": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "scripts/kernel/run/model-route-contract.js": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "src/kernel/run/model-route-metrics.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/run/model-route-metrics.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/run/model-routing.ts": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/kernel/run/model-routing.js": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "src/kernel/run/model-view.ts": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "scripts/kernel/run/model-view.js": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "src/kernel/run/mutation-guard.ts": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "scripts/kernel/run/mutation-guard.js": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "src/kernel/run/obligation-compiler.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/run/obligation-compiler.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/run/optional-capabilities.ts": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "scripts/kernel/run/optional-capabilities.js": {
+      "classification": "capability",
+      "capability": "model-routing-and-route-admission"
+    },
+    "src/kernel/run/receipt-fields.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/run/receipt-fields.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/run/report-identity.ts": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "scripts/kernel/run/report-identity.js": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "src/kernel/run/required-host-capabilities.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/run/required-host-capabilities.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/run/run-identity.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/run/run-identity.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/run/run-locator.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/run/run-locator.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/run/run-loop.ts": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "scripts/kernel/run/run-loop.js": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "src/kernel/run/run-step-ledger.ts": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "scripts/kernel/run/run-step-ledger.js": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "src/kernel/run/session-binding.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/kernel/run/session-binding.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/kernel/run/step-planner.ts": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "scripts/kernel/run/step-planner.js": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "src/kernel/run/successor-key.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/run/successor-key.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/run/work-authority.ts": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "scripts/kernel/run/work-authority.js": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "src/kernel/run/work-cursor.ts": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "scripts/kernel/run/work-cursor.js": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "src/kernel/run/workspace-change-set.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/run/workspace-change-set.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/run/workspace-registration.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/run/workspace-registration.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/runtime-home.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/runtime-home.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/runtime-resolver.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/runtime-resolver.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/sqlite-adapter.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/sqlite-adapter.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/standalone/artifact-utils.ts": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "scripts/kernel/standalone/artifact-utils.js": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "src/kernel/standalone/catalog.ts": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "scripts/kernel/standalone/catalog.js": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "src/kernel/standalone/common.ts": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "scripts/kernel/standalone/common.js": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "src/kernel/standalone/prework.ts": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "scripts/kernel/standalone/prework.js": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "src/kernel/standalone/skills-lock.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/standalone/skills-lock.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/state-projector.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/state-projector.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/state-store.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/state-store.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/kernel/task/evidence-plan.ts": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "scripts/kernel/task/evidence-plan.js": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "src/kernel/task/greenfield-bootstrap.ts": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "scripts/kernel/task/greenfield-bootstrap.js": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "src/kernel/task/migration-workflow.ts": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "scripts/kernel/task/migration-workflow.js": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "src/kernel/task/project-mode.ts": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "scripts/kernel/task/project-mode.js": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "src/kernel/task/task-contract.ts": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "scripts/kernel/task/task-contract.js": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "src/kernel/transition.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/transition.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/shared/atomic-json.ts": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "scripts/lib/atomic-json.js": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "src/shared/candidate-identity.ts": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "scripts/lib/candidate-identity.js": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "src/shared/canonical-digest.ts": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "scripts/lib/canonical-digest.js": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "src/shared/context-sanitization.ts": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "scripts/lib/context-sanitization.js": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "src/shared/git-safe.ts": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "scripts/lib/git-safe.js": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "src/shared/match-capture.ts": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "scripts/lib/match-capture.js": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "src/shared/path-identity.ts": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "scripts/lib/path-identity.js": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "src/shared/path-scope.ts": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "scripts/lib/path-scope.js": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "src/shared/payload-path.ts": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "scripts/lib/payload-path.js": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "src/shared/persistent-sanitizer.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/lib/persistent-sanitizer.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/shared/redaction.ts": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "scripts/lib/redaction.js": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "src/shared/required-index.ts": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "scripts/lib/required-index.js": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "src/shared/runtime-assets.ts": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "scripts/lib/runtime-assets.js": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "src/shared/runtime-build.ts": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "scripts/lib/runtime-build.js": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "src/shared/runtime-dependencies.ts": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "scripts/lib/runtime-dependencies.js": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "schemas/kernel.durable-state.schema.json": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "schemas/kernel.task-snapshot.schema.json": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "schemas/kernel.work-authority.schema.json": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    }
+  }
+}

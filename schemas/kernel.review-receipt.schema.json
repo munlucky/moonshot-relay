@@ -1,65 +1,257 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://moon-relay-kernel.local/schemas/kernel.review-receipt.schema.json",
-  "title": "Kernel review receipt",
-  "description": "Binds a structured review verdict to the session, model route, and workspace subject that actually produced it. A judgment obligation is satisfied by a receipt, never by a caller-supplied reviewer string. enforcementStatus 'unrouted' records a review the Host never routed; it can never satisfy a protected or T3 judgment.",
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schemaVersion", "receiptId", "runId", "obligationId", "reviewStage", "verdict",
-    "reviewer", "implementer", "subject", "rationale", "digest", "createdAt"
-  ],
   "properties": {
-    "schemaVersion": { "const": 1 },
-    "receiptId": { "type": "string", "pattern": "^review-receipt-[a-f0-9]{8,64}$" },
-    "runId": { "type": "string", "minLength": 1 },
-    "obligationId": { "type": "string", "minLength": 1 },
-    "stepId": { "type": ["string", "null"] },
-    "reviewerBindingId": { "type": ["string", "null"] },
-    "implementerAttemptId": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^attempt-[a-f0-9-]{8,96}$" }] },
-    "reviewStage": { "enum": ["contract", "engineering", "complexity"] },
-    "verdict": { "enum": ["pass", "fail", "changes-requested"] },
-    "findingClass": { "enum": ["none", "minor", "important", "critical"] },
-    "planRevision": { "type": "integer", "minimum": 1 },
+    "schemaVersion": {
+      "const": 1
+    },
+    "receiptId": {
+      "type": "string"
+    },
+    "runId": {
+      "type": "string"
+    },
+    "obligationId": {
+      "type": "string"
+    },
+    "stepId": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "reviewerBindingId": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "implementerAttemptId": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "reviewStage": {
+      "enum": [
+        "contract",
+        "engineering",
+        "complexity"
+      ]
+    },
+    "verdict": {
+      "enum": [
+        "pass",
+        "fail",
+        "changes-requested"
+      ]
+    },
+    "findingClass": {
+      "enum": [
+        "none",
+        "minor",
+        "important",
+        "critical"
+      ]
+    },
+    "planRevision": {
+      "type": "number"
+    },
     "reviewer": {
       "type": "object",
-      "additionalProperties": false,
-      "required": ["actorSessionId", "modelClass", "enforcementStatus"],
       "properties": {
-        "actorSessionId": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
-        "usageReceiptId": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^usage-[a-f0-9]{8,64}$" }] },
-        "routeDecisionId": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^route-[a-f0-9]{8,64}$" }] },
-        "modelClass": { "enum": ["frontier_reasoning", "value_coding", "kernel", "unrouted"] },
-        "resolvedModel": { "type": ["string", "null"] },
-        "enforcementStatus": { "enum": ["enforced", "fallback", "advisory", "unsupported", "failed", "unrouted"] }
-      }
+        "actorSessionId": {
+          "type": "string"
+        },
+        "usageReceiptId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "routeDecisionId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "modelClass": {
+          "type": "string"
+        },
+        "resolvedModel": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "enforcementStatus": {
+          "enum": [
+            "enforced",
+            "fallback",
+            "advisory",
+            "unsupported",
+            "failed",
+            "unrouted",
+            "operator_approved"
+          ]
+        },
+        "approvalRefDigest": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "actorSessionId",
+        "usageReceiptId",
+        "routeDecisionId",
+        "modelClass",
+        "resolvedModel",
+        "enforcementStatus",
+        "approvalRefDigest"
+      ],
+      "additionalProperties": false
     },
     "implementer": {
       "type": "object",
-      "additionalProperties": false,
-      "required": ["actorSessionId"],
       "properties": {
-        "actorSessionId": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }] },
-        "usageReceiptId": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^usage-[a-f0-9]{8,64}$" }] }
-      }
+        "actorSessionId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "usageReceiptId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "actorSessionId",
+        "usageReceiptId"
+      ],
+      "additionalProperties": false
     },
     "subject": {
       "type": "object",
-      "additionalProperties": false,
-      "required": ["workspaceIdentity", "mutationRevision", "changedPathsDigest", "evidenceDigest"],
       "properties": {
-        "workspaceIdentity": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
-        "mutationRevision": { "type": "integer", "minimum": 0 },
-        "changedPathsDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
-        "evidenceDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+        "workspaceIdentity": {
+          "type": "string"
+        },
+        "mutationRevision": {
+          "type": "number"
+        },
+        "changedPathsDigest": {
+          "type": "string"
+        },
+        "evidenceDigest": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspaceIdentity",
+        "mutationRevision",
+        "changedPathsDigest",
+        "evidenceDigest"
+      ],
+      "additionalProperties": false
+    },
+    "acceptanceCoverage": {
+      "type": "array",
+      "items": {
+        "type": "string"
       }
     },
-    "acceptanceCoverage": { "type": "array", "items": { "type": "string" } },
-    "findings": { "type": "array" },
-    "rationale": { "type": "string", "minLength": 1 },
-    "createdByVersion": { "type": "string" },
-    "migrationOrigin": { "type": ["string", "null"] },
-    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
-    "createdAt": { "type": "string", "minLength": 1 }
-  }
+    "findings": {
+      "type": "array",
+      "items": {}
+    },
+    "rationale": {
+      "type": "string"
+    },
+    "createdByVersion": {
+      "type": "string"
+    },
+    "migrationOrigin": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "createdAt": {
+      "type": "string"
+    },
+    "digest": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "receiptId",
+    "runId",
+    "obligationId",
+    "stepId",
+    "reviewerBindingId",
+    "implementerAttemptId",
+    "reviewStage",
+    "verdict",
+    "findingClass",
+    "planRevision",
+    "reviewer",
+    "implementer",
+    "subject",
+    "acceptanceCoverage",
+    "findings",
+    "rationale",
+    "createdByVersion",
+    "migrationOrigin",
+    "createdAt",
+    "digest"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://moon-relay-kernel.local/schemas/kernel.review-receipt.schema.json",
+  "title": "KernelReviewReceipt"
 }

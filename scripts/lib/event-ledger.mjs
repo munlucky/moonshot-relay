@@ -1,6 +1,6 @@
 import { appendFile, readFile } from 'node:fs/promises';
 
-import { sha256Hex } from './candidate-identity.mjs';
+import { sha256Hex } from './candidate-identity.js';
 
 const GENESIS_HASH = '0'.repeat(64);
 

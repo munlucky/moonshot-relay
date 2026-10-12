@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildProjectKnowledgeContext } from '../scripts/kernel/knowledge/context-load.mjs';
-import { openKernelStateStore } from '../scripts/kernel/state-store.mjs';
+import { buildProjectKnowledgeContext } from '../scripts/kernel/knowledge/context-load.js';
+import { openKernelStateStore } from '../scripts/kernel/state-store.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

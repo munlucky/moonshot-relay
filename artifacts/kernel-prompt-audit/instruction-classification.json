@@ -13,17 +13,17 @@
       { "surface": "kernel-planner.md", "instruction": "Do not claim completion. Completion is decided by the Kernel from evidence.", "reason": "Completion non-authority" }
     ],
     "B_common_stable_behavior_consolidated": [
-      { "instruction": "Complete the current work unit at its declared scope.", "movedTo": "scripts/host/kernel/prompts/common-execution.mjs" },
-      { "instruction": "Make routine implementation decisions without asking.", "movedTo": "scripts/host/kernel/prompts/common-execution.mjs" },
-      { "instruction": "Do not add extra planning, verification passes, reviewers, or subagents unless the Kernel action requires them.", "movedTo": "scripts/host/kernel/prompts/common-execution.mjs" },
-      { "instruction": "Keep user-visible progress focused on findings, blockers, and material changes of direction.", "movedTo": "scripts/host/kernel/prompts/common-execution.mjs" }
+      { "instruction": "Complete the current work unit at its declared scope.", "movedTo": "scripts/host/kernel/prompts/common-execution.js" },
+      { "instruction": "Make routine implementation decisions without asking.", "movedTo": "scripts/host/kernel/prompts/common-execution.js" },
+      { "instruction": "Do not add extra planning, verification passes, reviewers, or subagents unless the Kernel action requires them.", "movedTo": "scripts/host/kernel/prompts/common-execution.js" },
+      { "instruction": "Keep user-visible progress focused on findings, blockers, and material changes of direction.", "movedTo": "scripts/host/kernel/prompts/common-execution.js" }
     ],
     "C_duplicate_legacy_removed": [],
     "D_provider_specific_moved": [
-      { "instruction": "Keep thinking enabled; control cost through effort.", "movedTo": "scripts/host/kernel/prompts/claude-opus-5.mjs" },
-      { "instruction": "Use native tool calls only; do not execute tool-like text.", "movedTo": "scripts/host/kernel/prompts/claude-opus-5.mjs" },
+      { "instruction": "Keep thinking enabled; control cost through effort.", "movedTo": "scripts/host/kernel/prompts/claude-opus-5.js" },
+      { "instruction": "Use native tool calls only; do not execute tool-like text.", "movedTo": "scripts/host/kernel/prompts/claude-opus-5.js" },
       { "instruction": "Effort selection per action and risk tier.", "movedTo": "scripts/host/kernel/claude-effort-policy.mjs" },
-      { "instruction": "Model, reasoning effort, sandbox, and approval policy are execution authority, not prompt text.", "movedTo": "scripts/host/kernel/prompts/codex-gpt-5p6.mjs" },
+      { "instruction": "Model, reasoning effort, sandbox, and approval policy are execution authority, not prompt text.", "movedTo": "scripts/host/kernel/prompts/codex-gpt-5p6.js" },
       { "instruction": "Sol/Terra/Luna routing and reasoning effort selection.", "movedTo": "scripts/host/kernel/codex-model-policy.mjs" },
       { "instruction": "Codex profile settings (model, reasoning, sandbox).", "movedTo": "scripts/host/kernel/codex-profile-materializer.mjs" },
       { "instruction": "Fast mode selection.", "movedTo": "scripts/host/kernel/codex-model-policy.mjs (resolveCodexFastModePolicy)" }

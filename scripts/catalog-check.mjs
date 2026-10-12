@@ -4,7 +4,7 @@ import { access, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { buildStandaloneLock, loadStandaloneCatalog, STANDALONE_LOCK_REL, STANDALONE_CATALOG_REL } from './kernel/standalone/catalog.mjs';
+import { buildStandaloneLock, loadStandaloneCatalog, STANDALONE_LOCK_REL, STANDALONE_CATALOG_REL } from './kernel/standalone/catalog.js';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRootDefault = path.dirname(path.dirname(scriptPath));

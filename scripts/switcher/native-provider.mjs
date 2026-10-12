@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { providerForSurface } from '../kernel/run/host-session.mjs';
+import { providerForSurface } from '../host/kernel/host-session.js';
 import { resolveCommand } from './app-resolver/common.mjs';
 
 // Kernel owns orchestration and its Node runtime only. The provider process

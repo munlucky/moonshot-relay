@@ -7,7 +7,7 @@ import process from 'node:process';
 import {
   assertRuntimeSurfaceUnexpanded,
   auditSkillsLock,
-} from './lib/skills-lock.mjs';
+} from './kernel/standalone/skills-lock.js';
 import { resolveRuntimeNode } from './lib/moonshot-runtime-resolver.mjs';
 
 const usage = () => 'Usage: node scripts/doctor.mjs check [--repo-root <root>] [--evidence-root <root>] [--lock <skills-lock.json>] [--runtime-surface <runtime-surface.json>] [--expected-runtime-surface-json <json-array>] [--json]';

@@ -5,7 +5,7 @@ import process from 'node:process';
 import {
   auditSkillsLock,
   buildSkillsLock,
-} from './lib/skills-lock.mjs';
+} from './kernel/standalone/skills-lock.js';
 
 const usage = () => 'Usage: node scripts/skills-audit.mjs audit [--lock <skills-lock.json>] [--runtime-surface <runtime-surface.json>] [--json]\n       node scripts/skills-audit.mjs generate-lock [--out <skills-lock.json>] [--default-license <license>] [--default-permissions-json <json-array>] [--approve-permissions] [--json]';
 

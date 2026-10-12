@@ -5,8 +5,8 @@ import { promisify } from 'node:util';
 import { KERNEL_RUNTIME_ID, SURFACES } from './constants.mjs';
 import { resolveSurfaceRoots, physicalTargetIdentity } from './paths.mjs';
 import { listProviderProcesses } from './process-guard.mjs';
-import { installKernelProfile } from '../kernel/profile-install.mjs';
-import { materializeKernelCommandShim } from '../kernel/installer.mjs';
+import { installKernelProfile } from '../kernel/profile-install.js';
+import { materializeKernelCommandShim } from '../kernel/installer.js';
 import { installSwitcher } from './installer.mjs';
 
 const execFileAsync = promisify(execFile);

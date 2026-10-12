@@ -40,10 +40,10 @@ behavior with no single home*. That gap is now closed:
 
 | Concern | Single location |
 |---|---|
-| Common scope / autonomy / verification / delegation rules | `scripts/host/kernel/prompts/common-execution.mjs` |
+| Common scope / autonomy / verification / delegation rules | `scripts/host/kernel/prompts/common-execution.js` |
 | Conditional planning, verification order, delegation gate | `scripts/host/kernel/common-model-policy.mjs` |
-| Claude thinking, effort, cache breakpoints, output artifacts | `scripts/host/kernel/prompts/claude-opus-5.mjs`, `claude-effort-policy.mjs` |
-| Codex routing, profiles, session, fast mode, API capability gate | `scripts/host/kernel/prompts/codex-gpt-5p6.mjs`, `codex-model-policy.mjs`, `codex-profile-materializer.mjs`, `codex-agents-policy.mjs` |
+| Claude thinking, effort, cache breakpoints, output artifacts | `scripts/host/kernel/prompts/claude-opus-5.js`, `claude-effort-policy.mjs` |
+| Codex routing, profiles, session, fast mode, API capability gate | `scripts/host/kernel/prompts/codex-gpt-5p6.js`, `codex-model-policy.mjs`, `codex-profile-materializer.mjs`, `codex-agents-policy.mjs` |
 | Run/step/capsule identifiers | `scripts/host/kernel/prompt-envelope.mjs` `control` (never in a prompt segment) |
 
 `tests/kernel-prompt-legacy-instruction.test.mjs` now fails if any of the

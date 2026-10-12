@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "principle": "semantic authority owns transitions; state-store is the only SQLite persistence implementation",
+  "principle": "semantic authority owns transitions; owner stores share the single SQLite connection and transaction supplied by state-store",
   "authorities": [
     {
       "id": "work",
-      "semanticOwner": "scripts/kernel/run/work-cursor.mjs",
-      "readModel": "scripts/kernel/run/work-authority.mjs",
-      "persistence": "scripts/kernel/state-store.mjs",
+      "semanticOwner": "src/kernel/run/work-cursor.ts",
+      "readModel": "src/kernel/run/work-authority.ts",
+      "persistence": "src/kernel/state-store.ts",
       "tables": [
         "runs",
         "run_steps",
@@ -29,12 +29,52 @@
         "report operation key and payload digest are distinct",
         "physical worktree lifecycle is Host-owned",
         "the canonical Attempt checkpoints verified report continuation before Work or cursor advances"
-      ]
+      ],
+      "persistenceSources": [
+        "src/kernel/persistence/finalization-store.ts",
+        "src/kernel/persistence/host-execution-store.ts",
+        "src/kernel/persistence/knowledge-lifecycle-store.ts",
+        "src/kernel/persistence/schema-migrations.ts",
+        "src/kernel/persistence/trust-store.ts",
+        "src/kernel/persistence/work-attempt-store.ts",
+        "src/kernel/persistence/work-lifecycle-store.ts",
+        "src/kernel/persistence/work-store.ts",
+        "src/kernel/state-store.ts"
+      ],
+      "tableWriters": {
+        "runs": [
+          "src/kernel/persistence/finalization-store.ts",
+          "src/kernel/persistence/host-execution-store.ts",
+          "src/kernel/persistence/knowledge-lifecycle-store.ts",
+          "src/kernel/persistence/schema-migrations.ts",
+          "src/kernel/persistence/trust-store.ts",
+          "src/kernel/persistence/work-lifecycle-store.ts",
+          "src/kernel/persistence/work-store.ts"
+        ],
+        "run_steps": [
+          "src/kernel/persistence/schema-migrations.ts",
+          "src/kernel/persistence/work-attempt-store.ts",
+          "src/kernel/persistence/work-store.ts"
+        ],
+        "run_step_attempts": [
+          "src/kernel/persistence/schema-migrations.ts",
+          "src/kernel/persistence/work-attempt-store.ts"
+        ],
+        "project_workspaces": [
+          "src/kernel/persistence/schema-migrations.ts",
+          "src/kernel/persistence/work-lifecycle-store.ts",
+          "src/kernel/state-store.ts"
+        ],
+        "worktree_mutation_leases": [
+          "src/kernel/persistence/schema-migrations.ts",
+          "src/kernel/persistence/work-lifecycle-store.ts"
+        ]
+      }
     },
     {
       "id": "trust",
-      "semanticOwner": "scripts/kernel/proof/trust-authority.mjs",
-      "persistence": "scripts/kernel/state-store.mjs",
+      "semanticOwner": "src/kernel/proof/trust-authority.ts",
+      "persistence": "src/kernel/state-store.ts",
       "tables": [
         "run_obligations",
         "verifications",
@@ -50,12 +90,31 @@
         "completion is derived from current valid evidence",
         "review receipt is subject-bound",
         "completion acceptance is not rewritten by Knowledge or Git housekeeping"
-      ]
+      ],
+      "persistenceSources": [
+        "src/kernel/persistence/schema-migrations.ts",
+        "src/kernel/persistence/trust-store.ts"
+      ],
+      "tableWriters": {
+        "run_obligations": [
+          "src/kernel/persistence/trust-store.ts"
+        ],
+        "verifications": [
+          "src/kernel/persistence/schema-migrations.ts",
+          "src/kernel/persistence/trust-store.ts"
+        ],
+        "review_receipts": [
+          "src/kernel/persistence/trust-store.ts"
+        ],
+        "completion_decisions": [
+          "src/kernel/persistence/trust-store.ts"
+        ]
+      }
     },
     {
       "id": "knowledge",
-      "semanticOwner": "scripts/kernel/knowledge/knowledge-authority.mjs",
-      "persistence": "scripts/kernel/state-store.mjs",
+      "semanticOwner": "src/kernel/knowledge/knowledge-authority.ts",
+      "persistence": "src/kernel/state-store.ts",
       "tables": [
         "knowledge_candidates",
         "knowledge_review_receipts",
@@ -71,7 +130,24 @@
       "invariants": [
         "Knowledge failure never rewrites Work history",
         "required Knowledge may keep Task finalization incomplete after code acceptance"
-      ]
+      ],
+      "persistenceSources": [
+        "src/kernel/persistence/knowledge-lifecycle-store.ts"
+      ],
+      "tableWriters": {
+        "knowledge_candidates": [
+          "src/kernel/persistence/knowledge-lifecycle-store.ts"
+        ],
+        "knowledge_review_receipts": [
+          "src/kernel/persistence/knowledge-lifecycle-store.ts"
+        ],
+        "knowledge_commit_receipts": [
+          "src/kernel/persistence/knowledge-lifecycle-store.ts"
+        ],
+        "knowledge_approvals": [
+          "src/kernel/persistence/knowledge-lifecycle-store.ts"
+        ]
+      }
     }
   ],
   "retiredOrForbiddenWriters": [

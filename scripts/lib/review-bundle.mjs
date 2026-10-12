@@ -1,4 +1,4 @@
-import { sha256Hex } from './candidate-identity.mjs';
+import { sha256Hex } from './candidate-identity.js';
 import { BROWSER_REPAIR_MAX_ATTEMPTS } from './browser-scenario-contract.mjs';
 import {
   buildBrowserFailurePackage,

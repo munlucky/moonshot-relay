@@ -41,18 +41,47 @@ const isTestFile = (relative) => relative.startsWith('tests/') && (
   relative.endsWith('.test.mjs')
   || relative.endsWith('.test.js')
   || relative.endsWith('.test.cjs')
+  || relative.endsWith('.test.ts')
   || relative.endsWith('_test.py')
   || relative.endsWith('.spec.mjs')
   || relative.endsWith('.spec.js')
   || relative.endsWith('.spec.cjs')
+  || relative.endsWith('.spec.ts')
 );
+
+const compilerSurface = async (paths) => {
+  const generated = new Set();
+  const testSources = new Map();
+  if (!existsSync(path.join(sourceRoot, 'package/source-layout.json'))) return { generated, testSources };
+  const manifest = JSON.parse(await readFile(path.join(sourceRoot, 'dist/runtime-build.json'), 'utf8'));
+  for (const item of manifest.files) generated.add(item.output);
+  generated.add('dist/runtime-build.json');
+  const contracts = JSON.parse(await readFile(path.join(sourceRoot, 'catalog/kernel-contracts.json'), 'utf8'));
+  for (const contract of contracts.contracts) generated.add(contract.generatedType);
+  generated.add('src/contracts/schema-definitions.generated.ts');
+  for (const source of paths) {
+    if (source.startsWith('tools/build/') && source.endsWith('.ts')) generated.add(source.replace(/\.ts$/, '.mjs'));
+    if (!source.startsWith('tests/') || !source.endsWith('.ts')) continue;
+    if (!source.startsWith('tests/types/') && !source.startsWith('tests/fixtures/')) generated.add('dist/' + source.replace(/\.ts$/, '.mjs'));
+    const wrapper = source.replace(/\.ts$/, '.mjs');
+    if (!existsSync(path.join(sourceRoot, wrapper))) continue;
+    const body = await readFile(path.join(sourceRoot, wrapper), 'utf8');
+    if (body.startsWith('// Generated test entrypoint. Edit ' + source + '.\n')) {
+      generated.add(wrapper);
+      testSources.set(wrapper, source);
+    }
+  }
+  return { generated, testSources };
+};
 
 // Imported Node test suites are registered by the invoking npm script too.
 // Follow literal local imports only; this is an inventory, never execution.
-const testScriptCoverage = async (paths, scripts) => {
+const testScriptCoverage = async (paths, scripts, testSources) => {
   const coverage = new Map();
   for (const [name, command] of scripts) {
-    const pending = paths.filter((relative) => isTestFile(relative) && String(command).includes(relative));
+    const testArguments = [...String(command).matchAll(/\btests\/[^\s'";&|]+/g)].map(match => match[0]);
+    const declared = testArguments.map(argument => new RegExp('^' + argument.split('**').map(part => part.split('*').map(literal => literal.replace(/[\\^$+?.()|{}\[\]]/g, '\\$&')).join('[^/]*')).join('.*') + '$'));
+    const pending = paths.filter((relative) => isTestFile(relative) && declared.some(pattern => pattern.test(relative)));
     const visited = new Set();
     while (pending.length > 0) {
       const relative = pending.pop();
@@ -62,6 +91,12 @@ const testScriptCoverage = async (paths, scripts) => {
         const registered = coverage.get(relative) || new Set();
         registered.add(name);
         coverage.set(relative, registered);
+        const source = testSources.get(relative);
+        if (source) {
+          const sourceRegistration = coverage.get(source) || new Set();
+          sourceRegistration.add(name);
+          coverage.set(source, sourceRegistration);
+        }
       }
       const body = await readFile(path.join(sourceRoot, relative), 'utf8');
       const imports = /\b(?:import\s*(?:[^'";\n]*?\bfrom\s*)?|import\s*\(\s*)['"](\.[^'"]+)['"]/g;
@@ -84,12 +119,14 @@ const collectReport = async () => {
   const untracked = untrackedFiles();
   const packageJson = JSON.parse(await readFile(path.join(sourceRoot, 'package.json'), 'utf8'));
   const scripts = Object.entries(packageJson.scripts || {});
-  const scriptCoverage = await testScriptCoverage([...files, ...untracked], scripts);
+  const { generated, testSources } = await compilerSurface([...files, ...untracked]);
+  const canonicalFiles = files.filter(relative => !generated.has(relative));
+  const scriptCoverage = await testScriptCoverage([...files, ...untracked], scripts, testSources);
   let utf8Bytes = 0;
   let nonblankLines = 0;
   const categories = {};
 
-  for (const relative of files) {
+  for (const relative of canonicalFiles) {
     const body = await readFile(path.join(sourceRoot, relative));
     utf8Bytes += body.byteLength;
     nonblankLines += body.toString('utf8').split(/\r?\n/u).filter((line) => line.trim()).length;
@@ -97,9 +134,9 @@ const collectReport = async () => {
     categories[category] = (categories[category] || 0) + 1;
   }
 
-  const tests = files.filter(isTestFile).map((relative) => ({
+  const tests = canonicalFiles.filter(isTestFile).map((relative) => ({
     path: relative,
-    kind: relative.startsWith('tests/fixtures/') ? 'fixture' : 'runnable',
+    kind: relative.startsWith('tests/fixtures/') || relative.startsWith('tests/types/') ? 'fixture' : 'runnable',
     scripts: [...(scriptCoverage.get(relative) || [])].sort(),
   }));
   const runnableTests = tests.filter((entry) => entry.kind === 'runnable');
@@ -114,13 +151,16 @@ const collectReport = async () => {
       kind: 'versioned-repository-surface',
       command: 'git ls-files --cached',
       includesUntracked: false,
+      excludesCompilerGenerated: true,
     },
     diagnostics: {
       untrackedFiles: untracked,
       untrackedCount: untracked.length,
+      compilerGeneratedFiles: files.filter(relative => generated.has(relative)),
+      versionedFileCount: files.length,
     },
     totals: {
-      files: files.length,
+      files: canonicalFiles.length,
       nonblankLines,
       utf8Bytes,
       estimatedPromptTokens: Math.ceil(utf8Bytes / 4),

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const assetRoot = path.join(root, 'docs', 'capability-assets');
@@ -17,6 +18,21 @@ const baselineDocPath = path.join(assetRoot, 'CAPABILITY_ASSET_BASELINE.md');
 const rootBaselineDocPath = path.join(root, 'CAPABILITY_ASSET_BASELINE.md');
 const errors = [];
 const warnings = [];
+const sourceMigration = readJson(path.join(root, 'catalog/kernel-capability-surface-migrations.json'), 'typed capability surface migrations');
+const runtimeBuild = readJson(path.join(root, 'dist/runtime-build.json'), 'typed runtime build');
+const runtimeFiles = new Map((runtimeBuild?.files || []).map(item => [item.source, item]));
+
+// Frozen capability records retain their original paths. This explicit catalog
+// connects those records to the current source and compiler-owned output.
+function currentPathExists(filePath) {
+  const migration = sourceMigration?.migrations?.[filePath];
+  if (!migration) return fs.existsSync(path.join(root, filePath));
+  if (!isText(migration.source) || !isText(migration.output)) return false;
+  const emitted = runtimeFiles.get(migration.source);
+  return emitted?.output === migration.output
+    && fs.existsSync(path.join(root, migration.source))
+    && fs.existsSync(path.join(root, migration.output));
+}
 
 if (fs.existsSync(rootBaselineDocPath)) {
   addError('root CAPABILITY_ASSET_BASELINE.md is forbidden; canonical document is docs/capability-assets/CAPABILITY_ASSET_BASELINE.md');
@@ -145,7 +161,7 @@ function checkProofItem(item, label, isTest = false) {
     }
   }
 
-  if (item.referenceStatus === 'verified' && isText(item.path) && !fs.existsSync(path.join(root, item.path))) {
+  if (item.referenceStatus === 'verified' && isText(item.path) && !currentPathExists(item.path)) {
     addError(label + ' path does not exist in the current checkout: ' + item.path);
   }
 }
@@ -312,7 +328,7 @@ function checkManifest(manifest, manifestPath, schema, epochCommits, allIds, all
     requireTextArray(integration.entrypoints, label + '.current_integration.entrypoints');
     (integration.paths || []).forEach((integrationPath, index) => {
       safeRelativePath(integrationPath, label + '.current_integration.paths[' + index + ']');
-      if (isText(integrationPath) && !fs.existsSync(path.join(root, integrationPath))) {
+      if (isText(integrationPath) && !currentPathExists(integrationPath)) {
         addError(label + '.current_integration path missing: ' + integrationPath);
       }
     });
@@ -396,7 +412,7 @@ function checkManifest(manifest, manifestPath, schema, epochCommits, allIds, all
               pathAtCommit(ref.commit, ref.path, refLabel);
             }
           } else {
-            if (isText(ref.path) && !fs.existsSync(path.join(root, ref.path))) {
+            if (isText(ref.path) && !currentPathExists(ref.path)) {
               addError(refLabel + ' path does not exist in current checkout: ' + ref.path);
             }
           }
@@ -468,6 +484,39 @@ if (!isObject(coverageLedger)) {
     addError('coverage-ledger.yaml unclassifiedCount must be 0, found ' + coverageLedger.summary?.unclassifiedCount);
   }
   const surfaces = coverageLedger.surfaces || {};
+  const currentSurfaces = sourceMigration?.surfaces || {};
+  if (sourceMigration?.schemaVersion !== 1 || sourceMigration?.kind !== 'typed-capability-surface-migrations'
+      || sourceMigration.baselineCommit !== coverageLedger.baselineCommit) {
+    addError('typed capability migration catalog must match the frozen baseline');
+  }
+  for (const [filePath, entry] of Object.entries(currentSurfaces)) {
+    safeRelativePath(filePath, 'typed capability surface ' + filePath);
+    if (!fs.existsSync(path.join(root, filePath))) addError('typed capability surface missing: ' + filePath);
+    if (entry.classification === 'capability' && !allIds.has(entry.capability)) addError('typed capability surface has unknown capability: ' + filePath);
+    if (!['capability', 'ignored'].includes(entry.classification)) addError('typed capability surface must be classified: ' + filePath);
+    if (entry.classification === 'ignored' && !isText(entry.reason)) addError('ignored typed capability surface requires a reason: ' + filePath);
+  }
+  for (const item of runtimeFiles.values()) {
+    for (const [filePath, digest] of [[item.source, item.sourceDigest], [item.output, item.outputDigest]]) {
+      if (!surfaces[filePath] && !currentSurfaces[filePath]) addError('typed runtime surface is not classified: ' + filePath);
+      if (!fs.existsSync(path.join(root, filePath)) || createHash('sha256').update(fs.readFileSync(path.join(root, filePath), 'utf8').replace(/\r\n/g, '\n')).digest('hex') !== digest) {
+        addError('typed runtime surface is missing or stale: ' + filePath);
+      }
+    }
+  }
+  const baselineTree = git(['ls-tree', '-r', '--name-only', coverageLedger.baselineCommit]);
+  const historicalPaths = new Set(baselineTree.status === 0 ? baselineTree.stdout.split(/\r?\n/).filter(Boolean) : []);
+  for (const [oldPath, migration] of Object.entries(sourceMigration?.migrations || {})) {
+    safeRelativePath(oldPath, 'typed migration original path');
+    if (!surfaces[oldPath]) addError('typed migration original path is not in the frozen ledger: ' + oldPath);
+    if (migration.retired === true) {
+      if (!isText(migration.reason) || !historicalPaths.has(oldPath)) addError('retired surface lacks historical evidence: ' + oldPath);
+    } else {
+      safeRelativePath(migration.source, 'typed migration source');
+      safeRelativePath(migration.output, 'typed migration output');
+      if (!currentPathExists(oldPath)) addError('typed migration does not resolve to a current compiler-owned surface: ' + oldPath);
+    }
+  }
   const surfaceEntries = Object.entries(surfaces);
   if (surfaceEntries.length !== coverageLedger.summary?.totalMapped) {
     addError('coverage-ledger.yaml totalMapped mismatch: summary says ' + coverageLedger.summary?.totalMapped + ', found ' + surfaceEntries.length);
@@ -476,7 +525,7 @@ if (!isObject(coverageLedger)) {
   let ignoredCount = 0;
   for (const [filePath, entry] of surfaceEntries) {
     safeRelativePath(filePath, 'coverage-ledger surface ' + filePath);
-    if (!fs.existsSync(path.join(root, filePath))) {
+    if (!currentPathExists(filePath) && !(sourceMigration?.migrations?.[filePath]?.retired === true && historicalPaths.has(filePath))) {
       addError('coverage-ledger surface file does not exist: ' + filePath);
     }
     if (entry.classification === 'capability') {
@@ -515,7 +564,7 @@ if (!isObject(coverageLedger)) {
         || gf === 'bin/moon-relay-kernel.mjs'
         || gf === 'bin/moonshot-relay.mjs'
         || gf === 'bin/moon-relay-standalone.mjs';
-      if (isCore && !surfaces[gf] && !deletedFiles.has(gf)) {
+      if (isCore && !surfaces[gf] && !currentSurfaces[gf] && !deletedFiles.has(gf)) {
         addError('core file not mapped in coverage-ledger.yaml: ' + gf);
       }
     }

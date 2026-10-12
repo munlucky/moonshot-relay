@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { retryGitCloseout } from '../scripts/kernel/git/closeout.mjs';
-import { openKernelStateStore } from '../scripts/kernel/state-store.mjs';
+import { retryGitCloseout } from '../scripts/kernel/git/closeout.js';
+import { openKernelStateStore } from '../scripts/kernel/state-store.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -15,6 +15,19 @@ test('Git Retry - handles git closeout retries safely', async () => {
       objective: 'Git retry test',
       sourceIdentity: 'cand-12345678901234567890123456789012',
       projectId: 'proj-1',
+    });
+
+    store.recordCompletionDecision('run-git-retry-1', {
+      decision: 'accepted',
+      sourceIdentity: 'cand-12345678901234567890123456789012',
+      mutationRevision: 0,
+      evidenceDigest: `sha256:${'0'.repeat(64)}`,
+      decisionJson: {
+        runId: 'run-git-retry-1',
+        decision: 'accepted',
+        sourceIdentity: 'cand-12345678901234567890123456789012',
+        mutationRevision: 0,
+      },
     });
 
     store.recordGitCloseoutReceipt('run-git-retry-1', {

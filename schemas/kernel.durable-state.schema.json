@@ -1,0 +1,533 @@
+{
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "authority": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "const": "sqlite"
+        },
+        "durable": {
+          "const": true
+        }
+      },
+      "required": [
+        "source",
+        "durable"
+      ],
+      "additionalProperties": false
+    },
+    "project": {
+      "type": "object",
+      "properties": {
+        "projectId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "workspaceId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "worktreeId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "projectId",
+        "workspaceId",
+        "worktreeId"
+      ],
+      "additionalProperties": false
+    },
+    "task": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string"
+        },
+        "objective": {
+          "type": "string"
+        },
+        "taskClass": {
+          "type": "string"
+        },
+        "contractRevision": {
+          "type": "number"
+        },
+        "acceptanceCriteria": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "constraints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "nonGoals": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "runId",
+        "objective",
+        "taskClass",
+        "contractRevision",
+        "acceptanceCriteria",
+        "constraints",
+        "nonGoals"
+      ],
+      "additionalProperties": false
+    },
+    "work": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "planRevision": {
+          "type": "number"
+        },
+        "mutationRevision": {
+          "type": "number"
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "planRevision": {
+                  "type": "number"
+                },
+                "currentStepId": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "currentSequence": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ]
+                },
+                "stepCount": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "planRevision",
+                "currentStepId",
+                "currentSequence",
+                "stepCount"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "currentWorkUnit": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "stepId": {
+                  "type": "string"
+                },
+                "sequence": {
+                  "type": "number"
+                },
+                "planRevision": {
+                  "type": "number"
+                },
+                "objective": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string"
+                },
+                "synthetic": {
+                  "type": "boolean"
+                },
+                "acceptanceIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "obligationIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "allowedPaths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "forbiddenPaths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "stepId",
+                "sequence",
+                "planRevision",
+                "objective",
+                "state",
+                "synthetic",
+                "acceptanceIds",
+                "obligationIds",
+                "allowedPaths",
+                "forbiddenPaths"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "progress": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "completedWorkUnitIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "completedCurrentPlanWorkUnitIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "remainingWorkUnitIds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "completedCount": {
+                  "type": "number"
+                },
+                "completedCurrentPlanCount": {
+                  "type": "number"
+                },
+                "remainingCount": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "completedWorkUnitIds",
+                "completedCurrentPlanWorkUnitIds",
+                "remainingWorkUnitIds",
+                "completedCount",
+                "completedCurrentPlanCount",
+                "remainingCount"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "resume": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string"
+                },
+                "action": {
+                  "anyOf": [
+                    {
+                      "const": "none"
+                    },
+                    {
+                      "const": "continue-current-work-unit"
+                    },
+                    {
+                      "const": "continue-work"
+                    },
+                    {
+                      "const": "rebuild-work-cursor"
+                    }
+                  ]
+                },
+                "stepId": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "status",
+                "action",
+                "stepId"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "state",
+        "planRevision",
+        "mutationRevision",
+        "cursor",
+        "currentWorkUnit",
+        "progress",
+        "resume"
+      ],
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "properties": {
+        "executionClass": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "const": "planning"
+            },
+            {
+              "const": "complex_implementation"
+            },
+            {
+              "const": "review"
+            },
+            {
+              "const": "standard"
+            }
+          ]
+        }
+      },
+      "required": [
+        "executionClass"
+      ],
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "requiredObligations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "obligationId": {
+                "type": "string"
+              },
+              "evidenceClass": {
+                "type": "string"
+              },
+              "acceptanceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "obligationId",
+              "evidenceClass",
+              "acceptanceIds"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "verifications": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "obligationId": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "evidenceDigest": {},
+              "acceptanceCoverage": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "verifiedMutationRevision": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "obligationId",
+              "status",
+              "evidenceDigest",
+              "acceptanceCoverage",
+              "verifiedMutationRevision"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "requiredObligations",
+        "verifications"
+      ],
+      "additionalProperties": false
+    },
+    "completion": {
+      "type": "object",
+      "properties": {
+        "decision": {},
+        "overall": {},
+        "finalizationStatus": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "decision",
+        "overall",
+        "finalizationStatus"
+      ],
+      "additionalProperties": false
+    },
+    "knowledge": {
+      "type": "object",
+      "properties": {
+        "revisionStart": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "revisionClose": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "revisionStart",
+        "revisionClose",
+        "status"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "authority",
+    "project",
+    "task",
+    "work",
+    "execution",
+    "evidence",
+    "completion",
+    "knowledge"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://moon-relay-kernel.local/schemas/kernel.durable-state.schema.json",
+  "title": "KernelDurableState"
+}

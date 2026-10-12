@@ -1,0 +1,373 @@
+{
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "task": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string"
+        },
+        "objective": {
+          "type": "string"
+        },
+        "taskClass": {
+          "type": "string"
+        },
+        "contractRevision": {
+          "type": "number"
+        },
+        "acceptanceCriteria": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "runId",
+        "objective",
+        "taskClass",
+        "contractRevision",
+        "acceptanceCriteria"
+      ],
+      "additionalProperties": false
+    },
+    "run": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string"
+        },
+        "projectId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "planRevision": {
+          "type": "number"
+        },
+        "mutationRevision": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "runId",
+        "projectId",
+        "status",
+        "state",
+        "planRevision",
+        "mutationRevision"
+      ],
+      "additionalProperties": false
+    },
+    "workUnitStatus": {
+      "anyOf": [
+        {
+          "const": "active"
+        },
+        {
+          "const": "blocked"
+        },
+        {
+          "const": "complete"
+        }
+      ]
+    },
+    "goalStatus": {
+      "anyOf": [
+        {
+          "const": "active"
+        },
+        {
+          "const": "blocked"
+        },
+        {
+          "const": "complete"
+        }
+      ]
+    },
+    "goal": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "anyOf": [
+            {
+              "const": "active"
+            },
+            {
+              "const": "blocked"
+            },
+            {
+              "const": "complete"
+            }
+          ]
+        },
+        "objective": {
+          "type": "string"
+        },
+        "coverage": {
+          "type": "object",
+          "properties": {
+            "completedAcceptanceCount": {
+              "type": "number"
+            },
+            "totalAcceptanceCount": {
+              "type": "number"
+            },
+            "summary": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "completedAcceptanceCount",
+            "totalAcceptanceCount",
+            "summary"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "status",
+        "objective",
+        "coverage"
+      ],
+      "additionalProperties": false
+    },
+    "currentWorkUnit": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "stepId": {
+              "type": "string"
+            },
+            "sequence": {
+              "type": "number"
+            },
+            "planRevision": {
+              "type": "number"
+            },
+            "objective": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            },
+            "synthetic": {
+              "type": "boolean"
+            },
+            "acceptanceIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "obligationIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "allowedPaths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "forbiddenPaths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "stepId",
+            "sequence",
+            "planRevision",
+            "objective",
+            "state",
+            "synthetic",
+            "acceptanceIds",
+            "obligationIds",
+            "allowedPaths",
+            "forbiddenPaths"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "progress": {
+      "type": "object",
+      "properties": {
+        "completedWorkUnitIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "completedCurrentPlanWorkUnitIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "remainingWorkUnitIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "completedCount": {
+          "type": "number"
+        },
+        "completedCurrentPlanCount": {
+          "type": "number"
+        },
+        "remainingCount": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "completedWorkUnitIds",
+        "completedCurrentPlanWorkUnitIds",
+        "remainingWorkUnitIds",
+        "completedCount",
+        "completedCurrentPlanCount",
+        "remainingCount"
+      ],
+      "additionalProperties": false
+    },
+    "cursor": {
+      "type": "object",
+      "properties": {
+        "planRevision": {
+          "type": "number"
+        },
+        "currentStepId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "currentSequence": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "stepCount": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "planRevision",
+        "currentStepId",
+        "currentSequence",
+        "stepCount"
+      ],
+      "additionalProperties": false
+    },
+    "executionClass": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "const": "planning"
+        },
+        {
+          "const": "complex_implementation"
+        },
+        {
+          "const": "review"
+        },
+        {
+          "const": "standard"
+        }
+      ]
+    },
+    "resume": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "action": {
+          "anyOf": [
+            {
+              "const": "none"
+            },
+            {
+              "const": "continue-current-work-unit"
+            },
+            {
+              "const": "continue-work"
+            },
+            {
+              "const": "rebuild-work-cursor"
+            }
+          ]
+        },
+        "stepId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "action",
+        "stepId"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "task",
+    "run",
+    "workUnitStatus",
+    "goalStatus",
+    "goal",
+    "currentWorkUnit",
+    "progress",
+    "cursor",
+    "executionClass",
+    "resume"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://moon-relay-kernel.local/schemas/kernel.work-authority.schema.json",
+  "title": "KernelWorkAuthority"
+}

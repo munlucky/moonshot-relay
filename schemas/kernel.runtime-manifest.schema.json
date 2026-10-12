@@ -1,8 +1,62 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://moon-relay-kernel.local/schemas/kernel.runtime-manifest.schema.json",
   "type": "object",
-  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "productId": {
+      "type": "string"
+    },
+    "runtimeHome": {
+      "type": "string"
+    },
+    "platform": {
+      "anyOf": [
+        {
+          "const": "aix"
+        },
+        {
+          "const": "android"
+        },
+        {
+          "const": "darwin"
+        },
+        {
+          "const": "freebsd"
+        },
+        {
+          "const": "haiku"
+        },
+        {
+          "const": "linux"
+        },
+        {
+          "const": "openbsd"
+        },
+        {
+          "const": "sunos"
+        },
+        {
+          "const": "win32"
+        },
+        {
+          "const": "cygwin"
+        },
+        {
+          "const": "netbsd"
+        }
+      ]
+    },
+    "arch": {
+      "type": "string"
+    },
+    "nodePath": {
+      "type": "string"
+    },
+    "checksum": {
+      "type": "string"
+    }
+  },
   "required": [
     "schemaVersion",
     "productId",
@@ -12,27 +66,7 @@
     "nodePath",
     "checksum"
   ],
-  "properties": {
-    "schemaVersion": {
-      "const": 1
-    },
-    "productId": {
-      "const": "moon-relay-kernel"
-    },
-    "runtimeHome": {
-      "type": "string"
-    },
-    "platform": {
-      "type": "string"
-    },
-    "arch": {
-      "type": "string"
-    },
-    "nodePath": {
-      "type": "string"
-    },
-    "checksum": {
-      "pattern": "^[a-f0-9]{64}$"
-    }
-  }
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://moon-relay-kernel.local/schemas/kernel.runtime-manifest.schema.json"
 }

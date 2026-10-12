@@ -9,10 +9,10 @@ import { createReceipt } from './receipt.mjs';
 import { clearJournal, readJournal, readState, updateState } from './state-store.mjs';
 import { uninstallSwitcherPackage } from './installer.mjs';
 import { advanceTransaction, commitTransaction, prepareTransaction, recoverTransaction } from './transaction.mjs';
-import { inspectProfile, installKernelProfile } from '../kernel/profile-install.mjs';
-import { cleanupLegacyKernelHydration } from '../kernel/legacy-hydration-cleanup.mjs';
-import { inspectKernelProjectIdentity } from '../kernel/project-identity-preflight.mjs';
-import { loadStandaloneCatalog, standaloneDescriptors } from '../kernel/standalone/catalog.mjs';
+import { inspectProfile, installKernelProfile } from '../kernel/profile-install.js';
+import { cleanupLegacyKernelHydration } from '../kernel/legacy-hydration-cleanup.js';
+import { inspectKernelProjectIdentity } from '../kernel/project-identity-preflight.js';
+import { loadStandaloneCatalog, standaloneDescriptors } from '../kernel/standalone/catalog.js';
 
 const exists = async (file) => {
   try { await stat(file); return true; } catch { return false; }

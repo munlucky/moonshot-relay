@@ -1,11 +1,12 @@
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { pathsOverlap, resolveSurfaceRoots } from './paths.mjs';
-import { canonicalPath } from '../kernel/runtime-home.mjs';
-import { canonicalizeHostSessionId, providerForSurface } from '../kernel/run/host-session.mjs';
+import { canonicalPath } from '../kernel/runtime-home.js';
+import { canonicalizeHostSessionId } from '../contracts/host-session.js';
+import { providerForSurface } from '../host/kernel/host-session.js';
 import { nativeProviderDescriptor } from './native-provider.mjs';
 import { KERNEL_RUNTIME_ID, SURFACE_ENV } from './constants.mjs';
-import { withAdeQwenOwnerArgs } from '../host/kernel/ade-context-policy.mjs';
+import { withAdeQwenOwnerArgs } from '../host/kernel/ade-context-policy.js';
 
 function resolveClaudeDesktopAumid({ platform = process.platform, execFileSyncImpl = execFileSync } = {}) {
   if (platform !== 'win32') return null;

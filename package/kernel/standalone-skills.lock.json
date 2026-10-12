@@ -3,8 +3,8 @@
   "scope": "kernel-standalone",
   "catalogId": "moon-relay-kernel-standalone-skills.v2",
   "catalogDigest": "a3c3bcf6f36d916d619d211ee90d2babcb2cbbddeb539a4a5393ff9b500347ee",
-  "generatedAt": "2026-10-06T08:34:47.113Z",
-  "sourceCommit": "aca19ec85cf06f40860e07ef5006b37b02f7a260",
+  "generatedAt": "2026-10-10T13:54:42.054Z",
+  "sourceCommit": "e3281278d08476587f3e90af37737f56a290b28c",
   "skills": [
     {
       "name": "project-memory",
@@ -12,7 +12,7 @@
       "skillPath": "skills/project-memory",
       "entrypoint": "scripts/kernel/standalone/project-memory.mjs",
       "exportName": "runProjectMemory",
-      "contentHash": "d530fb7afd4020dbd72cdfc70ed6747e068b9d88024f3a66d4fb6e928bbdf15b",
+      "contentHash": "e75c6e744414dabe96f034e0ae8b124041da2dc025578998f32686b1d0d18dc8",
       "cli": {
         "enabled": true,
         "binName": "project-memory"
@@ -35,7 +35,7 @@
       "skillPath": "skills/kernel-commit",
       "entrypoint": "scripts/kernel/standalone/kernel-commit.mjs",
       "exportName": "kernelCommit",
-      "contentHash": "4cbf9cdf6f63554a37516fbb8dff733bce47deb83ea42d542b767b1cf0666907",
+      "contentHash": "9fd3e939eee165daa64a11cfc4d821630f61f347e0baba973f7ced1b6b8b292f",
       "cli": {
         "enabled": true,
         "binName": "kernel-commit"
@@ -60,7 +60,7 @@
       "skillPath": "skills/codebase-understanding",
       "entrypoint": "scripts/kernel/standalone/codebase-understanding.mjs",
       "exportName": "runCodebaseUnderstanding",
-      "contentHash": "1f81fda54b1af51e043c5ada28a7c2ec7b6d6292db5b8b38a8f0e532815bd203",
+      "contentHash": "32a00be8f1659734a67b5775d594c89ff51526563ef53596420a941eac8ebdc9",
       "cli": {
         "enabled": true,
         "binName": "codebase-understanding"
@@ -81,7 +81,7 @@
       "skillPath": "skills/explain-diff-html",
       "entrypoint": "scripts/kernel/standalone/explain-diff-html.mjs",
       "exportName": "runExplainDiffHtml",
-      "contentHash": "dca4085eb66ac547e1aa3ef8007cda96469753c04acce9eb0f7f26d590b0dbe4",
+      "contentHash": "3d1da32c45b1072fecc82d0fac3e78d0cc1bb815f9c2dfa25634b9e895c6314d",
       "cli": {
         "enabled": true,
         "binName": "explain-diff-html"
@@ -103,7 +103,7 @@
       "skillPath": "skills/ui-audit",
       "entrypoint": "scripts/kernel/standalone/ui-audit.mjs",
       "exportName": "runUiAudit",
-      "contentHash": "ef3af3a64ea6a91ddefbb944e416751cb16544fbead20ad0230eaa396d7a9bbf",
+      "contentHash": "d6c75d28ecfdaf31abbda812fb2a676f786bd977046b5c2b8a9e43188ae8d29b",
       "cli": {
         "enabled": true,
         "binName": "ui-audit"
@@ -124,7 +124,7 @@
       "skillPath": "skills/product-definition",
       "entrypoint": "scripts/kernel/standalone/product-definition.mjs",
       "exportName": "runProductDefinition",
-      "contentHash": "ccae0a0586de53f4eaacc74e791c6c1a0dac10f89a8da7034f3ec38c2e844de2",
+      "contentHash": "71c54bf6ea0fe1af5ca5220184e51e1278b104ec030643a028ff5e4380d90551",
       "cli": {
         "enabled": true,
         "binName": "product-definition"
@@ -145,7 +145,7 @@
       "skillPath": "skills/architecture-artifacts",
       "entrypoint": "scripts/kernel/standalone/architecture-artifacts.mjs",
       "exportName": "runArchitectureArtifacts",
-      "contentHash": "041fd08225c6de699cdc0440435c3dab6c0a0508820b81aac33039aafc9ec7aa",
+      "contentHash": "3bec59b4a445bca95e825ebe8a4560424127ee94da9b0318a58f4f63a0f4b510",
       "cli": {
         "enabled": true,
         "binName": "architecture-artifacts"
@@ -166,7 +166,7 @@
       "skillPath": "skills/codebase-master-guide",
       "entrypoint": "scripts/kernel/standalone/codebase-master-guide.mjs",
       "exportName": "runCodebaseMasterGuide",
-      "contentHash": "9d3ccfbbad9c5583f3f3c023760403492ebe252c3bf6ba94f9249de262617225",
+      "contentHash": "b9dfc8ce97fb1206e616a51b0cc40db41cea10f9d1f91051e4cbd91d44d59736",
       "cli": {
         "enabled": true,
         "binName": "codebase-master-guide"

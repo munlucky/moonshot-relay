@@ -5,7 +5,7 @@ import process from 'node:process';
 
 import { runFromFixture } from '../../scripts/provider-model-route-advisor.mjs';
 
-const usage = () => 'Usage: node tools/evals/provider-model-routing.mjs run --fixture-root <dir> [--json]';
+const usage = () => 'Usage: node tools/evals/provider-model-routing.js run --fixture-root <dir> [--json]';
 
 const parseArgs = (argv) => {
   const [command = 'run'] = argv;
@@ -89,7 +89,7 @@ const main = async () => {
   if (result.status !== 'pass') process.exitCode = 1;
 };
 
-if (import.meta.url === `file://${process.argv[1]?.replaceAll('\\', '/')}` || process.argv[1]?.endsWith('provider-model-routing.mjs')) {
+if (import.meta.url === `file://${process.argv[1]?.replaceAll('\\', '/')}` || process.argv[1]?.endsWith('provider-model-routing.js')) {
   main().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

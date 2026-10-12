@@ -1,30 +1,926 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "KernelKnowledgeReviewResult",
   "type": "object",
+  "properties": {
+    "status": {
+      "anyOf": [
+        {
+          "const": "failed"
+        },
+        {
+          "const": "no_candidates"
+        },
+        {
+          "const": "passed"
+        },
+        {
+          "const": "needs_approval"
+        },
+        {
+          "const": "pending_verification"
+        }
+      ]
+    },
+    "verifiedCandidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "candidateId": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "projectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "statement": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "rejectionReasons": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "evidenceRefs": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "acceptanceIds": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "obligationIds": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "evidenceBinding": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "acceptanceIds": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  },
+                  "obligationIds": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  },
+                  "evidenceRefs": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "required": [],
+                "additionalProperties": {}
+              }
+            ]
+          },
+          "sourceKind": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "sourceDigest": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "obligationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": [],
+        "additionalProperties": {}
+      }
+    },
+    "rejectedCandidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "candidateId": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "projectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "statement": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "rejectionReasons": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "evidenceRefs": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "acceptanceIds": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "obligationIds": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "evidenceBinding": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "acceptanceIds": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  },
+                  "obligationIds": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  },
+                  "evidenceRefs": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "required": [],
+                "additionalProperties": {}
+              }
+            ]
+          },
+          "sourceKind": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "sourceDigest": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "obligationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": [],
+        "additionalProperties": {}
+      }
+    },
+    "needsApprovalCandidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "candidateId": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "projectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "statement": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "rejectionReasons": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "evidenceRefs": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "acceptanceIds": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "obligationIds": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "evidenceBinding": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "acceptanceIds": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  },
+                  "obligationIds": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  },
+                  "evidenceRefs": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "required": [],
+                "additionalProperties": {}
+              }
+            ]
+          },
+          "sourceKind": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "sourceDigest": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "obligationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": [],
+        "additionalProperties": {}
+      }
+    },
+    "pendingVerificationCandidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "candidateId": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "projectId": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "statement": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "rejectionReasons": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "evidenceRefs": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "acceptanceIds": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "obligationIds": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "evidenceBinding": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "acceptanceIds": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  },
+                  "obligationIds": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  },
+                  "evidenceRefs": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ]
+                  }
+                },
+                "required": [],
+                "additionalProperties": {}
+              }
+            ]
+          },
+          "sourceKind": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "sourceDigest": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "obligationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": [],
+        "additionalProperties": {}
+      }
+    },
+    "candidateReviews": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "candidateId": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "decision": {
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "evidenceRef": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "additionalProperties": {}
+      }
+    },
+    "supersessionProposals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": {}
+      }
+    },
+    "ontologyViolations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "recordType": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "pattern": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "statement": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": [],
+        "additionalProperties": {}
+      }
+    },
+    "approvalRequired": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "recordType": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "pattern": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "statement": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": [],
+        "additionalProperties": {}
+      }
+    },
+    "verificationsRequired": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "recordType": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "pattern": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "statement": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": [],
+        "additionalProperties": {}
+      }
+    },
+    "evidenceCoverage": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
   "required": [
     "status",
     "verifiedCandidates",
-    "episodicCandidates",
-    "rejectedCandidates"
+    "rejectedCandidates",
+    "needsApprovalCandidates",
+    "pendingVerificationCandidates",
+    "candidateReviews",
+    "supersessionProposals",
+    "ontologyViolations",
+    "approvalRequired",
+    "verificationsRequired",
+    "evidenceCoverage"
   ],
-  "properties": {
-    "status": {
-      "type": "string",
-      "enum": [
-        "passed",
-        "failed",
-        "needs_approval",
-        "degraded"
-      ]
-    },
-    "verifiedCandidates": { "type": "array" },
-    "episodicCandidates": { "type": "array" },
-    "rejectedCandidates": { "type": "array" },
-    "supersessionProposals": { "type": "array" },
-    "ontologyViolations": { "type": "array" },
-    "approvalRequired": { "type": "array" },
-    "evidenceCoverage": { "type": "array" }
-  },
-  "additionalProperties": true
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://moon-relay-kernel.local/schemas/kernel.knowledge-review-result.schema.json",
+  "title": "KernelKnowledgeReviewResult"
 }

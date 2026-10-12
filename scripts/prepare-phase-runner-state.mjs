@@ -6,7 +6,7 @@ import process from 'node:process';
 
 import { resolveRuntimeStatePath } from './lib/runtime-state-root.mjs';
 import { acquireRunLease, recordResumeSnapshot, recordRuntimeEvent } from './lib/runtime-state-store.mjs';
-import { gitStatusBranchLine } from './lib/git-safe.mjs';
+import { gitStatusBranchLine } from './lib/git-safe.js';
 import { markdownPlanCompatibility, validatePlanGraph } from './lib/plan-graph.mjs';
 import { resolveProjectIdentity, sanitizeId } from './project-identity.mjs';
 

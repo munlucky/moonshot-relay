@@ -32,17 +32,17 @@
       "lines": 41
     },
     {
-      "path": "scripts/host/kernel/prompts/common-execution.mjs",
+      "path": "scripts/host/kernel/prompts/common-execution.js",
       "bytes": 2798,
       "lines": 61
     },
     {
-      "path": "scripts/host/kernel/prompts/claude-opus-5.mjs",
+      "path": "scripts/host/kernel/prompts/claude-opus-5.js",
       "bytes": 2755,
       "lines": 64
     },
     {
-      "path": "scripts/host/kernel/prompts/codex-gpt-5p6.mjs",
+      "path": "scripts/host/kernel/prompts/codex-gpt-5p6.js",
       "bytes": 838,
       "lines": 19
     }

@@ -8,7 +8,7 @@ import {
   compareEvidenceBinding,
   normalizeCandidateId,
   sha256Hex,
-} from '../scripts/lib/candidate-identity.mjs';
+} from '../scripts/lib/candidate-identity.js';
 
 const candidateInput = () => ({
   task: { id: 'EDAH-REQ-02' },

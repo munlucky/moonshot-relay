@@ -1,4 +1,4 @@
-import { sha256Hex } from './candidate-identity.mjs';
+import { sha256Hex } from './candidate-identity.js';
 
 export const CHANGE_INVALIDATION_MATRIX = Object.freeze({
   spec: ['plan', 'run', 'review', 'verify', 'score', 'submission'],

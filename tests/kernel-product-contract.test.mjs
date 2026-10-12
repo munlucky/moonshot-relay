@@ -1,4 +1,2 @@
-import assert from 'node:assert/strict'; import {readFile} from 'node:fs/promises'; import {test} from 'node:test';
-const read=(p)=>readFile(new URL(`../${p}`,import.meta.url),'utf8');
-test('Kernel product identity is isolated from Relay',async()=>{const t=await read('kernel/product.yaml'); assert.match(t,/productId:\s*moon-relay-kernel/); assert.match(t,/runtimeHome:\s*~\/.moon-relay-kernel/); assert.doesNotMatch(t,/runtimeHome:\s*~\/.moonshot-relay/); assert.match(t,/publicEntrypoints:\s*\n\s*- moon-relay-kernel/);});
-test('promotion policy exposes machine-readable hard gates',async()=>{const t=await read('kernel/promotion-policy.yaml'); for(const k of ['falseCompletion','securityRegression','crossTrackStatePollution','missingRequiredEvidence']) assert.match(t,new RegExp(`${k}:\\s*0`));});
+// Generated test entrypoint. Edit tests/kernel-product-contract.test.ts.
+export * from "../dist/tests/kernel-product-contract.test.mjs";

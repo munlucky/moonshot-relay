@@ -1,0 +1,3 @@
+import assert from 'node:assert/strict'; import {test} from 'node:test'; import {readFile} from 'node:fs/promises';
+const names=['kernel-minimal-correct-change','kernel-domain-modeling','kernel-tracer-slicing','kernel-test-driven-development','kernel-diagnosing-bugs','kernel-verification-before-completion','kernel-review-spec','kernel-review-standards','kernel-review-complexity'];
+test('core skills are internal and public entrypoint remains singular',async()=>{for(const n of names){const t=await readFile(new URL(`../skills/${n}/SKILL.md`,import.meta.url),'utf8'); assert.match(t,/user-invocable:\s*false/);} const c=await readFile(new URL('../catalog/kernel-skills.yaml',import.meta.url),'utf8'); assert.match(c,/public:\s*\n\s*- moon-relay-kernel/);});

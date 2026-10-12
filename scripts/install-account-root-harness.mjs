@@ -50,6 +50,7 @@ const commonSpec = {
     'package',
     'package.json',
     'package-lock.json',
+    'node_modules',
     'skills.lock.json',
     'verification.contract.yaml',
   ]),

@@ -6,7 +6,7 @@ import { test } from 'node:test';
 
 import { collectRetroRecord } from '../tools/retro/collect.mjs';
 import { importCollectRecords, readCollectRecord, resolveRetroRoot } from '../tools/retro/retro-store.mjs';
-import { canonicalPath } from '../scripts/kernel/runtime-home.mjs';
+import { canonicalPath } from '../scripts/kernel/runtime-home.js';
 
 const root = process.cwd();
 

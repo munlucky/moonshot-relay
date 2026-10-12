@@ -1,167 +1,502 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://moon-relay-kernel.local/schemas/kernel.execution-capsule.schema.json",
-  "title": "Kernel execution capsule",
-  "description": "The bounded execution context handed to one worker session for one unit of work. Built from persisted Kernel state only: never the conversation, the planner's reasoning, unrelated repository files, raw secrets, or an environment dump. capsuleId is derived from provenance.capsuleDigest, which excludes createdAt so the same state rebuilds the same capsule.",
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schemaVersion", "capsuleId", "runId", "role", "riskTier", "planRevision", "mutationRevision",
-    "objective", "workUnit", "repositoryContext", "verification", "permissions", "provenance", "createdAt"
-  ],
   "properties": {
-    "schemaVersion": { "const": 1 },
-    "capsuleId": { "type": "string", "pattern": "^capsule-[a-f0-9]{8,64}$" },
-    "runId": { "type": "string", "minLength": 1 },
-    "stepId": { "type": ["string", "null"] },
-    "role": { "enum": ["implementer", "reviewer", "planner", "researcher"] },
-    "riskTier": { "enum": ["T0", "T1", "T2", "T3"] },
-    "planRevision": { "type": "integer", "minimum": 1 },
-    "mutationRevision": { "type": "integer", "minimum": 0 },
-    "objective": { "type": "string" },
+    "capsuleId": {
+      "type": "string"
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "capsuleDigest": {
+          "type": "string"
+        },
+        "workspaceIdentity": {
+          "type": "string"
+        },
+        "sourceIdentity": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "taskContractDigest": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "knowledgeContextDigest": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "routeDecisionId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "createdByVersion": {
+          "type": "string"
+        },
+        "migrationOrigin": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "capsuleDigest",
+        "workspaceIdentity",
+        "sourceIdentity",
+        "taskContractDigest",
+        "knowledgeContextDigest",
+        "routeDecisionId",
+        "createdByVersion",
+        "migrationOrigin"
+      ],
+      "additionalProperties": false
+    },
+    "createdAt": {
+      "type": "string"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "runId": {
+      "type": "string"
+    },
+    "stepId": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "role": {
+      "enum": [
+        "implementer",
+        "reviewer",
+        "planner",
+        "researcher"
+      ]
+    },
+    "riskTier": {
+      "type": "string"
+    },
+    "planRevision": {
+      "type": "number"
+    },
+    "mutationRevision": {
+      "type": "number"
+    },
+    "objective": {
+      "type": "string"
+    },
     "acceptance": {
       "type": "array",
       "items": {
         "type": "object",
-        "additionalProperties": false,
         "properties": {
-          "id": { "type": "string" },
-          "statement": { "type": "string" },
-          "obligationIds": { "type": "array", "items": { "type": "string" } }
-        }
+          "id": {
+            "type": "string"
+          },
+          "statement": {
+            "type": "string"
+          },
+          "obligationIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "statement",
+          "obligationIds"
+        ],
+        "additionalProperties": false
       }
     },
-    "constraints": { "type": "array", "items": { "type": "string" } },
-    "nonGoals": { "type": "array", "items": { "type": "string" } },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "nonGoals": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "workUnit": {
       "type": "object",
-      "additionalProperties": false,
-      "required": ["objective", "allowedPaths", "forbiddenPaths"],
       "properties": {
-        "objective": { "type": "string" },
-        "dependencies": { "type": "array", "items": { "type": "string" } },
-        "allowedPaths": { "type": "array", "items": { "type": "string" } },
-        "forbiddenPaths": { "type": "array", "items": { "type": "string" } },
-        "expectedOutputs": { "type": "array", "items": { "type": "string" } }
-      }
+        "objective": {
+          "type": "string"
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowedPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "forbiddenPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "expectedOutputs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "objective",
+        "dependencies",
+        "allowedPaths",
+        "forbiddenPaths",
+        "expectedOutputs"
+      ],
+      "additionalProperties": false
     },
     "repositoryContext": {
       "type": "object",
-      "additionalProperties": false,
       "properties": {
-        "projectMode": { "type": ["string", "null"] },
-        "entrypoints": { "type": "array", "items": { "type": "string" } },
+        "projectMode": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "entrypoints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "relevantFiles": {
           "type": "array",
           "items": {
             "type": "object",
-            "additionalProperties": false,
-            "required": ["path"],
             "properties": {
-              "path": { "type": "string" },
-              "reason": { "type": "string" },
-              "digest": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }] }
-            }
+              "path": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "digest": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "path",
+              "reason",
+              "digest"
+            ],
+            "additionalProperties": false
           }
         },
         "relevantSymbols": {
           "type": "array",
           "items": {
             "type": "object",
-            "additionalProperties": false,
-            "properties": { "symbol": { "type": "string" }, "path": { "type": "string" } }
+            "properties": {
+              "symbol": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "symbol",
+              "path"
+            ],
+            "additionalProperties": false
           }
         },
-        "manifests": { "type": "array", "items": { "type": "string" } },
-        "knownCommands": { "type": "array", "items": { "type": "string" } },
+        "manifests": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "knownCommands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "architectureRecords": {
           "type": "array",
           "items": {
             "type": "object",
-            "additionalProperties": false,
-            "properties": { "recordId": { "type": "string" }, "summary": { "type": "string" } }
+            "properties": {
+              "recordId": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "recordId",
+              "summary"
+            ],
+            "additionalProperties": false
           }
         },
         "knowledgeRecords": {
           "type": "array",
           "items": {
             "type": "object",
-            "additionalProperties": false,
             "properties": {
-              "recordId": { "type": "string" },
-              "summary": { "type": "string" },
-              "revision": { "type": ["integer", "null"] }
-            }
+              "recordId": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "revision": {
+                "anyOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "recordId",
+              "summary",
+              "revision"
+            ],
+            "additionalProperties": false
           }
         },
-        "walkingSkeleton": { "type": ["object", "null"] },
+        "walkingSkeleton": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": true
+        },
         "baseline": {
           "type": "object",
-          "additionalProperties": false,
           "properties": {
-            "status": { "type": "string" },
-            "digest": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }] },
-            "knownFailures": { "type": "array" }
-          }
+            "status": {
+              "type": "string"
+            },
+            "digest": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "knownFailures": {
+              "type": "array",
+              "items": {}
+            }
+          },
+          "required": [
+            "status",
+            "digest",
+            "knownFailures"
+          ],
+          "additionalProperties": false
         }
-      }
+      },
+      "required": [
+        "projectMode",
+        "entrypoints",
+        "relevantFiles",
+        "relevantSymbols",
+        "manifests",
+        "knownCommands",
+        "architectureRecords",
+        "knowledgeRecords",
+        "walkingSkeleton",
+        "baseline"
+      ],
+      "additionalProperties": false
     },
     "verification": {
       "type": "object",
-      "additionalProperties": false,
-      "required": ["obligations"],
       "properties": {
         "obligations": {
           "type": "array",
           "items": {
             "type": "object",
-            "additionalProperties": false,
-            "required": ["obligationId", "evidenceClass"],
             "properties": {
-              "obligationId": { "type": "string" },
-              "evidenceClass": { "enum": ["hard", "judgment", "attested"] },
-              "allowedCommandRefs": { "type": "array", "items": { "type": "string" } },
-              "acceptanceIds": { "type": "array", "items": { "type": "string" } }
-            }
+              "obligationId": {
+                "type": "string"
+              },
+              "evidenceClass": {
+                "type": "string"
+              },
+              "allowedCommandRefs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "acceptanceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "obligationId",
+              "evidenceClass",
+              "allowedCommandRefs",
+              "acceptanceIds"
+            ],
+            "additionalProperties": false
           }
         }
-      }
+      },
+      "required": [
+        "obligations"
+      ],
+      "additionalProperties": false
     },
     "permissions": {
       "type": "object",
-      "additionalProperties": false,
-      "required": ["filesystem"],
       "properties": {
-        "filesystem": { "enum": ["read_only", "plan_write", "workspace_write"] },
-        "network": { "type": "string" },
-        "canDelegate": { "const": false },
-        "canCommit": { "const": false }
-      }
+        "filesystem": {
+          "enum": [
+            "read_only",
+            "plan_write",
+            "workspace_write"
+          ]
+        },
+        "network": {
+          "type": "string"
+        },
+        "canDelegate": {
+          "type": "boolean"
+        },
+        "canCommit": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "filesystem",
+        "network",
+        "canDelegate",
+        "canCommit"
+      ],
+      "additionalProperties": false
     },
     "budget": {
       "type": "object",
-      "additionalProperties": false,
       "properties": {
-        "reductions": { "type": "array" },
-        "serializedBytes": { "type": ["integer", "null"] },
-        "withinBudget": { "type": "boolean" }
-      }
-    },
-    "provenance": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["workspaceIdentity", "capsuleDigest"],
-      "properties": {
-        "workspaceIdentity": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
-        "sourceIdentity": { "type": ["string", "null"] },
-        "taskContractDigest": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }] },
-        "knowledgeContextDigest": { "type": ["string", "null"] },
-        "routeDecisionId": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^route-[a-f0-9]{8,64}$" }] },
-        "capsuleDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
-        "createdByVersion": { "type": "string" },
-        "migrationOrigin": { "type": ["string", "null"] }
-      }
-    },
-    "createdAt": { "type": "string", "minLength": 1 }
-  }
+        "reductions": {
+          "type": "array",
+          "items": {}
+        },
+        "serializedBytes": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "withinBudget": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "reductions",
+        "serializedBytes",
+        "withinBudget"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "capsuleId",
+    "provenance",
+    "createdAt",
+    "schemaVersion",
+    "runId",
+    "stepId",
+    "role",
+    "riskTier",
+    "planRevision",
+    "mutationRevision",
+    "objective",
+    "acceptance",
+    "constraints",
+    "nonGoals",
+    "workUnit",
+    "repositoryContext",
+    "verification",
+    "permissions",
+    "budget"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://moon-relay-kernel.local/schemas/kernel.execution-capsule.schema.json",
+  "title": "Kernel execution capsule"
 }

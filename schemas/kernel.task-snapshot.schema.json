@@ -1,0 +1,299 @@
+{
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "objective": {
+      "type": "string"
+    },
+    "acceptance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "statement": {
+            "type": "string"
+          },
+          "evidencePlan": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "class": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "const": "hard"
+                      },
+                      {
+                        "const": "judgment"
+                      }
+                    ]
+                  },
+                  "method": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "commandRefs": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "obligationId": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "evidenceLevel": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "const": "work"
+                      },
+                      {
+                        "const": "integration"
+                      },
+                      {
+                        "const": "goal"
+                      }
+                    ]
+                  },
+                  "scope": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "freshnessInputs": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "outcome": {
+                    "anyOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "const": "implemented"
+                      },
+                      {
+                        "const": "verified"
+                      },
+                      {
+                        "const": "deployed"
+                      },
+                      {
+                        "const": "observed"
+                      },
+                      {
+                        "const": "resolved"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "class",
+                  "method",
+                  "commandRefs",
+                  "obligationId",
+                  "evidenceLevel",
+                  "scope",
+                  "freshnessInputs",
+                  "outcome"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "structured": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "statement",
+          "evidencePlan",
+          "structured"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "nonGoals": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "surfaces": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "taskClass": {
+      "type": "string"
+    },
+    "requestedTier": {},
+    "changeClass": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "scopeExtension": {
+      "type": "boolean"
+    },
+    "defectWithinScope": {
+      "type": "boolean"
+    },
+    "replacement": {
+      "type": "boolean"
+    },
+    "requiredObligations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "requiredVerifications": {
+      "type": "array",
+      "items": {}
+    },
+    "completionPredicate": {
+      "type": "object",
+      "properties": {
+        "requiredOutcomes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "requiredOutcomes"
+      ],
+      "additionalProperties": false
+    },
+    "seedProvenance": {},
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "stepId": {},
+          "acceptanceIds": {},
+          "acceptanceCoverage": {},
+          "coverage": {},
+          "acceptanceMapping": {},
+          "obligationIds": {}
+        },
+        "required": [],
+        "additionalProperties": {}
+      }
+    },
+    "supersededStepIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "allowedPaths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "forbiddenPaths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "filesChanged": {
+      "type": "number"
+    },
+    "strictBoundedScope": {
+      "type": "boolean"
+    },
+    "flags": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": {}
+    },
+    "changedPaths": {},
+    "digest": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "objective",
+    "acceptance",
+    "constraints",
+    "nonGoals",
+    "risks",
+    "surfaces",
+    "taskClass",
+    "changeClass",
+    "scopeExtension",
+    "defectWithinScope",
+    "replacement",
+    "requiredObligations",
+    "requiredVerifications",
+    "completionPredicate",
+    "steps",
+    "supersededStepIds",
+    "allowedPaths",
+    "forbiddenPaths",
+    "filesChanged",
+    "strictBoundedScope",
+    "flags",
+    "digest"
+  ],
+  "additionalProperties": true,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://moon-relay-kernel.local/schemas/kernel.task-snapshot.schema.json",
+  "title": "KernelTaskSnapshot"
+}

@@ -9,10 +9,11 @@
     "estimatedPromptTokens": 3093984
   },
   "allowedDelta": {
-    "files": 50,
-    "nonblankLines": 3500,
-    "utf8Bytes": 172000,
-    "estimatedPromptTokens": 43000
+    "files": 200,
+    "nonblankLines": 50000,
+    "utf8Bytes": 1800000,
+    "estimatedPromptTokens": 450000
   },
+  "allowedDeltaRationale": "Typed Authority Architecture adds canonical strict TypeScript source, tests, build tools, contract catalogs and architecture documents. Compiler-owned outputs and generated contract projections are separately inventoried and excluded from the canonical input budget. The original immutable baseline is retained. The measured source snapshot has 2132 canonical files, 317462 nonblank lines and 13945448 UTF-8 bytes; these limits allow that declared migration with bounded headroom.",
   "allowedUnregisteredTests": 0
 }

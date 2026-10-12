@@ -10,7 +10,7 @@ import {
   auditSkillsLock,
   buildSkillsLock,
   discoverSourceSkills,
-} from '../scripts/lib/skills-lock.mjs';
+} from '../scripts/kernel/standalone/skills-lock.js';
 
 const tempRoots = [];
 

@@ -1,121 +1,637 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://moon-relay-kernel.local/schemas/kernel.model-usage.schema.json",
-  "title": "Kernel model usage receipt",
-  "description": "What the Host actually did with a model route decision. Unknown tokens or cost stay null and are reported as unavailable; they are never recorded as 0.",
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schemaVersion", "receiptId", "decisionId", "runId", "hostSurface",
-    "actorSessionId", "enforcementStatus", "resultStatus", "createdAt"
-  ],
-  "allOf": [
-    {
-      "if": {
-        "allOf": [
-          { "required": ["enforcementStatus"], "properties": { "enforcementStatus": { "const": "enforced" } } },
-          {
-            "anyOf": [
-              { "required": ["requestedModel"], "properties": { "requestedModel": { "type": "string", "minLength": 1 } } },
-              { "required": ["requestedEffort"], "properties": { "requestedEffort": { "type": "string", "minLength": 1 } } },
-              { "required": ["observedModel"], "properties": { "observedModel": { "type": "string", "minLength": 1 } } },
-              { "required": ["observedEffort"], "properties": { "observedEffort": { "type": "string", "minLength": 1 } } }
-            ]
-          }
-        ]
-      },
-      "then": { "required": ["resolvedModel", "observedModel"] }
-    },
-    {
-      "if": {
-        "allOf": [
-          { "required": ["enforcementStatus"], "properties": { "enforcementStatus": { "const": "enforced" } } },
-          {
-            "anyOf": [
-              { "required": ["requestedEffort"], "properties": { "requestedEffort": { "type": "string", "minLength": 1 } } },
-              { "required": ["observedEffort"], "properties": { "observedEffort": { "type": "string", "minLength": 1 } } }
-            ]
-          }
-        ]
-      },
-      "then": { "required": ["observedEffort"] }
-    }
-  ],
   "properties": {
-    "schemaVersion": { "const": 1 },
-    "receiptId": { "type": "string", "pattern": "^usage-[a-f0-9]{8,64}$" },
-    "decisionId": { "type": "string", "pattern": "^route-[a-f0-9]{8,64}$" },
-    "runId": { "type": "string", "minLength": 1 },
-    "attemptId": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^attempt-[a-f0-9-]{8,96}$" }] },
-    "bindingId": { "type": ["string", "null"] },
-    "hostSurface": { "type": "string", "minLength": 1 },
-    "actorSessionId": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
-    "parentSessionId": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }] },
-    "resolvedModel": { "type": ["string", "null"] },
-    "resolvedEffort": { "type": ["string", "null"] },
-    "requestedModel": { "type": ["string", "null"] },
-    "requestedEffort": { "type": ["string", "null"] },
-    "observedModel": { "type": ["string", "null"] },
-    "observedEffort": { "type": ["string", "null"] },
-    "role": { "type": ["string", "null"] },
-    "actionKind": { "type": ["string", "null"] },
-    "workProfile": {
-      "type": ["object", "null"],
-      "additionalProperties": false,
-      "required": ["complexity", "repeatedFailure", "independentContextRequired", "parallelizable"],
-      "properties": {
-        "complexity": { "enum": ["routine", "standard", "complex", "large-refactor"] },
-        "repeatedFailure": { "type": "boolean" },
-        "independentContextRequired": { "type": "boolean" },
-        "parallelizable": { "type": "boolean" }
-      }
+    "schemaVersion": {
+      "const": 1
     },
-    "dispatchMechanism": { "type": ["string", "null"] },
-    "enforcementReason": { "type": ["string", "null"] },
-    "fallbackReason": { "type": ["string", "null"] },
-    "capsuleId": { "type": ["string", "null"] },
-    "capsuleDigest": { "type": ["string", "null"] },
-    "admissionId": { "type": ["string", "null"] },
-    "admissionDigest": { "type": ["string", "null"] },
-    "stepId": { "type": ["string", "null"] },
-    "enforcementStatus": { "enum": ["enforced", "fallback", "advisory", "unsupported", "failed"] },
-    "resultStatus": { "enum": ["completed", "failed", "interrupted", "abandoned"] },
-    "startedAt": { "type": ["string", "null"] },
-    "finishedAt": { "type": ["string", "null"] },
-    "wallClockMs": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }] },
-    "inputTokens": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }] },
-    "cachedInputTokens": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }] },
-    "outputTokens": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }] },
-    "costMicros": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }] },
-    "provider": { "type": ["string", "null"] },
-    "surface": { "type": ["string", "null"] },
-    "speedMode": { "type": ["string", "null"] },
-    "reasoningContext": { "type": ["string", "null"] },
-    "reasoningMode": { "type": ["string", "null"] },
-    "delegationMode": { "type": ["string", "null"] },
-    "sessionLineageId": { "type": ["string", "null"] },
-    "previousResponseIdDigest": { "type": ["string", "null"] },
-    "promptPrefixDigest": { "type": ["string", "null"] },
-    "promptCacheKeyDigest": { "type": ["string", "null"] },
-    "cacheMode": { "oneOf": [{ "type": "null" }, { "enum": ["off", "shadow", "on"] }] },
-    "cacheTtl": { "type": ["string", "null"] },
+    "receiptId": {
+      "type": "string"
+    },
+    "decisionId": {
+      "type": "string"
+    },
+    "runId": {
+      "type": "string"
+    },
+    "hostSurface": {
+      "type": "string"
+    },
+    "actorSessionId": {
+      "type": "string"
+    },
+    "parentSessionId": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "resolvedModel": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "resolvedEffort": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "requestedModel": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "requestedEffort": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "observedModel": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "observedEffort": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "role": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "actionKind": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "workProfile": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "executionClass": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "const": "planning"
+                },
+                {
+                  "const": "complex_implementation"
+                },
+                {
+                  "const": "review"
+                },
+                {
+                  "const": "standard"
+                }
+              ]
+            },
+            "complexity": {
+              "enum": [
+                "standard",
+                "routine",
+                "complex",
+                "large-refactor"
+              ]
+            },
+            "repeatedFailure": {
+              "type": "boolean"
+            },
+            "independentContextRequired": {
+              "type": "boolean"
+            },
+            "parallelizable": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "executionClass",
+            "complexity",
+            "repeatedFailure",
+            "independentContextRequired",
+            "parallelizable"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "dispatchMechanism": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "enforcementReason": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "fallbackReason": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "attemptId": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "bindingId": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "capsuleId": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "capsuleDigest": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "admissionId": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "admissionDigest": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "stepId": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "enforcementStatus": {
+      "enum": [
+        "enforced",
+        "fallback",
+        "advisory",
+        "unsupported",
+        "failed"
+      ]
+    },
+    "resultStatus": {
+      "enum": [
+        "failed",
+        "completed",
+        "interrupted",
+        "abandoned"
+      ]
+    },
+    "startedAt": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "finishedAt": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "wallClockMs": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "number"
+        }
+      ]
+    },
+    "inputTokens": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "number"
+        }
+      ]
+    },
+    "cachedInputTokens": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "number"
+        }
+      ]
+    },
+    "outputTokens": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "number"
+        }
+      ]
+    },
+    "costMicros": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "number"
+        }
+      ]
+    },
+    "provider": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "surface": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "speedMode": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "reasoningContext": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "reasoningMode": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "delegationMode": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "sessionLineageId": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "previousResponseIdDigest": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "promptPrefixDigest": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "promptCacheKeyDigest": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "cacheMode": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "enum": [
+            "off",
+            "shadow",
+            "on"
+          ]
+        }
+      ]
+    },
+    "cacheTtl": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
     "cacheMissReason": {
       "oneOf": [
-        { "type": "null" },
-        { "enum": ["cold-prefix", "tool-schema-changed", "common-prefix-changed", "provider-prefix-changed", "project-prefix-changed", "run-prefix-changed", "model-changed", "effort-changed", "speed-mode-changed", "session-reset", "provider-unsupported", "usage-unreported", "unknown"] }
+        {
+          "type": "null"
+        },
+        {
+          "enum": [
+            "cold-prefix",
+            "tool-schema-changed",
+            "common-prefix-changed",
+            "provider-prefix-changed",
+            "project-prefix-changed",
+            "run-prefix-changed",
+            "model-changed",
+            "effort-changed",
+            "speed-mode-changed",
+            "session-reset",
+            "provider-unsupported",
+            "usage-unreported",
+            "unknown"
+          ]
+        }
       ]
     },
     "modelEscalationReason": {
       "oneOf": [
-        { "type": "null" },
-        { "enum": ["risk-tier", "complexity", "repeated-failure", "review-policy", "user-request", "quality-regression", "provider-fallback", "unknown"] }
+        {
+          "type": "null"
+        },
+        {
+          "enum": [
+            "risk-tier",
+            "complexity",
+            "repeated-failure",
+            "review-policy",
+            "user-request",
+            "quality-regression",
+            "provider-fallback",
+            "unknown"
+          ]
+        }
       ]
     },
-    "eligiblePrefixTokens": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }] },
-    "uncachedInputTokens": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }] },
-    "cacheReadInputTokens": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }] },
-    "cacheWriteInputTokens": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }] },
-    "reasoningTokens": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }] },
-    "createdAt": { "type": "string", "minLength": 1 }
-  }
+    "eligiblePrefixTokens": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "number"
+        }
+      ]
+    },
+    "uncachedInputTokens": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "number"
+        }
+      ]
+    },
+    "cacheReadInputTokens": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "number"
+        }
+      ]
+    },
+    "cacheWriteInputTokens": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "number"
+        }
+      ]
+    },
+    "reasoningTokens": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "number"
+        }
+      ]
+    },
+    "createdAt": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "receiptId",
+    "decisionId",
+    "runId",
+    "hostSurface",
+    "actorSessionId",
+    "parentSessionId",
+    "resolvedModel",
+    "resolvedEffort",
+    "requestedModel",
+    "requestedEffort",
+    "observedModel",
+    "observedEffort",
+    "role",
+    "actionKind",
+    "workProfile",
+    "dispatchMechanism",
+    "enforcementReason",
+    "fallbackReason",
+    "attemptId",
+    "bindingId",
+    "capsuleId",
+    "capsuleDigest",
+    "admissionId",
+    "admissionDigest",
+    "stepId",
+    "enforcementStatus",
+    "resultStatus",
+    "startedAt",
+    "finishedAt",
+    "wallClockMs",
+    "inputTokens",
+    "cachedInputTokens",
+    "outputTokens",
+    "costMicros",
+    "provider",
+    "surface",
+    "speedMode",
+    "reasoningContext",
+    "reasoningMode",
+    "delegationMode",
+    "sessionLineageId",
+    "previousResponseIdDigest",
+    "promptPrefixDigest",
+    "promptCacheKeyDigest",
+    "cacheMode",
+    "cacheTtl",
+    "cacheMissReason",
+    "modelEscalationReason",
+    "eligiblePrefixTokens",
+    "uncachedInputTokens",
+    "cacheReadInputTokens",
+    "cacheWriteInputTokens",
+    "reasoningTokens",
+    "createdAt"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://moon-relay-kernel.local/schemas/kernel.model-usage.schema.json",
+  "title": "Kernel model usage receipt"
 }

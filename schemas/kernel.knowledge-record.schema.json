@@ -24,9 +24,15 @@
       "enum": [
         "policy_anchor",
         "semantic_fact",
-        "episodic_observation",
+        "architecture_decision",
+        "domain_term",
+        "component_boundary",
+        "api_contract",
         "kg_relation",
         "ontology_constraint",
+        "episodic_observation",
+        "known_failure_pattern",
+        "required_verification",
         "provenance_event",
         "knowledge_candidate"
       ]
@@ -43,7 +49,8 @@
         "rejected",
         "committed",
         "superseded",
-        "archived"
+        "archived",
+        "quarantined"
       ]
     },
     "trustTier": {
@@ -65,9 +72,7 @@
     "sourceRef": {
       "type": "string"
     },
-    "evidence": {
-      "type": "object"
-    },
+    "evidence": {},
     "provenance": {
       "type": "array",
       "items": {

@@ -63,6 +63,32 @@ test('surface inventory follows imported test suites and leaves unreachable suit
   assert.deepEqual(report.testInventory.unregistered, ['tests/unreachable.test.mjs']);
 });
 
+test('surface inventory counts typed test sources once and retains unreachable typed tests', async () => {
+  const root = await fixture({
+    'package.json': JSON.stringify({ scripts: { test: 'node --test tests/registered*.test.mjs' } }),
+    'package/source-layout.json': '{}',
+    'catalog/kernel-contracts.json': '{"contracts":[]}',
+    'dist/runtime-build.json': '{"files":[{"source":"src/main.ts","output":"scripts/main.js"}]}',
+    'src/main.ts': 'export const main = 1;\n',
+    'scripts/main.js': 'export const main = 1;\n',
+    'tests/registered.test.ts': "import test from 'node:test';\n",
+    'tests/registered.test.mjs': '// Generated test entrypoint. Edit tests/registered.test.ts.\nexport * from "../dist/tests/registered.test.mjs";\n',
+    'dist/tests/registered.test.mjs': "import test from 'node:test';\n",
+    'tests/unreachable.test.ts': "import test from 'node:test';\n",
+  });
+  const reported = run('report', '--source-root', root, '--json');
+  assert.equal(reported.status, 0, reported.stderr);
+  const report = JSON.parse(reported.stdout);
+  assert.equal(report.testInventory.trackedCount, 2);
+  assert.equal(report.testInventory.registeredCount, 1);
+  assert.deepEqual(report.testInventory.unregistered, ['tests/unreachable.test.ts']);
+  assert.equal(report.diagnostics.versionedFileCount - report.totals.files, 4);
+  assert.ok(report.diagnostics.compilerGeneratedFiles.includes('scripts/main.js'));
+  await rm(path.join(root, 'dist/runtime-build.json'));
+  const missing = run('report', '--source-root', root, '--json');
+  assert.notEqual(missing.status, 0);
+});
+
 test('surface check blocks a deterministic over-budget source', async () => {
   const reported = run('report', '--source-root', sourceRoot, '--json');
   assert.equal(reported.status, 0, reported.stderr);

@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { runGit } from './lib/git-safe.mjs';
+import { runGit } from './lib/git-safe.js';
 
 const VALID_SCOPES = new Set(['runtime', 'phase_verification', 'phase_closeout']);
 const VALID_BLOCKER_CLASSES = new Set([

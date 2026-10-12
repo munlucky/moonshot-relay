@@ -28,6 +28,7 @@ jobs:
         node:
           - 20.x
           - 22.x
+          - 24.x
 
     steps:
       - name: Checkout
@@ -44,6 +45,12 @@ jobs:
 
       - name: Run active tests
         run: npm test
+
+      - name: Check typed source and generated contracts
+        run: npm run typecheck && npm run check:boundaries && npm run build:tests:check
+
+      - name: Run Kernel regressions
+        run: npm run test:kernel
 
       - name: Run package tests
         run: npm run test:package

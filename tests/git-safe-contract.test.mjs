@@ -9,7 +9,7 @@ import {
   gitSafeArgs,
   gitStatusBranchLine,
   runGit,
-} from '../scripts/lib/git-safe.mjs';
+} from '../scripts/lib/git-safe.js';
 
 const root = process.cwd();
 

@@ -34,7 +34,7 @@ const validGraph = () => ({
       doc: '02-candidate-identity-and-artifact-schemas-v1.md',
       dependsOn: ['phase-01'],
       parallelGroup: 'schema',
-      ownedPaths: ['schemas/candidate-identity.schema.json', 'scripts/lib/candidate-identity.mjs'],
+      ownedPaths: ['schemas/candidate-identity.schema.json', 'scripts/lib/candidate-identity.js'],
     },
     {
       id: 'phase-03',
@@ -56,7 +56,7 @@ test('plan graph validates dependencies and non-overlapping parallel write sets'
 test('plan graph blocks missing dependencies and parallel write conflicts', () => {
   const graph = validGraph();
   graph.phases[1].dependsOn = ['phase-99'];
-  graph.phases[2].ownedPaths = ['scripts/lib/candidate-identity.mjs'];
+  graph.phases[2].ownedPaths = ['scripts/lib/candidate-identity.js'];
   const result = validatePlanGraph(graph);
 
   assert.equal(result.status, 'blocked');

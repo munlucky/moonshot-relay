@@ -1,4 +1,4 @@
-import { assertEvidenceBinding, evidenceBinding } from './candidate-identity.mjs';
+import { assertEvidenceBinding, evidenceBinding } from './candidate-identity.js';
 
 const DELIVERY_MODES = new Set(['local', 'pr', 'release']);
 

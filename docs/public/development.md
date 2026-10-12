@@ -1,7 +1,6 @@
 # Kernel 개발과 런타임 빌드
 
-개발 코드는 `src/`에서 수정한다. 설치되는 코드는 빌드한 `.mjs` 파일이다.
-기존 실행 명령, Kernel 상태 경로, Host 실행 권한은 유지한다.
+개발 원본은 TypeScript다. `src/`에서 런타임을 수정하고 `tests/*.ts`에서 Kernel 테스트를 수정한다. `package/source-layout.json`이 원본과 설치 출력의 매핑 및 허용 의존성을 정한다. 생성 파일을 직접 수정하지 않는다.
 
 ## 새 checkout
 
@@ -9,82 +8,75 @@ Node 20 이상과 npm을 준비한 뒤 저장소에서 실행한다.
 
 ```sh
 npm ci
+npm run typecheck
 npm run build:check
 npm run dev:kernel -- --help
 ```
 
-`npm ci`의 prepare 단계가 런타임을 생성한다.
-`--ignore-scripts`로 의존성을 설치했다면 `npm run build`를 직접 실행한다.
-빌드 전에는 생성된 CLI 파일이 없을 수 있다.
+`npm ci`의 prepare 단계는 고정된 compiler CLI로 `dist/tools`에 빌드 도구를 먼저 생성한다. 그 도구가 런타임과 테스트를 생성한다. 기존 생성 도구가 없어도 시작할 수 있다. `--ignore-scripts`를 사용한 clean 원본에서는 `npm run prepare`를 직접 실행한다.
 
-## 원본과 산출물
+## 원본과 출력
 
-| 수정할 원본 | 생성되는 설치 경로 | 책임 |
+| 수정할 원본 | 생성 출력 | 책임 |
 | --- | --- | --- |
-| src/kernel/ | scripts/kernel/ | Work, Trust, Knowledge, 상태 저장, standalone 기능 |
-| src/host/kernel/ | scripts/host/kernel/ | provider 실행, session, worktree, prompt |
-| src/shared/ | scripts/lib/의 대응 파일 | 공통 runtime 유틸리티 |
-| src/cli/ | bin/의 대응 파일 | 공개 CLI 진입점 |
-| tools/build/ | 설치 런타임에 포함하지 않음 | 빌드, 타입 검사, 경계 검사 |
-| skills/, kernel/, schemas/, package/ | 기존 package contract가 지정한 경로 | 정책, schema, 배포 자산 |
+| src/contracts/ | scripts/contracts/*.js | 검증된 wire 계약과 owner DTO |
+| src/kernel/work/ 및 src/kernel/run/ | scripts/kernel/ 대응 파일 | Work 진행, resume, owner binding |
+| src/kernel/trust/ 및 src/kernel/proof/ | scripts/kernel/ 대응 파일 | Trust 증거와 completion 정책 |
+| src/kernel/knowledge/ | scripts/kernel/knowledge/ | Knowledge lifecycle과 검색 |
+| src/kernel/persistence/ 및 state-store.ts | scripts/kernel/ 대응 파일 | 한 SQLite DB와 transaction, owner store |
+| src/host/kernel/ | scripts/host/kernel/ | provider, session, 물리 실행, 설치 |
+| src/application/ | scripts/application/ 및 standalone 공개 파일 | CLI 및 독립 명령 조립 |
+| src/shared/ | scripts/lib/ 대응 파일 | 공통 runtime 유틸리티 |
+| src/cli/ | bin/*.mjs | 공개 CLI 진입점 |
+| tools/build/*.ts | tools/build/*.mjs | compiler bootstrap, emit, 경계 검사 |
+| tests/*.ts 및 tests/helpers/*.ts | dist/tests/*.mjs 및 helper 출력 | Node 기본 runner용 테스트 |
 
-`package/source-layout.json`이 소스와 출력의 매핑 및 모듈 의존성을 소유한다.
-매핑에 속하지 않는 기존 scripts/, bin/, tools/ 파일은 기존 support source다.
-scripts/kernel/와 scripts/host/kernel/는 빌드 전용 경로다.
-해당 경로에 파일을 직접 추가하거나 수정하지 않는다.
+일반 `.ts` 런타임 출력은 `.js`다. 공개 CLI와 호환 경로에 지정한 출력은 `.mjs`다. 테스트의 공개 `.mjs` 파일은 생성 진입점이며, 테스트 구현은 `dist/tests/`에 있다. 빌드 도구 출력과 테스트 출력은 설치 런타임 원본이 아니다.
 
-빌드는 TypeScript Compiler API 6.0.3에 고정한다.
-7.x의 compiler API는 다르므로 의존성 버전만 올리지 않는다.
-새 버전을 적용하려면 AST 변환과 출력의 회귀 검증을 함께 수행한다.
+`tsconfig.json`은 원본, 테스트, 빌드 도구를 strict 검사한다. `allowJs`는 false다. `tsconfig.build.json`은 production 원본에 `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, 경로 대소문자 검사를 추가한다. 빌드는 두 설정의 진단을 확인한 후 출력한다. 오류가 있으면 이전 산출물로 성공을 보고하지 않는다.
 
-기존 ESM JavaScript는 유지한다. execution-class.mts와
-optional-capabilities.mts에는 strict TypeScript를 적용했다.
-JavaScript 전체가 타입 검사되는 것은 아니다.
-새 계약 또는 수정하는 계약부터 .mts와 타입 테스트를 추가한다.
-타입 검사를 끄거나 광범위한 any 선언으로 파일 확장자만 바꾸지 않는다.
+외부 SDK와 JSON 입력은 `unknown`에서 검사한다. 내부 계약을 `any`, 검사 해제 주석, wildcard 선언으로 우회하지 않는다. SQLite SDK의 구조 차이는 작은 persistence adapter에 한정한다.
 
-## 개발 순서
+## 변경과 검증
 
-1. src/ 원본과 필요한 정책·테스트를 수정한다.
-2. `npm run build`를 실행한다. 빌드는 타입 오류, 누락 import, 경계 위반을 거부한다.
-3. 관련 테스트 또는 `npm run test:source-runtime`을 실행한다.
-4. 제출 전에 `npm run lint:kernel`과 `npm test`를 실행한다.
+직렬화 계약은 `schemas/kernel.*.schema.json`과 `catalog/kernel-contracts.json`에 정의한다. Schema를 변경한 뒤 `npm run build:contracts`로 타입과 validator 정의를 생성한다. 일반 build와 prepare는 생성 파일을 자동 승인하지 않으며 drift가 있으면 실패한다. 타입 생성기는 개발 의존성이다. Ajv와 formats는 설치 runtime의 실행 의존성이다.
+
+1. 해당 owner의 원본과 관련 테스트를 수정한다.
+2. 타입, 경계, 출력 검사를 실행한다.
+3. 관련 테스트를 실행한다.
+4. 전체 제출에서는 Kernel이 요구한 검증을 실행한다.
 
 ```sh
-npm run build
 npm run typecheck
+npm run build
 npm run check:boundaries
 npm run build:check
+npm run build:tests
+npm run build:tests:check
+node --test tests/kernel-report-replay.test.mjs
 npm run test:source-runtime
 ```
 
-dev:kernel과 dev:standalone은 빌드 후 기존 CLI를 실행한다.
-소스 파일을 직접 실행하는 대신 이 명령을 사용한다.
-import.meta.url 기반 자산 경로는 설치 경로를 기준으로 한다.
+`test:source-runtime`은 build 실패 보존, source 없는 설치 실행, 네 가지 owner 변경 시험을 확인한다. Codex 정책은 Host, 검색 정책은 Knowledge, completion 정책은 Trust, resume 정책은 Work에서 변경한다. 시험 변경은 임시 checkout에서 수행하고 제품 원본에 남기지 않는다.
 
-빌드 결과는 Git에서 제외한다. dist/runtime-build.json은 소스·도구·출력 hash를
-기록하며 시간과 절대 경로를 넣지 않는다. 같은 입력은 같은 출력과 receipt를 만든다.
-새 소스와 삭제한 소스도 검사한다. 사라진 소스의 이전 출력은 빌드가 제거한다.
-공유 출력 폴더에서는 매핑에 속한 파일만 관리한다.
+`npm run lint:kernel`, `npm run test:kernel`, `npm test`, `npm run test:package`는 서로 다른 검증 범위를 갖는다. 과거 Relay 호환 테스트는 기능 보존을 검사한다. 해당 테스트가 현재 Kernel authority를 대신하지 않는다.
 
-## 패키징과 설치
+## 패키징과 임시 설치
 
-기존 설치 진입점을 사용한다. checkout에서 먼저 npm ci 또는 npm run build를 실행한다.
-Kernel installer와 package materializer는 소스·출력·빌드 도구 hash가 바뀌면
-runtime_build_stale로 중단한다. 빌드한 뒤 다시 실행한다.
+```sh
+npm pack
+node bin/moon-relay-kernel.mjs install --help
+node bin/moonshot-relay.mjs install --dry-run --runtime codex --json
+```
 
-npm pack의 prepack도 빌드·타입·freshness 검사를 실행한다.
-소스와 컴파일러는 배포 payload에 넣지 않는다.
-배포 archive의 작은 prepare 진입점은 src/가 없으면 아무 작업도 하지 않는다.
-설치된 .mjs는 TypeScript 실행기 없이 Node에서 실행한다.
+실제 시험 설치는 별도로 만든 임시 target-root와 provider home을 지정한다. 실제 사용자 state와 섞지 않는다. 공개 설치 CLI는 공식 Kernel installer, runtime bootstrap, profile installer를 호출한다. 경로의 물리 identity 검사는 Host가 소유한다.
 
-standalone 진입점의 출력이 바뀌면 기존
-scripts/kernel/standalone/catalog.mjs의 writeStandaloneLock으로
-package/kernel/standalone-skills.lock.json을 갱신한다.
-일반 빌드는 이 lock을 자동 승인하거나 다시 쓰지 않는다.
+`npm pack`의 prepack은 빌드, 타입, freshness를 검사한다. 설치 payload에는 개발 원본, compiler, 테스트, 로그, DB, credentials를 넣지 않는다. 배포 archive의 prepare 진입점은 `src/`가 없으면 빌드하지 않는다. 설치 출력은 TypeScript 실행기 없이 Node에서 실행한다.
 
-## 후속 구조 개선
+installer는 원본과 출력 hash가 다르면 `runtime_build_stale`로 중단한다. standalone 출력이 바뀌면 `scripts/kernel/standalone/catalog.js`의 `writeStandaloneLock`으로 lock을 갱신한다. 일반 빌드는 이 lock을 자동 승인하지 않는다.
 
-[구조 결정과 Futures 적용 지도](roadmaps/source-runtime-separation/ARCHITECTURE.md)를 따른다.
-Futures Gate 상태, reviewer 추가, 계측과 데이터 migration은 이번 구조 개편에 포함하지 않는다.
-기존 대형 control-plane을 더 작은 서비스로 분리하는 작업도 별도 동작 보존 계약으로 수행한다.
+## 디버깅과 기존 자산
+
+`npm run dev:kernel -- --help`와 `npm run dev:standalone -- --help`는 먼저 빌드한다. sourcemap은 `dist/debug/`에 생성된다. 설치 runtime에는 source text를 넣지 않는다. `dist/runtime-build.json`은 시간과 절대 경로 없이 원본·도구·출력 hash를 기록한다.
+
+[현재 원본 폐쇄집합](roadmaps/typed-authority-architecture/CURRENT_SOURCE_CLOSURE.md)을 기준으로 변경 위치를 확인한다. 과거 계획의 파일 경로는 역사 기록으로 유지한다. runtime state와 provider home은 원본 및 package payload 밖에 둔다.

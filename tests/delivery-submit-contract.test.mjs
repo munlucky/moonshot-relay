@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { after, test } from 'node:test';
 
-import { buildCandidateIdentity, sha256Hex } from '../scripts/lib/candidate-identity.mjs';
+import { buildCandidateIdentity, sha256Hex } from '../scripts/lib/candidate-identity.js';
 import {
   assessDeliverySubmission,
   buildSubmissionReceipt,

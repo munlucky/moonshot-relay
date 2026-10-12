@@ -4,7 +4,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import { executeKernelGitCloseout } from '../scripts/kernel/git/closeout.mjs';
+import { executeKernelGitCloseout } from '../scripts/kernel/git/closeout.js';
+import { createGitCloseoutHost } from '../scripts/host/kernel/git/closeout-operations.js';
 
 test('Git Closeout - verifies Git closeout execution contract', async (t) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'git-closeout-contract-'));
@@ -16,6 +17,7 @@ test('Git Closeout - verifies Git closeout execution contract', async (t) => {
   };
   git(['init', '--quiet']);
   git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '--quiet', '-m', 'Initial fixture']);
+  const gitCloseoutHost = createGitCloseoutHost();
   const gitCloseoutRequest = {
     requested: true,
     mode: 'soft',
@@ -37,6 +39,7 @@ test('Git Closeout - verifies Git closeout execution contract', async (t) => {
     gitCloseoutRequest,
     knowledgeCommitReceipt,
     changedFiles: [],
+    gitCloseoutHost,
   });
 
   assert.ok(resSkipped);
@@ -59,7 +62,7 @@ test('Git Closeout - verifies Git closeout execution contract', async (t) => {
   git(['add', 'existing.txt']);
   await assert.rejects(executeKernelGitCloseout({
     runId: 'run-git-1', projectId: 'proj-git-1', repoRoot,
-    gitCloseoutRequest, knowledgeCommitReceipt, changedFiles: [],
+    gitCloseoutRequest, knowledgeCommitReceipt, changedFiles: [], gitCloseoutHost,
   }), { code: 'GIT_PREEXISTING_STAGED_CHANGES' });
   assert.equal(git(['diff', '--cached', '--name-only']), 'existing.txt');
 });

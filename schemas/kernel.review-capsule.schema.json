@@ -1,102 +1,347 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://moon-relay-kernel.local/schemas/kernel.review-capsule.schema.json",
-  "title": "Kernel review capsule",
-  "description": "The read-only context handed to an independent reviewer session. It is deliberately NOT the implementer capsule: it carries the subject (changed paths, workspace identity, mutation revision), the verification evidence, and the review scope — never the implementer's reasoning, discarded alternatives, unrelated project knowledge, or write permission.",
   "type": "object",
-  "additionalProperties": false,
-  "required": ["schemaVersion", "capsuleId", "runId", "role", "subject", "reviewScope", "permissions", "provenance", "createdAt"],
   "properties": {
-    "schemaVersion": { "const": 1 },
-    "capsuleId": { "type": "string", "pattern": "^capsule-[a-f0-9]{8,64}$" },
-    "runId": { "type": "string", "minLength": 1 },
-    "stepId": { "type": ["string", "null"] },
-    "role": { "const": "reviewer" },
-    "riskTier": { "enum": ["T0", "T1", "T2", "T3"] },
-    "planRevision": { "type": "integer", "minimum": 1 },
-    "objective": { "type": "string" },
+    "capsuleId": {
+      "type": "string"
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "capsuleDigest": {
+          "type": "string"
+        },
+        "workspaceIdentity": {
+          "type": "string"
+        },
+        "sourceIdentity": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "routeDecisionId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "createdByVersion": {
+          "type": "string"
+        },
+        "migrationOrigin": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "capsuleDigest",
+        "workspaceIdentity",
+        "sourceIdentity",
+        "routeDecisionId",
+        "createdByVersion",
+        "migrationOrigin"
+      ],
+      "additionalProperties": false
+    },
+    "createdAt": {
+      "type": "string"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "runId": {
+      "type": "string"
+    },
+    "stepId": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "role": {
+      "const": "reviewer"
+    },
+    "riskTier": {
+      "type": "string"
+    },
+    "planRevision": {
+      "type": "number"
+    },
+    "objective": {
+      "type": "string"
+    },
     "acceptance": {
       "type": "array",
       "items": {
         "type": "object",
-        "additionalProperties": false,
         "properties": {
-          "id": { "type": "string" },
-          "statement": { "type": "string" },
-          "obligationIds": { "type": "array", "items": { "type": "string" } }
-        }
+          "id": {
+            "type": "string"
+          },
+          "statement": {
+            "type": "string"
+          },
+          "obligationIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "statement",
+          "obligationIds"
+        ],
+        "additionalProperties": false
       }
     },
     "subject": {
       "type": "object",
-      "additionalProperties": false,
-      "required": ["changedPaths", "workspaceIdentity", "mutationRevision"],
       "properties": {
-        "changedPaths": { "type": "array", "items": { "type": "string" } },
-        "diffDigest": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }] },
-        "workspaceIdentity": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
-        "mutationRevision": { "type": "integer", "minimum": 0 }
-      }
+        "changedPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "diffDigest": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "workspaceIdentity": {
+          "type": "string"
+        },
+        "mutationRevision": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "changedPaths",
+        "diffDigest",
+        "workspaceIdentity",
+        "mutationRevision"
+      ],
+      "additionalProperties": false
     },
     "verificationEvidence": {
       "type": "array",
       "items": {
         "type": "object",
-        "additionalProperties": false,
         "properties": {
-          "obligationId": { "type": "string" },
-          "status": { "type": "string" },
-          "evidenceDigest": { "type": ["string", "null"] },
-          "command": { "type": ["string", "null"] },
-          "exitCode": { "type": ["integer", "null"] }
-        }
+          "obligationId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "evidenceDigest": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "command": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "exitCode": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          }
+        },
+        "required": [
+          "obligationId",
+          "status",
+          "evidenceDigest",
+          "command",
+          "exitCode"
+        ],
+        "additionalProperties": false
       }
     },
     "implementationReceipt": {
       "type": "object",
-      "additionalProperties": false,
       "properties": {
-        "actorSessionId": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }] },
-        "attemptId": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^attempt-[a-f0-9-]{8,96}$" }] },
-        "capsuleDigest": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }] },
-        "modelClass": { "type": ["string", "null"] },
-        "resolvedModel": { "type": ["string", "null"] }
-      }
+        "actorSessionId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "attemptId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "capsuleDigest": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "modelClass": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "resolvedModel": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "actorSessionId",
+        "attemptId",
+        "capsuleDigest",
+        "modelClass",
+        "resolvedModel"
+      ],
+      "additionalProperties": false
     },
     "reviewScope": {
       "type": "object",
-      "additionalProperties": false,
-      "required": ["stage"],
       "properties": {
-        "stage": { "enum": ["contract", "engineering", "complexity"] },
-        "requiredChecks": { "type": "array", "items": { "type": "string" } },
-        "obligationId": { "type": ["string", "null"] }
-      }
+        "stage": {
+          "enum": [
+            "contract",
+            "engineering",
+            "complexity"
+          ]
+        },
+        "requiredChecks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "obligationId": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "required": [
+        "stage",
+        "requiredChecks",
+        "obligationId"
+      ],
+      "additionalProperties": false
     },
     "permissions": {
       "type": "object",
-      "additionalProperties": false,
-      "required": ["filesystem"],
       "properties": {
-        "filesystem": { "const": "read_only" },
-        "network": { "type": "string" },
-        "canDelegate": { "const": false },
-        "canCommit": { "const": false }
-      }
-    },
-    "provenance": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["workspaceIdentity", "capsuleDigest"],
-      "properties": {
-        "workspaceIdentity": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
-        "sourceIdentity": { "type": ["string", "null"] },
-        "routeDecisionId": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^route-[a-f0-9]{8,64}$" }] },
-        "capsuleDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
-        "createdByVersion": { "type": "string" },
-        "migrationOrigin": { "type": ["string", "null"] }
-      }
-    },
-    "createdAt": { "type": "string", "minLength": 1 }
-  }
+        "filesystem": {
+          "const": "read_only"
+        },
+        "network": {
+          "type": "string"
+        },
+        "canDelegate": {
+          "type": "boolean"
+        },
+        "canCommit": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "filesystem",
+        "network",
+        "canDelegate",
+        "canCommit"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "capsuleId",
+    "provenance",
+    "createdAt",
+    "schemaVersion",
+    "runId",
+    "stepId",
+    "role",
+    "riskTier",
+    "planRevision",
+    "objective",
+    "acceptance",
+    "subject",
+    "verificationEvidence",
+    "implementationReceipt",
+    "reviewScope",
+    "permissions"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://moon-relay-kernel.local/schemas/kernel.review-capsule.schema.json",
+  "title": "Kernel review capsule"
 }

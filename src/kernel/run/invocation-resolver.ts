@@ -1,0 +1,449 @@
+import { canonicalizeHostSessionId } from '../../contracts/host-session.js';
+import { createOpaqueRunId } from './run-identity.js';
+import { normalizeTaskContract } from '../task/task-contract.js';
+import type { TaskContractLike } from '../task/task-contract.js';
+import { classifyContractChange } from '../change-contract.js';
+
+export const NEW_TASK_INVOCATION_INTENT = 'new-task';
+
+type UnknownRecord = Record<string, unknown>;
+
+interface WorkspaceRecovery {
+  acknowledgedIdentity?: string | null;
+}
+
+interface ResolverContract {
+  schemaVersion: number;
+  digest: string;
+  objective: string;
+  predecessorRunId?: string | null;
+  seedProvenance?: unknown;
+  workspaceRecovery?: WorkspaceRecovery | null;
+}
+
+interface ResolverTaskContractInput extends TaskContractLike {
+  schemaVersion?: unknown;
+  digest?: unknown;
+  objective?: unknown;
+  invocationIntent?: unknown;
+  intent?: unknown;
+  predecessorRunId?: unknown;
+  seedProvenance?: unknown;
+  workspaceRecovery?: WorkspaceRecovery | null;
+}
+
+interface ResolverRun {
+  runId: string;
+  projectId: string | null;
+  workspaceId?: string | null;
+  worktreeId?: string | null;
+  status?: string | null;
+  blockedReason?: string | null;
+  objective?: unknown;
+  taskContract?: import('../persistence/state-store-contracts.js').StoredTaskContract | null;
+  finalizationStatus?: string | null;
+  currentWorkspaceIdentity?: string | null;
+}
+
+interface ProjectWorkspace {
+  worktreeId?: string | null;
+}
+
+interface WorktreeLease {
+  worktreeId?: string | null;
+  projectId?: string | null;
+  holderRunId?: string | null;
+  acquiredAt?: string | null;
+}
+
+interface RunScope {
+  projectId: string;
+  worktreeId?: string | null;
+  workspaceId?: string | null;
+  statuses?: string[] | null;
+}
+
+interface InvocationStateStore {
+  getProjectWorkspace?: (workspaceId: string) => ProjectWorkspace | null;
+  listRuns?: (scope: RunScope) => ResolverRun[];
+  listActiveRuns?: (scope: RunScope) => ResolverRun[];
+  getWorktreeMutationLease?: (worktreeId: string) => WorktreeLease | null;
+  abandonRun?: (runId: string, input: { reason: string }) => unknown;
+  getRun: (runId: string) => ResolverRun | null;
+  getLatestRunForWorktree?: (scope: RunScope) => ResolverRun | null;
+}
+
+interface InvocationInput {
+  stateStore?: InvocationStateStore | null;
+  projectId?: string | null;
+  provider?: unknown;
+  sessionId?: string | null;
+  workspaceId?: string | null;
+  worktreeId?: string | null;
+  explicitRunId?: string | null;
+  envRunId?: string | null;
+  taskContract?: ResolverTaskContractInput | null;
+  invocationIntent?: unknown;
+  intent?: unknown;
+  observedWorkspaceIdentity?: string | null;
+}
+
+interface InvocationIntentInput {
+  taskContract?: ResolverTaskContractInput | null;
+  invocationIntent?: unknown;
+  intent?: unknown;
+}
+
+interface GoalIdentityInput {
+  existingRun?: ResolverRun | null;
+  contract?: ResolverContract | null;
+  requestedRunId?: string | null;
+}
+
+interface ConflictDetailsInput {
+  projectId: string;
+  worktreeId?: string | null;
+  mutableRuns: ResolverRun[];
+  worktreeLease?: WorktreeLease | null;
+  reason: string;
+}
+
+interface InvocationResolution {
+  mode: 'create' | 'revise' | 'resume' | 'finalization-retry' | 'done' | 'successor';
+  runId: string;
+  predecessorRunId: string | null;
+  binding: null;
+  reason: string;
+  taskContract: ResolverContract | null;
+  changeClass: ReturnType<typeof classifyContractChange> | null;
+}
+
+
+const codedError = (code: string, nextAction: string, details: UnknownRecord = {}) => Object.assign(new Error(code), {
+  code,
+  errorCode: code,
+  nextAction,
+  ...(Object.keys(details).length > 0 ? { details } : {}),
+});
+
+const resolveInvocationIntent = ({ taskContract, invocationIntent, intent }: InvocationIntentInput): string | null => {
+  const requested = invocationIntent || intent || taskContract?.invocationIntent || taskContract?.intent || null;
+  if (!requested) return null;
+  if (requested === NEW_TASK_INVOCATION_INTENT) return requested;
+  throw codedError('invocation_intent_invalid', 'use-supported-invocation-intent', {
+    invocationIntent: requested,
+    supported: [NEW_TASK_INVOCATION_INTENT],
+  });
+};
+
+const runHolder = (run: ResolverRun | null | undefined) => run ? {
+  runId: run.runId,
+  projectId: run.projectId || null,
+  workspaceId: run.workspaceId || null,
+  worktreeId: run.worktreeId || null,
+  status: run.status || null,
+  blockedReason: run.blockedReason || null,
+} : null;
+
+const worktreeConflictDetails = ({ projectId, worktreeId, mutableRuns, worktreeLease, reason }: ConflictDetailsInput) => ({
+  projectId,
+  worktreeId: worktreeId || null,
+  holderRunId: mutableRuns[0]?.runId || worktreeLease?.holderRunId || null,
+  holder: runHolder(mutableRuns[0]),
+  holders: mutableRuns.map(runHolder),
+  lease: worktreeLease ? {
+    worktreeId: worktreeLease.worktreeId || worktreeId || null,
+    projectId: worktreeLease.projectId || projectId,
+    holderRunId: worktreeLease.holderRunId || null,
+    acquiredAt: worktreeLease.acquiredAt || null,
+  } : null,
+  reason,
+});
+
+const provenanceRecord = (value: unknown): UnknownRecord => value && typeof value === 'object' && !Array.isArray(value) ? value as UnknownRecord : {};
+
+const normalizedContract = (taskContract: ResolverTaskContractInput | null | undefined): ResolverContract | null => {
+  if (!taskContract || Object.keys(taskContract).length === 0) return null;
+  if (taskContract.schemaVersion === 1 && typeof taskContract.digest === 'string') return taskContract as ResolverContract;
+  return normalizeTaskContract(taskContract, {
+    objective: taskContract.objective || 'Kernel execution task',
+  });
+};
+
+const normalizeObjective = (value: unknown): string => String(value || '')
+  .toLowerCase()
+  .trim()
+  .replace(/\s+/g, ' ');
+
+const isSameGoalIdentity = ({ existingRun, contract, requestedRunId }: GoalIdentityInput): boolean => {
+  if (!existingRun) return false;
+  if (requestedRunId && requestedRunId === existingRun.runId) return true;
+  if (contract?.predecessorRunId && contract.predecessorRunId === existingRun.runId) return true;
+  if (provenanceRecord(contract?.seedProvenance).predecessorRunId && provenanceRecord(contract?.seedProvenance).predecessorRunId === existingRun.runId) return true;
+  // A missing objective is not evidence of continuity. Treating it as a
+  // wildcard silently absorbs a stale Run when a new task arrives with a
+  // legacy/incomplete contract; only an explicit Run ID or predecessor link
+  // may bypass this identity check.
+  if (!contract?.objective) return false;
+
+  const existingNorm = normalizeObjective(existingRun.objective);
+  const nextNorm = normalizeObjective(contract.objective);
+  if (existingNorm && nextNorm && existingNorm === nextNorm) return true;
+
+  if (provenanceRecord(existingRun.taskContract?.seedProvenance).seedId && provenanceRecord(contract.seedProvenance).seedId
+    && provenanceRecord(existingRun.taskContract?.seedProvenance).seedId === provenanceRecord(contract.seedProvenance).seedId) {
+    return true;
+  }
+
+  return false;
+};
+
+export const resolveBoundInvocation = ({
+  stateStore,
+  projectId,
+  provider,
+  sessionId,
+  workspaceId,
+  worktreeId = null,
+  explicitRunId = null,
+  envRunId = null,
+  taskContract = null,
+  invocationIntent = null,
+  intent = null,
+  observedWorkspaceIdentity = null,
+}: InvocationInput = {}): InvocationResolution => {
+  if (!stateStore || !projectId || (!worktreeId && !workspaceId)) {
+    throw codedError('host_binding_missing', 'reopen-from-correct-worktree');
+  }
+  const canonicalSessionId = sessionId
+    ? canonicalizeHostSessionId({ provider, sessionId })
+    : null;
+  if (sessionId && canonicalSessionId !== sessionId) {
+    throw codedError('provider_session_invalid', 'reopen-from-correct-worktree');
+  }
+  const contract = normalizedContract(taskContract);
+  const resolvedIntent = resolveInvocationIntent({ taskContract, invocationIntent, intent });
+  const isNewTask = resolvedIntent === NEW_TASK_INVOCATION_INTENT;
+  const requestedRunId = explicitRunId || envRunId || null;
+  const registeredWorkspace = workspaceId
+    ? stateStore.getProjectWorkspace?.(workspaceId) || null
+    : null;
+  const effectiveWorktreeId = worktreeId || registeredWorkspace?.worktreeId || null;
+  const assertRunBinding = (run: ResolverRun): ResolverRun => {
+    if (run.projectId !== projectId) {
+      throw codedError('run_project_mismatch', 'relaunch-from-bound-project');
+    }
+    if (run.worktreeId) {
+      if (!effectiveWorktreeId || run.worktreeId !== effectiveWorktreeId) {
+        throw codedError('run_worktree_mismatch', 'return-to-bound-worktree');
+      }
+    } else if (run.workspaceId && run.workspaceId !== workspaceId) {
+      // Legacy Runs remain addressable through workspaceId, but a workspace-*
+      // compatibility id is never compared directly with a worktree-* id.
+      throw codedError('run_workspace_mismatch', 'return-to-bound-workspace');
+    }
+    return run;
+  };
+
+  const candidateRuns = typeof stateStore.listRuns === 'function'
+    ? stateStore.listRuns({
+        projectId,
+        ...(effectiveWorktreeId ? { worktreeId: effectiveWorktreeId } : { workspaceId: workspaceId ?? null }),
+        statuses: ['active', 'blocked'],
+      })
+    : typeof stateStore.listActiveRuns === 'function'
+      ? stateStore.listActiveRuns({
+          projectId,
+          ...(effectiveWorktreeId ? { worktreeId: effectiveWorktreeId } : { workspaceId: workspaceId ?? null }),
+        })
+      : [];
+  let worktreeLease = effectiveWorktreeId && typeof stateStore.getWorktreeMutationLease === 'function'
+    ? stateStore.getWorktreeMutationLease(effectiveWorktreeId)
+    : null;
+  let mutableRuns = candidateRuns.filter((run) => run.status === 'active'
+    || (run.status === 'blocked'
+      && worktreeLease?.projectId === projectId
+      && worktreeLease?.holderRunId === run.runId));
+
+  const shouldAbandonBlockedRuns = mutableRuns.length > 0
+    && mutableRuns.every((run) => run.status === 'blocked')
+    && (
+      isNewTask
+      || (contract && !requestedRunId && mutableRuns.every((run) => !isSameGoalIdentity({ existingRun: run, contract, requestedRunId })))
+    );
+
+  if (shouldAbandonBlockedRuns) {
+    for (const run of mutableRuns) {
+      if (typeof stateStore.abandonRun === 'function') {
+        stateStore.abandonRun(run.runId, { reason: 'superseded-and-archived-for-new-task' });
+      }
+    }
+    mutableRuns = [];
+    worktreeLease = effectiveWorktreeId && typeof stateStore.getWorktreeMutationLease === 'function'
+      ? stateStore.getWorktreeMutationLease(effectiveWorktreeId)
+      : null;
+  }
+
+  if (mutableRuns.length > 1) {
+    throw codedError(
+      'worktree_run_conflict',
+      'resolve-conflicting-active-runs',
+      worktreeConflictDetails({
+        projectId,
+        worktreeId: effectiveWorktreeId,
+        mutableRuns,
+        worktreeLease,
+        reason: 'multiple-mutable-worktree-runs',
+      }),
+    );
+  }
+  const mutableRun = mutableRuns[0] || null;
+  const requestedRun = requestedRunId ? stateStore.getRun(requestedRunId) : null;
+  if (requestedRun) assertRunBinding(requestedRun);
+
+  if (isNewTask && mutableRun) {
+    throw codedError(
+      'worktree_run_conflict',
+      'resume-the-worktree-bound-run',
+      worktreeConflictDetails({
+        projectId,
+        worktreeId: effectiveWorktreeId,
+        mutableRuns,
+        worktreeLease,
+        reason: 'new-task-cannot-revise-mutable-run',
+      }),
+    );
+  }
+
+  if (requestedRunId && mutableRun && requestedRunId !== mutableRun.runId) {
+    throw codedError(
+      'worktree_run_conflict',
+      'resume-the-worktree-bound-run',
+      worktreeConflictDetails({
+        projectId,
+        worktreeId: effectiveWorktreeId,
+        mutableRuns,
+        worktreeLease,
+        reason: 'requested-run-is-not-worktree-holder',
+      }),
+    );
+  }
+
+  const latestRun = typeof stateStore.getLatestRunForWorktree === 'function'
+    ? stateStore.getLatestRunForWorktree({
+        projectId,
+        ...(effectiveWorktreeId ? { worktreeId: effectiveWorktreeId } : { workspaceId: workspaceId ?? null }),
+      })
+    : null;
+  // A new task is allowed to start only after the mutable owner is absent.
+  // Historical blocked Runs without a lease are not mutable owners and must
+  // not become an implicit resume/revise cursor for the new task, while a
+  // completed or abandoned cursor still carries the normal successor lineage.
+  const newTaskCursor = isNewTask
+    ? [latestRun].find((run) => run?.status === 'completed' || run?.status === 'abandoned') || null
+    : latestRun;
+  let cursorRun: ResolverRun | null = requestedRun || mutableRun || newTaskCursor;
+
+  if (cursorRun && !requestedRunId && contract) {
+    if (!isSameGoalIdentity({ existingRun: cursorRun, contract, requestedRunId })) {
+      if (cursorRun.status === 'blocked') {
+        if (typeof stateStore.abandonRun === 'function' && worktreeLease?.holderRunId === cursorRun.runId) {
+          stateStore.abandonRun(cursorRun.runId, { reason: 'superseded-and-archived-for-new-task' });
+          worktreeLease = null;
+        }
+        cursorRun = null;
+      }
+    }
+  }
+
+  if (!cursorRun) {
+    if (!contract) throw codedError('host_binding_missing', 'supply-a-task-contract');
+    return {
+      mode: 'create',
+      runId: requestedRunId || createOpaqueRunId(),
+      predecessorRunId: null,
+      binding: null,
+      reason: 'no-worktree-cursor',
+      taskContract: contract,
+      changeClass: null,
+    };
+  }
+  assertRunBinding(cursorRun);
+  if (cursorRun.status === 'active' || cursorRun.status === 'blocked') {
+    const revised = Boolean(contract && cursorRun.taskContract?.digest !== contract.digest);
+    return {
+      mode: revised ? 'revise' : 'resume',
+      runId: cursorRun.runId,
+      predecessorRunId: null,
+      binding: null,
+      reason: revised
+        ? 'worktree-run-contract-changed'
+        : cursorRun.status === 'blocked' ? 'blocked-worktree-run' : 'active-worktree-run',
+      taskContract: contract,
+      changeClass: contract ? classifyContractChange({ previous: cursorRun.taskContract, next: contract }) : null,
+    };
+  }
+
+  if (cursorRun.status === 'completed') {
+    if (cursorRun.finalizationStatus !== 'completed') {
+      return {
+        mode: 'finalization-retry',
+        runId: cursorRun.runId,
+        predecessorRunId: null,
+        binding: null,
+        reason: 'completed-run-finalization-incomplete',
+        taskContract: contract,
+        changeClass: contract ? classifyContractChange({ previous: cursorRun.taskContract, next: contract }) : null,
+      };
+    }
+    // Explicit recovery starts a fresh proof baseline; never rewrite the
+    // completed Run or claim continuity across an externally changed checkout.
+    if (isNewTask && !requestedRunId && contract
+      && observedWorkspaceIdentity
+      && taskContract?.workspaceRecovery?.acknowledgedIdentity === observedWorkspaceIdentity
+      && cursorRun.currentWorkspaceIdentity !== observedWorkspaceIdentity) {
+      return {
+        mode: 'create', runId: createOpaqueRunId(), predecessorRunId: null,
+        binding: null, reason: 'user-acknowledged-new-workspace-baseline',
+        taskContract: contract, changeClass: null,
+      };
+    }
+    if (!isNewTask && (!contract || cursorRun.taskContract?.digest === contract.digest)) {
+      return {
+        mode: 'done',
+        runId: cursorRun.runId,
+        predecessorRunId: null,
+        binding: null,
+        reason: contract ? 'same-contract-already-complete' : 'no-new-task-contract',
+        taskContract: contract,
+        changeClass: null,
+      };
+    }
+    return {
+      mode: 'successor',
+      runId: createOpaqueRunId(),
+      predecessorRunId: cursorRun.runId,
+      binding: null,
+      reason: 'new-contract-after-completed-finalization',
+      taskContract: contract,
+      changeClass: classifyContractChange({ previous: cursorRun.taskContract, next: contract }),
+    };
+  }
+
+  if (cursorRun.status === 'abandoned') {
+    if (!contract) {
+      throw codedError('no_active_run', 'supply-a-task-contract');
+    }
+    return {
+      mode: 'create',
+      runId: requestedRunId || createOpaqueRunId(),
+      predecessorRunId: null,
+      binding: null,
+      reason: 'new-run-after-abandon',
+      taskContract: contract,
+      changeClass: null,
+    };
+  }
+
+  throw codedError('run_access_denied', 'inspect-worktree-cursor');
+};

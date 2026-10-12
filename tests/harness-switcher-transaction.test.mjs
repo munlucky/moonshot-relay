@@ -22,6 +22,7 @@ test('native root resolution fails closed when a Provider HOME points inside Ker
 });
 
 test('Kernel launch environment preserves every user Provider HOME binding', () => {
+  const workspaceRoot = path.resolve('test-project');
   const baseEnv = {
     PATH: 'C:\\Windows\\System32',
     Path: 'C:\\Windows\\System32',
@@ -37,14 +38,14 @@ test('Kernel launch environment preserves every user Provider HOME binding', () 
   const env = buildProcessEnvironment({
     surface: 'codex_cli',
     roots: { runtimeHome: 'C:\\Users\\moon\\.moon-relay-kernel', providerHome: 'C:\\Users\\moon\\.codex' },
-    workspaceRoot: 'C:\\work\\project',
+    workspaceRoot,
     baseEnv,
   });
   for (const key of ['CLAUDE_HOME', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'QWEN_HOME', 'GEMINI_HOME', 'ANTIGRAVITY_HOME', 'ANTIGRAVITY_SKILLS_HOME']) {
     assert.equal(env[key], baseEnv[key], key);
   }
   assert.equal(env.MOON_RELAY_KERNEL_RUNTIME, 'moon-relay-kernel');
-  assert.equal(env.MOON_RELAY_WORKSPACE_ROOT, 'C:\\work\\project');
+  assert.equal(env.MOON_RELAY_WORKSPACE_ROOT, workspaceRoot);
   assert.equal(env.MOON_RELAY_TRACK, undefined);
   assert.equal(env.Path, undefined);
 });

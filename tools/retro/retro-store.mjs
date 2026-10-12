@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { resolveKernelRuntimeHome } from '../../scripts/kernel/runtime-home.mjs';
+import { resolveKernelRuntimeHome } from '../../scripts/kernel/runtime-home.js';
 import { assertSafeRetroPayload, validateCollectRecord, validateDate, validateRetroIdentifier } from './retro-normalize.mjs';
 
 export function resolveRetroRoot({ projectId, stateRoot, env = process.env } = {}) {

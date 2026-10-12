@@ -1555,7 +1555,7 @@ test('record-summary fails closed without task class and browser result override
 
 test('package contract excludes generated verification traces and includes verification plane helper', async () => {
   const contract = await readFile(path.join(root, 'package', 'package-contract.yaml'), 'utf8');
-  const packageTest = await readFile(path.join(root, 'tests', 'package-materialization.test.mjs'), 'utf8');
+  const packageTest = await readFile(path.join(root, 'tests', 'package-materialization.test.ts'), 'utf8');
 
   assert.match(contract, /source: scripts\/verification-plane\.mjs/);
   assert.match(contract, /source: scripts\/lib\/verification-plane\.mjs/);

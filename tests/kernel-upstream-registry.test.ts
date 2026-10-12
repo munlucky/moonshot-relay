@@ -1,0 +1,3 @@
+import assert from 'node:assert/strict'; import {test} from 'node:test'; import {readFile} from 'node:fs/promises'; import {proposeUpstreamUpdate} from '../src/host/kernel/upstream-registry.js';
+test('upstream registry forbids automatic application',async()=>{const t=await readFile(new URL('../kernel/upstream-registry.yaml',import.meta.url),'utf8'); assert.match(t,/autoApply:\s*false/); assert.match(t,/DietrichGebert\/ponytail/); assert.match(t,/mattpocock\/skills/);});
+test('changed upstream creates proposal instead of mutation',()=>{const p=proposeUpstreamUpdate({source:'ponytail',currentRef:'a',observedRef:'b',changes:['guard']}); assert.equal(p.status,'proposal-required'); assert.equal(p.autoApply,false);});

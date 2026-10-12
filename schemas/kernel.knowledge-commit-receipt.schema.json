@@ -1,41 +1,94 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "KernelKnowledgeCommitReceipt",
   "type": "object",
-  "required": [
-    "schemaVersion",
-    "runId",
-    "projectId",
-    "sourceIdentity",
-    "revisionBefore",
-    "revisionAfter",
-    "status",
-    "digest"
-  ],
   "properties": {
-    "schemaVersion": { "type": "integer", "const": 1 },
-    "runId": { "type": "string" },
-    "projectId": { "type": "string" },
-    "sourceIdentity": { "type": "string" },
-    "mutationRevision": { "type": "integer" },
-    "completionDecisionRef": { "type": "string" },
-    "revisionBefore": { "type": "string" },
-    "revisionAfter": { "type": "string" },
-    "acceptedCandidates": { "type": "array" },
-    "rejectedCandidates": { "type": "array" },
-    "supersededRecords": { "type": "array" },
-    "evidenceRefs": { "type": "array" },
-    "filesWritten": { "type": "array" },
-    "digest": { "type": "string" },
+    "schemaVersion": {
+      "const": 1
+    },
+    "sourceIdentity": {
+      "type": "string"
+    },
+    "mutationRevision": {
+      "type": "number"
+    },
+    "completionDecisionRef": {
+      "type": "string"
+    },
+    "acceptedCandidates": {
+      "type": "array",
+      "items": {}
+    },
+    "rejectedCandidates": {
+      "type": "array",
+      "items": {}
+    },
+    "supersededRecords": {
+      "type": "array",
+      "items": {}
+    },
+    "evidenceRefs": {
+      "type": "array",
+      "items": {}
+    },
+    "filesWritten": {
+      "type": "array",
+      "items": {}
+    },
+    "projectionStatus": {
+      "type": "string"
+    },
     "status": {
-      "type": "string",
-      "enum": [
-        "committed",
-        "no_change",
-        "conflict",
-        "failed"
+      "type": "string"
+    },
+    "digest": {
+      "type": "string"
+    },
+    "runId": {
+      "type": "string"
+    },
+    "projectId": {
+      "type": "string"
+    },
+    "revisionBefore": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        }
+      ]
+    },
+    "revisionAfter": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        }
       ]
     }
   },
-  "additionalProperties": true
+  "required": [
+    "schemaVersion",
+    "sourceIdentity",
+    "mutationRevision",
+    "completionDecisionRef",
+    "acceptedCandidates",
+    "rejectedCandidates",
+    "supersededRecords",
+    "evidenceRefs",
+    "filesWritten",
+    "projectionStatus",
+    "status",
+    "digest",
+    "runId",
+    "projectId",
+    "revisionBefore",
+    "revisionAfter"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://moon-relay-kernel.local/schemas/kernel.knowledge-commit-receipt.schema.json",
+  "title": "KernelKnowledgeCommitReceipt"
 }

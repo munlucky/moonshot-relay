@@ -17,7 +17,8 @@ import {
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { assertRuntimeBuild } from '../scripts/lib/runtime-build.mjs';
+import { resolveRuntimeDependencyEntries } from '../scripts/lib/runtime-dependencies.js';
+import { assertRuntimeBuild } from '../scripts/lib/runtime-build.js';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const packageRoot = path.dirname(scriptPath);
@@ -34,6 +35,11 @@ const runtimeSpecs = {
       'bin',
       'kernel',
       'scripts/kernel',
+      'scripts/application',
+      'scripts/contracts',
+      'scripts/host/kernel',
+      'scripts/switcher',
+      'scripts/lib',
       'tools',
       'schemas',
       'templates',
@@ -47,7 +53,6 @@ const runtimeSpecs = {
       'package-lock.json',
       'skills.lock.json',
       'scripts/catalog-check.mjs',
-      'scripts/lib/runtime-build.mjs',
       'scripts/skill-router.mjs',
       'scripts/lint-skills.mjs',
       'scripts/architecture-context-build.mjs',
@@ -76,46 +81,9 @@ const runtimeSpecs = {
       'scripts/knowledge-improvement-lifecycle.mjs',
       'scripts/knowledge-records.mjs',
       'scripts/memory-claim-validate.mjs',
-      'scripts/lib/awtl-event-schema.mjs',
-      'scripts/lib/awtl-failure-attribution.mjs',
-      'scripts/lib/awtl-harness-capture.mjs',
-      'scripts/lib/awtl-memory-candidate.mjs',
-      'scripts/lib/awtl-memory-promotion.mjs',
-      'scripts/lib/awtl-redaction.mjs',
-      'scripts/lib/awtl-replay-probes.mjs',
-      'scripts/lib/awtl-replay-scorecard.mjs',
-      'scripts/lib/awtl-trace-sink.mjs',
-      'scripts/lib/candidate-identity.mjs',
       // Host-side Kernel model routing. These map a logical model class onto a
       // provider model for the installed Host; they carry no provider SDK and
       // are deliberately NOT part of the Kernel payload (§4.1).
-      'scripts/host/kernel/model-registry.mjs',
-      'scripts/host/kernel/turn-dispatcher.mjs',
-      'scripts/host/kernel/usage-receipt.mjs',
-      'scripts/host/kernel/adapters/claude.mjs',
-      'scripts/host/kernel/adapters/codex.mjs',
-      'scripts/host/kernel/adapters/fable.mjs',
-      'scripts/lib/browser-failure-package.mjs',
-      'scripts/lib/browser-scenario-contract.mjs',
-      'scripts/lib/context-state-engine.mjs',
-      'scripts/lib/commit-closeout-events.mjs',
-      'scripts/lib/contract-invalidation.mjs',
-      'scripts/lib/delivery-policy.mjs',
-      'scripts/lib/event-ledger.mjs',
-      'scripts/lib/failure-classifier.mjs',
-      'scripts/lib/git-safe.mjs',
-      'scripts/lib/harness-environment-snapshot.mjs',
-      'scripts/lib/memory-claim-ledger.mjs',
-      'scripts/lib/memory-control-plane-contracts.mjs',
-      'scripts/lib/plan-graph.mjs',
-      'scripts/lib/phase-runner-session-audit.mjs',
-      'scripts/lib/phase-event-ledger.mjs',
-      'scripts/lib/phase-run-lease-store.mjs',
-      'scripts/lib/portable-command-runner.mjs',
-      'scripts/lib/review-bundle.mjs',
-      'scripts/lib/runtime-state-db-path.mjs',
-      'scripts/lib/runtime-state-root.mjs',
-      'scripts/lib/runtime-unavailable-cache.mjs',
       'scripts/memory-mcp-wrapper.js',
       'scripts/memorygraph-direct.mjs',
       'scripts/memorygraph-mcp-wrapper.js',
@@ -132,23 +100,11 @@ const runtimeSpecs = {
       'scripts/runtime-state.mjs',
       'scripts/skills-audit.mjs',
       'scripts/spec-test-obligations.mjs',
-      'scripts/lib/skills-lock.mjs',
-      'scripts/lib/runtime-state-store.mjs',
-      'scripts/lib/sqlite-driver.mjs',
-      'scripts/lib/sqlite-drivers/node-sqlite.mjs',
-      'scripts/lib/moonshot-runtime-resolver.mjs',
-      'scripts/lib/control-plane-policy.mjs',
-      'scripts/lib/execution-cursor.mjs',
-      'scripts/lib/workflow-bundle-resolver.mjs',
       'scripts/verification-plane.mjs',
-      'scripts/lib/verification-plane.mjs',
-      'scripts/lib/provider-model-routing.mjs',
-      'scripts/lib/providers/codex-gpt-5-6-adapter.mjs',
       'scripts/verification-verdict-state.mjs',
       'scripts/workspace-manager.mjs',
-      'scripts/lib/workspace-manager.mjs',
     ],
-    materializeRuntimeDependencies: false,
+    materializeRuntimeDependencies: true,
     verificationTarget: 'verification.contract.yaml',
   },
   claude: {
@@ -428,11 +384,11 @@ const copyTreeWithoutPackageExclusions = async (source, destination, plannedCopi
 };
 
 const productionDependencyRoots = async () => {
-  const lock = JSON.parse(await readFile(path.join(repoRoot, 'package-lock.json'), 'utf8'));
-  return Object.entries(lock.packages || {})
-    .filter(([entry, meta]) => entry.startsWith('node_modules/') && !meta.dev)
-    .map(([entry]) => entry)
-    .sort();
+  const layout = JSON.parse(await readFile(path.join(repoRoot, 'package/source-layout.json'), 'utf8'));
+  const dependencyNames = [...new Set(layout.externalImports
+    .filter(entry => entry.from === 'src/contracts/schema-codec.ts')
+    .map(entry => entry.specifier.startsWith('@') ? entry.specifier.split('/').slice(0, 2).join('/') : entry.specifier.split('/')[0]))];
+  return (await resolveRuntimeDependencyEntries({ sourceRoot: repoRoot, dependencyNames })).map(entry => entry.relativePath);
 };
 
 const materializeRuntimeDependencies = async (outputRoot, plannedCopies, options = {}) => {

@@ -30,6 +30,14 @@ test('capability asset base validates manifests, provenance, catalog, subcapabil
   assert.equal(report.traceabilitySummary.withProofTrace, 47);
   const ledger = JSON.parse(readFileSync(path.join(root, 'docs/capability-assets/coverage-ledger.yaml'), 'utf8'));
   assert.equal(report.checked.coverageSurfaces, Object.keys(ledger.surfaces).length);
+  const migrations = JSON.parse(readFileSync(path.join(root, 'catalog/kernel-capability-surface-migrations.json'), 'utf8'));
+  assert.equal(migrations.baselineCommit, ledger.baselineCommit);
+  const contracts = JSON.parse(readFileSync(path.join(root, 'catalog/kernel-contracts.json'), 'utf8'));
+  for (const contract of contracts.contracts) {
+    assert.equal((ledger.surfaces[contract.schema] || migrations.surfaces[contract.schema])?.classification, 'capability', contract.schema);
+  }
+  assert.equal(migrations.migrations['scripts/kernel/proof/proof-executor.mjs'].source, 'src/host/kernel/proof/proof-executor.ts');
+  assert.equal(migrations.migrations['scripts/kernel/run/work-unit-scope.mjs'].source, 'src/contracts/work-unit-scope.ts');
   assert.equal(report.checked.rootBaselineForbidden, true);
   assert.equal(report.checked.canonicalBaselineExists, true);
   assert.equal(report.checked.decomplexificationMaps, true);

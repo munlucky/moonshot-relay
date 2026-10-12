@@ -186,7 +186,7 @@ test('low-score traces produce reviewed testcase candidates with rollback metada
 test('eval gate package contract includes source tools and keeps generated eval artifacts out', async () => {
   const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
   const contract = await readFile(path.join(root, 'package/package-contract.yaml'), 'utf8');
-  const packageTest = await readFile(path.join(root, 'tests/package-materialization.test.mjs'), 'utf8');
+  const packageTest = await readFile(path.join(root, 'tests/package-materialization.test.ts'), 'utf8');
 
   assert.match(packageJson.scripts['test:eval'], /tools\/evals\/harness-control-plane\.mjs run --json/);
   assert.match(contract, /source: tools\/evals\/harness-control-plane\.mjs/);

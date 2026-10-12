@@ -1,0 +1,186 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import os from 'node:os';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
+import { openKernelStateStore } from '../src/kernel/state-store.js';
+import { executeKernelGitCloseout } from '../src/kernel/git/closeout.js';
+import { createGitCloseoutHost } from '../src/host/kernel/git/closeout-operations.js';
+import { runGit } from '../src/shared/git-safe.js';
+
+const gitCloseoutHost = createGitCloseoutHost();
+
+test('S-19: a failed push retries only missing delivery and preserves accepted commit against a real local remote', async () => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'kernel-push-retry-'));
+  const remoteRoot = await mkdtemp(path.join(os.tmpdir(), 'kernel-push-remote-'));
+  try {
+    assert.equal(runGit(repoRoot, ['init', '-b', 'main']).status, 0);
+    runGit(repoRoot, ['config', 'user.name', 'Kernel Test']);
+    runGit(repoRoot, ['config', 'user.email', 'kernel-test@example.invalid']);
+    await writeFile(path.join(repoRoot, 'fixture.txt'), 'accepted code\n');
+    runGit(repoRoot, ['add', 'fixture.txt']);
+    assert.equal(runGit(repoRoot, ['commit', '-m', 'accepted fixture']).status, 0);
+    const accepted = runGit(repoRoot, ['rev-parse', 'HEAD']).stdout.trim();
+    const request = { requested: true, mode: 'commit_and_push', approvalReceipt: 'fixture-local-remote-approval', existingCommitSha: accepted };
+    await assert.rejects(executeKernelGitCloseout({ runId: 'push-retry', projectId: 'fixture', repoRoot, gitCloseoutRequest: request, changedFiles: [], gitCloseoutHost }), (error) => { assert.ok(error && typeof error === 'object'); assert.ok(error && typeof error === 'object' && 'code' in error);
+    return error.code === 'GIT_PUSH_FAILED'; });
+    assert.equal(runGit(repoRoot, ['rev-parse', 'HEAD']).stdout.trim(), accepted);
+    assert.equal(runGit(remoteRoot, ['init', '--bare']).status, 0);
+    assert.equal(runGit(repoRoot, ['remote', 'add', 'origin', remoteRoot]).status, 0);
+    const retried = await executeKernelGitCloseout({ runId: 'push-retry', projectId: 'fixture', repoRoot, gitCloseoutRequest: request, changedFiles: [], gitCloseoutHost });
+    assert.equal(retried.status, 'completed');
+    assert.equal(retried.commitSha, accepted);
+    assert.equal(runGit(repoRoot, ['rev-parse', 'HEAD']).stdout.trim(), accepted);
+    assert.equal(runGit(remoteRoot, ['rev-parse', 'refs/heads/main']).stdout.trim(), accepted);
+  } finally { await rm(repoRoot, { recursive: true, force: true }); await rm(remoteRoot, { recursive: true, force: true }); }
+});
+
+test('executeKernelGitCloseout retry skips creating duplicate commit when existingCommitSha is provided', async () => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'kernel-git-retry-isolated-'));
+  try {
+    runGit(repoRoot, ['init', '-b', 'main']);
+    runGit(repoRoot, ['config', 'user.name', 'Kernel Test']);
+    runGit(repoRoot, ['config', 'user.email', 'kernel-test@example.invalid']);
+    await writeFile(path.join(repoRoot, 'fixture.txt'), 'retry fixture\n');
+    runGit(repoRoot, ['add', 'fixture.txt']);
+    assert.equal(runGit(repoRoot, ['commit', '-m', 'fixture']).status, 0);
+    const existingCommitSha = runGit(repoRoot, ['rev-parse', 'HEAD']).stdout.trim();
+    const receipt = await executeKernelGitCloseout({
+    runId: 'retry-run-1',
+    projectId: 'p-retry',
+    repoRoot,
+    gitCloseoutRequest: { requested: true, mode: 'soft', approvalReceipt: 'approval://user/1', existingCommitSha },
+    knowledgeCommitReceipt: { digest: 'k-digest-1' },
+    changedFiles: [],
+    gitCloseoutHost,
+  });
+
+  assert.equal(receipt.commitSha, existingCommitSha);
+  assert.equal(receipt.status, 'completed');
+  assert.equal(runGit(repoRoot, ['rev-parse', 'HEAD']).stdout.trim(), existingCommitSha);
+  } finally {
+    await rm(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('public Git retry blocks external mutation after push_failed and records stale receipt', async () => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'kernel-git-retry-public-repo-'));
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-git-retry-public-home-'));
+  const runId = 'kernel-public-git-retry-external-mutation';
+  const sessionId = 'codex:kernel-public-git-retry-session';
+  const {
+    CODEX_THREAD_ID: _codexThreadId,
+    MOON_RELAY_KERNEL_SESSION_ID: _kernelSessionId,
+    ...isolatedEnv
+  } = process.env;
+  let cp = null;
+  try {
+    runGit(repoRoot, ['init', '-b', 'main']);
+    runGit(repoRoot, ['config', 'user.name', 'Kernel Test']);
+    runGit(repoRoot, ['config', 'user.email', 'kernel-test@example.invalid']);
+    await mkdir(path.join(repoRoot, '.moon-relay'), { recursive: true });
+    await writeFile(path.join(repoRoot, '.moon-relay', 'track.yaml'), 'schemaVersion: 1\ntrack: kernel\n');
+    await writeFile(path.join(repoRoot, 'initial.txt'), 'initial\n');
+    await writeFile(path.join(repoRoot, 'package.json'), JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }));
+    runGit(repoRoot, ['add', '--all']);
+    runGit(repoRoot, ['commit', '-m', 'fixture']);
+    await writeFile(path.join(repoRoot, 'change.txt'), 'kernel change\n');
+
+    cp = await createKernelControlPlane({
+      runtimeHome,
+      projectRoot: repoRoot,
+      requireHostBinding: true,
+      env: {
+        ...process.env,
+        MOON_RELAY_KERNEL_SESSION_ID: sessionId,
+        MOON_RELAY_KERNEL_PROVIDER: 'codex',
+        MOON_RELAY_KERNEL_RUN_ID: runId,
+      },
+    });
+    await cp.ensureRun({
+      runId,
+      objective: 'Block unsafe public Git retry',
+      taskContract: {
+        riskTier: 'T0',
+        acceptance: [{
+          acceptance: 'external mutation blocks the retry',
+          evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test'], obligationId: 'default' },
+        }],
+      },
+    });
+    for (const state of (['EXECUTE', 'PROVE'] as const)) await cp.transition(runId, state);
+    await cp.recordProof(runId, {
+      obligationId: 'default',
+      status: 'passed',
+      evidenceRef: 'ev-public-retry',
+      commandRef: 'test',
+      command: 'npm test',
+      exitCode: 0,
+      evidenceDigest: `sha256:${'d'.repeat(64)}`,
+      acceptanceCoverage: ['external mutation blocks the retry'],
+    });
+    const first = await cp.finalizeRun(runId, {
+      knowledgeObservations: [{
+        proposedType: 'semantic_fact',
+        statement: 'Public retry must revalidate workspace identity.',
+        scope: ['change.txt'],
+        evidenceRefs: ['ev-public-retry'],
+      }],
+      gitCloseoutRequest: { requested: true, mode: 'commit_and_push', approvalReceipt: 'approval-public-retry' },
+      changedPaths: ['change.txt'],
+    });
+    assert.ok(first && typeof first === 'object' && 'finalizationStatus' in first);
+    assert.equal(first.finalizationStatus, 'partial');
+    const pushFailedReceipt = cp.stateStore.getGitCloseoutReceipt(runId);
+    assert.ok(pushFailedReceipt && typeof pushFailedReceipt === 'object' && 'status' in pushFailedReceipt);
+    assert.equal(pushFailedReceipt.status, 'push_failed');
+    assert.ok(pushFailedReceipt && typeof pushFailedReceipt === 'object' && 'commitSha' in pushFailedReceipt);
+    const kernelCommitSha = pushFailedReceipt.commitSha;
+    assert.ok(kernelCommitSha);
+    await cp.close();
+    cp = null;
+
+    await writeFile(path.join(repoRoot, 'external.txt'), 'external mutation\n');
+    const result = spawnSync(process.execPath, [
+      path.resolve(process.cwd(), 'bin', 'moon-relay-kernel.mjs'),
+      'git-closeout',
+      '--run-id', runId,
+      '--session-id', sessionId,
+      '--provider', 'codex',
+      '--project-root', repoRoot,
+      '--runtime-home', runtimeHome,
+      '--json',
+    ], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      env: { ...isolatedEnv, MOON_RELAY_KERNEL_REEXEC: '1', MOON_RELAY_KERNEL_RUN_ID: '' },
+    });
+    assert.notEqual(result.status, 0);
+    const errorLine = result.stderr.split(/\r?\n/).find((line) => line.trim().startsWith('{'));
+    assert.ok(errorLine, result.stderr);
+    const errorPayload = JSON.parse(errorLine);
+    assert.equal(errorPayload.errorCode, 'WORKSPACE_IDENTITY_MISMATCH');
+
+    const retryStore = await openKernelStateStore({ runtimeHome });
+    try {
+      const staleReceipt = retryStore.getGitCloseoutReceipt(runId);
+      assert.ok(staleReceipt && typeof staleReceipt === 'object' && 'status' in staleReceipt);
+      assert.equal(staleReceipt.status, 'stale_workspace');
+      assert.ok(staleReceipt && typeof staleReceipt === 'object' && 'errorCode' in staleReceipt);
+      assert.equal(staleReceipt.errorCode, 'WORKSPACE_IDENTITY_MISMATCH');
+      assert.ok(staleReceipt && typeof staleReceipt === 'object' && 'pushStatus' in staleReceipt);
+      assert.equal(staleReceipt.pushStatus, 'not_started');
+      assert.equal(String(runGit(repoRoot, ['rev-parse', 'HEAD']).stdout).trim(), kernelCommitSha);
+    } finally {
+      retryStore.close();
+    }
+  } finally {
+    if (cp) await cp.close();
+    await rm(repoRoot, { recursive: true, force: true });
+    await rm(runtimeHome, { recursive: true, force: true });
+  }
+});
+
+type KernelControlPlane = Awaited<ReturnType<typeof createKernelControlPlane>>;

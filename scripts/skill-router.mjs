@@ -122,7 +122,7 @@ const listSkillDirs = async (repoRoot) => {
 
 const detectTrack = async (projectRoot) => {
   try {
-    const { readProjectTrack } = await import('./kernel/runtime-home.mjs');
+    const { readProjectTrack } = await import('./kernel/runtime-home.js');
     return await readProjectTrack(projectRoot || process.cwd());
   } catch {
     return 'relay';

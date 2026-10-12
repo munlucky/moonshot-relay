@@ -1,18 +1,2 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { isPathStagable, filterStagingSelection } from '../scripts/kernel/git/staging-policy.mjs';
-
-test('staging policy filters out runtime state, dot-git, dot-env, and secret files', () => {
-  assert.equal(isPathStagable('.moonshot-relay/runtime.sqlite'), false);
-  assert.equal(isPathStagable('.git/config'), false);
-  assert.equal(isPathStagable('.env'), false);
-  assert.equal(isPathStagable('scripts/kernel/control-plane.mjs'), true);
-
-  const selection = filterStagingSelection([
-    'scripts/kernel/control-plane.mjs',
-    '.moonshot-relay/runtime.sqlite',
-    '.env',
-  ]);
-  assert.deepEqual(selection.selectedPaths, ['scripts/kernel/control-plane.mjs']);
-  assert.equal(selection.excludedPaths.length, 2);
-});
+// Generated test entrypoint. Edit tests/kernel-git-closeout-path-validation.test.ts.
+export * from "../dist/tests/kernel-git-closeout-path-validation.test.mjs";

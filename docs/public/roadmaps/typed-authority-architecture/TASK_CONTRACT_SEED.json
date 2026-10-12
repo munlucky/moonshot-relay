@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "kind": "TASK_CONTRACT_SEED",
+  "authority": "prework-only",
+  "artifactDigest": "sha256:169530c1a514395c8fe47b06d9a18df6ca5c2a2b142ebdd2dc40a5ccf9f9af9b",
+  "sourceProvenance": {
+    "utility": "architecture-artifacts",
+    "projectId": "path-ad34f90ddb7a2a17",
+    "generatedAt": "2026-10-09T02:45:28.080Z",
+    "sourceType": "standalone-prework"
+  },
+  "referencedArtifacts": [
+    {
+      "path": "ADR/ADR-0001-ownership.md",
+      "digest": "sha256:b2caef1e0364c2630d252e661ea82b979d1c0b1c65cd8639de33f515ab97a75b"
+    },
+    {
+      "path": "ADR/ADR-0002-contracts.md",
+      "digest": "sha256:3d9101d524f95cca7ac180cbf2c91ed329879d81add4cb970ac21305db923f6b"
+    },
+    {
+      "path": "ADR/ADR-0003-build.md",
+      "digest": "sha256:6aeb59971e1240ba4860b99ed813987188b1991761969ca05d1fe73356aeee97"
+    },
+    {
+      "path": "ADR/ADR-0004-migration.md",
+      "digest": "sha256:3cb18ff33921e11860cf0da9917122a0088c3c20b295d1f22ec7225af7f65a12"
+    },
+    {
+      "path": "ARCHITECTURE_REVIEW.md",
+      "digest": "sha256:b1aaad095441a82d2211eea36d1e0b66439540fce158a7527ab4ff6e1ecb35b5"
+    },
+    {
+      "path": "ASR_CATALOG.md",
+      "digest": "sha256:9572eba304292d16448edc9308f00faaf6d73eb99fb5f0bf3d422fbf413fdaf5"
+    },
+    {
+      "path": "BUILD_AND_INSTALL.md",
+      "digest": "sha256:6c3416ea4f3bb3bd20273f5e2cba2536895867f91dd01509c957e575479419eb"
+    },
+    {
+      "path": "C4/C4_COMPONENT.md",
+      "digest": "sha256:e1b1e8bea4ebf921d065ed31bbfc0231c4505c4d06eaafcb3ab30ba670322a1c"
+    },
+    {
+      "path": "C4/C4_CONTAINER.md",
+      "digest": "sha256:99cd89b258628ca3a11306e78f4221030c18b4bd41bdc95ccd2c92f26517001b"
+    },
+    {
+      "path": "C4/C4_CONTEXT.md",
+      "digest": "sha256:06b57a668bb1d58e61d854407959c9f984ce815b0502377986e8cba8b0bd9bbb"
+    },
+    {
+      "path": "CONTRACTS_AND_STATE.md",
+      "digest": "sha256:6c14ed6707fa878073f6f6b5508e3e2e3235176d5c714bf4d606d4a29d5f4905"
+    },
+    {
+      "path": "CURRENT_ARCHITECTURE.md",
+      "digest": "sha256:9e95fda541bd6b320cb11d16256e0b264292c33d91f4d5a548ef315043560358"
+    },
+    {
+      "path": "IMPACT_MAP.md",
+      "digest": "sha256:e27f60a69b07985309ec295c16d0c37b6a36e21340e9d8cecb6dec24f716bced"
+    },
+    {
+      "path": "PLAN.md",
+      "digest": "sha256:6fc65bc1eab8b6cb1a0c2364f9ed7ed6111c1251baaad6a3bba1f7d86a291212"
+    },
+    {
+      "path": "PRD_FIT_GAP.md",
+      "digest": "sha256:648c2b3684420372ab77faf4affb874bdc1088cef34392cd619868db55d24780"
+    },
+    {
+      "path": "REQUIREMENT_INVENTORY.md",
+      "digest": "sha256:8e0fdb2849e3fd8642ce544a014cde8cf330b5ba66bf66abaeb6c7ce923a563c"
+    },
+    {
+      "path": "SOURCE_INVENTORY.md",
+      "digest": "sha256:7f67140a5b7cdbad1a5b677685defccfac526a59ebdcac84685e1e3187a06a30"
+    },
+    {
+      "path": "SOURCE_NOTES.md",
+      "digest": "sha256:bdfa6ae7ead6106b312bff75b4c6f7d8a605f3396c64021fc7768f96825de908"
+    },
+    {
+      "path": "SPEC_DELTA.md",
+      "digest": "sha256:0df986370dab588eb2bbaa2176a7b4b6cb155930300f5187288925912fbc3379"
+    },
+    {
+      "path": "TARGET_ARCHITECTURE.md",
+      "digest": "sha256:e83f4dd1c343c14cb8e4a17d39f0f2a80d7d8500fcf28d49b3e29539847b83f4"
+    },
+    {
+      "path": "TRACEABILITY_MATRIX.md",
+      "digest": "sha256:fca126b6519d715bbef1cbac20694c03e51e876df678234fdf705f89c7a75ad4"
+    },
+    {
+      "path": "TRADEOFF_ANALYSIS.md",
+      "digest": "sha256:467d7d0debd764a0f892d3102ecb6739667a4d1f2dbb361910d1ee53aa80cbc2"
+    },
+    {
+      "path": "VERIFICATION.md",
+      "digest": "sha256:931bf2e8666deb8ca88c334f71cd3a1c9281c69f03795aa94a8f3209bd5c82c0"
+    }
+  ],
+  "objective": "현재 Moonshot Relay 하네스의 기능을 유지하면서 Work·Trust·Knowledge와 Host의 소유권·의존 방향을 정리하고, 엄격한 TypeScript 원본과 검증된 설치 artifact로 유지보수와 개선 비용을 낮춘다.",
+  "acceptance": [
+    "REQ-001: 기능·writer·payload의 소유권을 빠짐없이 지정한다. Verification Signal: V01; 미분류 활성 항목 0",
+    "REQ-002: 계약을 한 정의에서 생성하고 strict TS와 입력 검증을 연결한다. Verification Signal: V02; 타입·schema·생성 drift의 부정 검증",
+    "REQ-003: Work를 세로 전환하고 resume·cursor·scope·CAS를 보존한다. Verification Signal: V03; 재시작·replan·mutation fencing 회귀",
+    "REQ-004: Trust가 증거·review·completion 수락을 독점하고 closeout 근거와 일치한다. Verification Signal: V04; 정상 수락 및 stale provenance 거부",
+    "REQ-005: Knowledge의 SQLite 권위와 승인·revision·supersession을 보존한다. Verification Signal: V05; 동시성·projection 손상·namespace 회귀",
+    "REQ-006: Host가 외부 실행을 소유하고 Kernel은 provider 독립 계약을 사용한다. Verification Signal: V06; 금지 import·외부 입력·native smoke",
+    "REQ-007: Control Plane과 persistence를 분리하며 원자성·idempotency를 유지한다. Verification Signal: V07; 직접 SQL/spawn 0 및 crash rollback",
+    "REQ-008: 표준 ESM artifact를 기존 공개 진입점으로 설치하고 실행한다. Verification Signal: V08; source 없는 archive/direct install hash parity",
+    "REQ-009: 활성 코드·테스트·개발 도구를 TS로 정리하고 변경 위치를 고정한다. Verification Signal: V09; 잔여 예외 정리 및 네 가지 변경 시험",
+    "REQ-010: 현재 artifact의 깨끗한 전체 검증과 운영 인계를 완료한다. Verification Signal: V10; 지원 matrix와 upgrade/rollback 증거"
+  ],
+  "constraints": [
+    "이 seed는 계획 입력이며 실행·검증·완료 권한이 없다.",
+    "구현 요청 시 현재 checkout과 사용자 범위를 재확인하고 TASK-001부터 수행한다.",
+    "기준 커밋 e3281278d08476587f3e90af37737f56a290b28c. 기존 public next/report·resume·evidence·Knowledge 계약을 보존한다.",
+    "상태 DB·credentials·provider sessions를 source나 runtime package에 포함하지 않는다.",
+    "Kernel workflow는 사용자의 명시적 모드 요청 때만 활성화한다."
+  ],
+  "nonGoals": [
+    "새 Futures 동작·provider/model 교체·workflow engine·event bus·microservice 도입",
+    "계획 작성만으로 구현·실계정 적용·커밋·푸시를 수행하거나 승인한 것으로 처리"
+  ],
+  "seedDigest": "sha256:32d7b17a08e1bcabee67fafa1306ff5b4bb40f79f003062c584f27ade89085a8",
+  "generatedAt": "2026-10-09T02:45:28.080Z"
+}

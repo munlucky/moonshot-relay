@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createKernelControlPlane } from '../scripts/kernel/control-plane.mjs';
+import { createKernelControlPlane } from '../scripts/host/kernel/control-plane-runtime.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';

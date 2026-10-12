@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import os from 'node:os';
 import path from 'node:path';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
-import { installKernelProfile, inspectProfile } from '../scripts/kernel/profile-install.mjs';
+import { installKernelProfile, inspectProfile } from '../scripts/kernel/profile-install.js';
 import { buildProcessEnvironment } from '../scripts/switcher/launch-adapter.mjs';
 
 test('native provider profile projection is idempotent and has no restore phase', async () => {

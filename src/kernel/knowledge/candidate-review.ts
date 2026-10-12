@@ -1,0 +1,443 @@
+import { parseKernelContract } from '../../contracts/schema-codec.js';
+import type { KernelKnowledgeReviewResult } from '../../contracts/generated/kernel.knowledge-review-result.js';
+import {
+  evaluateOntologyConstraints,
+  type OntologyConstraint,
+} from './ontology-evaluate.js';
+
+type UnknownRecord = Record<string, unknown>;
+
+interface EvidenceBindingLike extends UnknownRecord {
+  acceptanceIds?: string[];
+  obligationIds?: string[];
+  evidenceRefs?: string[];
+}
+
+export interface KnowledgeCandidateLike extends UnknownRecord {
+  candidateId?: string;
+  projectId?: (string) | undefined;
+  statement?: string;
+  scope?: string[];
+  status?: (string) | undefined;
+  rejectionReasons?: string[];
+  evidenceRefs?: string[];
+  acceptanceIds?: string[];
+  obligationIds?: string[];
+  evidenceBinding?: EvidenceBindingLike;
+  sourceKind?: (string) | undefined;
+  sourceDigest?: string;
+  obligationId?: string;
+}
+
+interface KnowledgeApprovalLike {
+  approvalReceipt?: unknown;
+  approvedBy?: unknown;
+}
+
+interface RunObligationLike {
+  obligationId?: unknown;
+  status?: unknown;
+}
+
+interface VerificationLike {
+  id?: unknown;
+  status?: unknown;
+  exitCode?: unknown;
+  evidenceDigest?: string | null;
+  evidenceRef?: string | null;
+  acceptanceCoverage?: unknown;
+  obligationId?: unknown;
+  sourceIdentity?: unknown;
+  verifiedMutationRevision?: unknown;
+}
+
+interface RunLike {
+  sourceIdentity?: unknown;
+  mutationRevision?: unknown;
+}
+
+interface KnowledgeReviewStore {
+  listKnowledgeRecords(input?: {
+    projectId?: string | null;
+    statuses?: string[];
+  }): OntologyConstraint[];
+  getKnowledgeApproval(
+    runId: string,
+    candidateId?: string,
+  ): KnowledgeApprovalLike | null;
+  ensureRunObligation(
+    runId: string,
+    input: UnknownRecord,
+  ): unknown;
+  getRunObligations(runId: string): RunObligationLike[];
+  getVerifications(runId: string): VerificationLike[];
+  recordCandidateEvidenceBinding(input: UnknownRecord): unknown;
+  getRun(runId: string): RunLike | null;
+}
+
+interface EvidencePackLike extends UnknownRecord {
+  digest?: unknown;
+}
+
+export interface ReviewKnowledgeCandidatesInput {
+  candidates?: KnowledgeCandidateLike[];
+  projectId?: string | null;
+  runId?: string | null;
+  stateStore?: KnowledgeReviewStore | null;
+  evidencePack?: EvidencePackLike | null;
+}
+
+export interface CandidateReviewRecord extends UnknownRecord {
+  candidateId?: (string) | undefined;
+  decision: string;
+  reason?: string;
+  evidenceRef?: string;
+}
+
+export type ReviewKnowledgeCandidatesResult = KernelKnowledgeReviewResult;
+
+const strings = (value: unknown): string[] => (
+  Array.isArray(value)
+    ? value.map(String).filter(Boolean)
+    : []
+);
+
+const evidenceBinding = (
+  candidate: KnowledgeCandidateLike,
+): EvidenceBindingLike => (
+  candidate.evidenceBinding && typeof candidate.evidenceBinding === 'object'
+    ? candidate.evidenceBinding
+    : {}
+);
+
+const rejectedCandidate = (
+  candidate: KnowledgeCandidateLike,
+  status: string,
+  reason: string,
+): KnowledgeCandidateLike => ({
+  ...candidate,
+  status,
+  rejectionReasons: [reason],
+});
+
+export async function reviewKnowledgeCandidates({
+  candidates = [],
+  projectId = null,
+  runId = null,
+  stateStore = null,
+  evidencePack = null,
+}: ReviewKnowledgeCandidatesInput = {}): Promise<ReviewKnowledgeCandidatesResult> {
+  if (candidates.length === 0) {
+    return parseKernelContract('kernel.knowledge-review-result', {
+      status: 'no_candidates',
+      verifiedCandidates: [],
+      rejectedCandidates: [],
+      needsApprovalCandidates: [],
+      pendingVerificationCandidates: [],
+      candidateReviews: [],
+      supersessionProposals: [],
+      ontologyViolations: [],
+      approvalRequired: [],
+      verificationsRequired: [],
+      evidenceCoverage: [],
+    });
+  }
+
+  if (!stateStore || !runId) {
+    throw Object.assign(
+      new Error(
+        'Persisted Run and SQLite Knowledge authority are required to review Knowledge candidates',
+      ),
+      { code: 'KNOWLEDGE_REVIEW_AUTHORITY_REQUIRED' },
+    );
+  }
+
+  const verifiedCandidates: KnowledgeCandidateLike[] = [];
+  const rejectedCandidates: KnowledgeCandidateLike[] = [];
+  const needsApprovalCandidates: KnowledgeCandidateLike[] = [];
+  const pendingVerificationCandidates: KnowledgeCandidateLike[] = [];
+  const ontologyViolations: OntologyConstraint[] = [];
+  const approvalRequired: OntologyConstraint[] = [];
+  const verificationsRequired: OntologyConstraint[] = [];
+  const candidateReviews: CandidateReviewRecord[] = [];
+
+  for (const candidate of candidates) {
+    if (candidate.projectId && candidate.projectId !== projectId) {
+      rejectedCandidates.push(
+        rejectedCandidate(candidate, 'rejected', 'PROJECT_ID_MISMATCH'),
+      );
+      candidateReviews.push({
+        candidateId: candidate.candidateId,
+        decision: 'rejected',
+        reason: 'PROJECT_ID_MISMATCH',
+      });
+      continue;
+    }
+
+    const statement = String(candidate.statement || '');
+    if (
+      /sk-[a-zA-Z0-9]{20,}/.test(statement)
+      || statement.includes('raw_transcript_body')
+    ) {
+      rejectedCandidates.push(
+        rejectedCandidate(candidate, 'rejected', 'FORBIDDEN_SAFETY_LEAK'),
+      );
+      candidateReviews.push({
+        candidateId: candidate.candidateId,
+        decision: 'rejected',
+        reason: 'FORBIDDEN_SAFETY_LEAK',
+      });
+      continue;
+    }
+
+    const ontologyEval = await evaluateOntologyConstraints({
+      projectId,
+      paths: strings(candidate.scope),
+      statements: [statement],
+      stateStore,
+    });
+
+    if (ontologyEval.violations.length > 0) {
+      ontologyViolations.push(...ontologyEval.violations);
+      rejectedCandidates.push(
+        rejectedCandidate(candidate, 'rejected', 'ONTOLOGY_NEVER_VIOLATION'),
+      );
+      candidateReviews.push({
+        candidateId: candidate.candidateId,
+        decision: 'rejected',
+        reason: 'ONTOLOGY_NEVER_VIOLATION',
+      });
+      continue;
+    }
+
+    if (ontologyEval.approvalRequired.length > 0) {
+      approvalRequired.push(...ontologyEval.approvalRequired);
+      const dbApproval = stateStore.getKnowledgeApproval(
+        runId,
+        candidate.candidateId,
+      );
+      const hasApproval = Boolean(
+        dbApproval?.approvalReceipt && dbApproval.approvedBy,
+      );
+      if (!hasApproval) {
+        needsApprovalCandidates.push(
+          rejectedCandidate(candidate, 'needs_approval', 'ASK_FIRST_REQUIRED'),
+        );
+        candidateReviews.push({
+          candidateId: candidate.candidateId,
+          decision: 'needs_approval',
+          reason: 'ASK_FIRST_REQUIRED',
+        });
+        continue;
+      }
+    }
+
+    if (ontologyEval.verificationsRequired.length > 0) {
+      verificationsRequired.push(...ontologyEval.verificationsRequired);
+      let allPassed = true;
+      for (const requirement of ontologyEval.verificationsRequired) {
+        const obligationId = String(
+          requirement.obligationId
+          || requirement.id
+          || 'verify-invariant',
+        );
+        stateStore.ensureRunObligation(runId, {
+          obligationId,
+          sourceType: 'ontology_constraint',
+          sourceRef: requirement.id,
+        });
+        const currentObligation = stateStore
+          .getRunObligations(runId)
+          .find((obligation) => (
+            String(obligation.obligationId || '') === obligationId
+          ));
+        if (
+          !currentObligation
+          || (
+            currentObligation.status !== 'passed'
+            && currentObligation.status !== 'waived'
+          )
+        ) {
+          allPassed = false;
+        }
+      }
+
+      if (!allPassed) {
+        pendingVerificationCandidates.push(
+          rejectedCandidate(
+            candidate,
+            'pending_verification',
+            'INVARIANT_VERIFICATION_REQUIRED',
+          ),
+        );
+        candidateReviews.push({
+          candidateId: candidate.candidateId,
+          decision: 'pending_verification',
+          reason: 'INVARIANT_VERIFICATION_REQUIRED',
+        });
+        continue;
+      }
+    }
+
+    let candidateEvidenceDigest: string | null = null;
+    const verifications = stateStore.getVerifications(runId);
+    const candidateRefs = strings(candidate.evidenceRefs);
+    const binding = evidenceBinding(candidate);
+    const acceptanceIds = new Set([
+      ...strings(candidate.acceptanceIds),
+      ...strings(binding.acceptanceIds),
+    ]);
+    const obligationIds = new Set([
+      ...strings(candidate.obligationIds),
+      ...strings(binding.obligationIds),
+    ]);
+
+    const matchingVerification = verifications.filter((verification) => {
+      if (
+        verification.status !== 'passed'
+        || Number(verification.exitCode) !== 0
+        || !verification.evidenceDigest
+      ) {
+        return false;
+      }
+      if (
+        candidateRefs.length > 0
+        && !candidateRefs.some((reference) => (
+          reference === verification.evidenceDigest
+          || reference === verification.evidenceRef
+        ))
+      ) {
+        return false;
+      }
+      if (
+        acceptanceIds.size > 0
+        && !strings(verification.acceptanceCoverage)
+          .some((id) => acceptanceIds.has(id))
+      ) {
+        return false;
+      }
+      if (
+        obligationIds.size > 0
+        && !obligationIds.has(String(verification.obligationId))
+      ) {
+        return false;
+      }
+      return true;
+    });
+
+    // A single verification is a safe compatibility bridge for legacy
+    // explicit observations. It is deliberately not the "last verification"
+    // fallback: when several receipts exist, the observation must name its
+    // acceptance, obligation, or evidence ref.
+    const selectedVerification = matchingVerification.length > 0
+      ? matchingVerification[0]
+      : (
+          candidateRefs.length === 0
+          && acceptanceIds.size === 0
+          && obligationIds.size === 0
+          && verifications.length === 1
+        )
+        ? verifications[0]
+        : null;
+
+    const structuredReceipt = candidate.sourceKind === 'auto'
+      ? candidateRefs.find((reference) => (
+          /^(?:failure|blocker|review|source|receipt):\/\//i.test(reference)
+        ))
+      : null;
+
+    if (selectedVerification?.evidenceDigest) {
+      candidateEvidenceDigest = selectedVerification.evidenceDigest;
+      stateStore.recordCandidateEvidenceBinding({
+        candidateId: candidate.candidateId,
+        runId,
+        evidenceDigest: selectedVerification.evidenceDigest,
+        obligationId: selectedVerification.obligationId || 'default',
+        sourceIdentity: selectedVerification.sourceIdentity,
+        mutationRevision: selectedVerification.verifiedMutationRevision,
+        bindingType: candidate.sourceKind === 'auto'
+          ? 'structured-signal'
+          : 'verification',
+      });
+    } else if (structuredReceipt) {
+      candidateEvidenceDigest = structuredReceipt;
+      const currentRun = stateStore.getRun(runId);
+      stateStore.recordCandidateEvidenceBinding({
+        candidateId: candidate.candidateId,
+        runId,
+        evidenceDigest: structuredReceipt,
+        obligationId: candidate.obligationIds?.[0] || 'structured-signal',
+        sourceIdentity: currentRun?.sourceIdentity || 'structured-signal',
+        mutationRevision: currentRun?.mutationRevision || 0,
+        bindingType: 'structured-signal',
+      });
+    } else if (
+      candidate.sourceDigest
+      && /^sha256:[a-f0-9]{64}$/i.test(candidate.sourceDigest)
+    ) {
+      candidateEvidenceDigest = candidate.sourceDigest;
+    }
+
+    if (!candidateEvidenceDigest) {
+      rejectedCandidates.push(
+        rejectedCandidate(candidate, 'rejected', 'MISSING_VERIFICATION_EVIDENCE'),
+      );
+      candidateReviews.push({
+        candidateId: candidate.candidateId,
+        decision: 'rejected',
+        reason: 'MISSING_VERIFICATION_EVIDENCE',
+      });
+      continue;
+    }
+
+    verifiedCandidates.push({
+      ...candidate,
+      status: 'verified',
+      evidenceRefs: [candidateEvidenceDigest],
+      evidenceBinding: {
+        ...binding,
+        evidenceRefs: [candidateEvidenceDigest],
+        obligationId: selectedVerification?.obligationId
+          ? String(selectedVerification.obligationId)
+          : candidate.obligationId || null,
+        verificationId: selectedVerification?.id ?? null,
+      },
+    });
+    candidateReviews.push({
+      candidateId: candidate.candidateId,
+      decision: 'verified',
+      evidenceRef: candidateEvidenceDigest,
+    });
+  }
+
+  let status: ReviewKnowledgeCandidatesResult['status'] = 'passed';
+  if (
+    ontologyViolations.length > 0
+    || (
+      rejectedCandidates.length === candidates.length
+      && candidates.length > 0
+    )
+  ) {
+    status = 'failed';
+  } else if (needsApprovalCandidates.length > 0) {
+    status = 'needs_approval';
+  } else if (pendingVerificationCandidates.length > 0) {
+    status = 'pending_verification';
+  }
+
+  return parseKernelContract('kernel.knowledge-review-result', {
+    status,
+    verifiedCandidates,
+    rejectedCandidates,
+    needsApprovalCandidates,
+    pendingVerificationCandidates,
+    candidateReviews,
+    supersessionProposals: [],
+    ontologyViolations,
+    approvalRequired,
+    verificationsRequired,
+    evidenceCoverage: evidencePack
+      ? [String(evidencePack.digest || 'evidence-pack')]
+      : [],
+  });
+}

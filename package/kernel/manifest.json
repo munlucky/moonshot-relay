@@ -12,17 +12,17 @@
     "completionAuthority": "kernel"
   },
   "include": [
+    "package.json",
     "bin/moon-relay-kernel.mjs",
     "bin/moon-relay-standalone.mjs",
     "bin/moon-harness-switcher.mjs",
     "kernel/",
     "scripts/kernel/",
+    "scripts/application/",
+    "scripts/contracts/",
     "scripts/host/kernel/",
     "scripts/switcher/",
-    "scripts/lib/skills-lock.mjs",
-    "scripts/lib/candidate-identity.mjs",
-    "scripts/lib/git-safe.mjs",
-    "scripts/lib/runtime-build.mjs",
+    "scripts/lib/",
     "schemas/kernel.*",
     "schemas/harness-switcher.*",
     "skills/moon-relay-kernel/",
@@ -43,8 +43,8 @@
     "package/kernel/standalone-skills.lock.json",
     "package/kernel/profiles/"
     ,"package/profile-templates/codex/"
-    ,"scripts/kernel/profile-install.mjs"
-    ,"scripts/kernel/profile-doctor.mjs"
+    ,"scripts/kernel/profile-install.js"
+    ,"scripts/kernel/profile-doctor.js"
     ,"package/switcher/manifest.json"
     ,"package/switcher/"
   ],

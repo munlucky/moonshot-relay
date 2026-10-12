@@ -1,44 +1,192 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://moon-relay-kernel.local/schemas/kernel.model-route.schema.json",
-  "title": "Kernel execution-class route decision",
-  "description": "Provider-neutral execution class decided by the Kernel for one action. Provider model identity, credentials, prompts, and raw output are Host-side and forbidden here.",
   "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schemaVersion", "decisionId", "runId", "attemptNumber", "replanCount",
-    "planRevision", "actionKind", "role", "executionClass", "modelClass", "riskTier",
-    "independentContextRequired", "workProfile", "permissions", "reasonCodes", "policyRevision", "createdAt"
-  ],
   "properties": {
-    "schemaVersion": { "const": 1 },
-    "decisionId": { "type": "string", "pattern": "^route-[a-f0-9]{8,64}$" },
-    "runId": { "type": "string", "minLength": 1 },
-    "attemptNumber": { "type": "integer", "minimum": 0 },
-    "replanCount": { "type": "integer", "minimum": 0 },
-    "planRevision": { "type": "integer", "minimum": 0 },
-    "obligationId": { "type": ["string", "null"] },
-    "actionKind": { "enum": ["understand", "design", "plan", "implement", "debug", "review_contract", "review_engineering", "replan", "prove", "close"] },
-    "role": { "enum": ["planner", "implementer", "reviewer", "kernel"] },
-    "executionClass": { "enum": ["planning", "complex_implementation", "review", "standard", null] },
-    "modelClass": { "enum": ["frontier_reasoning", "value_coding", "kernel"] },
-    "riskTier": { "enum": ["T0", "T1", "T2", "T3"] },
-    "independentContextRequired": { "type": "boolean" },
+    "schemaVersion": {
+      "const": 1
+    },
+    "decisionId": {
+      "type": "string"
+    },
+    "runId": {
+      "type": "string"
+    },
+    "attemptNumber": {
+      "type": "number"
+    },
+    "replanCount": {
+      "type": "number"
+    },
+    "planRevision": {
+      "type": "number"
+    },
+    "obligationId": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "actionKind": {
+      "enum": [
+        "understand",
+        "design",
+        "plan",
+        "implement",
+        "debug",
+        "review_contract",
+        "review_engineering",
+        "replan",
+        "prove",
+        "close"
+      ]
+    },
+    "role": {
+      "enum": [
+        "planner",
+        "implementer",
+        "reviewer",
+        "kernel"
+      ]
+    },
+    "executionClass": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "const": "planning"
+        },
+        {
+          "const": "complex_implementation"
+        },
+        {
+          "const": "review"
+        },
+        {
+          "const": "standard"
+        }
+      ]
+    },
+    "modelClass": {
+      "enum": [
+        "kernel",
+        "frontier_reasoning",
+        "value_coding"
+      ]
+    },
+    "riskTier": {
+      "enum": [
+        "T0",
+        "T1",
+        "T2",
+        "T3"
+      ]
+    },
+    "independentContextRequired": {
+      "type": "boolean"
+    },
     "workProfile": {
-      "type": ["object", "null"],
-      "additionalProperties": false,
-      "required": ["executionClass", "complexity", "repeatedFailure", "independentContextRequired", "parallelizable"],
-      "properties": {
-        "executionClass": { "enum": ["planning", "complex_implementation", "review", "standard", null] },
-        "complexity": { "enum": ["routine", "standard", "complex", "large-refactor"] },
-        "repeatedFailure": { "type": "boolean" },
-        "independentContextRequired": { "type": "boolean" },
-        "parallelizable": { "type": "boolean" }
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "executionClass": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "const": "planning"
+                },
+                {
+                  "const": "complex_implementation"
+                },
+                {
+                  "const": "review"
+                },
+                {
+                  "const": "standard"
+                }
+              ]
+            },
+            "complexity": {
+              "enum": [
+                "standard",
+                "routine",
+                "complex",
+                "large-refactor"
+              ]
+            },
+            "repeatedFailure": {
+              "type": "boolean"
+            },
+            "independentContextRequired": {
+              "type": "boolean"
+            },
+            "parallelizable": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "executionClass",
+            "complexity",
+            "repeatedFailure",
+            "independentContextRequired",
+            "parallelizable"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "permissions": {
+      "enum": [
+        "read_only",
+        "plan_write",
+        "workspace_write",
+        "kernel_runtime"
+      ]
+    },
+    "reasonCodes": {
+      "type": "array",
+      "items": {
+        "type": "string"
       }
     },
-    "permissions": { "enum": ["read_only", "plan_write", "workspace_write", "kernel_runtime"] },
-    "reasonCodes": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[A-Z0-9_]+$" } },
-    "policyRevision": { "type": "string", "minLength": 1 },
-    "createdAt": { "type": "string", "minLength": 1 }
-  }
+    "policyRevision": {
+      "type": "string"
+    },
+    "createdAt": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "decisionId",
+    "runId",
+    "attemptNumber",
+    "replanCount",
+    "planRevision",
+    "obligationId",
+    "actionKind",
+    "role",
+    "executionClass",
+    "modelClass",
+    "riskTier",
+    "independentContextRequired",
+    "workProfile",
+    "permissions",
+    "reasonCodes",
+    "policyRevision",
+    "createdAt"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://moon-relay-kernel.local/schemas/kernel.model-route.schema.json",
+  "title": "Kernel execution-class route decision"
 }

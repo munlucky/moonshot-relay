@@ -22,7 +22,7 @@
 
 ## Kernel 개발
 
-Kernel/Host 코드는 `src/`에서 수정합니다. `npm ci`는 개발 의존성을 설치하고 기존 경로에 `.mjs` 런타임을 빌드합니다. 수정 뒤 `npm run build`, `npm run test:source-runtime`을 실행합니다. 생성된 `scripts/kernel/`, `scripts/host/kernel/`와 매핑된 CLI 파일은 직접 수정하지 않습니다.
+Kernel/Host 코드는 `src/`에서 수정합니다. `npm ci`는 개발 의존성을 설치하고 기존 설치 경로에 `.js` 런타임과 공개 `.mjs` 진입점을 빌드합니다. 수정 뒤 `npm run build`, `npm run test:source-runtime`을 실행합니다. 생성된 `scripts/kernel/`, `scripts/host/kernel/`와 매핑된 CLI 파일은 직접 수정하지 않습니다.
 
 [개발 명령과 원본 경계](docs/public/development.md) · [구조 결정과 Futures 적용 지도](docs/public/roadmaps/source-runtime-separation/ARCHITECTURE.md)
 

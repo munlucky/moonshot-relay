@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { gitConfigValue, gitCurrentBranch } from './lib/git-safe.mjs';
+import { gitConfigValue, gitCurrentBranch } from './lib/git-safe.js';
 
 const PROJECT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{1,126}[a-z0-9]$/;
 
