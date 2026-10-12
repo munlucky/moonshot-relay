@@ -36,7 +36,7 @@
 | [C26](cards/C26.md) | W8 | Retrieval 단일 병목 개선과 비교 | C25 | COMPLETE |
 | [C27](cards/C27.md) | W9 | Hidden follow-up 평가 프로토콜 | C26 | COMPLETE |
 | [C28](cards/C28.md) | W9 | 전략별 순차 평가 실행 | C27 | COMPLETE |
-| [C29](cards/C29.md) | W9 | Follow-up 비용 비교와 Adaptive 판정 | C28 | NOT_STARTED |
+| [C29](cards/C29.md) | W9 | Follow-up 비용 비교와 Adaptive 판정 | C28 | COMPLETE |
 | [C30](cards/C30.md) | W10 | Projection interoperability 가치 판정 | C29 | NOT_STARTED |
 | [C31](cards/C31.md) | W10 | 단일 Projection adapter | C30 진행 판정 | NOT_STARTED |
 | [C32](cards/C32.md) | 마감 | 전체 계약 추적과 통합 검증 | C29 및 C30/C31의 조건 처리 | NOT_STARTED |
@@ -586,3 +586,19 @@ nextCard: C28 재개; C29 자동 진입 금지
 - checks: 동일 source의 LF checkout에서 정적 검사 4종 및 필수 테스트 56/56 통과. 최종 collector issues 0.
 - limitation: 단일 case 데이터 수집이다. 전략 채택 또는 일반화 판정은 하지 않았다.
 - nextCard: C29 NOT_STARTED. 자동 시작 금지.
+
+```text
+card: C29
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: 5bf6c23bf7e8e5a37a085d3a1b59be92a8b357d8
+resultHeadOrDiffDigest: sha256:c4d416b44bd4dfc514dbcbc543ab3483a7b88ad61999640b41a8405e957b49d0
+taskId: f1a159d0-67f1-471e-95de-14ef5d176f81
+kernelRunId: 없음; Kernel 모드 미사용
+scope: C28_LOCAL_RESULT.md의 actual 10 attempts 재집계 + C29_RESULT.md 판정 문서 + STATUS; 제품 source/policy 변경 없음
+acceptance: AC-1 C28 단일 case의 Verify-only/Always/Adaptive를 correctness/scope gate 우선으로 비교. 세 전략 최종 correctness/scope는 통과했지만 Adaptive F1 실패 attempt 1건을 비용에서 제외하지 않음. F1, F2+F3, 총비용을 wall time/actual token dimensions/files/LOC/verification time으로 각각 보고하고 case 1개라 cross-case variance/confidence interval은 unavailable로 명시. raw local receipt는 원격 Git에 없어 C28 collector 검증 결과와 committed result summary를 입력으로 사용한 제한을 기록. AC-2 Adaptive는 F2+F3 wall time이 Verify-only보다 약 28.9% 낮았으나 실패 포함 총 actor time은 25.6% 높고 total input/output/reasoning/cached token 및 verification time도 가장 큼. 단일 case로 일반화할 근거가 없으므로 Adaptive 미채택, 현재 policy 유지. Always도 follow-up wall time 이점은 있으나 total actor time이 Verify-only보다 약 10.0% 높고 단일 case라 policy 변경하지 않음. 평가 수치로 Kernel authority/policy 구현 변경 없음. AC-3 parser가 C28 표 10행, 실패 포함 총계, follow-up wall, pairing/correctness/scope evidence와 C29 decision 문구를 재현 검증. docs-only 변경이라 build 재실행 없음. AC-4 변경 경로/evidence/nextCard 기록
+checks: CONTRACTS/incumbent review c2900000-0000-4000-8000-000000000007 exit 0; aggregate parser c2900000-0000-4000-8000-000000000008 exit 0; C29 result reproduction/decision validation c2900000-0000-4000-8000-000000000009 exit 0
+liveEval: C28 actual result 재사용; C29에서 새 model run 없음
+remaining: C29 없음
+nextCard: C30 (W10)
+```
