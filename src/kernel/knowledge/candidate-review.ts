@@ -5,6 +5,7 @@ import {
   type OntologyConstraint,
 } from './ontology-evaluate.js';
 import { matchPathScope } from './path-scope.js';
+import { evaluateImprovementPairPromotion } from './improvement-pair.js';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -30,9 +31,11 @@ export interface KnowledgeCandidateLike extends UnknownRecord {
   obligationId?: string;
   supersedes?: string[];
   feedbackClassification?: unknown;
+  improvementPair?: unknown;
 }
 
 interface KnowledgeApprovalLike {
+  candidateId?: unknown;
   approvalReceipt?: unknown;
   approvedBy?: unknown;
 }
@@ -152,6 +155,14 @@ export async function reviewKnowledgeCandidates({
         'Persisted Run and SQLite Knowledge authority are required to review Knowledge candidates',
       ),
       { code: 'KNOWLEDGE_REVIEW_AUTHORITY_REQUIRED' },
+    );
+  }
+
+  const currentRun = stateStore.getRun(runId);
+  if (!currentRun) {
+    throw Object.assign(
+      new Error(`Run ${runId} not found for Knowledge review`),
+      { code: 'KNOWLEDGE_REVIEW_RUN_NOT_FOUND' },
     );
   }
 
@@ -344,8 +355,81 @@ export async function reviewKnowledgeCandidates({
       }
     }
 
-    let candidateEvidenceDigest: string | null = null;
     const verifications = stateStore.getVerifications(runId);
+    let candidateEvidenceDigest: string | null = null;
+    let improvementReplayVerificationId: unknown = null;
+    let improvementReplayObligationId: string | null = null;
+
+    if (candidate.improvementPair) {
+      const promotion = evaluateImprovementPairPromotion({
+        pair: candidate.improvementPair,
+        candidateId: String(candidate.candidateId || ''),
+        projectId: String(projectId || ''),
+        scope: strings(candidate.scope),
+        supersedes: strings(candidate.supersedes),
+        run: currentRun,
+        verifications,
+        approval: stateStore.getKnowledgeApproval(
+          runId,
+          candidate.candidateId,
+        ),
+      });
+      const reason = promotion.reasons[0]
+        || 'IMPROVEMENT_PAIR_PROMOTION_BLOCKED';
+
+      if (promotion.status === 'needs_approval') {
+        needsApprovalCandidates.push(
+          rejectedCandidate(candidate, 'needs_approval', reason),
+        );
+        candidateReviews.push({
+          candidateId: candidate.candidateId,
+          decision: 'needs_approval',
+          reason,
+        });
+        continue;
+      }
+      if (promotion.status === 'pending_replay') {
+        pendingVerificationCandidates.push(
+          rejectedCandidate(candidate, 'pending_verification', reason),
+        );
+        candidateReviews.push({
+          candidateId: candidate.candidateId,
+          decision: 'pending_verification',
+          reason,
+        });
+        continue;
+      }
+      if (!promotion.eligible) {
+        rejectedCandidates.push(
+          rejectedCandidate(candidate, 'rejected', reason),
+        );
+        candidateReviews.push({
+          candidateId: candidate.candidateId,
+          decision: 'rejected',
+          reason,
+        });
+        continue;
+      }
+
+      for (const replayBinding of promotion.replayBindings) {
+        stateStore.recordCandidateEvidenceBinding({
+          candidateId: candidate.candidateId,
+          runId,
+          evidenceDigest: replayBinding.evidenceDigest,
+          obligationId: replayBinding.obligationId,
+          sourceIdentity: replayBinding.sourceIdentity,
+          mutationRevision: replayBinding.mutationRevision,
+          bindingType: 'improvement-replay',
+        });
+      }
+      const firstReplayBinding = promotion.replayBindings[0];
+      if (firstReplayBinding) {
+        candidateEvidenceDigest = firstReplayBinding.evidenceDigest;
+        improvementReplayVerificationId = firstReplayBinding.verificationId;
+        improvementReplayObligationId = firstReplayBinding.obligationId;
+      }
+    }
+
     const candidateRefs = strings(candidate.evidenceRefs);
     const binding = evidenceBinding(candidate);
     const acceptanceIds = new Set([
@@ -411,7 +495,7 @@ export async function reviewKnowledgeCandidates({
         ))
       : null;
 
-    if (selectedVerification?.evidenceDigest) {
+    if (!candidateEvidenceDigest && selectedVerification?.evidenceDigest) {
       candidateEvidenceDigest = selectedVerification.evidenceDigest;
       stateStore.recordCandidateEvidenceBinding({
         candidateId: candidate.candidateId,
@@ -424,9 +508,8 @@ export async function reviewKnowledgeCandidates({
           ? 'structured-signal'
           : 'verification',
       });
-    } else if (structuredReceipt) {
+    } else if (!candidateEvidenceDigest && structuredReceipt) {
       candidateEvidenceDigest = structuredReceipt;
-      const currentRun = stateStore.getRun(runId);
       stateStore.recordCandidateEvidenceBinding({
         candidateId: candidate.candidateId,
         runId,
@@ -437,7 +520,8 @@ export async function reviewKnowledgeCandidates({
         bindingType: 'structured-signal',
       });
     } else if (
-      candidate.sourceDigest
+      !candidateEvidenceDigest
+      && candidate.sourceDigest
       && /^sha256:[a-f0-9]{64}$/i.test(candidate.sourceDigest)
     ) {
       candidateEvidenceDigest = candidate.sourceDigest;
@@ -464,8 +548,10 @@ export async function reviewKnowledgeCandidates({
         evidenceRefs: [candidateEvidenceDigest],
         obligationId: selectedVerification?.obligationId
           ? String(selectedVerification.obligationId)
-          : candidate.obligationId || null,
-        verificationId: selectedVerification?.id ?? null,
+          : improvementReplayObligationId || candidate.obligationId || null,
+        verificationId: selectedVerification?.id
+          ?? improvementReplayVerificationId
+          ?? null,
       },
     });
     if (candidate.candidateId) {

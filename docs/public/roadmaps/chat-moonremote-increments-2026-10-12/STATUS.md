@@ -28,8 +28,8 @@
 | [C18](cards/C18.md) | W4 | 최소 Procedure 표현과 점진적 로드 | C17 | COMPLETE |
 | [C19](cards/C19.md) | W5 | Feedback root-cause 분류 계약 | C18 | COMPLETE |
 | [C20](cards/C20.md) | W5 | 분류 결과를 기존 candidate lifecycle에 연결 | C19 | COMPLETE |
-| [C21](cards/C21.md) | W6 | Improvement Pair identity와 원자성 | C20 | NOT_STARTED |
-| [C22](cards/C22.md) | W6 | Pair replay와 promotion gate | C21 | NOT_STARTED |
+| [C21](cards/C21.md) | W6 | Improvement Pair identity와 원자성 | C20 | COMPLETE |
+| [C22](cards/C22.md) | W6 | Pair replay와 promotion gate | C21 | COMPLETE |
 | [C23](cards/C23.md) | W7 | Cross-run 반복 근거 묶음 | C22 | NOT_STARTED |
 | [C24](cards/C24.md) | W7 | Episodic에서 durable로 승격 | C23 | NOT_STARTED |
 | [C25](cards/C25.md) | W8 | Retrieval 정답셋과 지표 | C24 | NOT_STARTED |
@@ -446,4 +446,36 @@ checks: initial C20 typecheck c2010000-0000-4000-8000-000000000006 exit 2는 cor
 liveEval: 미실행; deterministic feedback candidate/review lifecycle 범위
 remaining: W5 없음
 nextCard: C21 (W6는 사용자 별도 요청 후 시작)
+```
+
+```text
+card: C21
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: f48e706a87ea8f13d682164f58a94e6e02d9808b
+resultHeadOrDiffDigest: sha256:d1bd73418321d9bfc1d0f9e642d1562c0dd684df1a94761494a9ae1c9dee500e
+taskId: f2f0e290-4226-4b01-a74c-0cf6ba6df582
+kernelRunId: 없음; Kernel 모드 미사용
+scope: src/kernel/knowledge/improvement-pair.ts; src/kernel/knowledge/candidate-extract.ts; src/kernel/knowledge-ingestion/normalize.ts; tests/kernel-knowledge-improvement-pair.test.ts; generated tests/kernel-knowledge-improvement-pair.test.mjs; persistence/schema/commit 변경 없음
+acceptance: AC-1 correction candidate의 단일 candidate_json에 correctionId/project/source identity/source revision/scope/source evidence/mutation candidate/replay candidate와 ready/incomplete/invalid recovery state를 함께 저장; pairId는 correction/project/source/revision/scope로 결정되어 replay 후보가 늦게 준비돼도 동일 identity를 유지; 동일 candidate_id SQLite upsert로 partial→ready 복구 시 한 행만 유지. AC-2 mutation/replay 한쪽 누락은 incomplete로 기록되고 ready가 아니며 project/revision/scope mismatch는 invalid로 fail-closed; pair metadata 자체는 trust/promotion 권한을 부여하지 않음. AC-3 typecheck, build 295 files/791 edges, build:tests 276/8, C19~C21+review focused 19/19, build:check/build:tests:check/check:boundaries 통과. AC-4 STATUS/checkpoint에 변경·증거·nextCard 기록
+checks: initial typecheck c2100000-0000-4000-8000-000000000005 exit 0; final typecheck with tests c2100000-0000-4000-8000-000000000006 exit 0; build+build:tests c2100000-0000-4000-8000-000000000007 exit 0; focused c2100000-0000-4000-8000-000000000008 exit 0 (19/19); build/checks/boundaries c2100000-0000-4000-8000-000000000009 exit 0; complexity/digest c2100000-0000-4000-8000-000000000010 exit 0
+liveEval: 미실행; deterministic pair identity/persistence 범위
+remaining: C21 없음
+nextCard: C22 (사용자 W6 요청에 따라 별도 task로 진행)
+```
+
+```text
+card: C22
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: f48e706a87ea8f13d682164f58a94e6e02d9808b
+resultHeadOrDiffDigest: sha256:19ea386a60d8d58ffa14c14551a26eec25c4a5155406f1d96cedfed56467f6f4
+taskId: 5c1809ec-7898-4365-a4db-836f6c961d1d
+kernelRunId: 없음; Kernel 모드 미사용
+scope: C21 improvement-pair contract + src/kernel/knowledge/candidate-review.ts + src/kernel/knowledge/commit.ts + C20 candidate extraction/normalization 연결; tests/kernel-knowledge-improvement-promotion.test.ts 및 generated .mjs; persistence/schema/finalization/public surface 변경 없음
+acceptance: AC-1 Improvement Pair는 ready 상태만 promotion 평가 대상으로 하며 replay obligation마다 현재 Run sourceIdentity+mutationRevision에 일치하는 persisted passed verification을 요구; missing/failed/stale/evidence mismatch replay는 pending으로 fail-closed. existing knowledge approval은 candidateId와 현재 pair snapshot approval digest에 묶이고 approvedBy가 scope owner와 일치해야 하며 owner revision/scope도 pair와 정확히 일치해야 함. rollback strategy가 필수이고 supersedes target 전체가 rollback target에 포함되어야 함. candidate-review에서 조건 미충족을 needs_approval/pending_verification/rejected로 노출하고 fresh replay만 verified evidence binding 및 supersession proposal을 생성. commitProjectKnowledge가 같은 gate를 재검증해 direct commit 우회를 차단하고 accepted candidate supersedes를 기존 knowledge transaction으로 전달하며 pairId를 transaction provenance에 기록. AC-2 임의 evaluation/status/score는 promotion 입력이나 권한으로 사용하지 않으며 persisted review/approval/verification을 우회하지 않음; 새 DB/schema/workflow stage/Authority/service 없음. AC-3 최종 typecheck/build/build:tests 통과, Knowledge+feedback 전체 회귀 74/74, build:check 295 files/793 edges drift 0, build:tests:check 277 tests/8 helpers drift 0, check:boundaries 9 modules 통과. AC-4 STATUS/checkpoint에 변경·증거·W6 종료 기록
+checks: initial typecheck c2200000-0000-4000-8000-000000000005 exit 0; promotion tests typecheck c2200000-0000-4000-8000-000000000006 exit 0; build+build:tests c2200000-0000-4000-8000-000000000007 exit 0; focused initial c2200000-0000-4000-8000-000000000008 exit 0 (28/28); expanded focused c2200000-0000-4000-8000-000000000009 exit 0 (30/30); final typecheck/build/build:tests after approval binding c2200000-0000-4000-8000-000000000012 exit 0 (295 files/793 edges; 277 tests/8 helpers); final broad regression+drift+boundary c2200000-0000-4000-8000-000000000013 exit 0 (Knowledge+feedback 74/74; drift 0; 9 modules); complexity/digest c2200000-0000-4000-8000-000000000014 exit 0
+liveEval: 미실행; deterministic persisted authority/replay promotion gate 범위
+remaining: W6 없음
+nextCard: C23 (W7는 사용자 별도 요청 후 시작)
 ```

@@ -9,6 +9,7 @@ import {
 import {
   reviewKnowledgeCandidates,
 } from '../src/kernel/knowledge/candidate-review.js';
+import { improvementPairApprovalRef } from '../src/kernel/knowledge/improvement-pair.js';
 
 const classification = (
   signal: FeedbackSignal,
@@ -232,12 +233,22 @@ type ReviewStore = NonNullable<
 const staleReviewStore = ({
   records,
   verifications,
+  approvalCandidateId = null,
+  approvalReceipt = null,
 }: {
   records: ReturnType<ReviewStore['listKnowledgeRecords']>;
   verifications: ReturnType<ReviewStore['getVerifications']>;
+  approvalCandidateId?: string | null;
+  approvalReceipt?: string | null;
 }): ReviewStore => ({
   listKnowledgeRecords: () => records,
-  getKnowledgeApproval: () => null,
+  getKnowledgeApproval: () => approvalCandidateId && approvalReceipt
+    ? {
+        candidateId: approvalCandidateId,
+        approvedBy: 'owner://auth',
+        approvalReceipt,
+      }
+    : null,
   ensureRunObligation: () => { throw new Error('unexpected obligation write'); },
   getRunObligations: () => [],
   getVerifications: () => verifications,
@@ -246,6 +257,7 @@ const staleReviewStore = ({
 });
 
 test('C20: stale supersession proposal appears only after existing review verification passes', async () => {
+  const proofDigest = `sha256:${'a'.repeat(64)}`;
   const plan = buildFeedbackCorrectionPlan({
     projectId: 'project-a',
     statement: 'Auth timeout is now 10 seconds.',
@@ -259,6 +271,24 @@ test('C20: stale supersession proposal appears only after existing review verifi
       status: 'committed',
       scope: ['src/auth/**'],
     }],
+    replayCandidate: {
+      candidateId: 'replay-auth-timeout',
+      projectId: 'project-a',
+      sourceRevision: 'revision-1',
+      scope: ['src/auth/config.ts'],
+      evidenceRefs: [proofDigest],
+      obligationIds: ['feedback-regression'],
+    },
+    scopeOwner: {
+      owner: 'owner://auth',
+      sourceRevision: 'revision-1',
+      scope: ['src/auth/config.ts'],
+    },
+    rollback: {
+      strategy: 'restore prior auth timeout knowledge',
+      targetIds: ['fact-old'],
+      evidenceRefs: ['rollback://auth-timeout'],
+    },
   });
   const candidate = plan.candidates[0];
   assert.ok(candidate);
@@ -277,14 +307,17 @@ test('C20: stale supersession proposal appears only after existing review verifi
     stateStore: staleReviewStore({
       records: currentRecords,
       verifications: [],
+      approvalCandidateId: candidate.candidateId,
+      approvalReceipt: improvementPairApprovalRef(
+        candidate.improvementPair,
+      ),
     }),
     candidates: [candidate],
   });
   assert.equal(withoutProof.verifiedCandidates.length, 0);
-  assert.equal(withoutProof.rejectedCandidates.length, 1);
+  assert.equal(withoutProof.pendingVerificationCandidates.length, 1);
   assert.deepEqual(withoutProof.supersessionProposals, []);
 
-  const proofDigest = `sha256:${'a'.repeat(64)}`;
   const withProof = await reviewKnowledgeCandidates({
     projectId: 'project-a',
     runId: 'run-with-proof',
@@ -301,6 +334,10 @@ test('C20: stale supersession proposal appears only after existing review verifi
         verifiedMutationRevision: 0,
         acceptanceCoverage: [],
       }],
+      approvalCandidateId: candidate.candidateId,
+      approvalReceipt: improvementPairApprovalRef(
+        candidate.improvementPair,
+      ),
     }),
     candidates: [candidate],
   });

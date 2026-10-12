@@ -1,6 +1,13 @@
 import crypto from 'node:crypto';
 import { matchPathScope } from '../../shared/path-scope.js';
 import { analyzeChangeDiff } from './change-diff.js';
+import {
+  buildImprovementPair,
+  type ImprovementPair,
+  type ImprovementPairMemberInput,
+  type ImprovementPairRollbackInput,
+  type ImprovementPairScopeOwnerInput,
+} from './improvement-pair.js';
 
 interface EvidencePackLike {
   digest: string;
@@ -214,6 +221,9 @@ export interface BuildFeedbackCorrectionPlanInput {
   classification: FeedbackRootCauseClassification;
   relatedRecordIds?: string[];
   existingRecords?: FeedbackExistingRecord[];
+  replayCandidate?: ImprovementPairMemberInput | null;
+  scopeOwner?: ImprovementPairScopeOwnerInput | null;
+  rollback?: ImprovementPairRollbackInput | null;
 }
 
 export interface FeedbackCorrectionCandidate extends Record<string, unknown> {
@@ -229,6 +239,7 @@ export interface FeedbackCorrectionCandidate extends Record<string, unknown> {
   supersedes: string[];
   feedbackClassification: FeedbackRootCauseClassification;
   correctionIntent: FeedbackRootCause;
+  improvementPair: ImprovementPair;
 }
 
 export interface FeedbackCorrectionPlan {
@@ -305,6 +316,9 @@ export function buildFeedbackCorrectionPlan({
   classification,
   relatedRecordIds = [],
   existingRecords = [],
+  replayCandidate = null,
+  scopeOwner = null,
+  rollback = null,
 }: BuildFeedbackCorrectionPlanInput): FeedbackCorrectionPlan {
   const relatedIds = new Set(uniqueStrings(relatedRecordIds));
   const related = existingRecords.filter((record) => (
@@ -389,14 +403,34 @@ export function buildFeedbackCorrectionPlan({
   }
 
   const normalizedScope = uniqueStrings(scope);
-  const candidate: FeedbackCorrectionCandidate = {
-    candidateId: correctionCandidateId({
+  const candidateId = correctionCandidateId({
+    projectId,
+    statement,
+    scope: normalizedScope,
+    classification,
+    supersedes,
+  });
+  const evidenceRefs = correctionEvidenceRefs(classification);
+  const improvementPair = buildImprovementPair({
+    correctionId: candidateId,
+    projectId,
+    sourceIdentity: classification.sourceIdentity,
+    sourceRevision: classification.sourceRevision,
+    scope: normalizedScope,
+    sourceEvidenceRefs: evidenceRefs,
+    mutationCandidate: {
+      candidateId,
       projectId,
-      statement,
+      sourceRevision: classification.sourceRevision,
       scope: normalizedScope,
-      classification,
-      supersedes,
-    }),
+      evidenceRefs,
+    },
+    replayCandidate,
+    scopeOwner,
+    rollback,
+  });
+  const candidate: FeedbackCorrectionCandidate = {
+    candidateId,
     projectId,
     proposedType,
     statement: statement.trim(),
@@ -404,10 +438,11 @@ export function buildFeedbackCorrectionPlan({
     sourceKind: 'feedback',
     status: 'observed',
     trustTier: 'derived',
-    evidenceRefs: correctionEvidenceRefs(classification),
+    evidenceRefs,
     supersedes,
     feedbackClassification: classification,
     correctionIntent: classification.primary,
+    improvementPair,
   };
 
   return {

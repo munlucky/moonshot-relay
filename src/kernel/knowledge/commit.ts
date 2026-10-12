@@ -17,6 +17,7 @@ import {
   rebuildKnowledgeProjection,
   type KnowledgeProjectionStore,
 } from './projection.js';
+import { evaluateImprovementPairPromotion } from './improvement-pair.js';
 
 export { rebuildKnowledgeProjection } from './projection.js';
 
@@ -44,6 +45,8 @@ interface CandidateLike extends UnknownRecord {
   statement?: unknown;
   scope?: unknown;
   evidenceRefs?: unknown;
+  supersedes?: unknown;
+  improvementPair?: unknown;
 }
 
 interface StoredCandidateLike extends UnknownRecord {
@@ -65,6 +68,11 @@ interface KnowledgeCommitStore extends KnowledgeProjectionStore {
   getRun(runId: string): RunLike | null;
   getCompletionDecision?(runId: string): CompletionDecisionLike | null;
   getKnowledgeCandidates(runId: string): StoredCandidateLike[];
+  getKnowledgeApproval?(
+    runId: string,
+    candidateId: string,
+  ): UnknownRecord | null;
+  getVerifications?(runId: string): UnknownRecord[];
   commitKnowledgeTransaction(input: UnknownRecord): KnowledgeTransactionResult;
 }
 
@@ -138,6 +146,12 @@ const normalizeCommittedRecord = (
     trustTier: 'verified',
     createdAt: new Date().toISOString(),
     evidence: { refs: strings(candidate.evidenceRefs) },
+    ...(strings(candidate.supersedes).length > 0
+      ? { supersedes: strings(candidate.supersedes) }
+      : {}),
+    ...(candidate.improvementPair
+      ? { improvementPair: asRecord(candidate.improvementPair) }
+      : {}),
   };
 
   if (!validateKnowledgeRecord(record)) {
@@ -242,12 +256,49 @@ export async function commitProjectKnowledge({
       .map(normalizeStoredCandidate);
   }
 
+  const improvementPairIds: string[] = [];
+  for (const candidate of acceptedCandidates) {
+    if (!candidate.improvementPair) continue;
+    if (
+      typeof stateStore.getKnowledgeApproval !== 'function'
+      || typeof stateStore.getVerifications !== 'function'
+    ) {
+      throw new KernelKnowledgeCommitError(
+        'IMPROVEMENT_PAIR_PROMOTION_AUTHORITY_REQUIRED',
+        'Improvement Pair promotion requires persisted approval and verification authority',
+      );
+    }
+
+    const candidateId = String(candidate.candidateId || candidate.id || '');
+    const promotion = evaluateImprovementPairPromotion({
+      pair: candidate.improvementPair,
+      candidateId,
+      projectId,
+      scope: strings(candidate.scope),
+      supersedes: strings(candidate.supersedes),
+      run,
+      verifications: stateStore.getVerifications(runId),
+      approval: stateStore.getKnowledgeApproval(runId, candidateId),
+    });
+    if (!promotion.eligible) {
+      throw new KernelKnowledgeCommitError(
+        'IMPROVEMENT_PAIR_PROMOTION_BLOCKED',
+        `Improvement Pair promotion blocked: ${promotion.reasons.join(', ') || promotion.status}`,
+        { candidateId, promotion },
+      );
+    }
+    if (promotion.pairId) improvementPairIds.push(promotion.pairId);
+  }
+
   const transactionId = `tx-${crypto.randomUUID()}`;
-  const supersessions = supersessionProposals.map((proposal) => (
-    typeof proposal === 'string'
-      ? proposal
-      : String(proposal.targetId || '')
-  )).filter(Boolean);
+  const supersessions = [...new Set([
+    ...supersessionProposals.map((proposal) => (
+      typeof proposal === 'string'
+        ? proposal
+        : String(proposal.targetId || '')
+    )),
+    ...acceptedCandidates.flatMap((candidate) => strings(candidate.supersedes)),
+  ].filter(Boolean))];
 
   let txResult: KnowledgeTransactionResult;
   try {
@@ -262,6 +313,7 @@ export async function commitProjectKnowledge({
         runId,
         sourceIdentity,
         committedCount: acceptedCandidates.length,
+        improvementPairIds: [...new Set(improvementPairIds)],
       },
       faultInjection,
       noChange: acceptedCandidates.length === 0
