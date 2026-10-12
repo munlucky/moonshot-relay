@@ -35,7 +35,7 @@
 | [C25](cards/C25.md) | W8 | Retrieval 정답셋과 지표 | C24 | COMPLETE |
 | [C26](cards/C26.md) | W8 | Retrieval 단일 병목 개선과 비교 | C25 | COMPLETE |
 | [C27](cards/C27.md) | W9 | Hidden follow-up 평가 프로토콜 | C26 | COMPLETE |
-| [C28](cards/C28.md) | W9 | 전략별 순차 평가 실행 | C27 | EVAL_PENDING |
+| [C28](cards/C28.md) | W9 | 전략별 순차 평가 실행 | C27 | COMPLETE |
 | [C29](cards/C29.md) | W9 | Follow-up 비용 비교와 Adaptive 판정 | C28 | NOT_STARTED |
 | [C30](cards/C30.md) | W10 | Projection interoperability 가치 판정 | C29 | NOT_STARTED |
 | [C31](cards/C31.md) | W10 | 단일 Projection adapter | C30 진행 판정 | NOT_STARTED |
@@ -575,3 +575,14 @@ liveEval: 미실행; 로컬 Codex + enforced blind filesystem isolation 필요
 remaining: 로컬 Codex에서 C28 actual strategy×case×F1/F2/F3 receipts 수집 후 C28 재개. C29는 C28 전체 결과 전까지 시작 금지
 nextCard: C28 재개; C29 자동 진입 금지
 ```
+
+## C28 로컬 후속 결과
+
+- status: COMPLETE (actual 데이터 수집). 이전 EVAL_PENDING 기록은 원격 환경의 이력이다.
+- sourceRevision: 92ff7fc7d57890e82d9bedaf2c2934e8564a3d74
+- kernelRunId: run-e0401d0f-3a94-4061-9b7f-f459a52f9ba5
+- actual: 1 case × 3 strategies × F1/F2/F3 = 성공 9개. 실패 1개를 포함한 전체 10 attempts 보존.
+- evidence: [C28_LOCAL_RESULT.md](C28_LOCAL_RESULT.md). 동일 조건, enforced isolation, freeze/reveal 순서와 실제 usage 확인.
+- checks: 동일 source의 LF checkout에서 정적 검사 4종 및 필수 테스트 56/56 통과. 최종 collector issues 0.
+- limitation: 단일 case 데이터 수집이다. 전략 채택 또는 일반화 판정은 하지 않았다.
+- nextCard: C29 NOT_STARTED. 자동 시작 금지.
