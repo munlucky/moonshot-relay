@@ -6,6 +6,7 @@ import {
 } from './ontology-evaluate.js';
 import { matchPathScope } from './path-scope.js';
 import { evaluateImprovementPairPromotion } from './improvement-pair.js';
+import { evaluateCrossRunPromotionCandidate } from './cross-run-evidence.js';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -32,6 +33,8 @@ export interface KnowledgeCandidateLike extends UnknownRecord {
   supersedes?: string[];
   feedbackClassification?: unknown;
   improvementPair?: unknown;
+  signalKind?: unknown;
+  crossRunEvidenceGroup?: unknown;
 }
 
 interface KnowledgeApprovalLike {
@@ -205,6 +208,21 @@ export async function reviewKnowledgeCandidates({
       continue;
     }
 
+    const crossRunPromotion = evaluateCrossRunPromotionCandidate({
+      candidate,
+      runId,
+      projectId: String(projectId || candidate.projectId || ''),
+    });
+    if (crossRunPromotion.applies && !crossRunPromotion.eligible) {
+      candidateReviews.push({
+        candidateId: candidate.candidateId,
+        decision: 'episodic',
+        reason: crossRunPromotion.reasons[0]
+          || 'CROSS_RUN_GROUP_EPISODIC_ONLY',
+      });
+      continue;
+    }
+
     const feedbackClassification = (
       candidate.feedbackClassification
       && typeof candidate.feedbackClassification === 'object'
@@ -213,8 +231,15 @@ export async function reviewKnowledgeCandidates({
       ? candidate.feedbackClassification as UnknownRecord
       : {};
     const candidateSupersedes = (
-      candidate.sourceKind === 'feedback'
-      && feedbackClassification.primary === 'stale_knowledge'
+      (
+        candidate.sourceKind === 'feedback'
+        && feedbackClassification.primary === 'stale_knowledge'
+      )
+      || (
+        crossRunPromotion.applies
+        && crossRunPromotion.eligible
+        && candidate.signalKind === 'cross-run-promotion'
+      )
     )
       ? strings(candidate.supersedes)
       : [];
@@ -559,7 +584,9 @@ export async function reviewKnowledgeCandidates({
         supersessionProposals.push({
           targetId,
           supersedingId: candidate.candidateId,
-          reason: 'verified_feedback_stale_knowledge',
+          reason: candidate.signalKind === 'cross-run-promotion'
+            ? 'verified_cross_run_supersession'
+            : 'verified_feedback_stale_knowledge',
         });
       }
     }

@@ -30,8 +30,8 @@
 | [C20](cards/C20.md) | W5 | 분류 결과를 기존 candidate lifecycle에 연결 | C19 | COMPLETE |
 | [C21](cards/C21.md) | W6 | Improvement Pair identity와 원자성 | C20 | COMPLETE |
 | [C22](cards/C22.md) | W6 | Pair replay와 promotion gate | C21 | COMPLETE |
-| [C23](cards/C23.md) | W7 | Cross-run 반복 근거 묶음 | C22 | NOT_STARTED |
-| [C24](cards/C24.md) | W7 | Episodic에서 durable로 승격 | C23 | NOT_STARTED |
+| [C23](cards/C23.md) | W7 | Cross-run 반복 근거 묶음 | C22 | COMPLETE |
+| [C24](cards/C24.md) | W7 | Episodic에서 durable로 승격 | C23 | COMPLETE |
 | [C25](cards/C25.md) | W8 | Retrieval 정답셋과 지표 | C24 | NOT_STARTED |
 | [C26](cards/C26.md) | W8 | Retrieval 단일 병목 개선과 비교 | C25 | NOT_STARTED |
 | [C27](cards/C27.md) | W9 | Hidden follow-up 평가 프로토콜 | C26 | NOT_STARTED |
@@ -478,4 +478,36 @@ checks: initial typecheck c2200000-0000-4000-8000-000000000005 exit 0; promotion
 liveEval: 미실행; deterministic persisted authority/replay promotion gate 범위
 remaining: W6 없음
 nextCard: C23 (W7는 사용자 별도 요청 후 시작)
+```
+
+```text
+card: C23
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: 36543f71ea2425ee465a524d73f1cce429356d44
+resultHeadOrDiffDigest: sha256:62ceda951ace5f52137f959584165f90de13be5becd494c78402ed0e33ebc58a
+taskId: 5579da5d-2b37-470c-8b97-161849eabd9f
+kernelRunId: 없음; Kernel 모드 미사용
+scope: src/kernel/knowledge/capture.ts; tests/kernel-knowledge-cross-run-evidence.test.ts + generated .mjs; tests/kernel-guide-improvements.test.ts; persistence/candidate-review/commit/schema 변경 없음
+acceptance: AC-1 기존 getProjectRunSignals(projectId, excludeRunId)를 그대로 사용하고 project+normalized scope+correction identity로 독립 Run evidence를 묶음. 같은 run의 retry/중복 signal/count는 supporting run 1개로 dedupe하며 failure/success resolution evidence를 각각 run 목록과 evidenceRefs로 보존. explicit stale/freshness=needs_deep_verify와 contradiction evidence를 group metadata에 노출. group은 episodic_observation + derived + observed + authority=episodic_only candidate만 생성하여 C23 자체 durable 승격 없음. AC-2 빈도/count는 truth/trust/promotion 권한으로 사용하지 않고 per-run reflection agent, 새 memory service/vector DB/저장 테이블 없음. AC-3 typecheck, production build 295 files/793 edges, test build 278/8, focused 33/33, Knowledge+feedback+guide 전체 94/94, build:check/build:tests:check drift 0, boundary 9 modules 통과. 최초 focused 실패 3건은 production generated capture.js 미갱신 원인으로 분류하고 npm run build 후 동일 범위 재검증 통과. AC-4 STATUS/checkpoint에 변경·증거·nextCard 기록
+checks: typecheck+test build c2300000-0000-4000-8000-000000000007 exit 0; initial focused c2300000-0000-4000-8000-000000000008 exit 1 (stale production generated output, 구현 결함 아님); production build+focused c2300000-0000-4000-8000-000000000009 exit 0 (33/33); broad regression+drift+boundary c2300000-0000-4000-8000-000000000010 exit 0 (94/94; 295/793 drift 0; 278/8 drift 0; 9 modules); complexity/digest c2300000-0000-4000-8000-000000000011 exit 0
+liveEval: 미실행; persisted deterministic cross-run evidence aggregation 범위
+remaining: C23 없음
+nextCard: C24 (사용자 W7 요청에 따라 별도 task로 진행)
+```
+
+```text
+card: C24
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: 36543f71ea2425ee465a524d73f1cce429356d44
+resultHeadOrDiffDigest: sha256:b6db0653fa6dd0811b51db8cd439d8397e1bfd6e96890c8f1daefb9942cc6490
+taskId: 58a4ebb3-8653-4190-8330-df9406f658cf
+kernelRunId: 없음; Kernel 모드 미사용
+scope: src/kernel/knowledge/cross-run-evidence.ts 신규 pure module; src/kernel/knowledge/capture.ts 연결; src/kernel/knowledge/candidate-review.ts 기존 review gate 연결; src/kernel/knowledge/commit.ts direct commit 우회 차단 및 provenance 보존; tests/kernel-knowledge-cross-run-evidence.test.ts/.mjs, tests/kernel-knowledge-cross-run-promotion.test.ts/.mjs, tests/kernel-guide-improvements.test.ts; persistence/schema/finalization/knowledge-authority/public surface 변경 없음
+acceptance: AC-1 repeat count/동일 run retry는 durable 권한이 아니며 project+scope+correction identity의 독립 run evidence만 group으로 유지. stale/needs_deep_verify/contradiction, scope 불일치, promotion basis 충돌, current-run fresh replay 부재 group은 episodic_observation으로 남고 candidate-review에서 decision=episodic으로 non-blocking 처리. 적격 group만 known_failure_pattern + 새 Improvement Pair 후보로 변환되며 기존 C22 approval/scope-owner/fresh persisted replay/rollback gate를 다시 통과해야 verified/supersession 가능. commitProjectKnowledge도 동일 cross-run structural eligibility와 기존 Improvement Pair gate를 재검증해 direct commit 우회를 차단하고 committed record에 crossRunEvidenceGroup provenance를 보존. AC-2 신규 memory service/vector DB/consolidation agent/DB table/schema/workflow Authority 없음. cross-run 관심사는 상태 없는 pure module로 분리해 capture.ts를 1088줄 임시 상태에서 544줄로 축소했고 persistence/knowledge-authority/finalization/public surface를 확장하지 않음. AC-3 최종 typecheck, production build 296 files/798 edges, test build 279/8, C23+C24+W6 focused 46/46, Knowledge+feedback+guide 전체 101/101, build:check/build:tests:check/check:boundaries 최종 compound 검증 exit 0. AC-4 STATUS/checkpoint에 변경·증거·W7 종료와 nextCard 기록
+checks: typecheck c2400000-0000-4000-8000-000000000031 exit 0; build+build:tests c2400000-0000-4000-8000-000000000032 exit 0 (296 files/798 edges; 279 tests/8 helpers); final broad regression+drift+boundary c2400000-0000-4000-8000-000000000033 exit 0 (101/101; build/test drift check 및 boundary 포함); final diff/complexity/hardcoding review c2400000-0000-4000-8000-000000000034 exit 0; W7 scoped digest c2400000-0000-4000-8000-000000000035 exit 0. 중간 c240...027/029 typecheck 실패는 pure module 분리 중 TypeScript 문법 추출 오류로 수정 후 c240...031에서 통과
+liveEval: 미실행; deterministic persisted cross-run evidence/promotion lifecycle 범위
+remaining: W7 없음
+nextCard: C25 (W8는 사용자 별도 요청 후 시작)
 ```

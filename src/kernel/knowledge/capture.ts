@@ -1,4 +1,9 @@
 import { createHash } from 'node:crypto';
+import {
+  buildCrossRunEvidenceCandidate,
+  buildCrossRunEvidenceGroups,
+} from './cross-run-evidence.js';
+export { buildCrossRunEvidenceGroups } from './cross-run-evidence.js';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -17,6 +22,9 @@ export interface KnowledgeCandidateLike extends UnknownRecord {
   acceptanceIds?: unknown;
   obligationIds?: unknown;
   supersedes?: unknown;
+  signalKind?: unknown;
+  improvementPair?: unknown;
+  crossRunEvidenceGroup?: unknown;
 }
 
 interface RunLike extends UnknownRecord {
@@ -25,6 +33,8 @@ interface RunLike extends UnknownRecord {
 }
 
 interface CaptureSignals extends UnknownRecord {
+  runId?: unknown;
+  projectId?: unknown;
   history?: unknown;
 }
 
@@ -290,16 +300,14 @@ export const extractStructuredKnowledgeCandidates = ({
     return [...grouped.values()].filter((entry) => entry.count >= 2);
   };
 
-  for (const signal of repeated('failures', (entry) => entry.fingerprint || entry.statement)) {
-    const candidate = autoCandidate({
-      run,
-      kind: 'failure',
-      signal,
-      proposedType: 'known_failure_pattern',
-      statement: signal.statement || `Repeated failure fingerprint: ${signal.fingerprint}`,
-      confidence: 0.85,
-    });
-    if (candidate) candidates.push(candidate);
+  const crossRunGroups = buildCrossRunEvidenceGroups({
+    projectId: run.projectId,
+    currentRunId: run.runId,
+    signals,
+    priorRunSignals,
+  });
+  for (const group of crossRunGroups) {
+    candidates.push(buildCrossRunEvidenceCandidate(run, group));
   }
 
   for (const signal of repeated(
@@ -443,6 +451,7 @@ export const buildStructuredRunSignals = ({
   changedPaths = [],
   verifications: _verifications = [],
 }: BuildStructuredRunSignalsInput = {}): CaptureSignals => ({
+  runId,
   failures: failures.filter(isRecord).map((failure) => ({
     ...failure,
     fingerprint: failure.fingerprint || failureFingerprint(failure),

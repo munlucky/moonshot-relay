@@ -22,7 +22,8 @@ test('structured repeated failures produce a bounded, evidence-bound knowledge c
     signals: { failures: [{ fingerprint: 'failure-1', statement: 'auth contract failed', evidenceRefs: ['failure://run-b/failure-1'] }] },
   });
   assert.equal(candidate.length, 1);
-  assert.equal(candidate[0].proposedType, 'known_failure_pattern');
+  assert.equal(candidate[0].proposedType, 'episodic_observation');
+  assert.equal(candidate[0].signalKind, 'cross-run-evidence');
   assert.ok(assertTestNumber(assertTestArray(candidate[0].evidenceRefs).length) > 0);
 });
 
@@ -54,7 +55,8 @@ test('failure fingerprints ignore run-specific metrics so repeated failures beco
     signals: { failures: [{ fingerprint: failureFingerprint({ obligationId: 'unit-test', commandRef: 'test:package', errorSummary: 'packaged performance 31.2 FPS at pid=9876' }), statement: 'packaged performance is below the gate', evidenceRefs: ['failure://run-b/1'], scope: ['package'] }] },
   });
   assert.equal(candidates.length, 1);
-  assert.equal(candidates[0].proposedType, 'known_failure_pattern');
+  assert.equal(candidates[0].proposedType, 'episodic_observation');
+  assert.equal(candidates[0].signalKind, 'cross-run-evidence');
 });
 
 test('evidence reuse requires exact declared identity and creates a current revision receipt', () => {

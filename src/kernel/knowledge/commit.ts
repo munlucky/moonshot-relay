@@ -18,6 +18,7 @@ import {
   type KnowledgeProjectionStore,
 } from './projection.js';
 import { evaluateImprovementPairPromotion } from './improvement-pair.js';
+import { evaluateCrossRunPromotionCandidate } from './cross-run-evidence.js';
 
 export { rebuildKnowledgeProjection } from './projection.js';
 
@@ -47,6 +48,7 @@ interface CandidateLike extends UnknownRecord {
   evidenceRefs?: unknown;
   supersedes?: unknown;
   improvementPair?: unknown;
+  crossRunEvidenceGroup?: unknown;
 }
 
 interface StoredCandidateLike extends UnknownRecord {
@@ -151,6 +153,9 @@ const normalizeCommittedRecord = (
       : {}),
     ...(candidate.improvementPair
       ? { improvementPair: asRecord(candidate.improvementPair) }
+      : {}),
+    ...(candidate.crossRunEvidenceGroup
+      ? { crossRunEvidenceGroup: asRecord(candidate.crossRunEvidenceGroup) }
       : {}),
   };
 
@@ -258,6 +263,19 @@ export async function commitProjectKnowledge({
 
   const improvementPairIds: string[] = [];
   for (const candidate of acceptedCandidates) {
+    const crossRunPromotion = evaluateCrossRunPromotionCandidate({
+      candidate,
+      runId,
+      projectId,
+    });
+    if (crossRunPromotion.applies && !crossRunPromotion.eligible) {
+      throw new KernelKnowledgeCommitError(
+        'CROSS_RUN_PROMOTION_BLOCKED',
+        `Cross-run durable promotion blocked: ${crossRunPromotion.reasons.join(', ') || 'episodic_only'}`,
+        { candidateId: candidate.candidateId, crossRunPromotion },
+      );
+    }
+
     if (!candidate.improvementPair) continue;
     if (
       typeof stateStore.getKnowledgeApproval !== 'function'
