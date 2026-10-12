@@ -1,0 +1,244 @@
+{
+  "schemaVersion": 1,
+  "policyRevision": "kernel-retrieval-eval.v1",
+  "baselineSourceHead": "14c61ca859082b9fffa909345185653b7ee23782",
+  "metricContract": {
+    "retrieveDefinition": "IDs returned by the project-scoped SQLite authority query before freshness, stage, relevance, and budget filtering.",
+    "injectionDefinition": "Record IDs actually present in the final context pack after freshness, stage, relevance, and budget filtering.",
+    "recallDenominator": "Ground-truth relevantIds for the query. Zero denominator is unavailable.",
+    "precisionDenominator": "Observed retrieved or injected IDs. Zero denominator is unavailable.",
+    "staleMissDenominator": "Ground-truth staleIds plus supersededIds. The numerator is any such ID that leaks into final injection. Zero denominator is unavailable.",
+    "tokenMetric": "Deterministic promptBlock character count divided by four and rounded up. This is a context-size proxy, not provider token usage.",
+    "latencyCold": "First context build for a case in a fresh temporary project/runtime with no prior context projection.",
+    "latencyWarm": "Second context build for the same case and runtime after the first projection write; no semantic cache hit is assumed.",
+    "unavailableRule": "Never substitute zero for an undefined ratio or unavailable provider token usage. Latency is informational because host load varies."
+  },
+  "deterministic": {
+    "taskSetRevision": "kernel-retrieval.v1",
+    "corpusDigest": "sha256:065690b1ebe3297502aacef7ef2bcf76f66f98279d52c84d660310fe70e5847e",
+    "caseCount": 3,
+    "aggregate": {
+      "retrieveRecall": {
+        "status": "available",
+        "numerator": 3,
+        "denominator": 3,
+        "value": 1
+      },
+      "retrievePrecision": {
+        "status": "available",
+        "numerator": 3,
+        "denominator": 7,
+        "value": 0.42857142857142855
+      },
+      "injectionRecall": {
+        "status": "available",
+        "numerator": 3,
+        "denominator": 3,
+        "value": 1
+      },
+      "injectionPrecision": {
+        "status": "available",
+        "numerator": 3,
+        "denominator": 6,
+        "value": 0.5
+      },
+      "staleMissRate": {
+        "status": "available",
+        "numerator": 0,
+        "denominator": 2,
+        "value": 0
+      },
+      "contextTokenEstimate": 129
+    },
+    "cases": [
+      {
+        "id": "RET-001",
+        "retrievedIds": [
+          "auth-refresh-rule",
+          "auth-refresh-stale",
+          "billing-retry-rule"
+        ],
+        "injectedIds": [
+          "auth-refresh-rule",
+          "billing-retry-rule"
+        ],
+        "staleOrUnavailableIds": [
+          "auth-refresh-stale"
+        ],
+        "retrieveRecall": {
+          "status": "available",
+          "numerator": 1,
+          "denominator": 1,
+          "value": 1
+        },
+        "retrievePrecision": {
+          "status": "available",
+          "numerator": 1,
+          "denominator": 3,
+          "value": 0.3333333333333333
+        },
+        "injectionRecall": {
+          "status": "available",
+          "numerator": 1,
+          "denominator": 1,
+          "value": 1
+        },
+        "injectionPrecision": {
+          "status": "available",
+          "numerator": 1,
+          "denominator": 2,
+          "value": 0.5
+        },
+        "staleMissRate": {
+          "status": "available",
+          "numerator": 0,
+          "denominator": 2,
+          "value": 0
+        },
+        "contextTokens": {
+          "status": "proxy",
+          "unit": "estimated_tokens_4chars",
+          "value": 39,
+          "reason": "provider-token-usage-unavailable"
+        }
+      },
+      {
+        "id": "RET-002",
+        "retrievedIds": [
+          "cache-key-rule",
+          "payments-timeout-rule"
+        ],
+        "injectedIds": [
+          "cache-key-rule",
+          "payments-timeout-rule"
+        ],
+        "staleOrUnavailableIds": [],
+        "retrieveRecall": {
+          "status": "available",
+          "numerator": 1,
+          "denominator": 1,
+          "value": 1
+        },
+        "retrievePrecision": {
+          "status": "available",
+          "numerator": 1,
+          "denominator": 2,
+          "value": 0.5
+        },
+        "injectionRecall": {
+          "status": "available",
+          "numerator": 1,
+          "denominator": 1,
+          "value": 1
+        },
+        "injectionPrecision": {
+          "status": "available",
+          "numerator": 1,
+          "denominator": 2,
+          "value": 0.5
+        },
+        "staleMissRate": {
+          "status": "unavailable",
+          "numerator": 0,
+          "denominator": 0,
+          "value": null,
+          "reason": "no-stale-or-superseded-ground-truth"
+        },
+        "contextTokens": {
+          "status": "proxy",
+          "unit": "estimated_tokens_4chars",
+          "value": 40,
+          "reason": "provider-token-usage-unavailable"
+        }
+      },
+      {
+        "id": "RET-003",
+        "retrievedIds": [
+          "auth-retry-failure",
+          "billing-retry-failure"
+        ],
+        "injectedIds": [
+          "auth-retry-failure",
+          "billing-retry-failure"
+        ],
+        "staleOrUnavailableIds": [],
+        "retrieveRecall": {
+          "status": "available",
+          "numerator": 1,
+          "denominator": 1,
+          "value": 1
+        },
+        "retrievePrecision": {
+          "status": "available",
+          "numerator": 1,
+          "denominator": 2,
+          "value": 0.5
+        },
+        "injectionRecall": {
+          "status": "available",
+          "numerator": 1,
+          "denominator": 1,
+          "value": 1
+        },
+        "injectionPrecision": {
+          "status": "available",
+          "numerator": 1,
+          "denominator": 2,
+          "value": 0.5
+        },
+        "staleMissRate": {
+          "status": "unavailable",
+          "numerator": 0,
+          "denominator": 0,
+          "value": null,
+          "reason": "no-stale-or-superseded-ground-truth"
+        },
+        "contextTokens": {
+          "status": "proxy",
+          "unit": "estimated_tokens_4chars",
+          "value": 50,
+          "reason": "provider-token-usage-unavailable"
+        }
+      }
+    ]
+  },
+  "latency": {
+    "status": "available",
+    "unit": "ms",
+    "cold": {
+      "condition": "First context build for a case in a fresh temporary project/runtime with no prior context projection.",
+      "samples": [
+        {
+          "id": "RET-001",
+          "value": 16.441728000000012
+        },
+        {
+          "id": "RET-002",
+          "value": 12.470256000000006
+        },
+        {
+          "id": "RET-003",
+          "value": 10.238902999999993
+        }
+      ]
+    },
+    "warm": {
+      "condition": "Second context build for the same case and runtime after the first projection write; no semantic cache hit is assumed.",
+      "samples": [
+        {
+          "id": "RET-001",
+          "value": 7.511016000000012
+        },
+        {
+          "id": "RET-002",
+          "value": 8.209264000000019
+        },
+        {
+          "id": "RET-003",
+          "value": 6.903374000000014
+        }
+      ]
+    },
+    "comparison": "informational-only"
+  }
+}

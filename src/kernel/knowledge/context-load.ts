@@ -9,7 +9,11 @@ import {
   deepRedact,
   type KnowledgePromptEntry,
 } from './context-render.js';
-import { matchPathScope, scoreRelevance } from './path-scope.js';
+import {
+  matchPathScope,
+  matchesKnowledgeQuery,
+  scoreRelevance,
+} from './path-scope.js';
 import { cheapReVerify } from './freshness.js';
 
 type UnknownRecord = Record<string, unknown>;
@@ -343,20 +347,30 @@ export async function buildProjectKnowledgeContext({
       });
       return false;
     })
-    .map((fact) => ({
-      fact,
-      score: scoreRelevance({
-        item: procedureSearchView(fact),
-        objective,
-        paths: changedPaths,
-      }),
-    }))
-    .filter(({ fact, score }) => (
-      score > 0
-      || fact.isGlobal === true
-      || !fact.scope
-      || fact.scope.length === 0
-    ))
+    .map((fact) => {
+      const searchView = procedureSearchView(fact);
+      return {
+        fact,
+        score: scoreRelevance({
+          item: searchView,
+          objective,
+          paths: changedPaths,
+        }),
+        queryRelevant: matchesKnowledgeQuery({
+          item: searchView,
+          objective,
+          paths: changedPaths,
+        }),
+      };
+    })
+    .filter(({ fact, queryRelevant }) => {
+      if (queryRelevant) return true;
+      omittedByPolicy.push({
+        id: fact.id || 'unknown',
+        reason: 'query_irrelevant',
+      });
+      return false;
+    })
     .sort((left, right) => right.score - left.score)
     .map(({ fact }) => fact);
 

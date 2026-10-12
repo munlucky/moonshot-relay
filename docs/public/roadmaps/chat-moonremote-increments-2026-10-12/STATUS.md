@@ -32,8 +32,8 @@
 | [C22](cards/C22.md) | W6 | Pair replay와 promotion gate | C21 | COMPLETE |
 | [C23](cards/C23.md) | W7 | Cross-run 반복 근거 묶음 | C22 | COMPLETE |
 | [C24](cards/C24.md) | W7 | Episodic에서 durable로 승격 | C23 | COMPLETE |
-| [C25](cards/C25.md) | W8 | Retrieval 정답셋과 지표 | C24 | NOT_STARTED |
-| [C26](cards/C26.md) | W8 | Retrieval 단일 병목 개선과 비교 | C25 | NOT_STARTED |
+| [C25](cards/C25.md) | W8 | Retrieval 정답셋과 지표 | C24 | COMPLETE |
+| [C26](cards/C26.md) | W8 | Retrieval 단일 병목 개선과 비교 | C25 | COMPLETE |
 | [C27](cards/C27.md) | W9 | Hidden follow-up 평가 프로토콜 | C26 | NOT_STARTED |
 | [C28](cards/C28.md) | W9 | 전략별 순차 평가 실행 | C27 | NOT_STARTED |
 | [C29](cards/C29.md) | W9 | Follow-up 비용 비교와 Adaptive 판정 | C28 | NOT_STARTED |
@@ -510,4 +510,36 @@ checks: typecheck c2400000-0000-4000-8000-000000000031 exit 0; build+build:tests
 liveEval: 미실행; deterministic persisted cross-run evidence/promotion lifecycle 범위
 remaining: W7 없음
 nextCard: C25 (W8는 사용자 별도 요청 후 시작)
+```
+
+```text
+card: C25
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: 14c61ca859082b9fffa909345185653b7ee23782
+resultHeadOrDiffDigest: sha256:27250da5ccfc6ea9611053b8742103856c2b13112a3ad4ab0a94f23d7485a59a
+taskId: 4f4b6ca4-22fb-452f-9d04-9a6691057386
+kernelRunId: 없음; Kernel 모드 미사용
+scope: src/host-tooling/kernel-eval/retrieval-eval.ts; tests/fixtures/kernel-retrieval-eval/corpus.json + baseline.json; tests/kernel-retrieval-eval.test.ts + generated .mjs; retrieval/freshness 정책 원본 변경 없음
+acceptance: AC-1 retrieve=project/status SQLite authority query 반환 ID, injection=최종 context pack 포함 ID로 명시 분리. recall 분모=relevantIds, precision 분모=관찰 ID, stale miss 분모=staleIds+supersededIds이며 분모 0은 unavailable. context token은 promptBlock chars/4 deterministic proxy로 provider usage와 구분. cold=새 temp project/runtime 첫 build, warm=동일 입력 두 번째 build로 고정하며 latency 절대값은 환경 의존 informational-only. current source baseline을 저장하고 corpus digest에 결합. AC-2 query별 relevant/irrelevant/stale/superseded/project isolation 정답을 사전 고정하고 baseline 결과에 맞춰 수정하지 않음. 긴 context 투입은 recall만으로 개선 판정하지 않고 injection precision/token을 별도 기록. baseline: retrieve recall 1.0, retrieve precision 3/7=0.42857, injection recall 1.0, injection precision 3/6=0.5, stale miss 0/2=0, context token proxy 129. 세 case 모두 scoped irrelevant record가 주입되어 C26 단일 병목으로 확정. AC-3 typecheck/build/build:tests 통과, scorer focused 5/5, retrieval/context/freshness/procedure 19/19, build:check 297 files/799 edges drift 0, build:tests:check 280/8 drift 0, boundary 9 modules 통과. AC-4 STATUS/checkpoint에 변경·증거·nextCard 기록
+checks: typecheck+build+build:tests c2500000-0000-4000-8000-000000000008 exit 0; baseline replay/write c2500000-0000-4000-8000-000000000009 exit 0; focused c2500000-0000-4000-8000-000000000010 exit 0 (5/5); context/freshness+drift+boundary c2500000-0000-4000-8000-000000000011 exit 0 (19/19; 297/799; 280/8; 9 modules); scope/digest c2500000-0000-4000-8000-000000000012 exit 0
+liveEval: 미실행; deterministic local retrieval/context replay 범위
+remaining: C25 없음
+nextCard: C26 (사용자 W8 요청에 따라 별도 task로 진행)
+```
+
+```text
+card: C26
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: 14c61ca859082b9fffa909345185653b7ee23782
+resultHeadOrDiffDigest: sha256:a52d85f4d70453d89c2bce21b26cd6081563db3ea6e5bb187550c26b325f1589
+taskId: baeec449-36dd-4077-a917-7282f4a39313
+kernelRunId: 없음; Kernel 모드 미사용
+scope: C25 fixed corpus/eval + src/kernel/knowledge/path-scope.ts의 query relevance predicate + src/kernel/knowledge/context-load.ts final injection gate; ranking score/storage/freshness/embedding/persistence/schema/public surface 변경 없음
+acceptance: AC-1 C25 baseline의 단일 측정 병목인 scoped irrelevant injection만 수정. 기존 scoreRelevance의 trust/status ranking 점수는 그대로 두고 matchesKnowledgeQuery를 별도 pure predicate로 추가. scoped record에 changedPaths가 있으면 path scope match를 query authority로 우선하고, changedPaths가 없을 때만 statement/title/practiceJson semantic fields에 Unicode-safe objective lexical fallback을 적용; projectId/status/trust/scope 같은 authority metadata는 lexical corpus에서 제외. global/unscoped record의 기존 동작은 보존. context-load는 query_irrelevant를 omittedByPolicy로 기록한 뒤 기존 relevance score로 정렬하므로 ranking 교체 없음. 동일 C25 corpus before→after: retrieve recall 1.0→1.0, retrieve precision 3/7→3/7, injection recall 1.0→1.0, injection precision 3/6=0.5→3/3=1.0, stale miss 0/2→0/2, context token proxy 129→91. 각 case의 authority retrievedIds가 baseline과 완전히 동일해 project/status retrieval isolation 보존 확인. AC-2 ranking/storage/embedding 교체, 새 service/vector DB/cache/fallback/프로젝트별 조건문 없음. AC-3 최종 typecheck/build/build:tests 통과; C17/C18/context/freshness+C25/C26 focused 21/21; Knowledge 전체+C25/C26 84/84; build:check 297 files/799 edges drift 0; build:tests:check 280/8 drift 0; boundary 9 modules; 최종 C25/C26 focused 7/7 및 generated test drift 0. AC-4 STATUS/checkpoint에 변경·증거·W8 종료와 nextCard 기록
+checks: initial implementation typecheck/build/build:tests c2600000-0000-4000-8000-000000000002 exit 0; initial focused c2600000-0000-4000-8000-000000000003 exit 1 (기존 19개 통과, 신규 2개 실패: lexical fallback이 projectId authority metadata와 negative objective term까지 매치하는 설계 결함을 발견); diagnostics c2600000-0000-4000-8000-000000000004~007로 path gate 정상/metadata false-positive 원인 확인; final typecheck/build/build:tests+focused c2600000-0000-4000-8000-000000000008 exit 0 (21/21); same-corpus before/after c2600000-0000-4000-8000-000000000009 exit 0; broad Knowledge+drift+boundary c2600000-0000-4000-8000-000000000010 exit 0 (84/84; 297/799; 280/8; 9 modules); complexity/hardcoding review c2600000-0000-4000-8000-000000000011 exit 0; final isolation assertion typecheck/build:tests/focused/build:tests:check c2600000-0000-4000-8000-000000000012 exit 0 (7/7; 280/8 drift 0); final W8 digest c2600000-0000-4000-8000-000000000013 exit 0
+liveEval: 미실행; C25 fixed deterministic local retrieval/context corpus 비교
+remaining: W8 없음
+nextCard: C27 (W9는 사용자 별도 요청 후 시작)
 ```

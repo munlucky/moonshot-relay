@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 1,
+  "taskSetRevision": "kernel-retrieval.v1",
+  "baselineSourceHead": "14c61ca859082b9fffa909345185653b7ee23782",
+  "metricContract": {
+    "retrieveDefinition": "IDs returned by the project-scoped SQLite authority query before freshness, stage, relevance, and budget filtering.",
+    "injectionDefinition": "Record IDs actually present in the final context pack after freshness, stage, relevance, and budget filtering.",
+    "recallDenominator": "Ground-truth relevantIds for the query. Zero denominator is unavailable.",
+    "precisionDenominator": "Observed retrieved or injected IDs. Zero denominator is unavailable.",
+    "staleMissDenominator": "Ground-truth staleIds plus supersededIds. The numerator is any such ID that leaks into final injection. Zero denominator is unavailable.",
+    "tokenMetric": "Deterministic promptBlock character count divided by four and rounded up. This is a context-size proxy, not provider token usage.",
+    "latencyCold": "First context build for a case in a fresh temporary project/runtime with no prior context projection.",
+    "latencyWarm": "Second context build for the same case and runtime after the first projection write; no semantic cache hit is assumed.",
+    "unavailableRule": "Never substitute zero for an undefined ratio or unavailable provider token usage. Latency is informational because host load varies."
+  },
+  "cases": [
+    {
+      "id": "RET-001",
+      "projectId": "retrieval-auth",
+      "stage": "FRAME",
+      "objective": "Fix refresh token expiry handling in the auth refresh path.",
+      "changedPaths": ["src/auth/refresh.ts"],
+      "records": [
+        {
+          "id": "auth-refresh-rule",
+          "projectId": "retrieval-auth",
+          "type": "semantic_fact",
+          "status": "committed",
+          "trustTier": "verified",
+          "scope": ["src/auth/**"],
+          "statement": "Refresh tokens are rotated after successful renewal."
+        },
+        {
+          "id": "billing-retry-rule",
+          "projectId": "retrieval-auth",
+          "type": "semantic_fact",
+          "status": "committed",
+          "trustTier": "verified",
+          "scope": ["src/billing/**"],
+          "statement": "Billing retries use a capped delay."
+        },
+        {
+          "id": "auth-refresh-stale",
+          "projectId": "retrieval-auth",
+          "type": "semantic_fact",
+          "status": "committed",
+          "trustTier": "verified",
+          "scope": ["src/auth/**"],
+          "statement": "Legacy refresh tokens never rotate.",
+          "sourceRefs": ["missing-auth-source.ts"],
+          "sourceDigest": "sha256:stale"
+        },
+        {
+          "id": "auth-refresh-superseded",
+          "projectId": "retrieval-auth",
+          "type": "semantic_fact",
+          "status": "superseded",
+          "trustTier": "verified",
+          "scope": ["src/auth/**"],
+          "statement": "Refresh tokens use the pre-rotation format."
+        },
+        {
+          "id": "foreign-auth-rule",
+          "projectId": "retrieval-other-project",
+          "type": "semantic_fact",
+          "status": "committed",
+          "trustTier": "verified",
+          "scope": ["src/auth/**"],
+          "statement": "Foreign project auth rule."
+        }
+      ],
+      "truth": {
+        "relevantIds": ["auth-refresh-rule"],
+        "irrelevantIds": ["billing-retry-rule", "foreign-auth-rule"],
+        "staleIds": ["auth-refresh-stale"],
+        "supersededIds": ["auth-refresh-superseded"]
+      }
+    },
+    {
+      "id": "RET-002",
+      "projectId": "retrieval-cache",
+      "stage": "EXECUTE",
+      "objective": "Implement the cache key builder for the request cache.",
+      "changedPaths": ["src/cache/key.ts"],
+      "records": [
+        {
+          "id": "cache-key-rule",
+          "projectId": "retrieval-cache",
+          "type": "semantic_fact",
+          "status": "committed",
+          "trustTier": "verified",
+          "scope": ["src/cache/**"],
+          "statement": "Request cache keys use the cache-v2 prefix."
+        },
+        {
+          "id": "payments-timeout-rule",
+          "projectId": "retrieval-cache",
+          "type": "semantic_fact",
+          "status": "committed",
+          "trustTier": "verified",
+          "scope": ["src/payments/**"],
+          "statement": "Payments requests time out after ten seconds."
+        }
+      ],
+      "truth": {
+        "relevantIds": ["cache-key-rule"],
+        "irrelevantIds": ["payments-timeout-rule"],
+        "staleIds": [],
+        "supersededIds": []
+      }
+    },
+    {
+      "id": "RET-003",
+      "projectId": "retrieval-prove",
+      "stage": "PROVE",
+      "objective": "Verify the auth retry regression without applying billing knowledge.",
+      "changedPaths": ["src/auth/retry.ts"],
+      "records": [
+        {
+          "id": "auth-retry-failure",
+          "projectId": "retrieval-prove",
+          "type": "known_failure_pattern",
+          "status": "committed",
+          "trustTier": "verified",
+          "scope": ["src/auth/**"],
+          "statement": "Auth retries can duplicate refresh requests after a network reset."
+        },
+        {
+          "id": "billing-retry-failure",
+          "projectId": "retrieval-prove",
+          "type": "known_failure_pattern",
+          "status": "committed",
+          "trustTier": "verified",
+          "scope": ["src/billing/**"],
+          "statement": "Billing retries can duplicate charge requests after a timeout."
+        }
+      ],
+      "truth": {
+        "relevantIds": ["auth-retry-failure"],
+        "irrelevantIds": ["billing-retry-failure"],
+        "staleIds": [],
+        "supersededIds": []
+      }
+    }
+  ]
+}

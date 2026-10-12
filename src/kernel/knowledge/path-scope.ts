@@ -5,6 +5,10 @@ export interface KnowledgeRelevanceItem extends Record<string, unknown> {
   trustTier?: string | null;
   evidence?: { refs?: unknown[] | null } | null;
   scope?: string[] | null;
+  isGlobal?: boolean;
+  statement?: string | null;
+  title?: string | null;
+  practiceJson?: unknown;
 }
 
 import { matchPathScope } from '../../shared/path-scope.js';
@@ -52,6 +56,52 @@ export function scoreRelevance({
   if (itemType === 'domain_term' && objWords.some((word) => itemText.includes(word))) score += 8;
 
   return score;
+}
+
+export function matchesKnowledgeQuery({
+  item,
+  objective = '',
+  paths = [],
+}: {
+  item: KnowledgeRelevanceItem | null | undefined;
+  objective?: string;
+  paths?: readonly string[];
+}): boolean {
+  if (!item || typeof item !== 'object') return false;
+  const status = item.status || 'committed';
+  if (['superseded', 'rejected', 'quarantined'].includes(status)) return false;
+  if (item.isGlobal === true) return true;
+
+  const scopes = Array.isArray(item.scope)
+    ? item.scope.filter(Boolean)
+    : [];
+  if (scopes.length === 0) return true;
+
+  if (paths.length > 0) {
+    return paths.some((candidatePath) => (
+      candidatePath && matchPathScope(candidatePath, scopes)
+    ));
+  }
+
+  const objectiveWords = objective
+    .toLowerCase()
+    .split(/\s+/)
+    .map((word) => word.replace(/[^\p{L}\p{N}_-]/gu, ''))
+    .filter((word) => word.length > 3);
+  if (objectiveWords.length === 0) return true;
+
+  const semanticText = [
+    item.statement,
+    item.title,
+    item.practiceJson,
+  ]
+    .filter((value) => value !== null && value !== undefined)
+    .map((value) => (
+      typeof value === 'string' ? value : JSON.stringify(value)
+    ))
+    .join(' ')
+    .toLowerCase();
+  return objectiveWords.some((word) => semanticText.includes(word));
 }
 
 export function calculatePathRelevance(paths: readonly string[] = [], scopes: readonly string[] = []): number {
