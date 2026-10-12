@@ -4,6 +4,7 @@ import {
   evaluateOntologyConstraints,
   type OntologyConstraint,
 } from './ontology-evaluate.js';
+import { matchPathScope } from './path-scope.js';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -27,6 +28,8 @@ export interface KnowledgeCandidateLike extends UnknownRecord {
   sourceKind?: (string) | undefined;
   sourceDigest?: string;
   obligationId?: string;
+  supersedes?: string[];
+  feedbackClassification?: unknown;
 }
 
 interface KnowledgeApprovalLike {
@@ -160,6 +163,7 @@ export async function reviewKnowledgeCandidates({
   const approvalRequired: OntologyConstraint[] = [];
   const verificationsRequired: OntologyConstraint[] = [];
   const candidateReviews: CandidateReviewRecord[] = [];
+  const supersessionProposals: UnknownRecord[] = [];
 
   for (const candidate of candidates) {
     if (candidate.projectId && candidate.projectId !== projectId) {
@@ -188,6 +192,67 @@ export async function reviewKnowledgeCandidates({
         reason: 'FORBIDDEN_SAFETY_LEAK',
       });
       continue;
+    }
+
+    const feedbackClassification = (
+      candidate.feedbackClassification
+      && typeof candidate.feedbackClassification === 'object'
+      && !Array.isArray(candidate.feedbackClassification)
+    )
+      ? candidate.feedbackClassification as UnknownRecord
+      : {};
+    const candidateSupersedes = (
+      candidate.sourceKind === 'feedback'
+      && feedbackClassification.primary === 'stale_knowledge'
+    )
+      ? strings(candidate.supersedes)
+      : [];
+
+    if (candidateSupersedes.length > 0) {
+      const currentRecords = stateStore.listKnowledgeRecords({
+        projectId,
+        statuses: ['committed', 'verified'],
+      }) as Array<OntologyConstraint & {
+        projectId?: string | null;
+        scope?: string[];
+      }>;
+      const candidateScope = strings(candidate.scope);
+      let supersessionError: string | null = null;
+      for (const targetId of candidateSupersedes) {
+        const target = currentRecords.find((record) => record.id === targetId);
+        if (!target) {
+          supersessionError = 'SUPERSESSION_TARGET_NOT_FOUND';
+          break;
+        }
+        if (target.projectId !== projectId) {
+          supersessionError = 'SUPERSESSION_PROJECT_MISMATCH';
+          break;
+        }
+        const targetScope = strings(target.scope);
+        if (
+          targetScope.length > 0
+          && (
+            candidateScope.length === 0
+            || !candidateScope.every((candidatePath) => (
+              matchPathScope(candidatePath, targetScope)
+            ))
+          )
+        ) {
+          supersessionError = 'SUPERSESSION_SCOPE_MISMATCH';
+          break;
+        }
+      }
+      if (supersessionError) {
+        rejectedCandidates.push(
+          rejectedCandidate(candidate, 'rejected', supersessionError),
+        );
+        candidateReviews.push({
+          candidateId: candidate.candidateId,
+          decision: 'rejected',
+          reason: supersessionError,
+        });
+        continue;
+      }
     }
 
     const ontologyEval = await evaluateOntologyConstraints({
@@ -403,6 +468,15 @@ export async function reviewKnowledgeCandidates({
         verificationId: selectedVerification?.id ?? null,
       },
     });
+    if (candidate.candidateId) {
+      for (const targetId of candidateSupersedes) {
+        supersessionProposals.push({
+          targetId,
+          supersedingId: candidate.candidateId,
+          reason: 'verified_feedback_stale_knowledge',
+        });
+      }
+    }
     candidateReviews.push({
       candidateId: candidate.candidateId,
       decision: 'verified',
@@ -432,7 +506,7 @@ export async function reviewKnowledgeCandidates({
     needsApprovalCandidates,
     pendingVerificationCandidates,
     candidateReviews,
-    supersessionProposals: [],
+    supersessionProposals,
     ontologyViolations,
     approvalRequired,
     verificationsRequired,

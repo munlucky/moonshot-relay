@@ -26,8 +26,8 @@
 | [C16](cards/C16.md) | W3 | Architecture escalation 기존 경로 재사용 | C15 | COMPLETE |
 | [C17](cards/C17.md) | W4 | Knowledge type 표현 가능성 판정 | C16 | COMPLETE |
 | [C18](cards/C18.md) | W4 | 최소 Procedure 표현과 점진적 로드 | C17 | COMPLETE |
-| [C19](cards/C19.md) | W5 | Feedback root-cause 분류 계약 | C18 | NOT_STARTED |
-| [C20](cards/C20.md) | W5 | 분류 결과를 기존 candidate lifecycle에 연결 | C19 | NOT_STARTED |
+| [C19](cards/C19.md) | W5 | Feedback root-cause 분류 계약 | C18 | COMPLETE |
+| [C20](cards/C20.md) | W5 | 분류 결과를 기존 candidate lifecycle에 연결 | C19 | COMPLETE |
 | [C21](cards/C21.md) | W6 | Improvement Pair identity와 원자성 | C20 | NOT_STARTED |
 | [C22](cards/C22.md) | W6 | Pair replay와 promotion gate | C21 | NOT_STARTED |
 | [C23](cards/C23.md) | W7 | Cross-run 반복 근거 묶음 | C22 | NOT_STARTED |
@@ -414,4 +414,36 @@ checks: typecheck c1800000-0000-4000-8000-000000000006 exit 0; build c1800000-00
 liveEval: 미실행; deterministic knowledge context/retrieval 경계
 remaining: W4 없음
 nextCard: C19 (W5는 별도 사용자 요청 후 시작)
+```
+
+```text
+card: C19
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: e308be9657c66ecaf79395f18ea7de50e9521248
+resultHeadOrDiffDigest: sha256:6e8d5c97c2f778d292d903d07e06565ae5a360eb5b7d811f6a1b64a71639bbaf
+taskId: 04ed9258-e981-48be-afec-316313fe2861
+kernelRunId: 없음; Kernel 모드 미사용
+scope: src/kernel/knowledge/candidate-extract.ts; src/kernel/knowledge-ingestion/normalize.ts; tests/kernel-feedback-root-cause.test.ts; generated tests/kernel-feedback-root-cause.test.mjs
+acceptance: AC-1 knowledge_gap/procedure_gap/verification_gap/stale_knowledge/known_failure/ambiguity/one_off 7종을 자연어 추측이 아닌 구조화된 source evidence signal로 분류; evidence 없는 주장과 상충 원인은 ambiguity로 fail-closed하며 explicit primary 하나일 때만 primary/secondary를 확정; user_instruction과 analysis_inference evidence refs를 별도 provenance로 보존. AC-2 feedbackClassification은 normalizeCandidate의 비권위 metadata로만 보존하며 proposedType/status/trust/promotion을 바꾸지 않음. AC-3 typecheck, build, build:tests, focused 12/12, build:check/build:tests:check 통과. AC-4 STATUS/checkpoint에 변경·증거·nextCard 기록
+checks: typecheck c1900000-0000-4000-8000-000000000005 exit 0; initial focused c1900000-0000-4000-8000-000000000007 exit 1은 production build 전 stale generated runtime 때문; initial build c1900000-0000-4000-8000-000000000008 exit 1은 build 전용 noUncheckedIndexedAccess narrowing 2건으로 수정; final build c1900000-0000-4000-8000-000000000009 exit 0 (294 files, 787 edges); final focused c1900000-0000-4000-8000-000000000010 exit 0 (12/12); build/checks c1900000-0000-4000-8000-000000000011 exit 0 (294 files/787 edges; 274 tests/8 helpers); scoped digest c1900000-0000-4000-8000-000000000012 exit 0
+liveEval: 미실행; deterministic feedback evidence classification 범위
+remaining: C19 없음
+nextCard: C20 (사용자 W5 요청에 따라 별도 task로 진행)
+```
+
+```text
+card: C20
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: e308be9657c66ecaf79395f18ea7de50e9521248
+resultHeadOrDiffDigest: sha256:0595b908cf0e9884a9d89562341a1b5add49a7e7dfc322d9a6516a2798b45f4b
+taskId: e4aa5ad9-c861-4dbd-b2a4-ef74ef1aca04
+kernelRunId: 없음; Kernel 모드 미사용
+scope: src/kernel/knowledge/candidate-extract.ts; src/kernel/knowledge/candidate-review.ts; C19의 src/kernel/knowledge-ingestion/normalize.ts; tests/kernel-feedback-candidate-lifecycle.test.ts; generated tests/kernel-feedback-candidate-lifecycle.test.mjs; C19 root-cause fixture 포함; schema/DB/commit/finalization 변경 없음
+acceptance: AC-1 knowledge_gap은 semantic_fact, procedure_gap/one_off는 episodic_observation, verification_gap은 required_verification의 observed/derived 보완 후보로만 연결; ambiguity는 needs_confirmation으로 후보 생성 안 함; known_failure는 같은 project/scope의 단일 existing known_failure_pattern만 reuse; stale_knowledge는 같은 project/scope의 단일 existing target을 supersedes하는 correction candidate만 생성. candidate identity는 project/source identity/source revision/cause/statement/scope/target에 결정적으로 묶여 같은 feedback source/revision 재입력의 중복 semantics를 방지. stale supersession proposal은 기존 candidate review의 persisted verification을 통과한 뒤에만 생성되어 기존 promotion/commit gate를 우회하지 않음. AC-2 모든 complaint를 durable fact/policy로 만들지 않고 ambiguity/known_failure는 새 durable 후보 0; forged stale target의 cross-project/scope를 review에서도 fail-closed 차단; 새 Authority/workflow/DB/vector service/finalization 경로 없음. AC-3 typecheck, build, build:tests, C19+C20+기존 review/supersession/commit focused 17/17, build:check/build:tests:check/check:boundaries 통과. AC-4 STATUS/checkpoint에 변경·증거·W5 종료 기록
+checks: initial C20 typecheck c2010000-0000-4000-8000-000000000006 exit 2는 correction DTO open-record index signature 누락으로 수정; final typecheck c2010000-0000-4000-8000-000000000007 exit 0; build c2010000-0000-4000-8000-000000000008 exit 0 (294 files, 789 edges); build:tests c2010000-0000-4000-8000-000000000009 exit 0 (275 tests, 8 helpers); focused c2010000-0000-4000-8000-000000000010 exit 0 (17/17); build:check c2010000-0000-4000-8000-000000000012 exit 0; build:tests:check c2010000-0000-4000-8000-000000000013 exit 0; check:boundaries c2010000-0000-4000-8000-000000000014 exit 0 (9 modules, 294 files, 789 edges); complexity/diff review c2010000-0000-4000-8000-000000000015 exit 0; W5 scoped digest c2010000-0000-4000-8000-000000000016 exit 0
+liveEval: 미실행; deterministic feedback candidate/review lifecycle 범위
+remaining: W5 없음
+nextCard: C21 (W6는 사용자 별도 요청 후 시작)
 ```

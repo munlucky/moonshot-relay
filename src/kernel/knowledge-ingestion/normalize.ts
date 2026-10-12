@@ -70,6 +70,7 @@ export interface KnowledgeCandidateInput extends UnknownRecord {
   conflictRefs?: unknown;
   supersedes?: unknown;
   supersedesId?: unknown;
+  feedbackClassification?: unknown;
 }
 
 export interface NormalizeCandidateContext {
@@ -96,6 +97,7 @@ export interface NormalizedKnowledgeCandidate extends UnknownRecord {
   trustTier: string;
   conflictRefs: string[];
   supersedes: string[];
+  feedbackClassification?: UnknownRecord;
   provenance: {
     sourceType: unknown;
     sourceIdentity: unknown;
@@ -149,6 +151,9 @@ export function normalizeCandidate(
     trustTier: String(candidate.trustTier || 'derived'),
     conflictRefs: list(candidate.conflictRefs),
     supersedes: list(candidate.supersedes || candidate.supersedesId),
+    ...(candidate.feedbackClassification
+      ? { feedbackClassification: asRecord(redactObject(candidate.feedbackClassification)) }
+      : {}),
     provenance: { sourceType, sourceIdentity, sourceDigest },
   };
 
