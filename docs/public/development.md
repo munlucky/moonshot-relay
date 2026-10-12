@@ -61,6 +61,12 @@ npm run test:source-runtime
 
 `npm run lint:kernel`, `npm run test:kernel`, `npm test`, `npm run test:package`는 서로 다른 검증 범위를 갖는다. 과거 Relay 호환 테스트는 기능 보존을 검사한다. 해당 테스트가 현재 Kernel authority를 대신하지 않는다.
 
+## Prompt 감사 유지보수
+
+Kernel prompt 감사의 canonical 기록은 `artifacts/kernel-prompt-audit/`에 둔다. 생성된 `scripts/`가 아니라 `src/`, `skills/`, `package/profile-templates/`의 원본 owner를 기록한다. 삭제 후보는 중복이 확인되고 남는 authority와 C01 rubric/eval 연결이 있을 때만 제거한다. C01 baseline은 비교 기준으로 고정하며 C09/C10 live 평가와 C11 gate 전에는 결과에 맞춰 갱신하지 않는다.
+
+다음 변화가 있으면 prompt 감사를 다시 수행한다: 기본 또는 major model family 변경, provider 공식 prompting guidance 변경, tool/provider message 구조 변경, stable prompt byte/token budget 변화, 불필요 tool/subagent 호출률 변화, completion/acceptance rate 변화. 감사 목적만으로 새 workflow stage나 always-on agent를 만들지 않는다. scope·security·compatibility·evidence·review·completion authority는 prompt 길이만을 이유로 제거하지 않는다.
+
 ## 패키징과 임시 설치
 
 ```sh

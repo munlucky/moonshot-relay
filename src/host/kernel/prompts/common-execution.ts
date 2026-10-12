@@ -37,6 +37,25 @@ export const OPTIONAL_PROMPT_FIELDS = Object.freeze([
   'expectedArtifacts',
 ] as const);
 
+// One provider-neutral mapping over the four established request fields. This
+// is a derived view, not another authority or wire contract.
+export const PROMPT_SEMANTIC_FIELD_MAP = Object.freeze({
+  objective: 'goal.objective',
+  acceptance: 'doneWhen.acceptance',
+  currentWorkUnit: 'context.workUnit',
+  scope: 'constraints.scope',
+  relevantProjectKnowledge: 'context.relevantProjectKnowledge',
+  requiredVerification: 'doneWhen.requiredVerification',
+  availableTools: 'context.availableTools',
+  mutationAuthority: 'constraints.mutationAuthority',
+  completionCondition: 'doneWhen.completionCondition',
+} as const);
+
+export type PromptSemanticKey = keyof typeof PROMPT_SEMANTIC_FIELD_MAP;
+export const PROMPT_SEMANTIC_KEYS = Object.freeze(
+  Object.keys(PROMPT_SEMANTIC_FIELD_MAP) as PromptSemanticKey[],
+);
+
 const VAGUE_INSTRUCTION_PATTERNS: readonly RegExp[] = Object.freeze([
   /\bdouble[-\s]?check\b/i,
   /\bre-?check before responding\b/i,

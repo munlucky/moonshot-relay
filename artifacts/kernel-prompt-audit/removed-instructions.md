@@ -20,8 +20,8 @@ Surfaces searched (see `prompt-inventory.json`):
 - `skills/moon-relay-kernel/SKILL.md`
 - `package/profile-templates/claude/.claude/agents/kernel-{planner,implementer,reviewer}.md`
 - `package/profile-templates/codex/.codex/AGENTS.md`
-- `scripts/host/kernel/**` (adapters, turn dispatcher, model registry)
-- `scripts/kernel/**` prompt assembly (`context-build.mjs`, `knowledge/context-render.mjs`)
+- `src/host/kernel/**` canonical Host prompt/policy sources
+- `src/kernel/**` canonical Kernel context/knowledge sources
 
 **No surface matched.** Every hit in the repository was in Relay-mode skills
 (`skills/figma-spec-synthesizer`, `skills/vercel-react-best-practices`,
@@ -40,12 +40,30 @@ behavior with no single home*. That gap is now closed:
 
 | Concern | Single location |
 |---|---|
-| Common scope / autonomy / verification / delegation rules | `scripts/host/kernel/prompts/common-execution.js` |
-| Conditional planning, verification order, delegation gate | `scripts/host/kernel/common-model-policy.mjs` |
-| Claude thinking, effort, cache breakpoints, output artifacts | `scripts/host/kernel/prompts/claude-opus-5.js`, `claude-effort-policy.mjs` |
-| Codex routing, profiles, session, fast mode, API capability gate | `scripts/host/kernel/prompts/codex-gpt-5p6.js`, `codex-model-policy.mjs`, `codex-profile-materializer.mjs`, `codex-agents-policy.mjs` |
-| Run/step/capsule identifiers | `scripts/host/kernel/prompt-envelope.mjs` `control` (never in a prompt segment) |
+| Common scope / autonomy / verification / delegation rules | `src/host/kernel/prompts/common-execution.ts` |
+| Conditional planning, verification order, delegation gate | `src/host/kernel/common-model-policy.ts` |
+| Claude thinking, effort, cache breakpoints, output artifacts | `src/host/kernel/prompts/claude-opus-5.ts`, `src/host/kernel/claude-effort-policy.ts` |
+| Codex routing, profiles, session, fast mode, API capability gate | `src/host/kernel/prompts/codex-gpt-5p6.ts`, `src/host/kernel/codex-model-policy.ts`, `src/host/kernel/model-registry.ts`, `src/host/kernel/codex-agents-policy.ts` |
+| Run/step/capsule identifiers | `src/host/kernel/prompt-envelope.ts` `control` (never in a prompt segment) |
 
-`tests/kernel-prompt-legacy-instruction.test.mjs` now fails if any of the
-patterns above is reintroduced into a Kernel prompt surface, so this audit is
-enforced rather than recorded.
+`tests/kernel-prompt-legacy-instruction.test.ts` fails if any of the patterns
+above is reintroduced into a Kernel-loaded prompt surface. C01 is the frozen
+comparison baseline; C09 and C10 run provider live comparisons; C11 owns the
+promotion decision. Until those gates pass, candidate prompt changes stay on
+the existing shadow/off path and do not overwrite the C01 baseline.
+
+## Re-audit triggers
+
+Run this audit again when any of these change materially:
+
+- the default or major model family;
+- provider official prompting guidance;
+- tool schema or provider message structure;
+- stable prompt byte/token budget;
+- unnecessary tool/subagent call rate;
+- task completion or acceptance rate.
+
+A re-audit may remove text only when the duplicate is confirmed, its remaining
+authority is named, and the affected C01 rubric/eval case is identified. Scope,
+security, compatibility, evidence, review, and completion authority are never
+removed only to reduce prompt size.

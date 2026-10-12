@@ -26,6 +26,16 @@ export const PROVIDER_CACHE_MODES = Object.freeze([
 ] as const);
 export type ProviderCacheMode = (typeof PROVIDER_CACHE_MODES)[number];
 
+export const OPENAI_RESPONSES_SERIALIZATION = 'openai-responses' as const;
+
+export const resolveProviderPromptSerialization = (
+  provider: unknown,
+): typeof OPENAI_RESPONSES_SERIALIZATION | null => (
+  String(provider) === 'openai'
+    ? OPENAI_RESPONSES_SERIALIZATION
+    : null
+);
+
 export interface ProviderCacheCapabilities {
   supportsPromptCache?: boolean;
   supportsExplicitCacheBreakpoints?: boolean;
@@ -37,6 +47,7 @@ export interface ProviderCacheCapabilities {
   supportsProMode?: boolean;
   supportsFastMode?: boolean;
   supportsUltra?: boolean;
+  supportsAdaptiveThinking?: boolean;
 }
 
 export type NormalizedProviderCacheCapabilities = Readonly<
@@ -54,6 +65,7 @@ export const DEFAULT_PROVIDER_CACHE_CAPABILITIES: NormalizedProviderCacheCapabil
   supportsProMode: false,
   supportsFastMode: false,
   supportsUltra: false,
+  supportsAdaptiveThinking: false,
 });
 
 const CAPABILITY_KEYS = Object.freeze(

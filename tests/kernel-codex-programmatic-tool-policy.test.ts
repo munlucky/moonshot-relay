@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  resolveCodexCapabilityDelta,
   resolveProgrammaticToolPolicy, PROGRAMMATIC_TOOL_SUITABLE, PROGRAMMATIC_TOOL_UNSUITABLE,
 } from '../src/host/kernel/codex-model-policy.js';
 
@@ -29,4 +30,22 @@ test('an evaluated suitable shape is still refused without provider support', ()
   const policy = resolveProgrammaticToolPolicy({ workShape: 'test-log-filtering', capabilityDetected: false, evaluated: true });
   assert.equal(policy.enabled, false);
   assert.equal(policy.reason, 'provider-unsupported');
+});
+
+
+test('Codex capability delta delegates programmatic tool use to the existing evaluated gate', () => {
+  const enabled = resolveCodexCapabilityDelta({
+    capabilities: { supportsProgrammaticToolCalling: true },
+    workShape: 'bounded-readonly-aggregation',
+    programmaticToolEvaluated: true,
+  });
+  assert.equal(enabled.toolUse.programmatic.enabled, true);
+
+  const unverified = resolveCodexCapabilityDelta({
+    capabilities: { supportsProgrammaticToolCalling: 'yes' },
+    workShape: 'bounded-readonly-aggregation',
+    programmaticToolEvaluated: true,
+  });
+  assert.equal(unverified.toolUse.programmatic.enabled, false);
+  assert.equal(unverified.toolUse.programmatic.reason, 'provider-unsupported');
 });

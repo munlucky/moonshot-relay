@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   COMMON_EXECUTION_PROMPT, COMMON_PROMPT_REVISION, compileCommonExecutionPrompt,
   REQUIRED_PROMPT_FIELDS, OPTIONAL_PROMPT_FIELDS,
+  PROMPT_SEMANTIC_KEYS, PROMPT_SEMANTIC_FIELD_MAP,
 } from '../src/host/kernel/prompts/common-execution.js';
 
 test('the common prompt is byte-stable across every dimension that varies per turn', () => {
@@ -46,6 +47,32 @@ test('the common contract enforces minimal sustainable implementation', () => {
 test('the four required request fields are declared', () => {
   assert.deepEqual([...REQUIRED_PROMPT_FIELDS], ['goal', 'context', 'constraints', 'doneWhen']);
   assert.ok(OPTIONAL_PROMPT_FIELDS.includes('nonGoals'));
+});
+
+test('the four request fields cover the nine provider-neutral prompt semantics exactly once', () => {
+  assert.deepEqual([...PROMPT_SEMANTIC_KEYS], [
+    'objective',
+    'acceptance',
+    'currentWorkUnit',
+    'scope',
+    'relevantProjectKnowledge',
+    'requiredVerification',
+    'availableTools',
+    'mutationAuthority',
+    'completionCondition',
+  ]);
+  assert.deepEqual(PROMPT_SEMANTIC_FIELD_MAP, {
+    objective: 'goal.objective',
+    acceptance: 'doneWhen.acceptance',
+    currentWorkUnit: 'context.workUnit',
+    scope: 'constraints.scope',
+    relevantProjectKnowledge: 'context.relevantProjectKnowledge',
+    requiredVerification: 'doneWhen.requiredVerification',
+    availableTools: 'context.availableTools',
+    mutationAuthority: 'constraints.mutationAuthority',
+    completionCondition: 'doneWhen.completionCondition',
+  });
+  assert.doesNotMatch(JSON.stringify(PROMPT_SEMANTIC_FIELD_MAP), /codex|claude|gpt|opus|model/i);
 });
 
 test('the prompt is delimited so a provider can place a cache boundary after it', () => {

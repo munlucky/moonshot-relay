@@ -6,6 +6,8 @@
 // turn at `xhigh` are different lineages and must not share a warm prefix.
 
 import { REVIEW_ACTIONS as REVIEW_ACTION_LIST } from '../../contracts/review.js';
+import { resolveVerificationPolicy } from './common-model-policy.js';
+import { normalizeProviderCacheCapabilities } from './provider-prompt-policy.js';
 
 export const CLAUDE_EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh'] as const);
 export type ClaudeEffort = (typeof CLAUDE_EFFORTS)[number];
@@ -95,6 +97,47 @@ export const CLAUDE_DELEGATION_DEFAULTS: Readonly<Record<string, Readonly<{ maxN
 export const resolveClaudeDelegation = (role: string) => (
   CLAUDE_DELEGATION_DEFAULTS[role] || Object.freeze({ maxNestedAgents: 0 })
 );
+
+export const resolveClaudeCapabilityDelta = ({
+  actionKind = 'implement',
+  riskTier = 'T1',
+  role = 'implementer',
+  capabilities = {},
+  obligations = [],
+  doneWhen = [],
+}: {
+  actionKind?: string;
+  riskTier?: string;
+  role?: string;
+  capabilities?: Record<string, unknown>;
+  obligations?: readonly { allowedCommandRefs?: readonly unknown[] }[];
+  doneWhen?: readonly unknown[];
+} = {}) => {
+  const caps = normalizeProviderCacheCapabilities(capabilities);
+  const effort = resolveClaudeEffort({ actionKind, riskTier });
+  const verification = resolveVerificationPolicy({ obligations, doneWhen });
+  return Object.freeze({
+    reasoning: Object.freeze({
+      thinkingMode: caps.supportsAdaptiveThinking ? 'adaptive' as const : 'host-default' as const,
+      supported: caps.supportsAdaptiveThinking,
+      effort,
+    }),
+    delegation: Object.freeze({
+      ...resolveClaudeDelegation(role),
+      owner: 'host' as const,
+      alwaysOn: false as const,
+    }),
+    verification: Object.freeze({
+      source: 'common-verification-policy' as const,
+      duplicateKernelProof: verification.duplicateKernelProof,
+      kernelEvidence: verification.kernelEvidence,
+    }),
+    promptCandidates: Object.freeze([
+      'remove-always-subagent',
+      'remove-always-self-verification',
+    ] as const),
+  });
+};
 
 // Breakpoints go at the end of each cacheable prefix, longest-lived first. The
 // launcher turns these into `cache_control` markers; the Kernel core never sees

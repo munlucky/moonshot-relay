@@ -1,8 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPromptEnvelope, renderCacheablePrompt, renderFullPrompt, findControlLeaks, SEGMENT_KINDS } from '../src/host/kernel/prompt-envelope.js';
+import {
+  buildCommonPromptRequest,
+  buildPromptEnvelope,
+  renderCacheablePrompt,
+  renderFullPrompt,
+  findControlLeaks,
+  SEGMENT_KINDS,
+} from '../src/host/kernel/prompt-envelope.js';
 import { buildToolManifest } from '../src/host/kernel/tool-manifest.js';
 import { buildKernelContextSegments } from '../src/host/kernel/context-segments.js';
+import { buildHostExecutionContract } from '../src/contracts/host-execution-contract.js';
 
 const manifest = () => buildToolManifest([
   { name: 'read_file', description: 'Read a file', inputSchema: { type: 'object' } },
@@ -27,11 +35,138 @@ const build = (overrides = {}) => buildPromptEnvelope({
   ...overrides,
 });
 
+const semanticContract = () => buildHostExecutionContract({
+  decision: {
+    runId: 'run-semantic-prompt',
+    decisionId: 'route-semantic-prompt-0001',
+    actionKind: 'implement',
+    role: 'implementer',
+    permissions: 'workspace_write',
+    executionClass: 'standard',
+    workProfile: { executionClass: 'standard', parallelizable: false },
+  },
+  assignment: {
+    executionMode: 'owner-direct',
+    freshSessionRequired: false,
+    delegation: { mode: 'optional', requested: false },
+  },
+  workUnit: {
+    objective: 'Add the bounded prompt mapping.',
+    allowedPaths: ['src/host/kernel/**'],
+    forbiddenPaths: ['src/kernel/**'],
+    expectedOutputs: ['provider-neutral semantic request'],
+  },
+});
+
+const semanticContext = () => ({
+  objective: 'Preserve one prompt meaning across provider renderers.',
+  acceptance: [
+    { id: 'AC-1', statement: 'All nine semantic fields are preserved.' },
+  ],
+  constraints: ['Do not add provider-specific model names.'],
+  currentWork: {
+    objective: 'Add the bounded prompt mapping.',
+    allowedPaths: ['src/host/kernel/**'],
+    forbiddenPaths: ['src/kernel/**'],
+    expectedOutputs: ['provider-neutral semantic request'],
+  },
+  relevantProjectKnowledge: [
+    { recordId: 'knowledge-1', summary: 'Host owns provider expression.' },
+  ],
+  requiredEvidence: [
+    { obligationId: 'unit-test', evidenceClass: 'hard' },
+  ],
+});
+
 test('an envelope emits every segment kind in cache order', () => {
   const envelope = build();
   assert.equal(envelope.schemaVersion, 2);
   assert.deepEqual(envelope.segments.map((s) => s.kind), SEGMENT_KINDS);
   assert.deepEqual(envelope.segments.map((s) => s.cacheable), [true, true, true, true, true, false]);
+});
+
+test('the common request maps all nine meanings from existing Host and model context fields', () => {
+  const request = buildCommonPromptRequest({
+    hostExecutionContract: semanticContract(),
+    modelContext: semanticContext(),
+    toolManifest: manifest(),
+  });
+
+  assert.deepEqual(request.goal, {
+    objective: 'Preserve one prompt meaning across provider renderers.',
+  });
+  assert.deepEqual(request.context.workUnit, {
+    objective: 'Add the bounded prompt mapping.',
+    allowedPaths: ['src/host/kernel/**'],
+    forbiddenPaths: ['src/kernel/**'],
+    expectedOutputs: ['provider-neutral semantic request'],
+  });
+  assert.deepEqual(request.constraints, {
+    task: ['Do not add provider-specific model names.'],
+    scope: {
+      allowedPaths: ['src/host/kernel/**'],
+      forbiddenPaths: ['src/kernel/**'],
+    },
+    mutationAuthority: 'workspace_write',
+  });
+  assert.equal(request.context.availableTools.length, 2);
+  assert.deepEqual(
+    request.context.availableTools.map((tool) => tool.name),
+    ['edit_file', 'read_file'],
+  );
+  assert.deepEqual(request.context.relevantProjectKnowledge, [
+    { recordId: 'knowledge-1', summary: 'Host owns provider expression.' },
+  ]);
+  assert.deepEqual(request.doneWhen.acceptance, [
+    { id: 'AC-1', statement: 'All nine semantic fields are preserved.' },
+  ]);
+  assert.deepEqual(request.doneWhen.requiredVerification, [
+    { obligationId: 'unit-test', evidenceClass: 'hard' },
+  ]);
+  assert.deepEqual(request.doneWhen.completionCondition, {
+    authority: 'kernel',
+    acceptanceRequired: true,
+    verificationRequired: true,
+  });
+  assert.doesNotMatch(JSON.stringify(request), /claude|codex|gpt-|opus|resolvedModel|reasoningEffort/i);
+});
+
+test('the common request fails closed on missing or wrongly typed semantic fields', () => {
+  assert.throws(
+    () => buildCommonPromptRequest({
+      hostExecutionContract: semanticContract(),
+      modelContext: { ...semanticContext(), acceptance: 'AC-1' },
+      toolManifest: manifest(),
+    }),
+    /prompt_semantic_field_invalid:doneWhen\.acceptance/,
+  );
+  const withoutKnowledge = { ...semanticContext() };
+  delete (withoutKnowledge as Partial<ReturnType<typeof semanticContext>>).relevantProjectKnowledge;
+  assert.throws(
+    () => buildCommonPromptRequest({
+      hostExecutionContract: semanticContract(),
+      modelContext: withoutKnowledge,
+      toolManifest: manifest(),
+    }),
+    /prompt_semantic_field_missing:context\.relevantProjectKnowledge/,
+  );
+});
+
+test('the common request rejects split-brain work-unit scope instead of choosing one source', () => {
+  assert.throws(
+    () => buildCommonPromptRequest({
+      hostExecutionContract: semanticContract(),
+      modelContext: {
+        ...semanticContext(),
+        currentWork: {
+          ...semanticContext().currentWork,
+          allowedPaths: ['src/kernel/**'],
+        },
+      },
+      toolManifest: manifest(),
+    }),
+    /prompt_semantic_field_source_mismatch:context\.currentWorkUnit\.allowedPaths/,
+  );
 });
 
 test('control metadata never reaches the prompt', () => {

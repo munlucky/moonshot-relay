@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   resolveVerificationPolicy, MODEL_LOCAL_CHECKS, KERNEL_AUTHORITATIVE_EVIDENCE,
 } from '../src/host/kernel/common-model-policy.js';
+import { resolveClaudeCapabilityDelta } from '../src/host/kernel/claude-effort-policy.js';
 
 test('verification runs smallest-first and reports what it ran', () => {
   const policy = resolveVerificationPolicy({});
@@ -39,4 +40,15 @@ test('an obligation with no bound commands requests nothing rather than inventin
 test('done-when conditions are carried through to the policy', () => {
   const policy = resolveVerificationPolicy({ doneWhen: ['npm run test:kernel passes'] });
   assert.deepEqual([...policy.doneWhen], ['npm run test:kernel passes']);
+});
+
+
+test('Claude capability delta preserves common Kernel-authoritative verification', () => {
+  const delta = resolveClaudeCapabilityDelta({
+    obligations: [{ allowedCommandRefs: ['test:kernel'] }],
+    doneWhen: ['test:kernel passes'],
+  });
+  assert.equal(delta.verification.source, 'common-verification-policy');
+  assert.equal(delta.verification.duplicateKernelProof, false);
+  assert.deepEqual([...delta.verification.kernelEvidence], [...KERNEL_AUTHORITATIVE_EVIDENCE]);
 });

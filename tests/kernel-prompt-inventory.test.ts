@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 
 const AUDIT = 'artifacts/kernel-prompt-audit';
 
@@ -23,15 +23,25 @@ const readInventory = async () => {
 const readClassification = async () => {
   const value = object(JSON.parse(await readFile(`${AUDIT}/instruction-classification.json`, 'utf8')));
   const classes = object(value.classes);
-  return { classes: {
-    A_kernel_authority_kept: array(classes.A_kernel_authority_kept).map(entry => {
-      const value = object(entry); assert.equal(typeof value.reason, 'string'); return { reason: String(value.reason) };
-    }),
-    B_common_stable_behavior_consolidated: array(classes.B_common_stable_behavior_consolidated).map(entry => {
-      const value = object(entry); assert.equal(typeof value.movedTo, 'string'); return { movedTo: String(value.movedTo) };
-    }),
-    C_duplicate_legacy_removed: array(classes.C_duplicate_legacy_removed),
-  } };
+  const evaluation = object(value.evaluation);
+  return {
+    evaluation: {
+      baseline: String(evaluation.baseline),
+      openaiCodexLiveGate: String(evaluation.openaiCodexLiveGate),
+      claudeLiveGate: String(evaluation.claudeLiveGate),
+      decisionGate: String(evaluation.decisionGate),
+    },
+    reAuditTriggers: array(value.reAuditTriggers).map(String),
+    classes: {
+      A_kernel_authority_kept: array(classes.A_kernel_authority_kept).map(entry => {
+        const value = object(entry); assert.equal(typeof value.reason, 'string'); return { reason: String(value.reason) };
+      }),
+      B_common_stable_behavior_consolidated: array(classes.B_common_stable_behavior_consolidated).map(entry => {
+        const value = object(entry); assert.equal(typeof value.movedTo, 'string'); return { movedTo: String(value.movedTo) };
+      }),
+      C_duplicate_legacy_removed: array(classes.C_duplicate_legacy_removed),
+    },
+  };
 };
 
 test('the prompt audit enumerates every Kernel prompt surface it inspected', async () => {
@@ -41,13 +51,14 @@ test('the prompt audit enumerates every Kernel prompt surface it inspected', asy
   for (const surface of inventory.surfaces) {
     assert.ok(existsSync(surface.path), `inventoried surface must exist: ${surface.path}`);
     assert.ok(surface.bytes > 0);
+    assert.equal(statSync(surface.path).size, surface.bytes, `audit bytes must match canonical source: ${surface.path}`);
   }
   const paths = inventory.surfaces.map((s) => s.path);
   for (const required of [
     'skills/moon-relay-kernel/SKILL.md',
-    'scripts/host/kernel/prompts/common-execution.js',
-    'scripts/host/kernel/prompts/claude-opus-5.js',
-    'scripts/host/kernel/prompts/codex-gpt-5p6.js',
+    'src/host/kernel/prompts/common-execution.ts',
+    'src/host/kernel/prompts/claude-opus-5.ts',
+    'src/host/kernel/prompts/codex-gpt-5p6.ts',
   ]) assert.ok(paths.includes(required), `audit must inventory ${required}`);
 });
 
@@ -58,7 +69,7 @@ test('classification keeps Kernel authority and records where common rules now l
     assert.ok(reasons.includes(authority), `Kernel authority must be classified as kept: ${authority}`);
   }
   for (const entry of classification.classes.B_common_stable_behavior_consolidated) {
-    assert.match(entry.movedTo, /common-execution\.js$/, 'common behavior consolidates into exactly one file');
+    assert.match(entry.movedTo, /common-execution\.ts$/, 'common behavior consolidates into exactly one source file');
   }
 });
 
@@ -69,4 +80,28 @@ test('the audit records that nothing was removed on suspicion', async () => {
   // A future removal must be listed here with its replacement authority.
   assert.equal(classification.classes.C_duplicate_legacy_removed.length, 0);
   assert.match(report, /nothing was removed/i);
+});
+
+
+test('the prompt audit pins evaluation gates and material re-audit triggers', async () => {
+  const classification = await readClassification();
+  assert.deepEqual(classification.evaluation, {
+    baseline: 'C01 promptComparison baseline',
+    openaiCodexLiveGate: 'C09',
+    claudeLiveGate: 'C10',
+    decisionGate: 'C11',
+  });
+  for (const trigger of [
+    'major-model-family-or-default-model-change',
+    'provider-official-prompting-guidance-change',
+    'tool-or-provider-message-structure-change',
+    'stable-prompt-byte-or-token-budget-change',
+    'unnecessary-tool-or-subagent-call-rate-change',
+    'completion-or-acceptance-rate-change',
+  ]) {
+    assert.ok(classification.reAuditTriggers.includes(trigger), trigger);
+  }
+  const report = await readFile(`${AUDIT}/removed-instructions.md`, 'utf8');
+  assert.match(report, /C01 is the frozen\s+comparison baseline/i);
+  assert.match(report, /scope,\s+security,\s+compatibility,\s+evidence,\s+review,\s+and completion authority/i);
 });

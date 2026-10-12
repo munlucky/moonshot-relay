@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveClaudeDelegation, CLAUDE_DELEGATION_DEFAULTS } from '../src/host/kernel/claude-effort-policy.js';
+import { resolveClaudeCapabilityDelta, resolveClaudeDelegation, CLAUDE_DELEGATION_DEFAULTS } from '../src/host/kernel/claude-effort-policy.js';
 import { buildClaudeInvocation, CLAUDE_AGENT_FOR_ROLE } from '../src/host/kernel/adapters/claude.js';
 
 test('every Claude role defaults to zero nested agents', () => {
@@ -32,4 +32,14 @@ test('a routine implementer turn keeps its context so the prefix stays warm', ()
   });
   assert.equal(invocation.freshContext, false);
   assert.equal(invocation.independentSessionRequired, false);
+});
+
+
+test('Claude capability delta never enables an always-on nested agent', () => {
+  for (const role of ['planner', 'implementer', 'reviewer', 'mystery']) {
+    const delegation = resolveClaudeCapabilityDelta({ role }).delegation;
+    assert.equal(delegation.maxNestedAgents, 0);
+    assert.equal(delegation.alwaysOn, false);
+    assert.equal(delegation.owner, 'host');
+  }
 });

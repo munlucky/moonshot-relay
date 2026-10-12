@@ -202,6 +202,54 @@ export const resolveProgrammaticToolPolicy = ({ workShape = null, capabilityDete
   });
 };
 
+// Derived Host view only. It does not select a model, effort, tool schema, or
+// completion state; those remain owned by the existing policies and contracts.
+export const resolveCodexCapabilityDelta = ({
+  capabilities = {},
+  workShape = null,
+  programmaticToolEvaluated = false,
+}: {
+  capabilities?: {
+    supportsSessionContinuation?: unknown;
+    supportsProgrammaticToolCalling?: unknown;
+  };
+  workShape?: string | null;
+  programmaticToolEvaluated?: boolean;
+} = {}) => {
+  const programmatic = resolveProgrammaticToolPolicy({
+    workShape,
+    capabilityDetected: capabilities.supportsProgrammaticToolCalling === true,
+    evaluated: programmaticToolEvaluated,
+  });
+  return Object.freeze({
+    autonomy: Object.freeze({
+      mode: 'bounded' as const,
+      delegation: 'contract-gated' as const,
+    }),
+    persistence: Object.freeze({
+      mode: capabilities.supportsSessionContinuation === true
+        ? 'session-continuation' as const
+        : 'turn-local' as const,
+      source: 'host-capability' as const,
+    }),
+    repositoryInvestigation: Object.freeze({
+      mode: 'bounded' as const,
+      boundary: 'work-unit-scope' as const,
+    }),
+    toolUse: Object.freeze({
+      source: 'tool-manifest' as const,
+      programmatic,
+    }),
+    effort: Object.freeze({
+      source: 'execution-class-policy' as const,
+    }),
+    progress: Object.freeze({
+      owner: 'execution-host' as const,
+      promptDirective: false as const,
+    }),
+  });
+};
+
 // `reasoning.mode = "pro"` is a Responses API mode, not a model slug, and stays
 // off the default path.
 export const resolveCodexProModePolicy = ({ capabilityDetected = false, qualityOverLatency = false, evalConfirmedGain = false, explicitlyRequested = false } = {}) => Object.freeze({

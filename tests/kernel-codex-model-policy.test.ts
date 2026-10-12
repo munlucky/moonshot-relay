@@ -4,6 +4,7 @@ import {
   CODEX_EXECUTION_CLASSES,
   CODEX_EXECUTION_POLICY,
   CODEX_MODELS,
+  resolveCodexCapabilityDelta,
   resolveCodexExecutionClass,
   resolveCodexModelAlias,
   resolveCodexModelPolicy,
@@ -117,4 +118,26 @@ test('the gpt-5.6 alias resolves to an explicit Sol id and gpt-6 to Astra for re
   assert.equal(solPolicy.model, CODEX_MODELS.sol);
   const astraPolicy = resolveCodexModelPolicy({ userRequested: { model: 'gpt-6' } });
   assert.equal(astraPolicy.model, CODEX_MODELS.astra);
+});
+
+
+test('Codex capability delta is Host-owned and does not duplicate model or completion policy', () => {
+  const delta = resolveCodexCapabilityDelta({
+    capabilities: { supportsSessionContinuation: true },
+  });
+  assert.deepEqual(delta.autonomy, { mode: 'bounded', delegation: 'contract-gated' });
+  assert.deepEqual(delta.persistence, { mode: 'session-continuation', source: 'host-capability' });
+  assert.deepEqual(delta.repositoryInvestigation, { mode: 'bounded', boundary: 'work-unit-scope' });
+  assert.equal(delta.toolUse.source, 'tool-manifest');
+  assert.deepEqual(delta.effort, { source: 'execution-class-policy' });
+  assert.deepEqual(delta.progress, { owner: 'execution-host', promptDirective: false });
+  assert.equal('model' in delta, false);
+  assert.equal('completionCondition' in delta, false);
+});
+
+test('Codex capability delta defaults to turn-local persistence without declared Host support', () => {
+  const delta = resolveCodexCapabilityDelta({
+    capabilities: { supportsSessionContinuation: 'yes' },
+  });
+  assert.equal(delta.persistence.mode, 'turn-local');
 });

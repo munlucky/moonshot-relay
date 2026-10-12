@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   resolveProviderPromptPolicy, normalizeProviderCacheCapabilities,
+  resolveProviderPromptSerialization, OPENAI_RESPONSES_SERIALIZATION,
   DEFAULT_PROVIDER_CACHE_CAPABILITIES, CACHE_MISS_REASONS, MODEL_ESCALATION_REASONS,
 } from '../src/host/kernel/provider-prompt-policy.js';
 import { COMMON_PROMPT_REVISION } from '../src/host/kernel/prompts/common-execution.js';
@@ -29,6 +30,13 @@ test('the policy names one common revision and a provider-specific one', () => {
 
 test('an unknown provider gets no provider prompt revision instead of a guess', () => {
   assert.equal(resolveProviderPromptPolicy({ provider: 'mystery' }).providerPromptRevision, null);
+});
+
+test('only the generic OpenAI surface selects Responses serialization', () => {
+  assert.equal(resolveProviderPromptSerialization('openai'), OPENAI_RESPONSES_SERIALIZATION);
+  assert.equal(resolveProviderPromptSerialization('codex'), null);
+  assert.equal(resolveProviderPromptSerialization('claude'), null);
+  assert.equal(resolveProviderPromptSerialization('mystery'), null);
 });
 
 test('delegation is default-deny for every provider and role', () => {

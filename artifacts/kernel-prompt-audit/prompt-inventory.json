@@ -3,8 +3,8 @@
   "surfaces": [
     {
       "path": "skills/moon-relay-kernel/SKILL.md",
-      "bytes": 1932,
-      "lines": 16
+      "bytes": 5685,
+      "lines": 50
     },
     {
       "path": "package/profile-templates/claude/.claude/agents/kernel-planner.md",
@@ -23,8 +23,8 @@
     },
     {
       "path": "package/profile-templates/codex/AGENTS.md",
-      "bytes": 1855,
-      "lines": 47
+      "bytes": 2223,
+      "lines": 50
     },
     {
       "path": "package/profile-templates/codex/.codex/AGENTS.md",
@@ -32,19 +32,19 @@
       "lines": 41
     },
     {
-      "path": "scripts/host/kernel/prompts/common-execution.js",
-      "bytes": 2798,
-      "lines": 61
+      "path": "src/host/kernel/prompts/common-execution.ts",
+      "bytes": 3319,
+      "lines": 87
     },
     {
-      "path": "scripts/host/kernel/prompts/claude-opus-5.js",
-      "bytes": 2755,
-      "lines": 64
+      "path": "src/host/kernel/prompts/claude-opus-5.ts",
+      "bytes": 2310,
+      "lines": 67
     },
     {
-      "path": "scripts/host/kernel/prompts/codex-gpt-5p6.js",
-      "bytes": 838,
-      "lines": 19
+      "path": "src/host/kernel/prompts/codex-gpt-5p6.ts",
+      "bytes": 718,
+      "lines": 15
     }
   ]
 }

@@ -9,6 +9,7 @@ import {
 } from './prompts/common-execution.js';
 import { CLAUDE_PROVIDER_PROMPT } from './prompts/claude-opus-5.js';
 import { CODEX_PROVIDER_PROMPT } from './prompts/codex-gpt-5p6.js';
+import { validateHostExecutionContract } from '../../contracts/host-execution-contract.js';
 import {
   renderToolManifestSegment,
   type ToolManifest,
@@ -128,6 +129,163 @@ export interface PromptEnvelope {
     mutationRevision: unknown;
   }>;
 }
+
+
+const recordOf = (value: unknown): UnknownRecord | null => (
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? value as UnknownRecord
+    : null
+);
+
+const semanticError = (field: string, reason = 'invalid'): never => {
+  throw new TypeError(`prompt_semantic_field_${reason}:${field}`);
+};
+
+const requireOwn = (record: UnknownRecord, key: string, field: string): unknown => {
+  if (!Object.hasOwn(record, key)) semanticError(field, 'missing');
+  return record[key];
+};
+
+const requiredText = (value: unknown, field: string): string => {
+  if (typeof value !== 'string' || !value.trim()) semanticError(field);
+  return value as string;
+};
+
+const requiredStringList = (value: unknown, field: string): readonly string[] => {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string')) {
+    semanticError(field);
+  }
+  return Object.freeze([...(value as string[])]);
+};
+
+const requiredArray = (value: unknown, field: string): readonly unknown[] => {
+  if (!Array.isArray(value)) semanticError(field);
+  return Object.freeze([...(value as unknown[])]);
+};
+
+const normalizedWorkUnit = (value: unknown) => {
+  const workUnit = recordOf(value);
+  if (!workUnit) semanticError('context.workUnit');
+  return Object.freeze({
+    objective: requiredText(workUnit?.objective, 'context.workUnit.objective'),
+    allowedPaths: requiredStringList(workUnit?.allowedPaths, 'constraints.scope.allowedPaths'),
+    forbiddenPaths: requiredStringList(workUnit?.forbiddenPaths, 'constraints.scope.forbiddenPaths'),
+    expectedOutputs: requiredStringList(workUnit?.expectedOutputs, 'context.workUnit.expectedOutputs'),
+  });
+};
+
+const assertWorkUnitMatches = (
+  modelContext: UnknownRecord,
+  workUnit: ReturnType<typeof normalizedWorkUnit>,
+): void => {
+  const current = modelContext.currentWork;
+  if (current === undefined || current === null) return;
+  const currentWork = recordOf(current);
+  if (!currentWork) semanticError('context.currentWorkUnit');
+  for (const field of ['objective', 'allowedPaths', 'forbiddenPaths', 'expectedOutputs'] as const) {
+    const observed = currentWork?.[field];
+    if (observed === undefined) continue;
+    const expected = workUnit[field];
+    const normalized = Array.isArray(expected)
+      ? requiredStringList(observed, `context.currentWorkUnit.${field}`)
+      : requiredText(observed, `context.currentWorkUnit.${field}`);
+    if (JSON.stringify(normalized) !== JSON.stringify(expected)) {
+      semanticError(`context.currentWorkUnit.${field}`, 'source_mismatch');
+    }
+  }
+};
+
+export const buildCommonPromptRequest = ({
+  hostExecutionContract,
+  modelContext,
+  toolManifest,
+}: {
+  hostExecutionContract: unknown;
+  modelContext: unknown;
+  toolManifest: ToolManifest;
+}) => {
+  const contract = validateHostExecutionContract(hostExecutionContract);
+  const context = recordOf(modelContext);
+  if (!context) semanticError('context');
+  if (!toolManifest || toolManifest.schemaVersion !== 1 || !Array.isArray(toolManifest.tools)) {
+    semanticError('context.availableTools');
+  }
+
+  const workUnit = normalizedWorkUnit(contract.workUnit);
+  assertWorkUnitMatches(context as UnknownRecord, workUnit);
+
+  const acceptance = requiredArray(
+    requireOwn(context as UnknownRecord, 'acceptance', 'doneWhen.acceptance'),
+    'doneWhen.acceptance',
+  );
+  for (const entry of acceptance) {
+    if (typeof entry === 'string' ? !entry.trim() : !requiredText(recordOf(entry)?.statement, 'doneWhen.acceptance')) {
+      semanticError('doneWhen.acceptance');
+    }
+  }
+
+  const knowledge = requireOwn(
+    context as UnknownRecord,
+    'relevantProjectKnowledge',
+    'context.relevantProjectKnowledge',
+  );
+  if (knowledge !== null && typeof knowledge !== 'object') {
+    semanticError('context.relevantProjectKnowledge');
+  }
+
+  const tools = Object.freeze(toolManifest.tools.map((tool) => {
+    requiredText(tool?.name, 'context.availableTools');
+    requiredText(tool?.schemaDigest, 'context.availableTools');
+    if (typeof tool?.description !== 'string') semanticError('context.availableTools');
+    return Object.freeze({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      schemaDigest: tool.schemaDigest,
+    });
+  }));
+
+  return Object.freeze({
+    goal: Object.freeze({
+      objective: requiredText(
+        requireOwn(context as UnknownRecord, 'objective', 'goal.objective'),
+        'goal.objective',
+      ),
+    }),
+    context: Object.freeze({
+      workUnit,
+      relevantProjectKnowledge: knowledge,
+      availableTools: tools,
+    }),
+    constraints: Object.freeze({
+      task: requiredStringList(
+        requireOwn(context as UnknownRecord, 'constraints', 'constraints.task'),
+        'constraints.task',
+      ),
+      scope: Object.freeze({
+        allowedPaths: workUnit.allowedPaths,
+        forbiddenPaths: workUnit.forbiddenPaths,
+      }),
+      mutationAuthority: requiredText(
+        contract.permissions,
+        'constraints.mutationAuthority',
+      ),
+    }),
+    doneWhen: Object.freeze({
+      acceptance,
+      requiredVerification: requiredArray(requireOwn(
+        context as UnknownRecord,
+        'requiredEvidence',
+        'doneWhen.requiredVerification',
+      ), 'doneWhen.requiredVerification'),
+      completionCondition: Object.freeze({
+        authority: 'kernel' as const,
+        acceptanceRequired: true as const,
+        verificationRequired: true as const,
+      }),
+    }),
+  });
+};
 
 const digest = (text: unknown): string => (
   `sha256:${createHash('sha256')
