@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { parseAndValidateJsonl } from './knowledge-records.mjs';
+import { parseAndValidateJsonl, parseJsonl } from './knowledge-records.mjs';
 import { resolveProjectIdentity } from './project-identity.mjs';
 
 const VALID_STAGES = new Set([
@@ -28,10 +28,17 @@ const DEFAULT_MAX_PROMPT_TOKENS = 900;
 const DEFAULT_STALE_AFTER_DAYS = 30;
 const CONTEXT_PACK_SCHEMA_VERSION = 1;
 
-const KNOWLEDGE_FILES = Object.freeze([
+const LEGACY_KNOWLEDGE_FILES = Object.freeze([
   { type: 'policy_anchor', path: ['policy', 'policy-anchors.jsonl'] },
   { type: 'semantic_fact', path: ['semantic', 'verified-facts.jsonl'] },
   { type: 'kg_relation', path: ['graph', 'kg-relations.jsonl'] },
+  { type: 'ontology_constraint', path: ['ontology', 'constraints.jsonl'] },
+]);
+
+const CANONICAL_KNOWLEDGE_FILES = Object.freeze([
+  { type: 'policy_anchor', path: ['policy', 'anchors.jsonl'] },
+  { type: 'semantic_fact', path: ['semantic', 'facts.jsonl'] },
+  { type: 'kg_relation', path: ['graph', 'relations.jsonl'] },
   { type: 'ontology_constraint', path: ['ontology', 'constraints.jsonl'] },
 ]);
 
@@ -325,6 +332,13 @@ function readRevision(knowledgeRoot, staleAfterDays, now) {
       stale,
       sourceRef: revisionPath,
       updatedAt,
+      layout: (
+        revision.schemaVersion === 1
+        && Object.prototype.hasOwnProperty.call(revision, 'knowledgeRevision')
+        && Number.isInteger(revision.recordCount)
+      )
+        ? 'canonical'
+        : 'legacy',
     };
   } catch (error) {
     return {
@@ -336,19 +350,65 @@ function readRevision(knowledgeRoot, staleAfterDays, now) {
   }
 }
 
-function loadKnowledgeRecords(knowledgeRoot, omittedByPolicy) {
+function validateCanonicalProjectionRecord(record, expectedType, sourceName, lineNumber) {
+  const location = `${sourceName}:${lineNumber}`;
+  if (!record || typeof record !== 'object' || Array.isArray(record)) {
+    return { ok: false, error: `${location}: canonical projection record must be an object` };
+  }
+  if (!record.id || !record.projectId || typeof record.statement !== 'string') {
+    return { ok: false, error: `${location}: canonical projection record is missing id/projectId/statement` };
+  }
+  if (record.type !== expectedType) {
+    return { ok: false, error: `${location}: expected ${expectedType} but found ${String(record.type)}` };
+  }
+  if (!['committed', 'verified'].includes(record.status)) {
+    return { ok: false, error: `${location}: canonical projection status is not durable: ${String(record.status)}` };
+  }
+  if (!['authoritative', 'verified', 'derived'].includes(record.trustTier)) {
+    return { ok: false, error: `${location}: canonical projection trust tier is not prompt-readable: ${String(record.trustTier)}` };
+  }
+  return { ok: true };
+}
+
+function loadKnowledgeRecords(knowledgeRoot, omittedByPolicy, revision) {
   const records = [];
   const readErrors = [];
   let existingFiles = 0;
   let validRecords = 0;
+  const canonicalLayout = revision.layout === 'canonical';
+  const files = canonicalLayout ? CANONICAL_KNOWLEDGE_FILES : LEGACY_KNOWLEDGE_FILES;
 
-  for (const entry of KNOWLEDGE_FILES) {
+  for (const entry of files) {
     const filePath = path.join(knowledgeRoot, ...entry.path);
     if (!fs.existsSync(filePath)) continue;
     existingFiles += 1;
     const text = fs.readFileSync(filePath, 'utf8');
     const unsafe = detectUnsafeText(text);
     if (unsafe.length > 0) recordOmissions(omittedByPolicy, filePath, [...new Set(unsafe)]);
+
+    if (canonicalLayout) {
+      const parsed = parseJsonl(text, { sourceName: filePath });
+      if (!parsed.ok) {
+        readErrors.push(...parsed.errors);
+        continue;
+      }
+      parsed.records.forEach((record, index) => {
+        const validation = validateCanonicalProjectionRecord(
+          record,
+          entry.type,
+          filePath,
+          parsed.lineNumbers[index],
+        );
+        if (!validation.ok) {
+          readErrors.push(validation.error);
+          return;
+        }
+        records.push({ ...record, __canonicalProjection: true });
+        validRecords += 1;
+      });
+      continue;
+    }
+
     const validation = parseAndValidateJsonl(text, { sourceName: filePath });
     if (!validation.ok) {
       readErrors.push(...validation.errors);
@@ -370,6 +430,10 @@ function severityFor(record) {
 }
 
 function isPromptVisibleRecord(record) {
+  if (record.__canonicalProjection === true) {
+    return ['committed', 'verified'].includes(record.status)
+      && ['verified', 'authoritative', 'derived'].includes(record.trustTier);
+  }
   if (record.type === 'policy_anchor') return ['verified'].includes(record.status);
   if (record.type === 'semantic_fact') return record.status === 'verified' && ['verified', 'derived', 'authoritative'].includes(record.trustTier);
   if (record.type === 'kg_relation') return ['derived', 'verified'].includes(record.status) && ['verified', 'derived'].includes(record.trustTier);
@@ -378,14 +442,16 @@ function isPromptVisibleRecord(record) {
 }
 
 function itemText(record) {
-  if (record.type === 'policy_anchor') return record.text;
+  if (record.type === 'policy_anchor') return record.text || record.statement;
   if (record.type === 'semantic_fact') return record.statement;
   if (record.type === 'kg_relation') {
     if (record.summary) return record.summary;
+    if (record.statement) return record.statement;
     return `${record.from} ${record.relation} ${record.to}`;
   }
   if (record.type === 'ontology_constraint') {
     if (record.text) return record.text;
+    if (record.statement) return record.statement;
     const appliesTo = Array.isArray(record.appliesTo) ? record.appliesTo.join(', ') : String(record.appliesTo || 'project artifact');
     return `${record.scope} constraint applies to ${appliesTo}; enforced by ${record.enforcedBy}.`;
   }
@@ -397,7 +463,7 @@ function stageScore(record, stage) {
   const stages = Array.isArray(record.stages) ? record.stages : [];
   const stageBoost = stages.includes(stage) ? 100 : 0;
   const trustBoost = record.trustTier === 'authoritative' ? 20 : record.trustTier === 'verified' ? 15 : record.trustTier === 'derived' ? 5 : 0;
-  const statusBoost = record.status === 'verified' ? 10 : record.status === 'derived' ? 5 : 0;
+  const statusBoost = ['verified', 'committed'].includes(record.status) ? 10 : record.status === 'derived' ? 5 : 0;
   const updatedAt = Date.parse(record.updatedAt || record.verifiedAt || record.createdAt || '') || 0;
   return {
     primary: stageBoost + (rule.weights[record.type] || 0) + trustBoost + statusBoost,
@@ -417,7 +483,10 @@ function sortForStage(records, stage) {
 }
 
 function toPromptItem(record, omittedByPolicy) {
-  const sourceRef = record.sourceRef || record.id;
+  const sourceRef = record.sourceRef
+    || (Array.isArray(record.sourceRefs) ? record.sourceRefs[0] : '')
+    || (Array.isArray(record.scope) ? record.scope[0] : '')
+    || record.id;
   const sanitized = redactPromptText(itemText(record));
   recordOmissions(omittedByPolicy, sourceRef, sanitized.omitted);
 
@@ -718,7 +787,7 @@ export function buildProjectKnowledgeContext(options = {}) {
   const knowledgeRoot = resolved.namespaces.knowledgeRoot;
   const revision = readRevision(knowledgeRoot, staleAfterDays, now);
   const loaded = fs.existsSync(knowledgeRoot)
-    ? loadKnowledgeRecords(knowledgeRoot, omittedByPolicy)
+    ? loadKnowledgeRecords(knowledgeRoot, omittedByPolicy, revision)
     : { records: [], readErrors: [], existingFiles: 0 };
   const records = [...promptAnchors, ...loaded.records];
   const selected = selectItems(records, stage, projectId, omittedByPolicy);

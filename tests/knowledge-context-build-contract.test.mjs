@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
+import { rebuildKnowledgeProjection } from '../scripts/kernel/knowledge/projection.js';
+import { openKernelStateStore } from '../scripts/kernel/state-store.js';
 
 const root = process.cwd();
 const tempRoots = [];
@@ -151,4 +153,152 @@ test('knowledge-context-build enforces stage-scoped retrieval omissions', async 
   assert.ok(score.ontologyConstraints.some((item) => item.id === 'ontology:constraint:evidence-only-score'));
   assert.ok(score.omittedByPolicy.some((item) => item.reason === 'stage_score_forbids_semantic_fact'));
   assert.equal(score.promptBlock.includes('prior solution patch'), false);
+});
+
+test('knowledge-context-build reads the canonical projection layout produced from SQLite', async () => {
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'knowledge-canonical-context-'));
+  tempRoots.push(runtimeHome);
+  const env = {
+    MOON_RELAY_KERNEL_HOME: runtimeHome,
+    MOONSHOT_RELAY_STATE_ROOT: path.join(runtimeHome, 'state'),
+  };
+  const identity = projectIdentity(env);
+  const projectId = identity.identity.projectId;
+  const store = await openKernelStateStore({ runtimeHome });
+
+  try {
+    store.saveKnowledgeRecord(projectId, 'policy-c31-canonical', {
+      recordType: 'policy_anchor',
+      status: 'committed',
+      trustTier: 'verified',
+      recordJson: {
+        id: 'policy-c31-canonical',
+        projectId,
+        type: 'policy_anchor',
+        statement: 'Canonical projection policy reaches the prompt consumer.',
+        scope: ['scripts/**'],
+        status: 'committed',
+        trustTier: 'verified',
+        createdAt: new Date().toISOString(),
+        sourceRefs: ['scripts/knowledge-context-build.mjs'],
+        sourceDigest: 'sha256:c31-canonical-source',
+      },
+      revision: 1,
+    });
+
+    const projection = await rebuildKnowledgeProjection(projectId, {
+      stateStore: store,
+      runtimeHome,
+      env,
+    });
+    assert.equal(projection.status, 'rebuilt');
+
+    const context = runContext('plan', env);
+    assert.equal(context.status, 'ready');
+    assert.ok(context.policyAnchors.some((item) => (
+      item.id === 'policy:policy-c31-canonical'
+      && item.text === 'Canonical projection policy reaches the prompt consumer.'
+      && item.sourceRef === 'scripts/knowledge-context-build.mjs'
+    )));
+    assert.equal(
+      context.metadata.unavailableCount,
+      0,
+    );
+    assert.equal(
+      context.knowledgeRevision,
+      String(store.getProjectKnowledgeRevision(projectId)),
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test('canonical projection tamper deletion and stale revision never mutate SQLite authority and regeneration restores consumer read', async () => {
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'knowledge-canonical-derived-'));
+  tempRoots.push(runtimeHome);
+  const env = {
+    MOON_RELAY_KERNEL_HOME: runtimeHome,
+    MOONSHOT_RELAY_STATE_ROOT: path.join(runtimeHome, 'state'),
+  };
+  const identity = projectIdentity(env);
+  const projectId = identity.identity.projectId;
+  const store = await openKernelStateStore({ runtimeHome });
+
+  try {
+    store.saveKnowledgeRecord(projectId, 'policy-c31-derived', {
+      recordType: 'policy_anchor',
+      status: 'committed',
+      trustTier: 'verified',
+      recordJson: {
+        id: 'policy-c31-derived',
+        projectId,
+        type: 'policy_anchor',
+        statement: 'Projection artifacts are derived from SQLite authority.',
+        scope: ['scripts/**'],
+        status: 'committed',
+        trustTier: 'verified',
+        createdAt: new Date().toISOString(),
+        sourceRefs: ['scripts/knowledge-context-build.mjs'],
+      },
+      revision: 1,
+    });
+
+    const rebuild = async () => {
+      const result = await rebuildKnowledgeProjection(projectId, {
+        stateStore: store,
+        runtimeHome,
+        env,
+      });
+      assert.equal(result.status, 'rebuilt');
+      return result;
+    };
+    let projection = await rebuild();
+    const authorityRevision = store.getProjectKnowledgeRevision(projectId);
+    const authorityRecord = () => store
+      .listKnowledgeRecords({
+        projectId,
+        statuses: ['committed', 'verified'],
+      })
+      .find((record) => record.id === 'policy-c31-derived');
+
+    const policyPath = path.join(projection.projectDir, 'policy', 'anchors.jsonl');
+    await writeFile(policyPath, '{"tampered":', 'utf8');
+    const tampered = runContext('plan', env);
+    assert.equal(tampered.status, 'degraded_read');
+    assert.ok(authorityRecord());
+    assert.equal(store.getProjectKnowledgeRevision(projectId), authorityRevision);
+
+    projection = await rebuild();
+    const restored = runContext('plan', env);
+    assert.equal(restored.status, 'ready');
+    assert.ok(restored.policyAnchors.some((item) => item.id === 'policy:policy-c31-derived'));
+
+    const revisionPath = path.join(projection.projectDir, 'revision.json');
+    const manifest = JSON.parse(await readFile(revisionPath, 'utf8'));
+    await writeFile(revisionPath, JSON.stringify({
+      ...manifest,
+      updatedAt: '2000-01-01T00:00:00.000Z',
+    }), 'utf8');
+    const stale = runContext('plan', env);
+    assert.equal(stale.status, 'stale');
+    assert.ok(stale.policyAnchors.some((item) => item.id === 'policy:policy-c31-derived'));
+    assert.equal(store.getProjectKnowledgeRevision(projectId), authorityRevision);
+
+    projection = await rebuild();
+    await rm(path.join(projection.projectDir, 'policy', 'anchors.jsonl'));
+    const deleted = runContext('plan', env);
+    assert.equal(
+      deleted.policyAnchors.some((item) => item.id === 'policy:policy-c31-derived'),
+      false,
+    );
+    assert.ok(authorityRecord());
+    assert.equal(store.getProjectKnowledgeRevision(projectId), authorityRevision);
+
+    await rebuild();
+    const regenerated = runContext('plan', env);
+    assert.ok(regenerated.policyAnchors.some((item) => item.id === 'policy:policy-c31-derived'));
+    assert.equal(store.getProjectKnowledgeRevision(projectId), authorityRevision);
+  } finally {
+    store.close();
+  }
 });

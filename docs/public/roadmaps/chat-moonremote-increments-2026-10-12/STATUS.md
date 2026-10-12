@@ -37,8 +37,8 @@
 | [C27](cards/C27.md) | W9 | Hidden follow-up 평가 프로토콜 | C26 | COMPLETE |
 | [C28](cards/C28.md) | W9 | 전략별 순차 평가 실행 | C27 | COMPLETE |
 | [C29](cards/C29.md) | W9 | Follow-up 비용 비교와 Adaptive 판정 | C28 | COMPLETE |
-| [C30](cards/C30.md) | W10 | Projection interoperability 가치 판정 | C29 | NOT_STARTED |
-| [C31](cards/C31.md) | W10 | 단일 Projection adapter | C30 진행 판정 | NOT_STARTED |
+| [C30](cards/C30.md) | W10 | Projection interoperability 가치 판정 | C29 | COMPLETE |
+| [C31](cards/C31.md) | W10 | 단일 Projection adapter | C30 진행 판정 | COMPLETE |
 | [C32](cards/C32.md) | 마감 | 전체 계약 추적과 통합 검증 | C29 및 C30/C31의 조건 처리 | NOT_STARTED |
 
 ## 실행 결과 기록 형식
@@ -601,4 +601,36 @@ checks: CONTRACTS/incumbent review c2900000-0000-4000-8000-000000000007 exit 0; 
 liveEval: C28 actual result 재사용; C29에서 새 model run 없음
 remaining: C29 없음
 nextCard: C30 (W10)
+```
+
+```text
+card: C30
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: 4d21e3c7421bc8cedd44260546fa8045ba441f89
+resultHeadOrDiffDigest: sha256:b7999e60a4f5826c933c25ffbaea4d3a26257335211e6260f9e3449a5704d6a4
+taskId: 71ad4206-e338-4910-b70e-c04b739ea6df
+kernelRunId: 없음; Kernel 모드 미사용
+scope: projection/authority 및 현재 consumer call-site 조사 + C30_RESULT.md; 제품 source는 C30에서 변경하지 않음
+acceptance: AC-1 진행 판정. 실제 consumer는 scripts/knowledge-context-build.mjs. SQLite policy_anchor→rebuildKnowledgeProjection fixture에서 canonical record가 projection에는 존재하지만 legacy file/type/status 계약 때문에 prompt context에 누락되고 degraded_read가 재현됨. architecture-knowledge-resolve는 mixed legacy file의 실제 record.type을 보존해 같은 anchor를 읽지만 context builder는 legacy validation/type filtering으로 손실하므로 consumer를 context builder 하나로 제한. AC-2 미래 확장 가정이 아니라 현재 runtime consumer failure로 가치 입증. existing modern projection payload가 충분하므로 새 projection authority/DB/vector service/bidirectional sync 불필요. C31은 modern canonical projection을 직접 읽는 consumer adapter로 제한. AC-3 deterministic SQLite→projection→consumer reproduction과 canonical committed record contract review를 현재 source에 연결. AC-4 C30_RESULT/STATUS/checkpoint 및 nextCard C31 기록
+checks: consumer search a9300000-1111-4aaa-8bbb-000000000001~003; architecture distinction a9300000-1111-4aaa-8bbb-000000000006~008; context consumer failure reproduction a9300000-1111-4aaa-8bbb-000000000015 exit 0; canonical status review a9300000-1111-4aaa-8bbb-000000000016 + b0310000-1111-4aaa-8bbb-000000000001
+liveEval: 불필요; deterministic local SQLite/projection/consumer fixture
+remaining: C30 없음
+nextCard: C31
+```
+
+```text
+card: C31
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: 4d21e3c7421bc8cedd44260546fa8045ba441f89
+resultHeadOrDiffDigest: sha256:b7999e60a4f5826c933c25ffbaea4d3a26257335211e6260f9e3449a5704d6a4
+taskId: 8da68711-0a3b-4f32-a099-3d77dd7f9c2d
+kernelRunId: 없음; Kernel 모드 미사용
+scope: scripts/knowledge-context-build.mjs 한 consumer adapter + tests/knowledge-context-build-contract.test.mjs + tests/knowledge-projection.test.mjs; projection.ts/knowledge-authority/persistence/schema 변경 없음
+acceptance: AC-1 기존 revision.json의 schemaVersion+knowledgeRevision+recordCount로 modern canonical layout을 명시적으로 식별하고 policy/anchors.jsonl, semantic/facts.jsonl, graph/relations.jsonl, ontology/constraints.jsonl을 직접 읽음. legacy manifest/layout은 기존 parseAndValidateJsonl 경로 유지. canonical committed/verified + readable trust record만 prompt-visible로 해석하고 statement/sourceRefs/scope provenance를 기존 prompt view에 연결. SQLite-generated policy anchor가 context consumer에 실제 노출되고 degraded_read가 해소됨. projection file 변조 시 degraded_read, stale revision 시 stale, projection 삭제 시 record 미노출이지만 SQLite authority/revision은 불변이며 rebuild 후 consumer read 복구. AC-2 새 projection file, DB/schema, authority, memory/vector service, 양방향 sync, provider/project 분기, silent fallback 없음. canonical/legacy는 manifest로 명시 분기. AC-3 focused 7/7 통과. typecheck와 production build 298 files/799 edges 통과. broad knowledge suite는 unrelated 기존 knowledge-review.test.mjs mock getRun 누락 1건으로 전체 9/10; C31 변경에 candidate-review 없음. 해당 unrelated test 제외한 current Knowledge 회귀 9/9 통과. build:check 298/799 drift 0, build:tests:check 281 tests/8 helpers drift 0, boundary 9 modules 통과. node --check/diff/hardcoding/범위 검사 통과. AC-4 STATUS/checkpoint에 변경·증거·W10 종료와 nextCard C32 기록
+checks: initial focused b0310000-1111-4aaa-8bbb-000000000016 exit 1 (제품 adapter consumer-read 성공; 테스트 API call 오류 1건 + manifest numeric type assertion 오류 1건); manifest contract 확인 b0310000-1111-4aaa-8bbb-000000000017; corrected focused b0310000-1111-4aaa-8bbb-000000000018 exit 0 (7/7); typecheck/build+broad b0310000-1111-4aaa-8bbb-000000000019 exit 1 only knowledge-review.test.mjs unrelated pre-existing mock getRun failure; relevant broad+drift+boundary b0310000-1111-4aaa-8bbb-000000000020 exit 0 (9/9; 298/799; 281/8; 9 modules); complexity/digest b0310000-1111-4aaa-8bbb-000000000021 exit 0
+liveEval: 불필요; deterministic SQLite/projection/context integration
+remaining: W10 없음
+nextCard: C32 (마감; 사용자 별도 요청 전 자동 시작하지 않음)
 ```

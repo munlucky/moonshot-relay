@@ -38,7 +38,10 @@ test('Knowledge Projection - rebuilds modern and legacy derived files from SQLit
     const manifest = JSON.parse(await readFile(join(res.projectDir, 'revision.json'), 'utf8'));
     assert.match(modern, /Project uses projection rebuild/);
     assert.equal(legacy, modern);
+    assert.equal(manifest.schemaVersion, 1);
     assert.equal(manifest.revision, String(store.getProjectKnowledgeRevision('proj-p1')));
+    assert.equal(String(manifest.knowledgeRevision), manifest.revision);
+    assert.equal(manifest.recordCount, 1);
   } finally {
     store.close();
     await rm(tmp, { recursive: true, force: true });
