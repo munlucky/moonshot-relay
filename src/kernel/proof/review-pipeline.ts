@@ -2,7 +2,13 @@
 // and acceptance semantics; engineering review checks implementation standards
 // and complexity. Reviewers are defined by a fixed I/O contract, not personas.
 
+import type { FuturesAssessment } from '../../contracts/futures-evidence.js';
 import { isReviewAction } from '../../contracts/review.js';
+import {
+  evaluateReviewReceipt,
+  reviewReceiptDigest,
+  type ReviewReceipt,
+} from './review-receipt.js';
 
 type UnknownRecord = Record<string, unknown>;
 type RiskTier = 'T0' | 'T1' | 'T2' | 'T3';
@@ -374,3 +380,145 @@ export const buildReviewContract = ({
     risks: [] as unknown[],
   },
 });
+
+
+export type FuturesReviewCapability = 'available' | 'unavailable';
+
+export type FuturesAssessmentReviewGateResult =
+  | Readonly<{
+    status: 'ready';
+    blocker: null;
+    reviewReceiptId: string;
+    candidate: FuturesAssessment['actionCandidate'];
+  }>
+  | Readonly<{
+    status: 'blocked';
+    blocker: Readonly<{
+      code: string;
+      reasons: readonly string[];
+    }>;
+    reviewReceiptId: string | null;
+    candidate: null;
+  }>;
+
+interface FuturesReviewRun extends UnknownRecord {
+  runId: string;
+  mutationRevision: number;
+  currentWorkspaceIdentity: string;
+}
+
+const blockedFuturesReview = (
+  code: string,
+  reasons: readonly string[],
+  reviewReceiptId: string | null = null,
+): FuturesAssessmentReviewGateResult => Object.freeze({
+  status: 'blocked' as const,
+  blocker: Object.freeze({
+    code,
+    reasons: Object.freeze([...reasons]),
+  }),
+  reviewReceiptId,
+  candidate: null,
+});
+
+export const resolveFuturesAssessmentReviewGate = ({
+  assessment,
+  reviewReceipt = null,
+  reviewCapability = 'available',
+  run,
+  existingObligationIds = [],
+}: {
+  assessment: FuturesAssessment;
+  reviewReceipt?: ReviewReceipt | null;
+  reviewCapability?: FuturesReviewCapability;
+  run: FuturesReviewRun;
+  existingObligationIds?: readonly string[];
+}): FuturesAssessmentReviewGateResult => {
+  if (
+    !assessment
+    || assessment.status !== 'assessed'
+    || assessment.color === null
+  ) {
+    return blockedFuturesReview('assessment-incomplete', ['assessment-not-actionable']);
+  }
+
+  if (
+    String(run.mutationRevision) !== assessment.subject.revision
+    || run.currentWorkspaceIdentity !== assessment.subject.contentDigest
+  ) {
+    return blockedFuturesReview('assessment-stale', [
+      ...(String(run.mutationRevision) !== assessment.subject.revision
+        ? ['assessment-stale-mutation-revision']
+        : []),
+      ...(run.currentWorkspaceIdentity !== assessment.subject.contentDigest
+        ? ['assessment-stale-workspace-identity']
+        : []),
+    ]);
+  }
+
+  if (reviewCapability === 'unavailable') {
+    return blockedFuturesReview(
+      'no-independent-review-capability',
+      ['review-capability-unavailable'],
+    );
+  }
+
+  if (!reviewReceipt) {
+    return blockedFuturesReview('review-receipt-missing', ['review-receipt-missing']);
+  }
+
+  if (
+    !reviewReceipt.digest
+    || reviewReceiptDigest(reviewReceipt as unknown as UnknownRecord) !== reviewReceipt.digest
+  ) {
+    return blockedFuturesReview(
+      'review-receipt-invalid',
+      ['review-receipt-digest-mismatch'],
+      reviewReceipt.receiptId || null,
+    );
+  }
+
+  if (reviewReceipt.subject.changedPathsDigest !== assessment.subject.changedPathsDigest) {
+    return blockedFuturesReview(
+      'review-stale-changed-paths',
+      ['review-stale-changed-paths'],
+      reviewReceipt.receiptId,
+    );
+  }
+
+  const review = evaluateReviewReceipt({
+    receipt: reviewReceipt,
+    run,
+    requireIndependentSession: true,
+    requireFrontierClass: true,
+    requireTrustedEnforcement: true,
+    currentEvidenceDigest: assessment.digest,
+  });
+  if (!review.usable) {
+    return blockedFuturesReview(
+      'review-receipt-unusable',
+      review.reasons,
+      reviewReceipt.receiptId,
+    );
+  }
+
+  if (assessment.actionCandidate.kind === 'existing-obligations') {
+    const current = new Set(existingObligationIds.map(String));
+    const missing = assessment.actionCandidate.obligationIds
+      .filter((obligationId) => !current.has(obligationId));
+    if (missing.length > 0) {
+      return blockedFuturesReview(
+        'assessment-obligation-stale',
+        missing.map((obligationId) => `obligation-missing:${obligationId}`),
+        reviewReceipt.receiptId,
+      );
+    }
+  }
+
+  return Object.freeze({
+    status: 'ready' as const,
+    blocker: null,
+    reviewReceiptId: reviewReceipt.receiptId,
+    candidate: assessment.actionCandidate,
+  });
+};

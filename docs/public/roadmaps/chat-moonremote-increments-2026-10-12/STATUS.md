@@ -19,9 +19,9 @@
 | [C09](cards/C09.md) | W1 | Codex 로컬 Prompt A/B 검증 계약 | C08 | COMPLETE |
 | [C10](cards/C10.md) | W1 | 비운영 Provider 평가 범위 정리 | C09 | NOT_APPLICABLE |
 | [C11](cards/C11.md) | W1 | Prompt gate 판정과 후속 기준선 고정 | C09, C10 | COMPLETE |
-| [C12](cards/C12.md) | W2 | Futures Evidence 순수 수집 계약 | C11 | NOT_STARTED |
-| [C13](cards/C13.md) | W2 | Green Yellow Red 평가와 mutation 제한 | C12 | NOT_STARTED |
-| [C14](cards/C14.md) | W2 | Fresh review와 기존 Work 경로 연결 | C13 | NOT_STARTED |
+| [C12](cards/C12.md) | W2 | Futures Evidence 순수 수집 계약 | C11 | COMPLETE |
+| [C13](cards/C13.md) | W2 | Green Yellow Red 평가와 mutation 제한 | C12 | COMPLETE |
+| [C14](cards/C14.md) | W2 | Fresh review와 기존 Work 경로 연결 | C13 | COMPLETE |
 | [C15](cards/C15.md) | W3 | Bounded Restore 실행과 fresh regression | C14 | NOT_STARTED |
 | [C16](cards/C16.md) | W3 | Architecture escalation 기존 경로 재사용 | C15 | NOT_STARTED |
 | [C17](cards/C17.md) | W4 | Knowledge type 표현 가능성 판정 | C16 | NOT_STARTED |
@@ -298,4 +298,55 @@ checks: workspace/diff c3b00000-0000-4000-8000-000000000002 exit 0; npm run lint
 liveEval: 원격 미실행. LOCAL_CODEX_VALIDATION.md에 따라 실제 Codex 모델-backed 검증은 릴리스/기본 profile 활성화 전 로컬에서 수행
 remaining: W1 원격 구현 없음. 로컬 Codex VALIDATED는 릴리스 전 필요
 nextCard: C12
+```
+
+
+```text
+card: C12
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: fa64e166635252e76e51477744f4b2525ad38d73
+resultHeadOrDiffDigest: sha256:2140b95e7cd50360107fa0c6c715deb0fbfca58412eeb9cd9d4f41bed39b0cad
+taskId: 791cdfb7-41b8-4894-97f3-4043e284ff61
+kernelRunId: 없음; Kernel 모드 미사용
+scope: src/contracts/futures-evidence.ts; generated scripts/contracts/futures-evidence.js; src/kernel/proof/futures-evidence.ts; tests/kernel-futures-evidence.test.ts; generated tests/kernel-futures-evidence.test.mjs; STATUS.md
+acceptance: AC-1 revision/contentDigest/change paths/dependency boundaries/regression scope/unknowns를 canonical digest에 바인딩; null 미확인과 [] 관찰 없음 구분; missing/unknown은 status=incomplete로 유지. AC-2 collector는 전달받은 observation만 정규화하며 fs/process/provider/project 의존 및 state mutation 없음; 위험도 평가도 수행하지 않음. AC-3 typecheck/build/build:tests/focused 5/5/build:check/build:tests:check/check:boundaries 통과, malformed digest/path 거부. AC-4 STATUS/checkpoint에 evidence와 nextCard 기록
+checks: evidence search c3c00000-0000-4000-8000-000000000002..004 exit 0; initial typecheck c3c00000-0000-4000-8000-000000000006 exit 2 (unknown narrowing only); corrected typecheck c3c00000-0000-4000-8000-000000000007 exit 0; build+build:tests c3c00000-0000-4000-8000-000000000008 exit 0 (293 files/783 edges; 267 tests/8 helpers); focused c3c00000-0000-4000-8000-000000000009 exit 0 (5/5); freshness/boundary/purity c3c00000-0000-4000-8000-000000000010 exit 0; generated convention c3c00000-0000-4000-8000-000000000012 exit 0
+liveEval: 미실행; pure evidence contract 범위
+remaining: C12 없음
+nextCard: C13
+```
+
+
+```text
+card: C13
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: fa64e166635252e76e51477744f4b2525ad38d73
+resultHeadOrDiffDigest: sha256:77b118e051fbcfe005eadfbc9f98ab8113c8b54d1322543b9ead7efac3a88924
+taskId: 47505b08-2923-4263-bb5e-9d346e2a89cd
+kernelRunId: 없음; Kernel 모드 미사용
+scope: src/contracts/futures-evidence.ts; generated scripts/contracts/futures-evidence.js; src/kernel/proof/futures-assessment.ts; tests/kernel-futures-assessment.test.ts; generated tests/kernel-futures-assessment.test.mjs; STATUS.md
+acceptance: AC-1 Green은 existing obligations, Yellow는 observed changed paths 안의 bounded restore 후보, Red는 architecture-planning 후보만 반환; 직접 mutation/rollback/knowledge promotion 없음. AC-2 evidence revision/content/digest freshness를 검증하고 stale/tampered evidence를 거부; missing/unknown은 color=null incomplete로 유지하고 Work cursor/completion을 쓰지 않음. AC-3 typecheck/build/build:tests/focused 7/7/build:check/build:tests:check/check:boundaries 및 mutation/model/project scan 통과. AC-4 STATUS/checkpoint에 evidence와 nextCard 기록
+checks: F/action inspection c3d00000-0000-4000-8000-000000000002 exit 0; typecheck c3d00000-0000-4000-8000-000000000004 exit 0; build+build:tests+focused c3d00000-0000-4000-8000-000000000005 exit 0 (294 files/785 edges; 268 tests/8 helpers; focused 7/7); freshness/boundary/static authority scan c3d00000-0000-4000-8000-000000000006 exit 0; scoped digest c3d00000-0000-4000-8000-000000000007 exit 0
+liveEval: 미실행; deterministic assessment contract 범위
+remaining: C13 없음
+nextCard: C14
+```
+
+
+```text
+card: C14
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: fa64e166635252e76e51477744f4b2525ad38d73
+resultHeadOrDiffDigest: sha256:83f709194d70a3a038186883010140fbb79a6025eae49478a7703c23941c0611
+taskId: 70d11141-e303-4b0b-832a-728c6c53bc8f
+kernelRunId: 없음; Kernel 모드 미사용
+scope: src/contracts/futures-evidence.ts; generated scripts/contracts/futures-evidence.js; src/kernel/proof/futures-assessment.ts; src/kernel/proof/review-pipeline.ts; tests/kernel-futures-review-gate.test.ts; generated tests/kernel-futures-review-gate.test.mjs; C12/C13 W2 sources/tests; STATUS.md
+acceptance: AC-1 assessment subject에 changedPathsDigest를 포함하고 같은 mutation revision/workspace/content/changed paths/assessment evidence digest에 묶인 closed ReviewReceipt만 candidate를 ready로 노출; stale/missing/unavailable/self-check/tamper는 blocker. AC-2 review capability unavailable은 no-independent-review-capability로 남기고 새 reviewer/schema/stage/obligation compiler나 임의 fallback을 추가하지 않음; Green은 현재 Work에 남아 있는 obligation만 재사용. AC-3 현재 source 기준 typecheck/build/build:tests, Futures+Review focused 42/42, build:check/build:tests:check/check:boundaries 통과. AC-4 STATUS/checkpoint에 evidence와 nextCard 기록
+checks: current diff/package mapping c3e00000-0000-4000-8000-000000000012 exit 0; typecheck/build/build:tests/focused 42/42/build:check/build:tests:check c3e00000-0000-4000-8000-000000000014 (boundary 단계 진입 후 전체 command 240s timeout; 앞선 항목은 모두 pass); standalone check:boundaries c3e00000-0000-4000-8000-000000000015 exit 0 (9 modules, 294 files, 787 edges)
+liveEval: 미실행; C14는 기존 ReviewReceipt/Work authority 연결의 deterministic integration 범위
+remaining: C14 없음. 다음 카드 자동 진입 금지
+nextCard: C15
 ```
