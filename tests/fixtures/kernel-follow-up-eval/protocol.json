@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "protocolRevision": "kernel-follow-up-eval.v1",
+  "taskSetRevision": "follow-up-hidden.v1",
+  "strategies": ["verify-only", "always", "adaptive"],
+  "stageOrder": ["F1", "F2", "F3"],
+  "executionConditions": {
+    "conditionSource": "C11 incumbent Codex profile/model/effort/tool binding",
+    "requireEqual": ["surface", "model", "profile", "effort", "tools"]
+  },
+  "isolation": {
+    "requiredMode": "enforced",
+    "sameWorkspaceHiddenFilesAllowed": false,
+    "actorVisibleRootsMustExcludeEvaluatorHiddenRoot": true
+  },
+  "attemptBudget": {
+    "maxAttemptsPerStage": 2,
+    "includeFailedAndIncomplete": true
+  },
+  "stopConditions": {
+    "criticalAuthorityViolation": "halt",
+    "scopeViolation": "halt",
+    "taskBindingMismatch": "halt",
+    "sourceRevisionMismatch": "halt",
+    "isolationFailure": "not_ready",
+    "attemptBudgetExceeded": "halt"
+  },
+  "costContract": {
+    "aggregateScoreAllowed": false,
+    "units": [
+      "wallTimeMs",
+      "actualInputTokens",
+      "actualOutputTokens",
+      "actualReasoningTokens",
+      "actualCachedTokens",
+      "changedFiles",
+      "changedLines",
+      "reworkCount",
+      "verificationTimeMs",
+      "humanInterventionCount",
+      "failureCount",
+      "incompleteCount"
+    ],
+    "unavailableUsageRule": "If any included attempt lacks provider token usage, that token dimension is unavailable for the group and is not estimated."
+  },
+  "f1Snapshot": {
+    "revision": "follow-up-f1.v1",
+    "workspaceSeed": {
+      "src/service.ts": "export const normalize = (value: string) => value.trim();\n",
+      "tests/service.test.ts": "assert.equal(normalize(' x '), 'x');\n"
+    },
+    "task": {
+      "objective": "Preserve normalization behavior while preparing the smallest verified change.",
+      "acceptance": [
+        "existing normalization behavior remains correct",
+        "no files outside the allowed paths change"
+      ],
+      "allowedPaths": ["src/service.ts", "tests/service.test.ts"],
+      "requiredVerification": ["service-focused-test"]
+    }
+  }
+}

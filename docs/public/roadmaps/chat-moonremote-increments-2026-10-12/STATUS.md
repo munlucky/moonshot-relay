@@ -34,8 +34,8 @@
 | [C24](cards/C24.md) | W7 | Episodic에서 durable로 승격 | C23 | COMPLETE |
 | [C25](cards/C25.md) | W8 | Retrieval 정답셋과 지표 | C24 | COMPLETE |
 | [C26](cards/C26.md) | W8 | Retrieval 단일 병목 개선과 비교 | C25 | COMPLETE |
-| [C27](cards/C27.md) | W9 | Hidden follow-up 평가 프로토콜 | C26 | NOT_STARTED |
-| [C28](cards/C28.md) | W9 | 전략별 순차 평가 실행 | C27 | NOT_STARTED |
+| [C27](cards/C27.md) | W9 | Hidden follow-up 평가 프로토콜 | C26 | COMPLETE |
+| [C28](cards/C28.md) | W9 | 전략별 순차 평가 실행 | C27 | EVAL_PENDING |
 | [C29](cards/C29.md) | W9 | Follow-up 비용 비교와 Adaptive 판정 | C28 | NOT_STARTED |
 | [C30](cards/C30.md) | W10 | Projection interoperability 가치 판정 | C29 | NOT_STARTED |
 | [C31](cards/C31.md) | W10 | 단일 Projection adapter | C30 진행 판정 | NOT_STARTED |
@@ -542,4 +542,36 @@ checks: initial implementation typecheck/build/build:tests c2600000-0000-4000-80
 liveEval: 미실행; C25 fixed deterministic local retrieval/context corpus 비교
 remaining: W8 없음
 nextCard: C27 (W9는 사용자 별도 요청 후 시작)
+```
+
+```text
+card: C27
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: d1c7a66e305c8894a5cc2470ae6ed9c3072f2709
+resultHeadOrDiffDigest: sha256:43200083665f1b4b1cd3086fd3be21534168bc3a6cb2f0c8d59e021604d2598d
+taskId: a9bb65e4-3213-4ab2-b66a-af54efc27a0d
+kernelRunId: 없음; Kernel 모드 미사용
+scope: src/host-tooling/kernel-eval/follow-up-eval.ts; tests/fixtures/kernel-follow-up-eval/protocol.json; tests/kernel-follow-up-eval.test.ts + generated .mjs; 제품 Kernel/Authority/schema/public surface 변경 없음
+acceptance: AC-1 Verify-only/Always/Adaptive가 동일 F1 snapshot/task binding을 사용하도록 protocol revision과 F1 digest를 고정. F1 actor package에는 F2/F3 내용·digest·evaluator hidden path를 넣지 않으며 prompt/knowledge/fileSearch/log/actorPackage 표면을 hidden marker/digest/path로 음성 검사. cost는 wall time, 실제 provider token dimensions, changed files/LOC, rework, verification time, human intervention, failure/incomplete를 별도 단위로 유지하고 aggregate score를 금지. 실제 token usage 일부가 없으면 해당 차원 전체를 unavailable로 남김. authority/scope/task/revision/attempt budget 위반은 halt, isolation failure는 not_ready로 fail-closed. AC-2 같은 workspace hidden 파일은 blind로 인정하지 않고 actor visible root가 hidden root를 포함하거나 isolation mode가 enforced가 아니면 not_ready. 저장소에 실제 agent filesystem sandbox가 없으므로 새 fake runner를 만들지 않고 외부 filesystem allowlist/sandbox evidence를 요구. F1 freeze 후 F2 reveal, F2 freeze 후 F3 reveal만 허용하며 task/source revision mismatch를 차단. AC-3 initial typecheck 실패 1건(nullable usage accumulator) 수정 후 typecheck/build/build:tests 통과; C27 focused 6/6; eval corpus/routing/retrieval/sentinel+C27 28/28; build:check 298 files/799 edges drift 0; build:tests:check 281/8 drift 0; boundary 9 modules; diff/범위/하드코딩 검사 통과. AC-4 STATUS/checkpoint에 변경·증거·nextCard 기록
+checks: initial typecheck c2700000-0000-4000-8000-000000000006 exit 2 (nullable accumulator TS18047, build 미실행); corrected typecheck/build/build:tests c2700000-0000-4000-8000-000000000007 exit 0 (298/799; 281/8); focused c2700000-0000-4000-8000-000000000008 exit 0 (6/6); broad eval+drift+boundary c2700000-0000-4000-8000-000000000009 exit 0 (28/28; 298/799; 281/8; 9 modules); scope/digest c2700000-0000-4000-8000-000000000010 exit 0
+liveEval: 미실행; C27은 deterministic protocol/readiness 검증 범위이며 실제 Codex actor 실행은 C28
+remaining: C27 없음
+nextCard: C28
+```
+
+```text
+card: C28
+status: EVAL_PENDING
+workspace: /shared/moonshot-relay
+baseHead: d1c7a66e305c8894a5cc2470ae6ed9c3072f2709
+resultHeadOrDiffDigest: sha256:addca1c1a295c91388a8e59e4fa47fd8a168d280e094255b16cfde6c66be3533
+taskId: 9a9f0c54-8dd0-40de-95b4-f5b9784e7b54
+kernelRunId: 없음; Kernel 모드 미사용
+scope: 제품 소스 변경 없음; LOCAL_CODEX_VALIDATION.md에 C27 protocol 기반 W9 local Codex actual-run 절차, receipt schema, stop condition, resume cursor, C28 완료 조건 추가
+acceptance: AC-1 원격 actual 실행 미수행. 현재 Moonremote 환경에는 codex executable과 OPENAI_API_KEY가 없고 C27이 요구하는 enforced filesystem isolation을 제공할 bwrap/firejail/docker/podman도 없음. 따라서 동일 baseline 세 전략의 correctness/follow-up cost/과도 수정/회귀 actual evidence를 만들 수 없어 EVAL_PENDING. mock/static result로 actual cost를 대체하지 않음. 로컬 절차는 동일 F1 snapshot/model/profile/effort/tools, F1 freeze→F2 reveal→F2 freeze→F3 reveal, failed/incomplete 포함, stage별 diff/verification/actual usage receipt를 요구. AC-2 strategy×case×F1/F2/F3 한 배치와 resume cursor를 고정하고 완료 stage 재실행 금지. AC-3 readiness command의 실제 receipt로 원격 미지원 상태 확인; C27 deterministic 검증은 C28 live 결과로 계산하지 않음. AC-4 STATUS/checkpoint에 blockers와 로컬 검증 경로 기록
+checks: remote live capability c2800000-0000-4000-8000-000000000002 exit 0: codex absent, OPENAI_API_KEY absent, CODEX_HOME present, bwrap/firejail/docker/podman absent
+liveEval: 미실행; 로컬 Codex + enforced blind filesystem isolation 필요
+remaining: 로컬 Codex에서 C28 actual strategy×case×F1/F2/F3 receipts 수집 후 C28 재개. C29는 C28 전체 결과 전까지 시작 금지
+nextCard: C28 재개; C29 자동 진입 금지
 ```
