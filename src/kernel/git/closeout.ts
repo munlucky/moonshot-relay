@@ -390,6 +390,7 @@ export async function executeKernelGitCloseout({
           commitMessage,
           reportKey: gitCloseoutRequest.reportKey || null,
           verifiedWorkspaceIdentity: gitCloseoutRequest.verifiedWorkspaceIdentity || null,
+          mutationAdmission: gitCloseoutRequest.mutationAdmission || null,
           status: 'commit_created',
         },
       });
@@ -426,6 +427,8 @@ export async function executeKernelGitCloseout({
             pushStatus: 'completed',
             parity: parityCheck.parity,
             status: 'parity_failed',
+            beforeHeadSha,
+            selectedPaths,
             errorCode: 'REMOTE_PARITY_MISMATCH',
             errorMessage: `Remote parity mismatch: local ${commitSha} != remote ${remoteHeadSha}`,
             receiptJson: {
@@ -437,6 +440,7 @@ export async function executeKernelGitCloseout({
               commitMessage,
               reportKey: gitCloseoutRequest.reportKey || null,
               verifiedWorkspaceIdentity: gitCloseoutRequest.verifiedWorkspaceIdentity || null,
+              mutationAdmission: gitCloseoutRequest.mutationAdmission || null,
               status: 'parity_failed',
             },
           });
@@ -457,6 +461,8 @@ export async function executeKernelGitCloseout({
           pushStatus: 'failed',
           parity: 'failed',
           status: 'push_failed',
+          beforeHeadSha,
+          selectedPaths,
           errorCode: 'GIT_PUSH_FAILED',
           errorMessage: pushResult.stderr,
           receiptJson: {
@@ -468,6 +474,7 @@ export async function executeKernelGitCloseout({
             commitMessage,
             reportKey: gitCloseoutRequest.reportKey || null,
             verifiedWorkspaceIdentity: gitCloseoutRequest.verifiedWorkspaceIdentity || null,
+            mutationAdmission: gitCloseoutRequest.mutationAdmission || null,
             status: 'push_failed',
           },
         });
@@ -497,6 +504,7 @@ export async function executeKernelGitCloseout({
     approvalReceipt: gitCloseoutRequest.approvalReceipt,
     reportKey: gitCloseoutRequest.reportKey || null,
     verifiedWorkspaceIdentity: gitCloseoutRequest.verifiedWorkspaceIdentity || null,
+    mutationAdmission: gitCloseoutRequest.mutationAdmission || null,
     status: 'completed',
   };
 

@@ -75,7 +75,7 @@ test('CLI rejects conflicting explicit and environment run identities with recov
   const payload = parseCliErrorReceipt(result.stderr || result.stdout);
   assert.equal(payload.errorCode, 'run_binding_conflict');
   assert.equal(payload.nextAction, 'reopen-from-correct-worktree');
-  assert.match(assertTestString(assertTestRecord(assertTestRecord(payload.diagnostics).remediation).command), /moon-harness-switcher launch --track kernel/);
+  assert.match(assertTestString(assertTestRecord(assertTestRecord(payload.diagnostics).remediation).command), /kernel next --diagnose/);
 });
 
 test('Kernel host injects run, project, session, and workspace identity process-scoped', () => {
@@ -228,7 +228,7 @@ test('conflicting Codex and Kernel session bindings fail closed with one recover
   const payload = parseCliErrorReceipt(result.stderr || result.stdout);
   assert.equal(payload.errorCode, 'host_binding_conflict');
   assert.equal(payload.nextAction, 'reopen-from-correct-worktree');
-  assert.match(assertTestString(assertTestRecord(assertTestRecord(payload.diagnostics).remediation).command), /moon-harness-switcher launch --track kernel/);
+  assert.match(assertTestString(assertTestRecord(assertTestRecord(payload.diagnostics).remediation).command), /kernel next --diagnose/);
 });
 
 test('binding recovery command quotes hostile workspace paths without shell expansion', async () => {
@@ -244,7 +244,7 @@ test('binding recovery command quotes hostile workspace paths without shell expa
       encoding: 'utf8',
       env: { PATH: '/usr/bin:/bin' },
     });
-    assert.notEqual(result.status, 0, 'the fixture intentionally omits moon-harness-switcher');
+    assert.notEqual(result.status, 0, 'the fixture intentionally omits the kernel executable');
     await assert.rejects(access(marker));
     assert.match(assertTestPresent(remediation).command, /--project-root '/);
   } finally {

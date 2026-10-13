@@ -1,4 +1,5 @@
 import { runGit } from '../../../shared/git-safe.js';
+import { assertStagingContentSafe } from '../../../kernel/git/staging-policy.js';
 
 type GitRunner = typeof runGit;
 
@@ -30,7 +31,7 @@ export function partitionStagingPathsByTracking({
   if (unique.length === 0) return { tracked: [], untracked: [] };
 
   const options = env ? { env } : {};
-  const result = git(repoRoot, ['ls-files', '-z', '--', ...unique], options);
+  const result = git(repoRoot, ['--literal-pathspecs', 'ls-files', '-z', '--', ...unique], options);
   if (result.error || (result.status ?? 0) !== 0) {
     throw Object.assign(
       new Error(
@@ -63,6 +64,9 @@ export function stageSelectedPaths({
   git = runGit,
   env = undefined,
 }: StagingInput): StagingResult {
+  for (const candidate of paths) {
+    assertStagingContentSafe(repoRoot, candidate);
+  }
   const { tracked, untracked } = partitionStagingPathsByTracking({
     repoRoot,
     paths,
@@ -71,8 +75,8 @@ export function stageSelectedPaths({
   });
   const options = env ? { env } : {};
   const invocations: string[][] = [];
-  if (tracked.length > 0) invocations.push(['add', '-u', '--', ...tracked]);
-  if (untracked.length > 0) invocations.push(['add', '--', ...untracked]);
+  if (tracked.length > 0) invocations.push(['--literal-pathspecs', 'add', '-u', '--', ...tracked]);
+  if (untracked.length > 0) invocations.push(['--literal-pathspecs', 'add', '--', ...untracked]);
 
   for (const args of invocations) {
     const result = git(repoRoot, args, options);

@@ -1,4 +1,5 @@
 import { requiredIndex } from '../shared/required-index.js';
+import { buildAgentRecovery } from './run/agent-recovery.js';
 import type { StepSettlementOutcome, WorkStepResolution } from './run/work-cursor.js';
 import { canonicalChangedPaths, canonicalReceiptValue, receiptValuesEqual, computeKernelSourceIdentity, findingClassOf, reviewReceiptRequired, buildRunRoute, resolveDeclaredStepForReplan, stepScopeChanged, planDiffersFromContract } from './run/control-plane-helpers.js';
 export { computeKernelSourceIdentity, resolveDeclaredStepForReplan } from './run/control-plane-helpers.js';
@@ -168,7 +169,7 @@ import { buildSuccessorKey } from './run/successor-key.js';
 import { assertRunWorktreeMutationAuthority } from '../contracts/worktree-authority.js';
 import { registerWorktreeObservation } from './run/workspace-registration.js';
 import { resolveRunArtifactPaths } from './artifact-paths.js';
-import { writeRunLocator } from './run/run-locator.js';
+import { writeRunLocator, reconcileOrphanRunLocators } from './run/run-locator.js';
 import { buildStructuredRunSignals, failureFingerprint } from './knowledge/capture.js';
 import { buildKnowledgeAuthorityView } from './knowledge/knowledge-authority.js';
 import { buildEvidenceIdentity, buildEvidenceReuseReceipt, VERIFICATION_SCOPE_FIELD, EVIDENCE_IDENTITY_FIELDS } from './proof/evidence-reuse.js';
@@ -623,12 +624,30 @@ export const createKernelControlPlane = async ({
       contract: run.taskContract ? contractBriefing(run.taskContract as NormalizedTaskContract) : null,
     });
   };
+  const recoveryForRun = (runId: string, failure: unknown) => {
+    const run = getRunSnapshot(runId);
+    let observation: ReturnType<typeof observeWorkspaceIdentity> | null = null;
+    try { observation = observeWorkspaceIdentity({ projectRoot }); } catch { /* No observation means no repair grant. */ }
+    const steps = run ? store.getRunSteps(runId, { planRevision: run.planRevision }) : [];
+    const step = selectCurrentStep(steps, { planRevision: run?.planRevision || 1 });
+    const binding = getHostBinding({ runId });
+    const lease = run?.worktreeId ? store.getWorktreeMutationLease(run.worktreeId) : null;
+    return buildAgentRecovery({ failure, observation: {
+      projectRoot, runtimeHome, runId, run: run as UnknownRecord | null,
+      step: step as UnknownRecord | null, sessionId: hostSessionId || null,
+      ownerSessionId: binding?.sessionId || null, ownerBindingActive: binding?.accessMode === 'owner' && binding.status === 'active',
+      worktreeLeaseOwned: lease?.holderRunId === runId && lease?.projectId === run?.projectId,
+      workspaceIdentity: observation?.identity || null, workspaceStatus: observation?.changedPaths ? 'known' : 'unknown',
+      changedPaths: observation?.changedPaths || [], discoveryStatus: 'bound-runtime',
+    } });
+  };
   const buildBlockedResponse = ({ runId, reason, detail = null }: { runId: string; reason: string; detail?: unknown }) => ({
     schemaVersion: 1,
     runId,
     status: 'blocked',
     blockedReason: reason,
     blockedDetail: detail,
+    recovery: recoveryForRun(runId, { errorCode: reason }),
     next: buildUnboundNextPayload(runId),
   });
   const reportHintObligationId = (request: ProofRequest | null | undefined, obligations: PersistedRunObligation[] = []) => {
@@ -685,6 +704,7 @@ export const createKernelControlPlane = async ({
       status: 'contract-rejected',
       errorCode,
       failureCode: errorCode,
+      recovery: recoveryForRun(runId, { errorCode, recoverable, blockingClass }),
       errorSummary,
       nextAction,
       canonicalAcceptanceIds,
@@ -1423,6 +1443,7 @@ export const createKernelControlPlane = async ({
         if (run && typeof store.rollbackRunInitialization === 'function') {
           try {
             store.rollbackRunInitialization(runId, { projectId, sourceIdentity: trustedSourceIdentity });
+            reconcileOrphanRunLocators({ runtimeHome, projectRoot, runId });
           } catch (rollbackError) {
             asRecord(error).lifecycleRollback = {
               errorCode: asRecord(rollbackError).code || errorMessage(rollbackError),
@@ -1695,6 +1716,7 @@ export const createKernelControlPlane = async ({
                 projectId: currentProject.projectId,
                 sourceIdentity: createdRun.sourceIdentity,
               });
+              reconcileOrphanRunLocators({ runtimeHome, projectRoot, runId });
             } catch (rollbackError) {
               asRecord(error).lifecycleRollback = {
                 errorCode: asRecord(rollbackError).code || errorMessage(rollbackError),

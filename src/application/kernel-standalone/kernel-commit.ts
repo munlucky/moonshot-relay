@@ -9,18 +9,22 @@ import { extractCodebaseCandidates } from '../../kernel/knowledge-ingestion/cand
 import { commitImportedProjectKnowledge } from '../../kernel/knowledge-ingestion/import.js';
 import { isPathStagable } from '../../kernel/git/staging-policy.js';
 import {
-  createWorkingTreeCommit,
+  createGitCloseoutHost,
   parseGitStatusOutput,
-  pushWorkingTreeCommit,
   readGitStatusEntries,
+  readGitHead,
+  readGitTree,
   type GitStatusEntry,
 } from '../../host/kernel/git/closeout-operations.js';
-import { buildKernelCommitMessage } from '../../kernel/git/commit-message.js';
+import { executeKernelGitCloseout } from '../../kernel/git/closeout.js';
 import { parseCliArgs, printResult, readJson, resolveStandaloneProject, sha256, writeJsonAtomic } from '../../kernel/standalone/common.js';
 import { ensureAccountRootTrack } from '../../kernel/runtime-home.js';
 import { registerWorkspace } from '../../kernel/run/workspace-registration.js';
 import { resolveStableWorkspaceIdentity } from '../../host/kernel/workspace/stable-workspace.js';
 import { observeWorkspaceIdentity } from '../../host/kernel/workspace/workspace-identity.js';
+import { matchPathScope } from '../../shared/path-scope.js';
+import { validateGitCloseoutPath } from '../../kernel/git/staging-policy.js';
+import type { WorkspaceChangeEntry } from '../../contracts/workspace-observation.js';
 import type { WorkRun } from '../../kernel/run/work-authority.js';
 import type {
   CompletionDecisionAuthority,
@@ -28,6 +32,7 @@ import type {
 } from '../../kernel/proof/completion-provenance.js';
 import type { RegisteredWorkspace } from '../../kernel/run/workspace-registration.js';
 import type { StableWorkspaceObservation } from '../../contracts/workspace-observation.js';
+import { diagnoseKernelRecovery } from '../../host/kernel/run/agent-recovery.js';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -46,6 +51,7 @@ interface StandaloneProject extends UnknownRecord {
 }
 
 interface KernelCommitRun extends WorkRun {
+  baselineWorkspaceEntries?: WorkspaceChangeEntry[];
   projectId: string | null;
   workspaceId: string | null;
   worktreeId: string | null;
@@ -91,7 +97,18 @@ interface ValidLineage {
   entries: ValidLineageEntry[];
 }
 
+const lineageApprovedPaths = (stateStore: KernelCommitStateStore, entries: ValidLineageEntry[]): string[] =>
+  uniquePaths(entries.flatMap((entry) => [
+    ...(entry.provenance.changedPaths || []),
+    ...(stateStore.getStepAttempts?.(entry.run.runId) || [])
+      .filter((attempt) => attempt.status === 'passed'
+        && Number(attempt.mutationRevision) > 0
+        && Number(attempt.mutationRevision) <= entry.run.mutationRevision)
+      .flatMap((attempt) => attempt.changedPaths || []),
+  ]));
+
 interface KernelCommitStateStore {
+  getStepAttempts?(runId: string): Array<{ status: string; mutationRevision?: number | null; changedPaths?: string[] | null }>;
   getRun(runId: string): KernelCommitRun | null;
   listRuns(input: { projectId: string; statuses: string[] }): KernelCommitRun[];
   resolveSuccessorLineage?(runId: string): SuccessorLineage;
@@ -139,6 +156,7 @@ interface KernelCloseoutResolution {
 }
 
 interface MutationAdmission {
+  initialPaths: string[];
   run: KernelCommitRun;
   completion: CompletionDecision;
   workspace: RegisteredWorkspace;
@@ -152,6 +170,7 @@ interface MutationAdmission {
 }
 
 interface AdmitKernelMutationInput {
+  initialPaths?: string[];
   stateStore: KernelCommitStateStore;
   project: Pick<StandaloneProject, 'projectId' | 'projectRoot'>;
   statusEntries?: GitStatusEntry[];
@@ -167,6 +186,7 @@ interface ResolveCommitMessageInput {
 }
 
 interface KernelCommitInput {
+  initialPathsFile?: string | null;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   message?: string | null;
@@ -209,6 +229,7 @@ interface KernelCommitReceipt extends UnknownRecord {
 }
 
 interface KernelCommitCliArgs extends UnknownRecord {
+  initialPathsJson?: string;
   _: string[];
   json: boolean;
   message?: string;
@@ -382,7 +403,7 @@ export function resolveKernelCloseoutRun({
       const lineage = validLineage(candidate);
       if (!lineage) return false;
       const provenance = {
-        changedPaths: lineage.entries.flatMap((entry) => entry.provenance.changedPaths || []),
+        changedPaths: lineageApprovedPaths(stateStore, lineage.entries),
         workspaceIdentity: candidate.currentWorkspaceIdentity,
       };
       return matchesCurrentMutationCandidate({
@@ -425,11 +446,14 @@ export function resolveKernelCloseoutRun({
     completion,
     lineage: resolvedLineage.lineage,
     provenance: resolvedLineage.entries.at(-1)?.provenance || null,
-    approvedPaths: uniquePaths(resolvedLineage.entries.flatMap((entry) => entry.provenance.changedPaths || [])),
+    approvedPaths: lineageApprovedPaths(stateStore, resolvedLineage.entries),
   };
 }
 
-export function admitKernelMutation({ stateStore, project, statusEntries = [], selected = [], runId = null, env = process.env }: AdmitKernelMutationInput): MutationAdmission {
+export function admitKernelMutation({ stateStore, project, statusEntries = [], selected = [], runId = null, env = process.env, initialPaths = [] }: AdmitKernelMutationInput): MutationAdmission {
+  if (initialPaths.length > 0 && (!(runId || env.MOON_RELAY_KERNEL_RUN_ID) || readGitHead(project.projectRoot))) {
+    throw admissionError('INITIAL_COMMIT_REQUIRES_UNBORN_EXPLICIT_RUN');
+  }
   const workspaceObservation = resolveStableWorkspaceIdentity({
     projectId: project.projectId,
     workspaceRoot: project.projectRoot,
@@ -462,6 +486,35 @@ export function admitKernelMutation({ stateStore, project, statusEntries = [], s
     throw admissionError('MUTATION_PROVENANCE_MISSING', { runId: run.runId, reason: 'changed_paths_empty' });
   }
   const approvedSet = new Set(approvedPaths);
+  if (initialPaths.length > 0) {
+    const declared = uniquePaths(initialPaths);
+    if (declared.length !== initialPaths.length || JSON.stringify(declared) !== JSON.stringify(selectedPaths)
+      || statusEntries.some((entry) => entry.status !== '??')) {
+      throw admissionError('INITIAL_INVENTORY_MISMATCH');
+    }
+    const allowed = run.taskContract?.allowedPaths;
+    const forbidden = run.taskContract?.forbiddenPaths;
+    if (!Array.isArray(allowed) || allowed.length === 0) throw admissionError('INITIAL_SCOPE_REQUIRED');
+    const baseline = new Map((run.baselineWorkspaceEntries || []).map((entry) => [entry.path, entry]));
+    const observed = new Map(currentObservation.changeEntries.map((entry) => [entry.path, entry]));
+    for (const candidate of declared) {
+      validateGitCloseoutPath(project.projectRoot, candidate);
+      if (!matchPathScope(candidate, allowed.map(String))
+        || (Array.isArray(forbidden) && forbidden.length > 0 && matchPathScope(candidate, forbidden.map(String)))) {
+        throw admissionError('INITIAL_SCOPE_VIOLATION', { path: candidate });
+      }
+      if (approvedSet.has(candidate)) continue;
+      const prior = baseline.get(candidate);
+      const current = observed.get(candidate);
+      if (!prior || !current || prior.digest !== current.digest || prior.statusCode !== '??'
+        || current.statusCode !== '??' || prior.indexDigest !== current.indexDigest) {
+        throw admissionError('INITIAL_BASELINE_NOT_ACCEPTED', { path: candidate });
+      }
+      approvedSet.add(candidate);
+      approvedPaths.push(candidate);
+    }
+    approvedPaths.sort();
+  }
   const foreignPaths = currentPaths.filter((candidate) => !approvedSet.has(candidate));
   const unapprovedSelectedPaths = selectedPaths.filter((candidate) => !approvedSet.has(candidate));
   if (foreignPaths.length > 0 || unapprovedSelectedPaths.length > 0) {
@@ -507,6 +560,7 @@ export function admitKernelMutation({ stateStore, project, statusEntries = [], s
     });
   }
   return {
+    initialPaths: [...initialPaths],
     run,
     completion,
     workspace,
@@ -537,12 +591,31 @@ export async function resolveCommitMessage({ cwd = process.cwd(), message = null
   return text;
 }
 
-export async function kernelCommit({ cwd = process.cwd(), env = process.env, message = null, messageFile = null, push = false, memory = false, memoryReview = false, approvalRef = null, runId = null, approve = false, approver = null, reason = null, approvalReason = null, operatorApprovalRef = null }: KernelCommitInput = {}) {
+export function kernelCommitFailure(error: unknown, { cwd = process.cwd(), env = process.env, runId = null }: {
+  cwd?: string; env?: NodeJS.ProcessEnv; runId?: string | null;
+} = {}) {
+  const failure = error && typeof error === 'object' ? error as { code?: string; message?: string; details?: unknown } : {};
+  const project = resolveStandaloneProject({ cwd, env });
+  const diagnosis = diagnoseKernelRecovery({
+    projectRoot: project.projectRoot, runtimeHome: project.runtimeHome,
+    runId: runId || env.MOON_RELAY_KERNEL_RUN_ID || null,
+    sessionId: env.MOON_RELAY_KERNEL_SESSION_ID || (env.CODEX_THREAD_ID ? `codex:${env.CODEX_THREAD_ID}` : null),
+    failure: { errorCode: failure.code || failure.message || 'unexpected-runtime-condition', details: failure.details }, env,
+  });
+  return { status: 'error', errorCode: failure.code || failure.message || 'unexpected-runtime-condition',
+    details: failure.details || null, recovery: diagnosis.recovery };
+}
+
+export async function kernelCommit({ cwd = process.cwd(), env = process.env, message = null, messageFile = null, push = false, memory = false, memoryReview = false, approvalRef = null, runId = null, approve = false, approver = null, reason = null, approvalReason = null, operatorApprovalRef = null, initialPathsFile = null }: KernelCommitInput = {}) {
   message = await resolveCommitMessage({ cwd, message, messageFile });
   await ensureAccountRootTrack({ startDir: cwd, track: 'kernel', env, source: 'standalone-kernel-commit' });
   const project = resolveStandaloneProject({ cwd, env });
   const statusEntries = readGitStatusEntries(project.projectRoot);
   const { selected, denied } = selectStagingPaths(statusEntries);
+  const initialPaths: unknown = initialPathsFile ? JSON.parse(await readFile(path.resolve(cwd, initialPathsFile), 'utf8')) : [];
+  if (!Array.isArray(initialPaths) || initialPaths.some((entry) => typeof entry !== 'string' || !entry)) {
+    throw admissionError('INITIAL_INVENTORY_INVALID');
+  }
 
   if (approve) {
     const { createKernelControlPlane } = await import('../../host/kernel/control-plane-runtime.js');
@@ -571,7 +644,7 @@ export async function kernelCommit({ cwd = process.cwd(), env = process.env, mes
   const stateStore = await openKernelStateStore({ runtimeHome: project.runtimeHome });
   try {
     const admission = selected.length > 0
-      ? admitKernelMutation({ stateStore, project, statusEntries, selected, runId, env })
+      ? admitKernelMutation({ stateStore, project, statusEntries, selected, runId, env, initialPaths })
       : null;
     const index = await buildCodebaseIndex({ projectRoot: project.projectRoot, projectId: project.projectId, codebaseRoot: project.codebaseRoot, runtimeHome: project.runtimeHome });
     let candidates: KnowledgeCandidate[] = [];
@@ -580,48 +653,54 @@ export async function kernelCommit({ cwd = process.cwd(), env = process.env, mes
       candidates = extractCodebaseCandidates(map || {}, { projectId: project.projectId, sourceDigest: index.manifest?.sourceTreeDigest });
     }
     if (memoryReview && !approvalRef) return { status: 'awaiting_review', projectId: project.projectId, staging: { selected, denied }, candidates, index };
-    if (selected.length === 0) return { status: 'no_op', projectId: project.projectId, staging: { selected, denied }, index, candidates };
-    const commitMessage = buildKernelCommitMessage({
-      message,
-      run: admission?.run,
-      completion: admission?.completion,
-      projectId: project.projectId,
-      selectedPaths: selected,
-      excludedPaths: denied,
-      knowledgeStatus: memory ? (approvalRef ? 'approval-requested' : 'candidate-snapshot') : 'not-requested',
-      closeoutMode: push ? 'commit_and_push' : 'commit',
-    });
-    const commitSubject = commitMessage.split('\n', 1)[0] ?? '';
-    const commitResult = createWorkingTreeCommit({
-      repoRoot: project.projectRoot,
-      selectedPaths: selected,
-      commitMessage,
-    });
-    const beforeHeadSha = commitResult.beforeHeadSha;
-    const commitHash = commitResult.commitSha;
+    if (selected.length === 0 && !push) return { status: 'no_op', projectId: project.projectId, staging: { selected, denied }, index, candidates };
+    const effectiveRunId = admission?.run.runId || runId || env.MOON_RELAY_KERNEL_RUN_ID;
+    if (!effectiveRunId) throw admissionError('RUN_PROVENANCE_REQUIRED');
+    const prior = stateStore.getGitCloseoutReceipt(effectiveRunId);
+    const gitHost = createGitCloseoutHost();
+    const existingCommitSha = selected.length === 0 ? prior?.commitSha || null : null;
+    if (selected.length === 0 && (!existingCommitSha || prior?.projectId !== project.projectId
+      || !gitHost.isAuthorizedCloseoutWorkspace({ repoRoot: project.projectRoot, commitSha: existingCommitSha }))) {
+      throw admissionError('GIT_CLOSEOUT_RECEIPT_REQUIRED');
+    }
+    const mutationAdmission: UnknownRecord | null = admission ? {
+      runId: admission.run.runId, workspaceId: admission.workspace.workspaceId,
+      sourceIdentity: admission.sourceIdentity, mutationRevision: admission.mutationRevision,
+      workspaceIdentityBeforeCommit: admission.workspaceIdentity, approvedPaths: admission.approvedPaths,
+      initialPaths: admission.initialPaths, mutationDigest: admission.mutationDigest,
+      provenanceAttemptId: admission.provenance.attemptId || null,
+    } : (prior?.receiptJson?.mutationAdmission as UnknownRecord | null) || null;
+    let closeout: UnknownRecord;
+    const beforeHeadSha = existingCommitSha ? prior?.beforeHeadSha || null : readGitHead(project.projectRoot);
+    try {
+      closeout = await executeKernelGitCloseout({
+        runId: effectiveRunId, projectId: project.projectId, stateStore,
+        repoRoot: project.projectRoot, changedFiles: selected,
+        observeWorkspaceIdentity, gitCloseoutHost: gitHost,
+        gitCloseoutRequest: {
+          requested: true, mode: push ? 'commit_and_push' : 'commit',
+          approvalReceipt: admission?.mutationDigest || `kernel-commit:${effectiveRunId}:receipted-push`,
+          message, existingCommitSha, mutationAdmission,
+          reportKey: admission?.mutationDigest || prior?.receiptJson?.reportKey || null,
+          verifiedWorkspaceIdentity: admission?.workspaceIdentity || prior?.receiptJson?.verifiedWorkspaceIdentity || null,
+        },
+      });
+    } catch (error) {
+      // Shared closeout persists the commit checkpoint before attempting push.
+      // Keep its failure visible so the next native invocation can resume it.
+      const failed = stateStore.getGitCloseoutReceipt(effectiveRunId);
+      if (failed?.commitSha) await writeJsonAtomic(path.join(project.receiptsRoot, 'commits', `${failed.commitSha}.json`), failed.receiptJson);
+      throw error;
+    }
+    const commitHash = String(closeout.commitSha);
+    const commitMessage = String(closeout.commitMessage || prior?.receiptJson?.commitMessage || '');
+    const commitSubject = commitMessage.split('\n', 1)[0] || '';
     const receipt: KernelCommitReceipt = {
-      schemaVersion: 2,
-      authority: 'kernel-closeout-only',
-      projectId: project.projectId,
-      branch: commitResult.branch,
-      commitHash,
-      commitSubject,
-      commitMessage,
-      selectedPaths: selected,
-      deniedPaths: denied,
-      treeDigest: commitResult.treeDigest,
-      knowledgeStatus: 'staged',
-      closeoutStatus: 'partial',
-      mutationAdmission: admission ? {
-        runId: admission.run.runId,
-        workspaceId: admission.workspace.workspaceId,
-        sourceIdentity: admission.sourceIdentity,
-        mutationRevision: admission.mutationRevision,
-        workspaceIdentityBeforeCommit: admission.workspaceIdentity,
-        approvedPaths: admission.approvedPaths,
-        mutationDigest: admission.mutationDigest,
-        provenanceAttemptId: admission.provenance.attemptId || null,
-      } : null,
+      ...closeout, schemaVersion: 2, authority: 'kernel-closeout-only', projectId: project.projectId,
+      branch: String(closeout.branch), commitHash, commitSubject, commitMessage,
+      selectedPaths: selected.length > 0 ? selected : prior?.selectedPaths || [], deniedPaths: denied,
+      treeDigest: readGitTree(project.projectRoot),
+      knowledgeStatus: 'not-requested', closeoutStatus: 'completed', mutationAdmission,
       createdAt: new Date().toISOString(),
     };
     if (memory && candidates.length > 0) {
@@ -639,34 +718,12 @@ export async function kernelCommit({ cwd = process.cwd(), env = process.env, mes
     }
     const receiptPath = path.join(project.receiptsRoot, 'commits', `${commitHash}.json`);
     await writeJsonAtomic(receiptPath, receipt);
-    if (push) {
-      const pushResult = pushWorkingTreeCommit({
-        repoRoot: project.projectRoot,
-        commitSha: commitHash,
-        branch: receipt.branch || commitResult.branch,
-      });
-      if (pushResult.parity === 'not_checked') {
-        throw new Error(`git_failed: push: ${pushResult.stderr.trim()}`);
-      }
-      receipt.pushStatus = pushResult.status === 'completed' ? 'completed' : 'parity_failed';
-      receipt.remoteHead = pushResult.remoteHeadSha;
-      if (receipt.pushStatus !== 'completed') throw new Error('REMOTE_PARITY_FAILED');
-      await writeJsonAtomic(receiptPath, receipt);
-    }
-    if (admission) {
-      stateStore.recordGitCloseoutReceipt(admission.run.runId, {
-        projectId: project.projectId,
-        mode: 'kernel-commit',
-        commitSha: commitHash,
-        branch: receipt.branch,
-        pushStatus: push ? receipt.pushStatus : 'skipped',
-        parity: push ? 'remote' : 'local',
-        status: 'completed',
-        beforeHeadSha,
-        selectedPaths: selected,
-        receiptJson: receipt,
-      });
-    }
+    stateStore.recordGitCloseoutReceipt(effectiveRunId, {
+      projectId: project.projectId, mode: push ? 'commit_and_push' : 'commit',
+      commitSha: commitHash, branch: receipt.branch, pushStatus: push ? 'completed' : 'skipped',
+      parity: push ? 'matched' : 'not_requested', status: 'completed',
+      beforeHeadSha, selectedPaths: receipt.selectedPaths, receiptJson: receipt,
+    });
     return { status: 'committed', projectId: project.projectId, commitHash, commitSubject, commitMessage, receipt, staging: { selected, denied }, index };
   } finally { await stateStore.close(); }
 }
@@ -674,6 +731,7 @@ export async function kernelCommit({ cwd = process.cwd(), env = process.env, mes
 if (isDirectEntrypoint(import.meta.url)) {
   const args = parseCliArgs(process.argv.slice(2));
   kernelCommit({
+    initialPathsFile: typeof args.initialPathsJson === 'string' ? args.initialPathsJson : null,
     message: typeof args.message === 'string' ? args.message : null,
     messageFile: typeof args.messageFile === 'string' ? args.messageFile : null,
     push: args.push === true,
@@ -685,5 +743,8 @@ if (isDirectEntrypoint(import.meta.url)) {
     approver: typeof args.approver === 'string' ? args.approver : null,
     reason: typeof args.reason === 'string' ? args.reason : typeof args.approvalReason === 'string' ? args.approvalReason : null,
     operatorApprovalRef: (typeof args.operatorApprovalRef === 'string' ? args.operatorApprovalRef : null) || process.env.MOON_RELAY_KERNEL_OPERATOR_APPROVAL_REF || null,
-  }).then((result) => printResult(result, { json: args.json })).catch((error) => { printResult({ status: 'error', errorCode: error.code || error.message }, { json: true }); process.exitCode = 1; });
+  }).then((result) => printResult(result, { json: args.json })).catch((error: unknown) => {
+    printResult(kernelCommitFailure(error, { runId: typeof args.runId === 'string' ? args.runId : null }), { json: true });
+    process.exitCode = 1;
+  });
 }

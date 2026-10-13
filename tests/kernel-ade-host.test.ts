@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
+import { canonicalPath } from '../src/kernel/runtime-home.js';
 import { loadLegacyStringArray, loadLegacyRecord, loadLegacyRecordFunction } from './helpers/legacy-module-boundary.js';
 const SURFACES = await loadLegacyStringArray('scripts/switcher/constants.mjs', 'SURFACES');
 const SURFACE_ENV = await loadLegacyRecord('scripts/switcher/constants.mjs', 'SURFACE_ENV');
@@ -57,7 +58,7 @@ test('ADE is a first-class native surface with ADE-owned home, executable, and s
     kernelHome: '/tmp/kernel-home',
     baseEnv,
   });
-  assert.equal(assertTestString(roots.providerHome).replaceAll('\\', '/'), path.resolve(baseEnv.ADE_HOME).replaceAll('\\', '/'));
+  assert.equal(assertTestString(roots.providerHome).replaceAll('\\', '/'), canonicalPath(baseEnv.ADE_HOME).replaceAll('\\', '/'));
 
   const provider = nativeProviderDescriptor({ surface: 'ade_cli', runtimeHome: roots.runtimeHome, env: baseEnv });
   assert.equal(provider.provider, 'ade');

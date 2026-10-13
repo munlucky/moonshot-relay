@@ -1,8 +1,9 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadStandaloneCatalog, standaloneEntry } from '../../kernel/standalone/catalog.js';
-import { parseCliArgs } from '../../kernel/standalone/common.js';
+import { parseCliArgs, resolveStandaloneProject } from '../../kernel/standalone/common.js';
 import { observeWorkspaceIdentity } from '../../host/kernel/workspace/workspace-identity.js';
+import { diagnoseKernelRecovery } from '../../host/kernel/run/agent-recovery.js';
 
 type CliArgValue = string | boolean | undefined;
 
@@ -14,6 +15,7 @@ interface StandaloneCliArgs extends Record<string, unknown> {
   force?: CliArgValue;
   message?: CliArgValue;
   messageFile?: CliArgValue;
+  initialPathsJson?: CliArgValue;
   push?: CliArgValue;
   memory?: CliArgValue;
   memoryReview?: CliArgValue;
@@ -95,7 +97,8 @@ export async function runStandaloneCliApplication(
   }
 
   const args = parseCliArgs(argv) as StandaloneCliArgs;
-  const result = await (exported as StandaloneImplementation)({
+  let result: unknown;
+  try { result = await (exported as StandaloneImplementation)({
     cwd,
     env,
     command: args._[0] || 'status',
@@ -104,6 +107,7 @@ export async function runStandaloneCliApplication(
     force: args.force === true,
     message: args.message || null,
     messageFile: args.messageFile ?? null,
+    initialPathsFile: args.initialPathsJson ?? null,
     push: args.push === true,
     memory: args.memory === true,
     memoryReview: args.memoryReview === true,
@@ -120,7 +124,17 @@ export async function runStandaloneCliApplication(
       || env.MOON_RELAY_KERNEL_OPERATOR_APPROVAL_REF
       || null,
     observeWorkspaceIdentity,
-  });
+  }); } catch (error: unknown) {
+    const failure = asRecord(error);
+    try {
+      const project = resolveStandaloneProject({ cwd, env });
+      failure.recovery = diagnoseKernelRecovery({ projectRoot: project.projectRoot, runtimeHome: project.runtimeHome,
+        runId: typeof args.runId === 'string' ? args.runId : env.MOON_RELAY_KERNEL_RUN_ID || null,
+        sessionId: env.MOON_RELAY_KERNEL_SESSION_ID || (env.CODEX_THREAD_ID ? `codex:${env.CODEX_THREAD_ID}` : null),
+        failure, env }).recovery;
+    } catch { /* Preserve the original failure when the project cannot be resolved. */ }
+    throw error;
+  }
 
   return {
     ...asRecord(result),

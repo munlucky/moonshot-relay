@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { atomicWriteText } from '../durable-write.js';
+import { currentStep, type RunStep } from './run-step-ledger.js';
 import {
   KERNEL_DEFAULT_HOME,
   canonicalPath,
@@ -14,6 +15,7 @@ type UnknownRecord = Record<string, unknown>;
 
 interface ReadonlyStatement {
   get(...params: unknown[]): UnknownRecord | undefined;
+  all(...params: unknown[]): UnknownRecord[];
 }
 
 interface ReadonlyRuntimeDb {
@@ -30,6 +32,7 @@ interface BetterSqlite3Constructor {
   ): {
     prepare(sql: string): {
       get(...params: unknown[]): unknown;
+      all(...params: unknown[]): unknown[];
     };
     close(): void;
   };
@@ -103,7 +106,7 @@ const optionalString = (value: unknown): string | null => (
 );
 
 const adaptReadonlyDb = (db: {
-  prepare(sql: string): { get(...params: unknown[]): unknown };
+  prepare(sql: string): { get(...params: unknown[]): unknown; all(...params: unknown[]): unknown[] };
   close(): void;
 }): ReadonlyRuntimeDb => ({
   prepare(sql: string): ReadonlyStatement {
@@ -112,6 +115,9 @@ const adaptReadonlyDb = (db: {
       get(...params: unknown[]): UnknownRecord | undefined {
         const value = statement.get(...params);
         return recordOf(value) || undefined;
+      },
+      all(...params: unknown[]): UnknownRecord[] {
+        return statement.all(...params).map(recordOf).filter((value): value is UnknownRecord => value !== null);
       },
     };
   },
@@ -492,6 +498,67 @@ export const validateRunLocatorRuntime = (
       // Read-only validation is fail-soft; close errors cannot authorize a Run.
     }
   }
+};
+
+// Observe durable authority without schema migration, lease acquisition or
+// creating a replacement database. Recovery remains available when bootstrap
+// itself fails, and an unreadable store never grants a repair scope.
+export const readRunRecoveryState = ({ runtimeHome, runId }: { runtimeHome: string; runId: string | null }) => {
+  const dbPath = runtimeStateDbPath(runtimeHome);
+  if (!runId || !fs.existsSync(dbPath) || !openReadonlyRuntimeDb) return null;
+  let db: ReadonlyRuntimeDb | null = null;
+  try {
+    db = openReadonlyRuntimeDb(dbPath);
+    const run = db.prepare(`SELECT run_id AS runId, project_id AS projectId,
+      worktree_id AS worktreeId, owner_binding_id AS ownerBindingId,
+      contract_revision AS contractRevision, plan_revision AS planRevision,
+      mutation_revision AS mutationRevision, status, current_workspace_identity AS workspaceIdentity
+      FROM runs WHERE run_id = ?`).get(runId);
+    if (!run) return null;
+    const owner = db.prepare(`SELECT session_id AS sessionId, status, access_mode AS accessMode,
+      expires_at AS expiresAt FROM session_bindings WHERE binding_id = ? AND run_id = ?`).get(run.ownerBindingId, runId);
+    const lease = db.prepare(`SELECT holder_run_id AS holderRunId, project_id AS projectId
+      FROM worktree_mutation_leases WHERE worktree_id = ?`).get(run.worktreeId);
+    const rows = db.prepare(`SELECT step_id AS stepId, sequence, plan_revision AS planRevision,
+      state, dependency_ids_json AS dependencyIds, allowed_paths_json AS allowedPaths,
+      forbidden_paths_json AS forbiddenPaths FROM run_steps WHERE run_id = ? ORDER BY sequence`).all(runId);
+    const steps = rows.map((row) => ({ ...row,
+      dependencyIds: JSON.parse(String(row.dependencyIds || '[]')),
+      allowedPaths: JSON.parse(String(row.allowedPaths || '[]')),
+      forbiddenPaths: JSON.parse(String(row.forbiddenPaths || '[]')),
+    })) as RunStep[];
+    // Read the same native work cursor as next, including ready work and dependencies.
+    const step = currentStep(steps, { planRevision: Number(run.planRevision) });
+    return { run, owner, step, lease };
+  } finally {
+    db?.close();
+  }
+};
+
+// Only disposable references proven absent from a readable authoritative DB
+// may be quarantined. Corrupt/missing DBs, mismatched bindings and live Runs
+// are never repaired by guessing or deleting durable history.
+export const reconcileOrphanRunLocators = ({ runtimeHome, projectRoot, runId = null }: {
+  runtimeHome: string; projectRoot: string; runId?: string | null;
+}) => {
+  const quarantined: string[] = [];
+  for (const locator of listRunLocators({ runtimeHome })) {
+    if (!samePath(locator.runtimeHome, canonicalPath(runtimeHome)) || !samePath(locator.canonicalRoot, canonicalPath(projectRoot))
+      || (runId && locator.runId !== runId)) continue;
+    const validation = validateRunLocatorRuntime(locator);
+    if (validation.status !== 'stale' || validation.reason !== 'run-not-found') continue;
+    const source = runLocatorPath({ runtimeHome, runId: locator.runId });
+    const fresh = readLocatorFile(source);
+    if (!fresh || JSON.stringify(fresh) !== JSON.stringify(locator)) continue;
+    const checked = validateRunLocatorRuntime(fresh);
+    if (checked.status !== 'stale' || checked.reason !== 'run-not-found') continue;
+    const quarantine = path.join(runLocatorRoot(runtimeHome), 'quarantine');
+    fs.mkdirSync(quarantine, { recursive: true });
+    const identity = createHash('sha256').update(JSON.stringify(fresh)).digest('hex');
+    fs.renameSync(source, path.join(quarantine, `${fileNameForRun(locator.runId)}.${identity}`));
+    quarantined.push(locator.runId);
+  }
+  return { status: 'reconciled', quarantined };
 };
 
 // Runtime discovery is intentionally a locator operation, not a state

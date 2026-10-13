@@ -12,6 +12,7 @@ import { createOpaqueRunId } from '../../kernel/run/run-identity.js';
 import { projectKernelModelView } from '../../kernel/run/model-view.js';
 import { resolveStableWorkspaceIdentity } from '../../host/kernel/workspace/stable-workspace.js';
 import { resolveKernelWorktreeIdentity } from '../../host/kernel/workspace/worktree-resolution.js';
+import { diagnoseKernelRecovery } from './recovery.js';
 const asRecord = (value) => (value && typeof value === 'object' && !Array.isArray(value)
     ? value
     : {});
@@ -41,7 +42,7 @@ export async function runKernelCliApplication(argv = [], options = {}) {
         const help = {
             usage: 'kernel <command> [options]',
             commands: {
-                next: 'kernel next [run-id] [--contract-json <file>] [--project-root <path>] [--json] [--verbose]',
+                next: 'kernel next [run-id] [--contract-json <file>] [--diagnose [--failure-json <file>] [--previous-recovery-json <file>] [--reconcile-derived-state]] [--project-root <path>] [--json] [--verbose]',
                 report: 'kernel report [run-id] --report-json <file> [--project-root <path>] [--json] [--verbose]',
                 approve: 'kernel approve [run-id] [--obligation <id>] [--reason <text>] [--approver <name>] [--approval-ref <host-ref>] [--all-judgments] [--json]',
                 status: 'kernel status --run-id <id> [--json]',
@@ -61,6 +62,7 @@ export async function runKernelCliApplication(argv = [], options = {}) {
                 'Common binding flags: --project-root <path>, --runtime-home <path>, --session-id <id>, --provider <name>.',
                 'next/report default to a compact model view. --verbose returns full diagnostic snapshots.',
                 'Help exits before runtime binding, lease acquisition, report submission, or verification.',
+                'Unexpected condition: next --diagnose observes authority without acquiring a lease. Repair within next scope, then resume next/report with fresh proof.',
             ],
         };
         if (json)
@@ -114,6 +116,7 @@ export async function runKernelCliApplication(argv = [], options = {}) {
     // the control plane will safely issue a fresh Run instead of making an uncertain binding.
     const hasContractInput = Boolean(getArgValue('--contract-json') || getArgValue('--objective-json'));
     const locatorDiscoveryFailureAllowed = !['doctor', 'version', '--version', 'context'].includes(command)
+        && !(command === 'next' && args.includes('--diagnose'))
         && !(command === 'next' && hasContractInput && !explicitRunId);
     const isLocatorUnresolved = ['ambiguous', 'stale'].includes(locatorDiscovery.status);
     const runtimeBindingDiscoveryError = isLocatorUnresolved
@@ -225,7 +228,10 @@ export async function runKernelCliApplication(argv = [], options = {}) {
             details: { bindings: [{ source: 'cli', runId: explicitRunId }, { source: 'environment', runId: envRunId }] },
         })
         : null;
-    const inferredRunId = explicitRunId || envRunId || discoveredRunId || null;
+    // Discovery is an address, not a caller's explicit recovery target. A new
+    // task must not inherit an automatically discovered predecessor as envRunId.
+    const startingNewTask = command === 'next' && getArgValue('--invocation-intent') === 'new-task';
+    const inferredRunId = explicitRunId || envRunId || (startingNewTask ? null : discoveredRunId) || null;
     const kernelEnv = sessionId || inferredRunId
         ? {
             ...env,
@@ -250,12 +256,34 @@ export async function runKernelCliApplication(argv = [], options = {}) {
         });
     };
     const output = (rawValue) => {
+        const payload = asRecord(rawValue);
+        const failureStatuses = ['error', 'blocked', 'contract-rejected', 'evidence-rejected'];
+        let enriched = rawValue;
+        if (['next', 'report'].includes(command) && asRecord(payload.recovery).kind !== 'agent-recovery' && failureStatuses.includes(String(payload.status))) {
+            try {
+                enriched = { ...payload, ...(payload.recovery ? { bindingRecovery: payload.recovery } : {}), recovery: diagnoseKernelRecovery({ projectRoot, runtimeHome: effectiveRuntimeHome || resolveKernelRuntimeHome({ env }),
+                        runId: String(payload.runId || inferredRunId || '') || null, sessionId, failure: payload, env }).recovery };
+            }
+            catch { /* Original rejection remains authoritative when observation fails. */ }
+        }
         const value = ['next', 'report'].includes(command)
-            ? projectKernelModelView(asRecord(rawValue), { verbose: args.includes('--verbose') })
-            : rawValue;
+            ? projectKernelModelView(asRecord(enriched), { verbose: args.includes('--verbose') }) : enriched;
         emitOutput(json ? JSON.stringify(value) : value !== null && typeof value === 'object' ? Object.entries(value).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join('\n') : String(value));
     };
     try {
+        if (command === 'next' && args.includes('--diagnose')) {
+            if (args.includes('--reconcile-derived-state'))
+                await assertKernelTrack();
+            const failureFile = getArgValue('--failure-json');
+            const previousFile = getArgValue('--previous-recovery-json');
+            const previousPayload = previousFile ? await readJsonObjectFile(previousFile, 'previous-recovery-json') : null;
+            output(diagnoseKernelRecovery({ projectRoot, runtimeHome: effectiveRuntimeHome || resolveKernelRuntimeHome({ env }),
+                runId: explicitRunId || envRunId, sessionId: hostSessionResolutionError ? null : sessionId,
+                failure: failureFile ? await readJsonObjectFile(failureFile, 'failure-json') : runtimeBindingDiscoveryError,
+                previous: previousPayload?.recovery || previousPayload,
+                reconcile: args.includes('--reconcile-derived-state'), env }));
+            return { exitCode: 0 };
+        }
         if (runtimeBindingDiscoveryError)
             throw runtimeBindingDiscoveryError;
         if (hostSessionResolutionError)
@@ -502,7 +530,7 @@ export async function runKernelCliApplication(argv = [], options = {}) {
             const targetRoot = getArgValue('--target-root') || cwd;
             const sourceRoot = getArgValue('--source-root') || cwd;
             output(await (args.includes('--account-root')
-                ? installKernelAccountRoot({ runtime, targetRoot, sourceRoot, runtimeHome: getArgValue('--runtime-home') || undefined, force: args.includes('--sync') })
+                ? installKernelAccountRoot({ runtime, targetRoot, sourceRoot, runtimeHome: getArgValue('--runtime-home') || undefined, force: args.includes('--sync'), preserveUnmanagedSkills: args.includes('--preserve-unmanaged-skills') })
                 : installKernelProfile({ runtime, targetRoot, sourceRoot, skillsRoot: getArgValue('--skills-root'), runtimeHome: getArgValue('--runtime-home') || undefined, force: args.includes('--sync') })));
         }
         else if (command === 'profile-doctor') {
@@ -853,6 +881,13 @@ export async function runKernelCliApplication(argv = [], options = {}) {
                 .filter((key) => failure[key] !== undefined)
                 .map((key) => [key, failure[key]])),
         };
+        let recovery = null;
+        try {
+            recovery = diagnoseKernelRecovery({ projectRoot, runtimeHome: effectiveRuntimeHome || resolveKernelRuntimeHome({ env }),
+                runId: String(failure.runId || inferredRunId || '') || null, sessionId,
+                failure: { ...failure, ...details, errorCode }, env }).recovery;
+        }
+        catch { /* Never replace the primary failure with a secondary observer error. */ }
         emitError(json ? JSON.stringify({
             schemaVersion: 1,
             status: 'error',
@@ -861,6 +896,7 @@ export async function runKernelCliApplication(argv = [], options = {}) {
             ...(failure.nextAction ? { nextAction: failure.nextAction } : {}),
             ...(failure.runId ? { runId: failure.runId } : {}),
             ...(Object.keys(diagnostics).length ? { diagnostics } : {}),
+            ...(recovery ? { recovery } : {}),
         }) : message);
         exitCode = 1;
     }

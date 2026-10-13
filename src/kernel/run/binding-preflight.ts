@@ -91,7 +91,7 @@ export const recoveryForKernelError = ({
   ].includes(String(code || ''))) {
     return {
       action: 'reopen-from-correct-worktree',
-      command: `moon-harness-switcher launch --track kernel --surface ${surface} --project-root ${shellQuote(projectRoot)} --execute`,
+      command: `kernel next --diagnose --project-root ${shellQuote(projectRoot)} --provider ${surface} --json`,
     };
   }
   return null;

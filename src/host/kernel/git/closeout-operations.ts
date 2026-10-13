@@ -2,9 +2,10 @@ import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { rm } from 'node:fs/promises';
-import { gitCurrentBranch, runGit } from '../../../shared/git-safe.js';
+import { runGit } from '../../../shared/git-safe.js';
 import { stageSelectedPaths } from './staging.js';
 import { verifyRemoteParity } from './remote-parity.js';
+import { validateGitCloseoutPath } from '../../../kernel/git/staging-policy.js';
 
 type ErrorDetails = Record<string, unknown>;
 
@@ -13,6 +14,11 @@ const hostGitError = (
   message: string,
   details: ErrorDetails = {},
 ) => Object.assign(new Error(message), { code, details });
+
+const gitCurrentBranch = (repoRoot: string): string => {
+  const result = runGit(repoRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  return result.status === 0 ? String(result.stdout || '').trim() : '';
+};
 
 export interface GitCloseoutWorkspaceObservation {
   branch: string;
@@ -38,10 +44,7 @@ export const inspectGitCloseoutWorkspace = ({
   const statusText = status.status === 0 ? String(status.stdout || '') : null;
   const changedPaths = statusText === null
     ? null
-    : statusText
-      .split(/\r?\n/)
-      .map((line) => line.slice(3).trim())
-      .filter(Boolean);
+    : readGitStatusEntries(repoRoot).map((entry) => entry.path);
 
   return {
     branch,
@@ -96,6 +99,7 @@ export async function createGitCloseoutCommit({
       'Git closeout requires an active branch, found detached HEAD',
     );
   }
+  for (const candidate of selectedPaths) validateGitCloseoutPath(repoRoot, candidate);
 
   const operationDigest = createHash('sha256')
     .update(String(operationId))
@@ -158,8 +162,8 @@ export async function createGitCloseoutCommit({
       );
     }
 
-    const updateRefArgs = ['update-ref', `refs/heads/${branch}`, commitSha];
-    if (expectedHeadSha) updateRefArgs.push(expectedHeadSha);
+    const updateRefArgs = ['update-ref', `refs/heads/${branch}`, commitSha,
+      expectedHeadSha || '0'.repeat(commitSha.length)];
     const updateRef = runGit(repoRoot, updateRefArgs);
     if (updateRef.status !== 0) {
       throw hostGitError(
@@ -210,14 +214,8 @@ export const pushGitCloseoutCommit = ({
   branch?: string | null;
   remote?: string;
 } = {}): GitPushResult => {
-  const result = runGit(
-    repoRoot,
-    ['push', remote, `${String(commitSha || '')}:refs/heads/${String(branch || '')}`],
-  );
-  return {
-    status: result.status === 0 ? 'completed' : 'failed',
-    stderr: String(result.stderr || ''),
-  };
+  const result = pushWorkingTreeCommit({ repoRoot, commitSha: String(commitSha || ''), branch: String(branch || ''), remote });
+  return { status: result.status, stderr: result.stderr };
 };
 
 export interface GitStatusEntry {
@@ -261,9 +259,32 @@ export const parseGitStatusOutput = (
 export const readGitStatusEntries = (
   repoRoot: string,
 ): GitStatusEntry[] => {
-  const result = runGitChecked(repoRoot, ['status', '--porcelain=v1']);
-  return parseGitStatusOutput(String(result.stdout || ''));
+  const result = runGitChecked(repoRoot, ['status', '--porcelain=v1', '-z', '--untracked-files=all']);
+  const records = String(result.stdout || '').split('\0').filter(Boolean);
+  const entries: GitStatusEntry[] = [];
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index]!;
+    const status = record.slice(0, 2);
+    entries.push({ status, path: record.slice(3) });
+    if (/[RC]/u.test(status) && records[index + 1]) {
+      entries.push({ status, path: records[++index]! });
+    }
+  }
+  return entries;
 };
+
+export const readGitHead = (repoRoot: string): string => {
+  const head = runGit(repoRoot, ['rev-parse', '--verify', 'HEAD']);
+  if (head.status === 0) return String(head.stdout || '').trim();
+  // Only a valid symbolic branch with no commit is an unborn HEAD.
+  runGitChecked(repoRoot, ['symbolic-ref', '--quiet', 'HEAD']);
+  const ref = runGit(repoRoot, ['show-ref', '--verify', '--quiet', `refs/heads/${gitCurrentBranch(repoRoot)}`]);
+  if (ref.status !== 1) throw hostGitError('GIT_HEAD_UNAVAILABLE', 'Cannot resolve Git HEAD');
+  return '';
+};
+
+export const readGitTree = (repoRoot: string): string =>
+  String(runGitChecked(repoRoot, ['rev-parse', 'HEAD^{tree}']).stdout || '').trim();
 
 export interface WorkingTreeCommitResult {
   beforeHeadSha: string;
@@ -272,7 +293,7 @@ export interface WorkingTreeCommitResult {
   treeDigest: string;
 }
 
-export const createWorkingTreeCommit = ({
+export const createWorkingTreeCommit = async ({
   repoRoot,
   selectedPaths,
   commitMessage,
@@ -280,20 +301,16 @@ export const createWorkingTreeCommit = ({
   repoRoot: string;
   selectedPaths: readonly string[];
   commitMessage: string;
-}): WorkingTreeCommitResult => {
-  const beforeHeadSha = String(
-    runGitChecked(repoRoot, ['rev-parse', 'HEAD']).stdout || '',
-  ).trim();
-  stageSelectedPaths({
-    repoRoot,
-    paths: selectedPaths,
-    git: runGit,
-  });
-  runGitChecked(repoRoot, ['commit', '-m', commitMessage]);
-  const commitSha = String(
-    runGitChecked(repoRoot, ['rev-parse', 'HEAD']).stdout || '',
-  ).trim();
+}): Promise<WorkingTreeCommitResult> => {
+  if (runGit(repoRoot, ['diff', '--cached', '--quiet']).status !== 0) {
+    throw hostGitError('GIT_PREEXISTING_STAGED_CHANGES', 'Preserve the existing user index before Kernel closeout');
+  }
+  const beforeHeadSha = readGitHead(repoRoot);
   const branch = gitCurrentBranch(repoRoot);
+  const { commitSha } = await createGitCloseoutCommit({
+    repoRoot, operationId: 'standalone-closeout', selectedPaths, commitMessage,
+    branch, expectedHeadSha: beforeHeadSha,
+  });
   const treeDigest = String(
     runGitChecked(repoRoot, ['rev-parse', 'HEAD^{tree}']).stdout || '',
   ).trim();
@@ -323,7 +340,10 @@ export const pushWorkingTreeCommit = ({
   branch: string;
   remote?: string;
 }): WorkingTreePushResult => {
-  const push = runGit(repoRoot, ['push']);
+  if (readGitHead(repoRoot) !== commitSha || gitCurrentBranch(repoRoot) !== branch) {
+    throw hostGitError('GIT_PUSH_HEAD_MISMATCH', 'Push must target the receipted current branch and commit');
+  }
+  const push = runGit(repoRoot, ['push', '--set-upstream', remote, `${branch}:refs/heads/${branch}`]);
   if (push.error || push.status !== 0) {
     return {
       status: 'failed',

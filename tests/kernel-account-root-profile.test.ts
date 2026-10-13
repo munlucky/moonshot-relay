@@ -9,6 +9,39 @@ import { doctorKernelProfile } from '../src/kernel/profile-doctor.js';
 
 const digest = async (file: string) => createHash('sha256').update(await readFile(file)).digest('hex');
 
+test('explicit preservation leaves unmanaged skills outside Kernel ownership and survives refresh', async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'kernel-account-preserve-'));
+  const targetRoot = path.join(home, '.codex');
+  const runtimeHome = path.join(home, '.moon-relay-kernel');
+  const sourceRoot = process.cwd();
+  const custom = path.join(targetRoot, 'skills', 'codebase-master-guide', 'SKILL.md');
+  try {
+    await mkdir(path.dirname(custom), { recursive: true });
+    await writeFile(custom, '# User-owned guide\n');
+    const original = await digest(custom);
+    const rejected = await installKernelAccountRoot({ sourceRoot, targetRoot, runtimeHome, force: true });
+    assert.equal(rejected.status, 'collision');
+    assert.equal(await digest(custom), original);
+    const installed = await installKernelAccountRoot({ sourceRoot, targetRoot, runtimeHome, preserveUnmanagedSkills: true });
+    assert.equal(installed.status, 'installed');
+    assert.ok(installed.manifestPath);
+    assert.deepEqual(installed.preservedUnmanagedSkills, ['codebase-master-guide']);
+    assert.equal(await digest(custom), original);
+    const manifest = JSON.parse(await readFile(installed.manifestPath, 'utf8'));
+    assert.ok(manifest.files.every((entry: { path: string }) => !entry.path.startsWith('skills/codebase-master-guide/')));
+    assert.equal(await digest(path.join(targetRoot, 'skills', 'moon-relay-kernel', 'SKILL.md')), await digest(path.join(sourceRoot, 'skills', 'moon-relay-kernel', 'SKILL.md')));
+    assert.equal((await doctorKernelProfile({ targetRoot, runtime: 'codex' })).status, 'ready');
+    assert.equal((await installKernelAccountRoot({ sourceRoot, targetRoot, runtimeHome })).status, 'already_current');
+    assert.equal((await installKernelAccountRoot({ sourceRoot, targetRoot, runtimeHome, force: true })).status, 'reinstalled');
+    assert.equal(await digest(custom), original);
+    const owned = path.join(targetRoot, 'skills', 'kernel-commit', 'SKILL.md');
+    await writeFile(owned, '# Drifted managed skill\n');
+    assert.equal((await installKernelAccountRoot({ sourceRoot, targetRoot, runtimeHome, preserveUnmanagedSkills: true })).status, 'collision');
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test('Kernel account-root profile replaces Relay command skills and preserves user data', async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), 'kernel-account-root-profile-'));
   const targetRoot = path.join(home, '.codex');

@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { lstatSync, readFileSync } from 'node:fs';
 
 export const HARD_DENY_PATTERNS: readonly RegExp[] = [
   /\.git\//i,
@@ -8,12 +9,39 @@ export const HARD_DENY_PATTERNS: readonly RegExp[] = [
   /\.claude\/cache\/memorygraph(\/|$)/i,
   /\.codex\/state/i,
   /\.qwen\//i,
-  /\.env.*/i,
+  /(^|\/)\.env(?!\.example$).*/i,
   /\.sqlite(-wal|-shm)?$/i,
   /\.moon-relay-kernel\//i,
   /(^|\/)\.agents(\/|$)/i,
   /(^|\/)\.mcp\.json$/i,
 ];
+
+// A checked-in template is configuration documentation, but its contents must
+// still be checked at the shared staging boundary in every closeout path.
+export function assertStagingContentSafe(repoRoot: string, filePath: string): void {
+  if (path.posix.basename(filePath.replace(/\\/gu, '/')).toLowerCase() !== '.env.example') return;
+  const absolute = path.resolve(repoRoot, filePath);
+  const stat = lstatSync(absolute, { throwIfNoEntry: false });
+  if (!stat) return; // Tracked template deletion has no content to disclose.
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 64 * 1024) {
+    throw new Error('GIT_ENV_TEMPLATE_INVALID');
+  }
+  const text = readFileSync(absolute, 'utf8');
+  if (text.includes('\0') || /(?:gh[pousr]_[A-Za-z0-9]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{25,}|-----BEGIN .*PRIVATE KEY-----)/u.test(text)) {
+    throw new Error('GIT_ENV_TEMPLATE_SECRET');
+  }
+  for (const line of text.split(/\r?\n/u)) {
+    if (!line.trim() || line.trim().startsWith('#')) continue;
+    const assignment = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/u.exec(line.trim());
+    if (!assignment) throw new Error('GIT_ENV_TEMPLATE_INVALID');
+    if (/(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH)(?:_|$)/iu.test(assignment[1]!)) {
+      const value = assignment[2]!.trim().replace(/^(['"])(.*)\1$/u, '$2');
+      if (value && !/^(?:<[^<>]+>|\$\{[A-Za-z_][A-Za-z0-9_]*\}|changeme|replace_me|your[-_][A-Za-z_-]+)$/iu.test(value)) {
+        throw new Error('GIT_ENV_TEMPLATE_SECRET');
+      }
+    }
+  }
+}
 
 export function isPathStagable(filePath: unknown): filePath is string {
   if (typeof filePath !== 'string' || filePath.length === 0) return false;

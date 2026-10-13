@@ -55,6 +55,7 @@ interface ProfileManifest extends JsonRecord {
   backupPath?: string | null;
   files?: ProfileEntry[];
   retiredRelaySkills?: string[];
+  preservedUnmanagedSkills?: string[];
 }
 interface ProfileCollision extends JsonRecord { path: string; ownership: ProfileOwnership; reason: string }
 interface SourceFile { rel: string; sourcePath: string; kind: string }
@@ -81,10 +82,10 @@ interface ProfilePlanInput {
 interface MarkerInput {
   root: string; runtime: string; prior: ProfileManifest | null; force: boolean; layout?: string | null;
 }
-interface AccountPlanInput { root: string; sourceRoot: string; runtimeHome: string; prior: ProfileManifest | null; force: boolean }
+interface AccountPlanInput { root: string; sourceRoot: string; runtimeHome: string; prior: ProfileManifest | null; force: boolean; preserveUnmanagedSkills?: boolean }
 interface InstallProfileInput {
   sourceRoot?: string; runtime?: (string) | undefined; targetRoot?: string; skillsRoot?: string | null;
-  runtimeHome?: (string | null) | undefined; force?: boolean;
+  runtimeHome?: (string | null) | undefined; force?: boolean; preserveUnmanagedSkills?: boolean;
 }
 interface ProfileCheck {
   path: string; ownership: ProfileOwnership; present: boolean; checksum: string | null;
@@ -919,8 +920,9 @@ const accountSkillItems = async (sourceRoot: string): Promise<Array<{ name: stri
   return items;
 };
 
-const accountPlan = async ({ root, sourceRoot, runtimeHome, prior, force }: AccountPlanInput): Promise<{ plans: ProfilePlan[]; collisions: ProfileCollision[] }> => {
+const accountPlan = async ({ root, sourceRoot, runtimeHome, prior, force, preserveUnmanagedSkills = false }: AccountPlanInput): Promise<{ plans: ProfilePlan[]; collisions: ProfileCollision[]; preservedUnmanagedSkills: string[] }> => {
   const source = path.resolve(sourceRoot, 'package', 'kernel', 'profiles', 'codex');
+  const preservedUnmanaged: string[] = [];
   const plans: ProfilePlan[] = [];
   const collisions: ProfileCollision[] = [];
   const push = async (plan: PlanResult): Promise<void> => { if (plan.collision) collisions.push(plan.collision); else plans.push(plan); };
@@ -973,6 +975,16 @@ const accountPlan = async ({ root, sourceRoot, runtimeHome, prior, force }: Acco
   }
 
   for (const { name, dir } of await accountSkillItems(sourceRoot)) {
+    const skillPrefix = `skills/${name}/`;
+    const owned = (prior?.files || []).some((entry) => entry.path.startsWith(skillPrefix));
+    // Preserve a whole user skill without projecting files or claiming ownership.
+    // The Kernel entrypoint remains mandatory and must pass normal admission.
+    if (name !== KERNEL_ENTRYPOINT_SKILL && !owned
+      && (preserveUnmanagedSkills || prior?.preservedUnmanagedSkills?.includes(name))
+      && await exists(safeJoin(root, `skills/${name}`))) {
+      preservedUnmanaged.push(name);
+      continue;
+    }
     for (const rel of await files(dir)) {
       if (isGeneratedPythonArtifact(rel)) continue;
       const targetRel = path.join('skills', name, rel).replaceAll('\\', '/');
@@ -989,14 +1001,15 @@ const accountPlan = async ({ root, sourceRoot, runtimeHome, prior, force }: Acco
       plans.push({ type: 'file', target, sourcePath: path.join(dir, rel), entry: { path: targetRel, ownership: PROFILE_OWNERSHIP.OWNED_FILE, sourceChecksum: checksum, createdByKernel: createdByKernelFor({ present, priorEntry }), checksum } });
     }
   }
-  return { plans, collisions };
+  return { plans, collisions, preservedUnmanagedSkills: preservedUnmanaged };
 };
 
-const accountProjectionIsCurrent = async ({ root, sourceRoot, runtimeHome, manifest }: { root: string; sourceRoot: string; runtimeHome: string; manifest: ProfileManifest | null }): Promise<boolean> => {
+const accountProjectionIsCurrent = async ({ root, sourceRoot, runtimeHome, manifest, preserveUnmanagedSkills }: { root: string; sourceRoot: string; runtimeHome: string; manifest: ProfileManifest | null; preserveUnmanagedSkills?: boolean }): Promise<boolean> => {
   if (!manifest || manifest.sourceRoot !== path.resolve(sourceRoot)) return false;
   if ((await inspectProfile(root)).status !== 'ready') return false;
-  const plan = await accountPlan({ root, sourceRoot, runtimeHome, prior: manifest, force: false });
+  const plan = await accountPlan({ root, sourceRoot, runtimeHome, prior: manifest, force: false, preserveUnmanagedSkills: preserveUnmanagedSkills ?? false });
   if (plan.collisions.length > 0) return false;
+  if (JSON.stringify(plan.preservedUnmanagedSkills) !== JSON.stringify(manifest.preservedUnmanagedSkills || [])) return false;
   const desiredPaths = new Set([...plan.plans.map((item) => item.entry.path), PROFILE_MARKER_NAME]);
   const currentPaths = new Set((manifest.files || []).map((entry) => entry.path));
   if (currentPaths.size !== desiredPaths.size || [...desiredPaths].some((rel) => !currentPaths.has(rel))) return false;
@@ -1010,7 +1023,7 @@ const accountProjectionIsCurrent = async ({ root, sourceRoot, runtimeHome, manif
   return true;
 };
 
-export async function installKernelAccountRoot({ sourceRoot = process.cwd(), runtime = 'codex', targetRoot, runtimeHome = null, force = false }: InstallProfileInput = {}) {
+export async function installKernelAccountRoot({ sourceRoot = process.cwd(), runtime = 'codex', targetRoot, runtimeHome = null, force = false, preserveUnmanagedSkills = false }: InstallProfileInput = {}) {
   if (runtime !== 'codex') throw new Error(`unsupported_account_root_profile: ${runtime}`);
   const root = await safeProfileRoot(targetRoot);
   const source = path.resolve(sourceRoot, 'package', 'kernel', 'profiles', runtime);
@@ -1026,11 +1039,11 @@ export async function installKernelAccountRoot({ sourceRoot = process.cwd(), run
   const prior = await trustedPriorManifest({ root, manifest: priorManifest, runtime, layout: ACCOUNT_ROOT_PROFILE_LAYOUT });
   if (await exists(markerPath) && !prior) throw new Error('target_collision: marker without trusted manifest');
   const effectiveRuntimeHome = runtimeHome || resolveKernelRuntimeHome();
-  if (prior && !force && await accountProjectionIsCurrent({ root, sourceRoot, runtimeHome: effectiveRuntimeHome, manifest: prior })) {
-    return { status: 'already_current', runtime, layout: ACCOUNT_ROOT_PROFILE_LAYOUT, targetRoot: root, manifestPath, backupPath: prior.backupPath || null, retiredRelaySkills: prior.retiredRelaySkills || [], installedFilesCount: prior.files?.length || 0 };
+  if (prior && !force && await accountProjectionIsCurrent({ root, sourceRoot, runtimeHome: effectiveRuntimeHome, manifest: prior, preserveUnmanagedSkills })) {
+    return { status: 'already_current', runtime, layout: ACCOUNT_ROOT_PROFILE_LAYOUT, targetRoot: root, manifestPath, backupPath: prior.backupPath || null, retiredRelaySkills: prior.retiredRelaySkills || [], preservedUnmanagedSkills: prior.preservedUnmanagedSkills || [], installedFilesCount: prior.files?.length || 0 };
   }
 
-  const { plans, collisions } = await accountPlan({ root, sourceRoot, runtimeHome: effectiveRuntimeHome, prior, force });
+  const { plans, collisions, preservedUnmanagedSkills: preservedSkills } = await accountPlan({ root, sourceRoot, runtimeHome: effectiveRuntimeHome, prior, force, preserveUnmanagedSkills });
   const marker = await markerPlan({ root, runtime, prior, force, layout: ACCOUNT_ROOT_PROFILE_LAYOUT });
   if (marker.collision) collisions.push(marker.collision); else plans.push(marker);
   if (collisions.length > 0) return { status: 'collision', runtime, targetRoot: root, collisions };
@@ -1058,11 +1071,11 @@ export async function installKernelAccountRoot({ sourceRoot = process.cwd(), run
     }
     await applyProfilePlans(plans);
     const hasBackup = backupEntries.length > 0 || Boolean(prior);
-    const manifest = { schemaVersion: 2, productId: PROFILE_PRODUCT_ID, runtime, kernelRuntime: 'moon-relay-kernel', layout: ACCOUNT_ROOT_PROFILE_LAYOUT, targetRoot: root, runtimeHome: canonicalPath(effectiveRuntimeHome), sourceRoot: path.resolve(sourceRoot), installedAt: new Date().toISOString(), backupPath: hasBackup ? backupPath : null, retiredRelaySkills, files: plans.map((plan) => plan.entry) };
+    const manifest = { schemaVersion: 2, productId: PROFILE_PRODUCT_ID, runtime, kernelRuntime: 'moon-relay-kernel', layout: ACCOUNT_ROOT_PROFILE_LAYOUT, targetRoot: root, runtimeHome: canonicalPath(effectiveRuntimeHome), sourceRoot: path.resolve(sourceRoot), installedAt: new Date().toISOString(), backupPath: hasBackup ? backupPath : null, retiredRelaySkills, preservedUnmanagedSkills: preservedSkills, files: plans.map((plan) => plan.entry) };
     await atomicWrite(manifestPath, JSON.stringify(manifest, null, 2));
     if (!hasBackup) await rm(backupPath, { recursive: true, force: true });
     else await atomicWrite(path.join(backupPath, 'account-root-backup.json'), JSON.stringify({ schemaVersion: 2, targetRoot: root, retiredRelaySkills }, null, 2));
-    return { status: prior ? 'reinstalled' : 'installed', runtime, layout: ACCOUNT_ROOT_PROFILE_LAYOUT, targetRoot: root, manifestPath, backupPath: hasBackup ? backupPath : null, retiredRelaySkills, installedFilesCount: manifest.files.length };
+    return { status: prior ? 'reinstalled' : 'installed', runtime, layout: ACCOUNT_ROOT_PROFILE_LAYOUT, targetRoot: root, manifestPath, backupPath: hasBackup ? backupPath : null, retiredRelaySkills, preservedUnmanagedSkills: preservedSkills, installedFilesCount: manifest.files.length };
   } catch (error) {
     if (prior && await exists(backupPath)) {
       try { await rollbackKernelProfile({ targetRoot: root, backupPath }); } catch {}

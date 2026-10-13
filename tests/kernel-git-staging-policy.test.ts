@@ -156,7 +156,7 @@ test('the default npm test command runs the staging and unification suites', asy
 
 test('physical Git mutation call sites stay behind Host Git operations', async () => {
   const expectations: Array<[string, RegExp]> = [
-    ['scripts/kernel/standalone/kernel-commit.mjs', /createWorkingTreeCommit/],
+    ['scripts/kernel/standalone/kernel-commit.mjs', /executeKernelGitCloseout/],
     ['scripts/host/kernel/git/closeout-operations.js', /stageSelectedPaths/],
     ['scripts/host/kernel/workspace/physical-worktree.js', /stageSelectedPaths/],
   ];

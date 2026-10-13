@@ -100,6 +100,7 @@ export async function main(
         status: 'error',
         errorCode: details.code || errorMessage(error),
         findings: details.findings || undefined,
+        recovery: details.recovery || undefined,
       },
       { json: true },
     );

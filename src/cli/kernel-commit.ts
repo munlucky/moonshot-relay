@@ -6,6 +6,7 @@ runStandaloneCli('kernel-commit', process.argv.slice(2))
   .catch((error: unknown) => {
     const code = error && typeof error === 'object' && 'code' in error ? error.code : null;
     const message = error instanceof Error ? error.message : String(error);
-    process.stdout.write(`${JSON.stringify({ status: 'error', errorCode: code || message }, null, 2)}\n`);
+    const recovery = error && typeof error === 'object' && 'recovery' in error ? error.recovery : undefined;
+    process.stdout.write(`${JSON.stringify({ status: 'error', errorCode: code || message, recovery }, null, 2)}\n`);
     process.exitCode = 1;
   });

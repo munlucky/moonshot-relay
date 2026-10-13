@@ -19,7 +19,8 @@ The account command skillset defaults to Kernel. Bind the current project/worktr
 - **Host Execution Policy**: Execute each model-owned work unit according to the active provider Host policy. A Host may use owner-direct execution or require an isolated child; the public Kernel skill does not override that provider boundary.
 - **Mutation Boundary**: Never mutate files outside `allowedPaths`. Mutations outside the allowed unit are rejected before verification runs.
 - **Delegation**: Delegation mode, freshness, nesting, and concurrency are Host-owned. Follow the active provider profile rather than inventing a second workflow.
-- **Fast Blockers**: When blocked, immediately report the blocker reason (`question`, `permission`, `unsupported-verification`, etc.) rather than looping or improvising.
+- **Agent Recovery**: Treat unexpected conditions as diagnostic work. Use the failure's `recovery` capsule or `kernel next [run-id] --diagnose --json` to observe Run/worktree/owner authority and investigate the responsible source and environment. Repair within the current work unit, refresh `next`, then submit actual changes and fresh bound proof through `report`. Unknown errors use the same loop; do not invent fallback completion or edit runtime DB/receipts. See [recovery guidance](../../docs/public/guidelines/kernel-agent-recovery.md).
+- **Progress Bound**: Retain the last diagnosis capsule and pass `--previous-recovery-json <file>` on each diagnostic retry. When the capsule escalates after three unchanged comparisons, or repair requires unavailable authority/user input, report the concrete blocker and attempted fixes. Do not repeat unchanged commands indefinitely.
 
 
 ## Context and Wait Budget
