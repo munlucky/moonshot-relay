@@ -2,6 +2,8 @@
 
 The message explains the committed change to a reader who has not seen the conversation. Kernel receipts retain execution details separately.
 
+Use Korean by default for the subject description and authored body. An English Run objective or source document does not override this default; only an explicit user language request does. Preserve technical identifiers, Conventional Commit types/scopes, and generated provenance fields in their original form.
+
 ## Write from the Diff
 
 1. Inspect the selected/staged diff and identify the problem and resulting behavior. Use implementation artifacts as supporting context; check them against the code.

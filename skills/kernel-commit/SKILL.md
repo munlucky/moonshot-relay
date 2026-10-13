@@ -13,6 +13,7 @@ Execute a safe, governed Git commit (and optional remote push) for an accepted K
 - **Command**: `node scripts/kernel/standalone/kernel-commit.mjs --message-file <utf8-file> [--push] [--approve] [--reason "..."] [--operator-approval-ref <host-ref>] [--json]`
 - **Alternative Entrypoint**: `node bin/kernel-commit.mjs --message-file <utf8-file> [--push] [--approve] [--reason "..."] [--json]`
 - **Provenance Binding**: Resolves project identity and verifies run completion provenance.
+- **Message Language**: Write the commit subject description and authored body in Korean by default, regardless of the language of the Run objective, source code, or skill documentation. Follow another language only when the user explicitly requests it. Keep Conventional Commit types/scopes, code identifiers, paths, commands, and Kernel provenance fields unchanged.
 - **Message Format**: Review the actual commit diff and write its problem, resulting behavior, and relevant verification as a subject and body in a UTF-8 file. The authored body leads; Kernel adds compact provenance. See [references/commit-message.md](references/commit-message.md).
 
 ## Describe the Change
@@ -38,3 +39,4 @@ Execute a safe, governed Git commit (and optional remote push) for an accepted K
 ## Verification
 - Run `git status -s` and inspect git log to ensure only expected paths were committed and working tree is clean.
 - Confirm the stored message explains the implemented behavior before reporting completion; successful receipt creation alone does not establish message quality.
+- Check that the subject description and authored body are Korean unless the user explicitly requested another language; receiving a successful receipt does not validate the language choice.
