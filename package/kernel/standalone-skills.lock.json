@@ -3,8 +3,8 @@
   "scope": "kernel-standalone",
   "catalogId": "moon-relay-kernel-standalone-skills.v2",
   "catalogDigest": "a3c3bcf6f36d916d619d211ee90d2babcb2cbbddeb539a4a5393ff9b500347ee",
-  "generatedAt": "2026-10-10T13:54:42.054Z",
-  "sourceCommit": "e3281278d08476587f3e90af37737f56a290b28c",
+  "generatedAt": "2026-10-12T22:17:57.946Z",
+  "sourceCommit": "b40bdba4e05b54b54dc91c826a38cf180d0d4e83",
   "skills": [
     {
       "name": "project-memory",
@@ -145,7 +145,7 @@
       "skillPath": "skills/architecture-artifacts",
       "entrypoint": "scripts/kernel/standalone/architecture-artifacts.mjs",
       "exportName": "runArchitectureArtifacts",
-      "contentHash": "3bec59b4a445bca95e825ebe8a4560424127ee94da9b0318a58f4f63a0f4b510",
+      "contentHash": "29ac5b912c0e027cc2d8eb7f8c3a264829f983a8ae194e37b64595d9076eaf1c",
       "cli": {
         "enabled": true,
         "binName": "architecture-artifacts"

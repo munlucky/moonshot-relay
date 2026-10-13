@@ -1,6 +1,6 @@
 # 작업 진행표
 
-현재 개발 상태: IN_PROGRESS. 이 파일은 계획 인덱스이며 runtime authority가 아니다.
+현재 개발 상태: COMPLETE. 이 파일은 계획 인덱스이며 runtime authority가 아니다.
 
 허용 표기: NOT_STARTED, IN_PROGRESS, BLOCKED, EVAL_PENDING, COMPLETE, VERIFIED_EXISTING, NOT_APPLICABLE.
 필수 카드의 완료는 COMPLETE/VERIFIED_EXISTING과 현재 유효한 증거가 있어야 한다. 조건부 카드만 NOT_APPLICABLE을 허용한다. 모델-backed 검증이 원격 필수 조건인 카드만 미실행 시 EVAL_PENDING이다. 현재 운영 surface인 Codex의 모델-backed 품질 검증은 LOCAL_CODEX_VALIDATION.md의 릴리스 전 후속 검증으로 분리한다.
@@ -39,7 +39,7 @@
 | [C29](cards/C29.md) | W9 | Follow-up 비용 비교와 Adaptive 판정 | C28 | COMPLETE |
 | [C30](cards/C30.md) | W10 | Projection interoperability 가치 판정 | C29 | COMPLETE |
 | [C31](cards/C31.md) | W10 | 단일 Projection adapter | C30 진행 판정 | COMPLETE |
-| [C32](cards/C32.md) | 마감 | 전체 계약 추적과 통합 검증 | C29 및 C30/C31의 조건 처리 | NOT_STARTED |
+| [C32](cards/C32.md) | 마감 | 전체 계약 추적과 통합 검증 | C29 및 C30/C31의 조건 처리 | COMPLETE |
 
 ## 실행 결과 기록 형식
 
@@ -588,6 +588,22 @@ nextCard: C28 재개; C29 자동 진입 금지
 - nextCard: C29 NOT_STARTED. 자동 시작 금지.
 
 ```text
+card: C28
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: 92ff7fc7d57890e82d9bedaf2c2934e8564a3d74
+resultHeadOrDiffDigest: 5bf6c23bf7e8e5a37a085d3a1b59be92a8b357d8에 로컬 actual 결과 병합 완료
+taskId: 로컬 Codex 후속 작업에서 완료; 원격 C28 EVAL_PENDING task와 분리
+kernelRunId: run-e0401d0f-3a94-4061-9b7f-f459a52f9ba5 (hidden follow-up 평가 데이터 수집용이며 Kernel completion authority로 주장하지 않음)
+scope: C27 protocol에 따른 실제 Codex 1 case × 3 strategies × F1/F2/F3 실행과 C28_LOCAL_RESULT.md; 제품 정책 변경 없음
+acceptance: AC-1 동일 source/model/profile/effort/tools와 enforced isolation에서 Verify-only/Always/Adaptive actual 실행 완료, 성공 9개와 실패 1개를 포함한 전체 10 attempts 보존; AC-2 각 strategy는 동일 F1 snapshot에서 시작하고 F1 freeze→F2 reveal→F2 freeze→F3 reveal 순서를 지켰으며 완료 stage 재실행 없음; AC-3 실제 usage/diff/verification receipt와 collector issues 0, 필수 정적 검사 4종 및 테스트 56/56 통과; AC-4 결과 문서와 후속 C29 입력 고정
+checks: C28_LOCAL_RESULT.md의 동일 조건·격리·freeze/reveal·usage evidence; 로컬 collector issues 0; 필수 테스트 56/56
+liveEval: 완료; 로컬 Codex actual 실행
+remaining: C28 없음
+nextCard: C29
+```
+
+```text
 card: C29
 status: COMPLETE
 workspace: /shared/moonshot-relay
@@ -633,4 +649,20 @@ checks: initial focused b0310000-1111-4aaa-8bbb-000000000016 exit 1 (제품 adap
 liveEval: 불필요; deterministic SQLite/projection/context integration
 remaining: W10 없음
 nextCard: C32 (마감; 사용자 별도 요청 전 자동 시작하지 않음)
+```
+
+```text
+card: C32
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: b40bdba4e05b54b54dc91c826a38cf180d0d4e83
+resultHeadOrDiffDigest: artifact-diff-sha256:7e33c33b217d44e1c7eac2343cc85718a2d956c1e33e5df6b2eefa1581f4c1f7
+taskId: 53455939-2a1f-4e80-9bb9-ab6104583a28
+kernelRunId: 없음; C28 hidden follow-up run은 평가 데이터 수집용이며 C32 Kernel 완료 authority가 아님
+scope: STATUS ledger 마감, package/kernel/standalone-skills.lock.json 기존 generator 갱신, package/harness-surface-budget.json reviewed headroom 갱신; 제품 기능/Authority/workflow/public command 추가 없음
+acceptance: AC-1 C00~C31은 C07 VERIFIED_EXISTING과 조건부 C10 NOT_APPLICABLE을 포함해 필수 31개 충족, W10 C30/C31 COMPLETE. C28 EVAL_PENDING 이력은 보존하되 actual local 후속 COMPLETE 표준 block으로 정합화. surface budget은 immutable baseline을 유지한 채 C00~C31의 검토된 canonical 증가분만 bounded headroom으로 반영하고 현재 check PASS. standalone lock은 기존 generator 결과로 현재 sourceCommit/contentHash와 정합화. AC-2 초기 test:kernel 8 failures와 package 13 failures를 숨기지 않고 분석. better-sqlite3 PE binary 및 병렬 ENOMEM/temp 간섭을 분리했고 Linux rebuild/격리 재검증으로 제품 결함이 아님을 확인. 미통과를 문서로 덮지 않음. AC-3 W10과 동일 HEAD의 typecheck/build/build:check/build:tests:check/boundary 성공 증거를 재사용. 최종 package 312/312, eval 14/14 score 1, unification 15 gates + 12/12, installer isolated 5/5, surface 7/7 및 blockers 0, Kernel 단일 동시성 1445 tests / 1433 pass / 0 fail / 12 skip 통과. AC-4 변경 경로, receipts, remaining 없음과 roadmap 종료를 STATUS/checkpoint에 기록
+checks: package c3200000-2222-4aaa-8bbb-000000000047 exit 0 (312/312); surface c3200000-2222-4aaa-8bbb-000000000046 exit 0 (7/7, blockers 0); installer isolated c3210013-1111-4000-8000-000000000001 exit 0 (5/5); test:eval c3210013-2222-4000-8000-000000000001 exit 0 (14/14, score 1); test:kernel-unification + final kernel c3210013-3333-4000-8000-000000000001 exit 0 (15 gates, 12/12; 1445 total, 1433 pass, 0 fail, 12 skip)
+liveEval: test:eval 완료. 외부 비운영 provider live 호출은 C10 NOT_APPLICABLE 계약에 따라 요구하지 않음
+remaining: 없음
+nextCard: 없음; roadmap COMPLETE
 ```

@@ -10,10 +10,10 @@
   },
   "allowedDelta": {
     "files": 200,
-    "nonblankLines": 50000,
-    "utf8Bytes": 1800000,
-    "estimatedPromptTokens": 450000
+    "nonblankLines": 62000,
+    "utf8Bytes": 2400000,
+    "estimatedPromptTokens": 600000
   },
-  "allowedDeltaRationale": "Typed Authority Architecture adds canonical strict TypeScript source, tests, build tools, contract catalogs and architecture documents. Compiler-owned outputs and generated contract projections are separately inventoried and excluded from the canonical input budget. The original immutable baseline is retained. The measured source snapshot has 2132 canonical files, 317462 nonblank lines and 13945448 UTF-8 bytes; these limits allow that declared migration with bounded headroom.",
+  "allowedDeltaRationale": "The immutable aca19ec baseline is retained. After Typed Authority Architecture plus the reviewed C00-C31 roadmap, the measured canonical surface is 2204 files, 329014 nonblank lines, 14493472 UTF-8 bytes and 3623368 estimated prompt tokens. Since the previous reviewed budget, growth is dominated by regression tests (5750 added lines), implementation source (4415), and roadmap/contracts/evidence docs (2915), while the common complexity budget still adds zero public Kernel commands, workflow stages, Authorities, always-on agents, execution classes, memory services, vector DBs, Kernel model/project hardcoding, per-run reflection agents, or model-specific full prompt forks. Compiler-owned outputs remain excluded. The file cap is unchanged; line/byte/token headroom is bounded above the measured reviewed surface rather than auto-ratcheted.",
   "allowedUnregisteredTests": 0
 }
