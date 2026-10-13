@@ -1,16 +1,24 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, readFile, stat } from 'node:fs/promises';
+import type { TestContext } from 'node:test';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { execFileSync, execSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { planKernelPackage, materializeKernelPackage } from '../src/kernel/package-build.js';
+import { assertRuntimeDependencyCompatibility } from '../src/shared/runtime-dependencies.js';
 
 const sourceRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 
-test('Kernel package dry plan contains only Kernel payload roots and includes required schemas and skills', async () => {
-  const out = await mkdtemp(path.join(os.tmpdir(), 'kernel-pkg-'));
+const temp = async (t: TestContext, prefix: string) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), prefix));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  return root;
+};
+
+test('Kernel package dry plan contains only Kernel payload roots and includes required schemas and skills', async (t) => {
+  const out = await temp(t, 'kernel-pkg-');
   const plan = await planKernelPackage({ sourceRoot, outputRoot: out });
   assert.equal(plan.manifest.productId, 'moon-relay-kernel');
   assert.ok(plan.planned.every((p) => !p.target.includes('.moonshot-relay')));
@@ -28,8 +36,32 @@ test('Kernel package dry plan contains only Kernel payload roots and includes re
   }
 });
 
-test('Kernel package materialization creates files on disk, validates mandatory files, and executes doctor cleanly', async () => {
-  const out = await mkdtemp(path.join(os.tmpdir(), 'kernel-pkg-mat-'));
+test('native runtime dependency preflight fails closed without mutating an incompatible addon', async (t) => {
+  const root = await temp(t, 'kernel-native-incompatible-');
+  const packageRoot = path.join(root, 'node_modules', 'native-fixture');
+  const addon = path.join(packageRoot, 'build', 'Release', 'fixture.node');
+  await mkdir(path.dirname(addon), { recursive: true });
+  await writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({ name: 'native-fixture', version: '1.0.0' }));
+  const bytes = Buffer.from('not-a-native-addon');
+  await writeFile(addon, bytes);
+
+  await assert.rejects(
+    () => assertRuntimeDependencyCompatibility([{
+      name: 'native-fixture',
+      sourcePath: packageRoot,
+      relativePath: 'node_modules/native-fixture',
+    }]),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal((error as Error & { code?: string }).code, 'NATIVE_RUNTIME_INCOMPATIBLE');
+      return true;
+    },
+  );
+  assert.deepEqual(await readFile(addon), bytes);
+});
+
+test('Kernel package materialization creates files on disk, validates mandatory files, and executes doctor cleanly', async (t) => {
+  const out = await temp(t, 'kernel-pkg-mat-');
   const result = await materializeKernelPackage({ sourceRoot, outputRoot: out, dryRun: false });
   assert.equal(result.dryRun, false);
 

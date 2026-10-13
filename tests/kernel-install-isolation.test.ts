@@ -1,9 +1,16 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { test } from 'node:test';
+import type { TestContext } from 'node:test';
 import os from 'node:os';
 import path from 'node:path';
 import { installKernel, uninstallKernel, rollbackKernel } from '../src/kernel/installer.js';
+
+const temp = async (t: TestContext, prefix: string) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), prefix));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  return root;
+};
 
 test('Kernel manifest explicitly excludes Relay state and profiles', async () => {
   const m = JSON.parse(await readFile(new URL('../package/kernel/manifest.json', import.meta.url), 'utf8'));
@@ -12,12 +19,15 @@ test('Kernel manifest explicitly excludes Relay state and profiles', async () =>
   assert.equal(m.runtimeHome, '~/.moon-relay-kernel');
 });
 
-test('Kernel installer protects Relay marker and owned-file collisions', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'krn-install-'));
+test('Kernel installer protects Relay marker and owned-file collisions', async (t) => {
+  const root = await temp(t, 'krn-install-');
   await writeFile(path.join(root, '.keep'), 'relay');
   await mkdir(path.join(root, '.moon-relay'), { recursive: true });
   await writeFile(path.join(root, '.moon-relay', 'track.yaml'), 'schemaVersion: 1\ntrack: relay\nproduct: moonshot-relay\n');
-  await assert.rejects(() => installKernel({ targetRoot: root, sourceRoot: process.cwd() }), /Relay marker is protected/);
+  await assert.rejects(
+    () => installKernel({ targetRoot: root, sourceRoot: path.join(root, 'missing-package-source') }),
+    /Relay marker is protected/,
+  );
 });
 
 test('Kernel sync replaces modified retired payload files only after preserving a backup', async () => {
@@ -53,8 +63,8 @@ test('Kernel sync replaces modified retired payload files only after preserving 
   }
 });
 
-test('Kernel installer creates a backup and rollback restores owned files', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'krn-install-'));
+test('Kernel installer creates a backup and rollback restores owned files', async (t) => {
+  const root = await temp(t, 'krn-install-');
   const first = await installKernel({ targetRoot: root, sourceRoot: process.cwd() });
   assert.ok(first.manifestPath);
   const second = await installKernel({ targetRoot: root, sourceRoot: process.cwd() });

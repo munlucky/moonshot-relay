@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile, cp, readdir, stat, realpath, lstat } from '
 import { auditSkillsLock } from './standalone/skills-lock.js';
 import { buildStandaloneLock, loadStandaloneCatalog } from './standalone/catalog.js';
 import { assertRuntimeBuild } from '../shared/runtime-build.js';
-import { resolveRuntimeDependencyEntries } from '../shared/runtime-dependencies.js';
+import { assertRuntimeDependencyCompatibility, resolveRuntimeDependencyEntries } from '../shared/runtime-dependencies.js';
 
 const forbidden = ['.moonshot-relay', 'runtime-state.sqlite', 'package/claude/profile', 'package/codex/profile', 'package/qwen/profile'];
 const forbiddenNames = new Set(['runtime-state.sqlite', '.moonshot-relay']);
@@ -184,6 +184,7 @@ export const planKernelPackage = async ({ sourceRoot = process.cwd(), outputRoot
   }
 
   const runtimeDependencies = await resolveRuntimeDependencyEntries({ sourceRoot });
+  await assertRuntimeDependencyCompatibility(runtimeDependencies);
   for (const dependency of runtimeDependencies) {
     planned.push({
       source: dependency.sourcePath,

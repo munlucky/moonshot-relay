@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import type { TestContext } from 'node:test';
 import { lstat, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,13 +8,19 @@ import { resolveKernelNode, buildRuntimeManifest, sha256File, parseNodeVersion }
 import { installKernel, uninstallKernel } from '../src/kernel/installer.js';
 import { canonicalPath } from '../src/kernel/runtime-home.js';
 
+const temp = async (t: TestContext, prefix: string) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), prefix));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  return root;
+};
+
 test('parseNodeVersion correctly extracts major, minor, and patch', () => {
   assert.deepEqual(parseNodeVersion('v22.13.0'), { major: 22, minor: 13, patch: 0, raw: 'v22.13.0' });
   assert.deepEqual(parseNodeVersion('v20.18.1'), { major: 20, minor: 18, patch: 1, raw: 'v20.18.1' });
 });
 
-test('managed Node wins over host fallback when all 7 manifest fields and checksum match', async () => {
-  const h = await mkdtemp(path.join(os.tmpdir(), 'krn-runtime-'));
+test('managed Node wins over host fallback when all 7 manifest fields and checksum match', async (t) => {
+  const h = await temp(t, 'krn-runtime-');
   const p = path.join(h, 'runtime', 'current', process.platform === 'win32' ? 'node.exe' : path.join('bin', 'node'));
   await mkdir(path.dirname(p), { recursive: true });
   await writeFile(p, 'node-mock-content');
@@ -45,8 +52,8 @@ test('managed Node wins over host fallback when all 7 manifest fields and checks
   assert.match(m.checksum, /^[a-f0-9]{64}$/);
 });
 
-test('missing manifest triggers host fallback by default', async () => {
-  const h = await mkdtemp(path.join(os.tmpdir(), 'krn-runtime-nomanifest-'));
+test('missing manifest triggers host fallback by default', async (t) => {
+  const h = await temp(t, 'krn-runtime-nomanifest-');
   const p = path.join(h, 'runtime', 'current', process.platform === 'win32' ? 'node.exe' : path.join('bin', 'node'));
   await mkdir(path.dirname(p), { recursive: true });
   await writeFile(p, 'node-mock-content');
@@ -56,8 +63,8 @@ test('missing manifest triggers host fallback by default', async () => {
   assert.equal(r.reason, 'missing-manifest');
 });
 
-test('incomplete or corrupt manifest fields fall back to host', async () => {
-  const h = await mkdtemp(path.join(os.tmpdir(), 'krn-runtime-corrupt-'));
+test('incomplete or corrupt manifest fields fall back to host', async (t) => {
+  const h = await temp(t, 'krn-runtime-corrupt-');
   const p = path.join(h, 'runtime', 'current', process.platform === 'win32' ? 'node.exe' : path.join('bin', 'node'));
   await mkdir(path.dirname(p), { recursive: true });
   await writeFile(p, 'node-corrupt-content');
@@ -79,8 +86,8 @@ test('incomplete or corrupt manifest fields fall back to host', async () => {
   assert.match(r.reason, /runtime-home-mismatch/);
 });
 
-test('checksum mismatch in manifest triggers host fallback', async () => {
-  const h = await mkdtemp(path.join(os.tmpdir(), 'krn-runtime-chk-'));
+test('checksum mismatch in manifest triggers host fallback', async (t) => {
+  const h = await temp(t, 'krn-runtime-chk-');
   const p = path.join(h, 'runtime', 'current', process.platform === 'win32' ? 'node.exe' : path.join('bin', 'node'));
   await mkdir(path.dirname(p), { recursive: true });
   await writeFile(p, 'node-binary-content');
@@ -111,12 +118,20 @@ test('Kernel installer places an external runtime source in the resolver runtime
   const nodeSource = path.join(runtimeSource, nodeRel);
   await mkdir(path.dirname(nodeSource), { recursive: true });
   await writeFile(nodeSource, 'managed-node-binary');
+  await writeFile(path.join(runtimeSource, 'runtime-manifest.json'), JSON.stringify({ stale: true }));
   try {
     await installKernel({ targetRoot: project, sourceRoot: process.cwd(), runtimeSource });
     const runtimeHome = canonicalPath(path.join(project, '.moon-relay', 'kernel-payload'));
     const resolved = await resolveKernelNode({ runtimeHome, fallback: '/host/node', skipExecuteCheck: true });
     assert.equal(resolved.source, 'managed');
     assert.equal(resolved.nodePath, path.join(runtimeHome, 'runtime', 'current', nodeRel));
+    const installManifest = JSON.parse(await readFile(path.join(project, '.moon-relay', 'install-manifest.json'), 'utf8'));
+    const runtimeManifestEntries = installManifest.files.filter(
+      (file: { path?: string }) => file.path === 'kernel-payload/runtime/current/runtime-manifest.json',
+    );
+    assert.equal(runtimeManifestEntries.length, 1);
+    const installedRuntimeManifest = JSON.parse(await readFile(path.join(runtimeHome, 'runtime', 'current', 'runtime-manifest.json'), 'utf8'));
+    assert.equal(installedRuntimeManifest.productId, 'moon-relay-kernel');
     await uninstallKernel({ targetRoot: project });
   } finally {
     await rm(project, { recursive: true, force: true });
@@ -150,10 +165,24 @@ test('Kernel installer rejects an explicitly missing managed runtime source', as
   const project = await mkdtemp(path.join(os.tmpdir(), 'krn-runtime-missing-project-'));
   try {
     await assert.rejects(
-      () => installKernel({ targetRoot: project, sourceRoot: process.cwd(), runtimeSource: path.join(project, 'missing-runtime') }),
+      () => installKernel({ targetRoot: project, sourceRoot: path.join(project, 'missing-package-source'), runtimeSource: path.join(project, 'missing-runtime') }),
       /managed runtime source does not exist/
     );
   } finally {
     await rm(project, { recursive: true, force: true });
   }
+});
+
+test('Kernel installer rejects a managed runtime without Node before package planning', async (t) => {
+  const project = await temp(t, 'krn-runtime-missing-node-project-');
+  const runtimeSource = await temp(t, 'krn-runtime-missing-node-source-');
+  await mkdir(path.join(runtimeSource, 'runtime', 'current'), { recursive: true });
+  await assert.rejects(
+    () => installKernel({
+      targetRoot: project,
+      sourceRoot: path.join(project, 'missing-package-source'),
+      runtimeSource,
+    }),
+    /Kernel managed runtime is missing/,
+  );
 });

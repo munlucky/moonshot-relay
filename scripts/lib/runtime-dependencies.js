@@ -1,7 +1,76 @@
 // Generated from src/shared/runtime-dependencies.ts. Edit the source and run npm run build.
 import { requiredIndex } from './required-index.js';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import { readFile, realpath, stat } from 'node:fs/promises';
+import { readFile, readdir, realpath, stat } from 'node:fs/promises';
+const nativeAddonPaths = async (root, relative = '') => {
+    const directory = path.join(root, relative);
+    const addons = [];
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+        if (entry.name === 'node_modules')
+            continue;
+        const childRelative = path.join(relative, entry.name);
+        if (entry.isDirectory())
+            addons.push(...await nativeAddonPaths(root, childRelative));
+        else if (entry.isFile() && entry.name.endsWith('.node'))
+            addons.push(path.join(root, childRelative));
+    }
+    return addons.sort();
+};
+const NATIVE_ADDON_PROBE = `
+let input = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', chunk => { input += chunk; });
+process.stdin.on('end', () => {
+  const addons = JSON.parse(input);
+  for (const addon of addons) {
+    try {
+      const module = { exports: {} };
+      process.dlopen(module, addon.path);
+    } catch (error) {
+      process.stderr.write(JSON.stringify({ name: addon.name, path: addon.path, message: error?.message || String(error) }));
+      process.exit(1);
+    }
+  }
+});`;
+export const assertRuntimeDependencyCompatibility = async (entries) => {
+    const probes = [];
+    for (const entry of entries) {
+        for (const addon of await nativeAddonPaths(entry.sourcePath))
+            probes.push({ name: entry.name, path: addon });
+    }
+    if (probes.length === 0)
+        return;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', NATIVE_ADDON_PROBE], {
+        input: JSON.stringify(probes),
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 10_000,
+        maxBuffer: 64 * 1024,
+    });
+    if (result.status === 0)
+        return;
+    let failure = {};
+    try {
+        failure = JSON.parse(result.stderr || '{}');
+    }
+    catch {
+        const message = result.stderr || result.error?.message;
+        failure = message ? { message } : {};
+    }
+    const dependency = failure.name || probes[0]?.name || 'unknown';
+    throw Object.assign(new Error(`Native runtime dependency is incompatible with the current execution surface: ${dependency}: ${failure.message || 'native addon load failed'}`), {
+        code: 'NATIVE_RUNTIME_INCOMPATIBLE',
+        details: {
+            dependency,
+            addonPath: failure.path || null,
+            platform: process.platform,
+            arch: process.arch,
+            nodeVersion: process.version,
+            modulesAbi: process.versions.modules || null,
+        },
+    });
+};
 const exists = async (target) => {
     try {
         await stat(target);

@@ -16,27 +16,40 @@ const sha256 = (value: Parameters<ReturnType<typeof createHash>['update']>[0]) =
 
 let materializedRoot: string | null = null;
 
-const materializePackage = async () => {
-  if (materializedRoot) {
-    return materializedRoot;
-  }
+type PackageBuild = (outputRoot: string) => { status: number | null; stdout: string; stderr: string };
 
-  materializedRoot = await mkdtemp(path.join(os.tmpdir(), 'moonshot-relay-package-'));
+const runPackageBuild: PackageBuild = (outputRoot) => {
   const result = spawnSync(process.execPath, [
     'package/build-package.mjs',
     '--runtime',
     'all',
     '--out',
-    materializedRoot,
+    outputRoot,
     '--clean',
     '--json',
   ], {
     cwd: root,
     encoding: 'utf8',
   });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+};
 
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-  return materializedRoot;
+const materializePackage = async (build: PackageBuild = runPackageBuild) => {
+  if (materializedRoot) {
+    return materializedRoot;
+  }
+
+  const candidateRoot = await mkdtemp(path.join(os.tmpdir(), 'moonshot-relay-package-'));
+  try {
+    const result = build(candidateRoot);
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    materializedRoot = candidateRoot;
+    return candidateRoot;
+  } catch (error) {
+    await rm(candidateRoot, { recursive: true, force: true });
+    throw error;
+  }
 };
 
 const claudeProfile = async () => path.join(await materializePackage(), 'claude', 'profile', '.claude');
@@ -48,10 +61,22 @@ const commonProfile = async () => path.join(await materializePackage(), 'moonsho
 const runtimeSurface = JSON.parse(await readFile(fromRoot('package', 'runtime-surface.json'), 'utf8'));
 const publicRuntimeSkills = assertTestArray(runtimeSurface.publicRuntimeSkills).map(assertTestString).sort();
 
-after(async () => {
-  if (materializedRoot) {
-    await rm(materializedRoot, { recursive: true, force: true });
-  }
+
+test('failed package fixture is discarded and the next materialization starts clean', async () => {
+  let failedRoot = '';
+  await assert.rejects(
+    () => materializePackage((candidateRoot) => {
+      failedRoot = candidateRoot;
+      return { status: 1, stdout: '', stderr: 'expected package build failure' };
+    }),
+    /expected package build failure/,
+  );
+  assert.equal(materializedRoot, null);
+  assert.equal(existsSync(failedRoot), false);
+
+  const recoveredRoot = await materializePackage();
+  assert.notEqual(recoveredRoot, failedRoot);
+  assert.equal(existsSync(recoveredRoot), true);
 });
 
 const requiredClaudeEntries = [
@@ -1047,3 +1072,9 @@ test('account-root installer merges shared directories without deleting unrelate
 
 type TestControlPlane = Awaited<ReturnType<typeof import('../src/host/kernel/control-plane-runtime.js').createKernelControlPlane>>;
 type TestStateStore = Awaited<ReturnType<typeof import('../src/kernel/state-store.js').openKernelStateStore>>;
+
+after(async () => {
+  if (materializedRoot) {
+    await rm(materializedRoot, { recursive: true, force: true });
+  }
+});

@@ -2,7 +2,7 @@ import path from 'node:path';
 import { isGeneratedPythonArtifact } from '../shared/payload-path.js';
 import { createHash } from 'node:crypto';
 import { lstatSync } from 'node:fs';
-import { chmod, cp, lstat, mkdir, readFile, readdir, realpath, rm, stat } from 'node:fs/promises';
+import { chmod, copyFile, cp, lstat, mkdir, readFile, readdir, realpath, rm, stat } from 'node:fs/promises';
 import { buildRuntimeManifest } from './runtime-resolver.js';
 import { canonicalPath } from './runtime-home.js';
 import { atomicWriteText } from './durable-write.js';
@@ -135,6 +135,19 @@ const copyTree = async (source: string, target: string, payload = false): Promis
   });
 };
 
+const copyKnownFiles = async (
+  sourceRoot: string,
+  targetRoot: string,
+  files: readonly string[],
+): Promise<void> => {
+  for (const rel of files) {
+    const source = path.join(sourceRoot, rel);
+    const target = path.join(targetRoot, rel);
+    await mkdir(path.dirname(target), { recursive: true });
+    await copyFile(source, target);
+  }
+};
+
 const collectFiles = async (root: string, rel = ''): Promise<string[]> => {
   const target = path.join(root, rel);
   if (!(await exists(target))) return [];
@@ -254,10 +267,6 @@ export const installKernel = async ({ targetRoot = process.cwd(), sourceRoot = p
   const source = path.resolve(sourceRoot);
   const kernelDir = assertContained(root, path.join(root, '.moon-relay'));
   const payloadRoot = assertContained(kernelDir, path.join(kernelDir, 'kernel-payload'));
-  const packagePlan = await planKernelPackage({
-    sourceRoot: source,
-    outputRoot: payloadRoot,
-  });
   const trackPath = path.join(kernelDir, 'track.yaml');
   const manifestPath = path.join(kernelDir, 'install-manifest.json');
   await rejectSymlink(kernelDir, 'target directory');
@@ -275,13 +284,43 @@ export const installKernel = async ({ targetRoot = process.cwd(), sourceRoot = p
   const snapshotRoot = path.join(backupPath, 'snapshot');
   const existingManifest = await exists(manifestPath) ? await readManifest(manifestPath) : null;
   if (existingManifest && existingManifest.productId !== PRODUCT_ID) throw new Error('Kernel install refused: manifest belongs to another product');
+  let managedRuntimePlan: { sourceCurrent: string; nodeRel: string; files: string[] } | null = null;
+  if (runtimeSource) {
+    if (!(await exists(runtimeSource))) {
+      throw new Error(`Kernel managed runtime source does not exist: ${runtimeSource}`);
+    }
+    const sourceRootWithCurrent = path.join(runtimeSource, 'runtime', 'current');
+    const sourceCurrentCandidate = await exists(sourceRootWithCurrent)
+      ? sourceRootWithCurrent
+      : (await exists(path.join(runtimeSource, 'current')) ? path.join(runtimeSource, 'current') : runtimeSource);
+    // Provider installers commonly expose runtime/current as a junction or
+    // symlink. Kernel payloads must contain the resolved files, never that
+    // provider-owned link.
+    const sourceCurrent = await realpath(sourceCurrentCandidate);
+    const nodeRel = process.platform === 'win32' ? 'node.exe' : path.join('bin', 'node');
+    if (!(await exists(path.join(sourceCurrent, nodeRel)))) {
+      throw new Error(`Kernel managed runtime is missing ${nodeRel}`);
+    }
+    managedRuntimePlan = {
+      sourceCurrent,
+      nodeRel,
+      // runtime-manifest.json is generated for the installed location. Never
+      // copy a provider/source manifest and then record it a second time.
+      files: (await collectFiles(sourceCurrent, '')).filter((rel) => rel !== 'runtime-manifest.json'),
+    };
+  }
 
+  const packagePlan = await planKernelPackage({
+    sourceRoot: source,
+    outputRoot: payloadRoot,
+  });
   const planned = packagePlan.planned.map((item) => {
     const targetRel = path.join('kernel-payload', item.rel).replaceAll('\\', '/');
     return {
       sourcePath: item.source,
       targetRel,
       targetPath: assertContained(kernelDir, item.target),
+      files: [] as string[],
     };
   });
   if (planned.length === 0) throw new Error(`Kernel payload source is empty: ${source}`);
@@ -292,23 +331,12 @@ export const installKernel = async ({ targetRoot = process.cwd(), sourceRoot = p
   // untouched.
   const desiredPaths = new Set(['track.yaml']);
   for (const item of planned) {
-    for (const rel of await collectFiles(item.sourcePath, '')) {
-      if (isGeneratedPythonArtifact(rel)) continue;
+    item.files = (await collectFiles(item.sourcePath, '')).filter((rel) => !isGeneratedPythonArtifact(rel));
+    for (const rel of item.files) {
       desiredPaths.add(path.join(item.targetRel, rel).replaceAll('\\', '/'));
     }
   }
-  let managedRuntimePlan = null;
-  if (runtimeSource) {
-    if (!(await exists(runtimeSource))) throw new Error(`Kernel managed runtime source does not exist: ${runtimeSource}`);
-    const sourceRootWithCurrent = path.join(runtimeSource, 'runtime', 'current');
-    const sourceCurrentCandidate = await exists(sourceRootWithCurrent)
-      ? sourceRootWithCurrent
-      : (await exists(path.join(runtimeSource, 'current')) ? path.join(runtimeSource, 'current') : runtimeSource);
-    // Provider installers commonly expose runtime/current as a junction or
-    // symlink. Kernel payloads must contain the resolved files, never that
-    // provider-owned link.
-    const sourceCurrent = await realpath(sourceCurrentCandidate);
-    managedRuntimePlan = { sourceCurrent, files: await collectFiles(sourceCurrent, '') };
+  if (managedRuntimePlan) {
     for (const rel of managedRuntimePlan.files) {
       desiredPaths.add(path.join('kernel-payload', 'runtime', 'current', rel).replaceAll('\\', '/'));
     }
@@ -342,8 +370,8 @@ export const installKernel = async ({ targetRoot = process.cwd(), sourceRoot = p
       }
     }
     for (const item of planned) {
-      await copyTree(item.sourcePath, item.targetPath, true);
-      for (const rel of await collectFiles(item.targetPath, '')) {
+      await copyKnownFiles(item.sourcePath, item.targetPath, item.files);
+      for (const rel of item.files) {
         const absolute = path.join(item.targetPath, rel);
         const manifestRel = path.join(item.targetRel, rel).replaceAll('\\', '/');
         installed.push({ path: manifestRel, checksum: await sha256File(absolute) });
@@ -354,12 +382,22 @@ export const installKernel = async ({ targetRoot = process.cwd(), sourceRoot = p
       const runtimeTarget = assertContained(kernelDir, path.join(runtimeRoot, 'current'));
       const runtimePlan = managedRuntimePlan;
       if (!runtimePlan) throw new Error('Kernel managed runtime plan is unavailable');
-      await copyTree(runtimePlan.sourceCurrent, runtimeTarget);
-      const nodeRel = process.platform === 'win32' ? 'node.exe' : path.join('bin', 'node');
+      await copyKnownFiles(runtimePlan.sourceCurrent, runtimeTarget, runtimePlan.files);
+      const nodeRel = runtimePlan.nodeRel;
       const nodeTarget = path.join(runtimeTarget, nodeRel);
       if (!(await exists(nodeTarget))) throw new Error(`Kernel managed runtime is missing ${nodeRel}`);
-      await atomicWrite(path.join(runtimeTarget, 'runtime-manifest.json'), JSON.stringify(await buildRuntimeManifest({ runtimeHome: path.join(kernelDir, 'kernel-payload'), nodePath: nodeTarget }), null, 2));
-      for (const rel of await collectFiles(runtimeRoot, '')) installed.push({ path: path.join('kernel-payload', 'runtime', rel).replaceAll('\\', '/'), checksum: await sha256File(path.join(runtimeRoot, rel)) });
+      const runtimeManifestPath = path.join(runtimeTarget, 'runtime-manifest.json');
+      await atomicWrite(runtimeManifestPath, JSON.stringify(await buildRuntimeManifest({ runtimeHome: path.join(kernelDir, 'kernel-payload'), nodePath: nodeTarget }), null, 2));
+      for (const rel of runtimePlan.files) {
+        installed.push({
+          path: path.join('kernel-payload', 'runtime', 'current', rel).replaceAll('\\', '/'),
+          checksum: await sha256File(path.join(runtimeTarget, rel)),
+        });
+      }
+      installed.push({
+        path: 'kernel-payload/runtime/current/runtime-manifest.json',
+        checksum: await sha256File(runtimeManifestPath),
+      });
     }
 
     const manifest = {
