@@ -20,19 +20,23 @@ special-case fallbacks or a separate recovery state machine.
    another owner, inspection is read-only; obtain a valid native next work
    unit, use a supported binding procedure, or choose an isolated worktree.
    For out-of-scope repairs, revise a bounded task contract through next.
-4. Observe again after repair. Pass the last capsule as
-   `--previous-recovery-json <file>` to `next --diagnose` for progress comparison.
-   Three unchanged comparisons produce `mode=escalate`: report a concrete
-   blocker with the attempted repair and evidence instead of repeating commands.
+4. Observe again after repair. Host-managed surfaces retain and replay the
+   previous diagnosis capsule for progress comparison, so the model does not
+   maintain fingerprints or retry counters. Three unchanged comparisons produce
+   `mode=escalate`: report a concrete blocker with the attempted repair and
+   evidence instead of repeating commands. For a stateless/manual CLI process,
+   `--previous-recovery-json <file>` remains available as an explicit handoff.
 5. Resume the capsule's `commands.resume` through native next. If no Run exists,
    supply the corrected task contract. Report actual changed paths and request
    the currently bound verification commands. Only final Kernel `done` is
    completion; diagnosis or an agent's explanation is never verification proof.
 
-The previous capsule is a progress hint, not trusted authority. Omitting or
-editing it cannot grant mutation rights, mark proof passed, or reset Run history.
-The repeated-condition budget applies to comparisons supplied to diagnosis;
-the owner must retain the last capsule across retries.
+The previous capsule is a progress hint, not trusted authority. Host continuity
+is process-local and never becomes durable Run state. Omitting or editing a
+manual capsule cannot grant mutation rights, mark proof passed, or reset Run
+history. The repeated-condition budget still comes from the existing recovery
+fingerprint comparison; Kernel owner, lease, scope, safety, proof and completion
+authority are unchanged.
 
 ## Derived-state reconciliation
 

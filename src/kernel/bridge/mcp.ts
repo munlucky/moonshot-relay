@@ -8,6 +8,7 @@ import { projectKernelModelView } from '../run/model-view.js';
 import {
   createKernelControlPlane,
   createKernelHostReviewBridge,
+  createKernelRecoveryContinuity,
   isKernelReviewAction,
   resolveKernelWorktreeIdentity,
 } from '../../host/kernel/mcp-composition.js';
@@ -269,6 +270,7 @@ export const handleMcpToolCall = async ({
   }
 
   const resolvedWorkspaceRoot = path.resolve(workspaceRoot);
+  const resolvedRuntimeHome = runtimeHome || resolveKernelRuntimeHome({ env });
   const worktreeIdentity = resolveKernelWorktreeIdentity({
     cwd: resolvedWorkspaceRoot,
     workspaceRoot: resolvedWorkspaceRoot,
@@ -276,7 +278,7 @@ export const handleMcpToolCall = async ({
   });
 
   const cp = await createKernelControlPlane({
-    runtimeHome: runtimeHome || resolveKernelRuntimeHome({ env }),
+    runtimeHome: resolvedRuntimeHome,
     projectRoot: resolvedWorkspaceRoot,
     env: {
       ...env,
@@ -292,7 +294,7 @@ export const handleMcpToolCall = async ({
     || createKernelHostReviewBridge({
       surface: lifecycleSurface,
       nativeAgentHost: nativeHost,
-      runtimeHome: runtimeHome || resolveKernelRuntimeHome({ env }),
+      runtimeHome: resolvedRuntimeHome,
       env,
     });
   const lifecycleBridge = configuredHostBridge;
@@ -397,6 +399,7 @@ export const handleMcpToolCall = async ({
 };
 
 export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, hostBridge = null, nativeHost = globalThis }: Omit<HandleMcpToolCallInput, 'name' | 'parameters'> = {}) => {
+  const recoveryContinuity = createKernelRecoveryContinuity();
   return async (request: McpRequest) => {
     const { id, method, params } = request || {};
 
@@ -437,15 +440,30 @@ export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, 
 
     if (method === 'tools/call') {
       const { name, arguments: toolArgs } = params || {};
+      const callArgs = toolArgs || {};
+      const resolvedRuntimeHome = runtimeHome || resolveKernelRuntimeHome({ env });
       try {
         const resultData = await handleMcpToolCall({
           name,
-          parameters: toolArgs || {},
+          parameters: callArgs,
           runtimeHome,
           env,
           hostBridge,
           nativeHost,
         });
+        const recoveryInput = typeof callArgs.workspaceRoot === 'string'
+          ? {
+              projectRoot: callArgs.workspaceRoot,
+              runtimeHome: resolvedRuntimeHome,
+              runId: String(asRecord(resultData).runId || callArgs.runId || env.MOON_RELAY_KERNEL_RUN_ID || '') || null,
+              sessionId: env.MOON_RELAY_KERNEL_SESSION_ID || null,
+              env,
+            }
+          : null;
+        const decoratedResult = recoveryInput
+          ? recoveryContinuity.decorate(resultData, recoveryInput)
+          : resultData;
+        if (recoveryInput && !recoveryContinuity.hasRecovery(decoratedResult)) recoveryContinuity.clear(recoveryInput);
         return {
           jsonrpc: '2.0',
           id,
@@ -453,7 +471,7 @@ export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, 
             content: [
               {
                 type: 'text',
-                text: typeof resultData === 'string' ? resultData : JSON.stringify(resultData, null, 2),
+                text: typeof decoratedResult === 'string' ? decoratedResult : JSON.stringify(decoratedResult, null, 2),
               },
             ],
             isError: false,
@@ -461,6 +479,21 @@ export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, 
         };
       } catch (error: unknown) {
         const failure = errorRecord(error);
+        const errorPayload = {
+          status: 'error',
+          error: String(failure.message || error),
+          code: failure.code || failure.errorCode || 'KERNEL_BRIDGE_ERROR',
+          details: failure.details || null,
+        };
+        const decoratedError = typeof callArgs.workspaceRoot === 'string'
+          ? recoveryContinuity.decorate(errorPayload, {
+              projectRoot: callArgs.workspaceRoot,
+              runtimeHome: resolvedRuntimeHome,
+              runId: String(failure.runId || callArgs.runId || env.MOON_RELAY_KERNEL_RUN_ID || '') || null,
+              sessionId: env.MOON_RELAY_KERNEL_SESSION_ID || null,
+              env,
+            })
+          : errorPayload;
         return {
           jsonrpc: '2.0',
           id,
@@ -468,11 +501,7 @@ export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, 
             content: [
               {
                 type: 'text',
-                text: JSON.stringify({
-                  error: String(failure.message || error),
-                  code: failure.code || failure.errorCode || 'KERNEL_BRIDGE_ERROR',
-                  details: failure.details || null,
-                }, null, 2),
+                text: JSON.stringify(decoratedError, null, 2),
               },
             ],
             isError: true,

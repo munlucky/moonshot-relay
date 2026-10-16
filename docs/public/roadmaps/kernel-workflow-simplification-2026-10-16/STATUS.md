@@ -27,7 +27,7 @@ W0 시작 기준: planning commit/push 이후 실제 current HEAD를 `baseHead`�
 | W4 | canonical next preparation 통합 | W3 | COMPLETE | this Wave commit | verified after push |
 | W5 | model-visible next 왕복 제거 | W4 equivalence 통과 | COMPLETE | this Wave commit | verified after push |
 | W6 | semantic Contract 입력 | W5 | COMPLETE | this Wave commit | verified after push |
-| W7 | Recovery continuity mechanics | W6 + 필요성 확인 | NOT_STARTED | - | - |
+| W7 | Recovery continuity mechanics | W6 + 필요성 확인 | COMPLETE | this Wave commit | verified after push |
 | W8 | 전후 측정·통합 검증·잔여 단순화 | W7 또는 VERIFIED_EXISTING | NOT_STARTED | - | - |
 
 ## Wave 결과 기록 템플릿
@@ -430,4 +430,75 @@ push:
   parity: required before W7
 remaining: W7~W8
 nextWave: W7
+```
+
+## W7 결과
+
+```text
+wave: W7
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: c3e280acf07209005cf1247a8e0ffd07570c9eb2
+resultHead: this Wave commit
+taskId: 4b8b1d6f-602d-4099-b965-b55f3f648055
+kernelRunId: 없음
+scope:
+  - src/host/kernel/run/agent-recovery.ts
+  - src/host/kernel/mcp-composition.ts
+  - src/kernel/bridge/mcp.ts
+  - src/application/kernel-cli/main.ts
+  - scripts/application/kernel-cli/main.js
+  - skills/moon-relay-kernel/SKILL.md
+  - package/kernel/profiles/codex/skills/moon-relay-kernel/SKILL.md
+  - docs/public/guidelines/kernel-agent-recovery.md
+  - tests/kernel-recovery-continuity.test.ts
+  - tests/kernel-recovery-continuity.test.mjs
+  - tests/kernel-agent-recovery.test.ts
+  - tests/kernel-bridge-mcp.test.ts
+  - tests/kernel-prompt-legacy-instruction.test.ts
+  - STATUS.md
+acceptance:
+  - W7 진입 조건 확인: 기존 Skill이 모델에게 previous recovery capsule/파일을 매 retry마다 직접 유지하도록 요구
+  - Kernel fingerprint, unchangedAttempts, 3회 escalation 알고리즘은 기존 src/kernel/run/agent-recovery.ts 그대로 유지
+  - Host에 process-local recovery continuity를 두고 기존 diagnosis capsule을 다음 진단의 previous 입력으로 자동 연결
+  - continuity는 durable Run state가 아니며 DB/table/schema/migration 추가 없음
+  - MCP handler 단위 continuity로 repeated failure를 0→1→2→3 비교하고 기존 mode=escalate 유지
+  - fingerprint/failure/authority가 바뀌면 기존 Kernel 비교 규칙에 따라 unchangedAttempts 0으로 재시작
+  - 정상 next/report 진행 후 Host continuity를 clear하여 과거 진단을 다음 정상 작업에 끌고 가지 않음
+  - structured failure와 MCP tool error는 동일 Host recovery decoration 경계를 사용
+  - 기존 binding recovery가 있으면 bindingRecovery로 보존하고 agent recovery capsule을 모델용 recovery로 제공
+  - stateless/manual CLI에서는 --previous-recovery-json을 명시적 handoff로 계속 지원
+  - failure JSON에 agent recovery capsule이 이미 있으면 별도 previous 파일 없이 자동 재사용
+  - model-facing Skill은 recovery fingerprint/retry counter bookkeeping을 요구하지 않도록 정리
+  - owner/session/worktree/lease/scope/safety/proof/completion authority 변경 없음
+  - auto repair fallback, error-code별 하드코딩 repair, 새 recovery state machine 없음
+checks:
+  - 최종 Host/MCP/CLI/Skill focused suite 24/24 통과
+  - broader owner/scope/parallel/session/recovery suite 54/54 통과
+  - real-usage/profile/compression/golden suite 35/35 통과
+  - npm run typecheck 통과
+  - npm run build 통과: files 301, changed 2, removed 0, edges 815
+  - npm run build:check 통과: files 301, changed 0, removed 0, edges 815
+  - npm run build:tests:check 통과: tests 284, helpers 8, removed 0
+  - npm run check:boundaries 통과: modules 9, files 301, edges 815
+  - git diff --check 통과
+structuralReview:
+  kernelRecoveryAuthorityChange: 없음
+  persistentStateChange: 없음
+  databaseChange: 없음
+  schemaOrMigration: 없음
+  newFallback: 없음
+  projectSpecificHardcoding: 없음
+  duplicatedRetryCounter: 없음
+  continuityOwnership: Host process-local
+  manualCompatibility: stateless CLI previous-recovery-json만 유지
+  unknownFailurePolicy: 기존 generic diagnosis loop 유지, 추측 repair 없음
+commit: this Wave commit
+push:
+  remote: origin
+  branch: main
+  remoteHead: verified after push
+  parity: required before W8
+remaining: W8
+nextWave: W8
 ```

@@ -557,3 +557,56 @@ test('mcp next blocks before mutation when the Host cannot execute an independen
 
 type TestControlPlane = Awaited<ReturnType<typeof import('../src/host/kernel/control-plane-runtime.js').createKernelControlPlane>>;
 type TestStateStore = Awaited<ReturnType<typeof import('../src/kernel/state-store.js').openKernelStateStore>>;
+
+
+test('mcp Host carries recovery continuity across retries without model-supplied bookkeeping', async (t) => {
+  t.after(async () => {
+    await Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  const workspaceRoot = await createFixtureRepo();
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-mcp-recovery-state-'));
+  tempRoots.push(runtimeHome);
+  const handler = createMcpBridgeHandler({ runtimeHome, env: {} });
+  const invalidContract = {
+    objective: 'exercise MCP recovery continuity',
+    acceptance: ['change is valid'],
+    steps: [
+      {
+        stepId: 'repair-step',
+        objective: 'repair one file',
+        allowedPaths: ['README.md'],
+        acceptanceIds: ['AC-missing'],
+      },
+    ],
+  };
+
+  const diagnose = async (id: number) => {
+    const response = await handler({
+      jsonrpc: '2.0',
+      id,
+      method: 'tools/call',
+      params: {
+        name: 'kernel_next',
+        arguments: {
+          workspaceRoot,
+          runId: 'mcp-recovery-continuity',
+          contractJson: invalidContract,
+          surface: 'codex_app',
+        },
+      },
+    });
+    const payload = parseToolText(response);
+    assert.equal(assertTestPresent(assertTestPresent(response).result).isError, true);
+    return assertTestRecord(payload.recovery);
+  };
+
+  const attempts = [
+    await diagnose(70),
+    await diagnose(71),
+    await diagnose(72),
+    await diagnose(73),
+  ];
+  assert.deepEqual(attempts.map((entry) => entry.unchangedAttempts), [0, 1, 2, 3]);
+  assert.equal(attempts[3].mode, 'escalate');
+});

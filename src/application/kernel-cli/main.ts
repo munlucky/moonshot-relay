@@ -113,7 +113,7 @@ if (args.includes('--help') || args.includes('-h') || command === 'help') {
       'Common binding flags: --project-root <path>, --runtime-home <path>, --session-id <id>, --provider <name>.',
       'next/report default to a compact model view. --verbose returns full diagnostic snapshots.',
       'Help exits before runtime binding, lease acquisition, report submission, or verification.',
-      'Unexpected condition: next --diagnose observes authority without acquiring a lease. Repair within next scope, then resume next/report with fresh proof.',
+      'Unexpected condition: next --diagnose observes authority without acquiring a lease. Host-managed surfaces retain recovery continuity automatically; --previous-recovery-json is only for stateless/manual CLI continuation. Repair within next scope, then resume next/report with fresh proof.',
     ],
   };
   if (json) emitOutput(JSON.stringify(help));
@@ -339,10 +339,16 @@ try {
     if (args.includes('--reconcile-derived-state')) await assertKernelTrack();
     const failureFile = getArgValue('--failure-json');
     const previousFile = getArgValue('--previous-recovery-json');
-    const previousPayload = previousFile ? await readJsonObjectFile(previousFile, 'previous-recovery-json') : null;
+    const failurePayload = failureFile ? await readJsonObjectFile(failureFile, 'failure-json') : runtimeBindingDiscoveryError;
+    const embeddedRecovery = asRecord(asRecord(failurePayload).recovery);
+    const previousPayload = previousFile
+      ? await readJsonObjectFile(previousFile, 'previous-recovery-json')
+      : embeddedRecovery.kind === 'agent-recovery'
+        ? embeddedRecovery
+        : null;
     output(diagnoseKernelRecovery({ projectRoot, runtimeHome: effectiveRuntimeHome || resolveKernelRuntimeHome({ env }),
       runId: explicitRunId || envRunId, sessionId: hostSessionResolutionError ? null : sessionId,
-      failure: failureFile ? await readJsonObjectFile(failureFile, 'failure-json') : runtimeBindingDiscoveryError,
+      failure: failurePayload,
       previous: previousPayload?.recovery || previousPayload,
       reconcile: args.includes('--reconcile-derived-state'), env }));
     return { exitCode: 0 };

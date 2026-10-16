@@ -85,6 +85,19 @@ test('Kernel skill asks for semantic contract meaning instead of internal wiring
   }
 });
 
+test('Kernel skill keeps recovery continuity in the Host instead of model bookkeeping', async () => {
+  const skill = await readFile('skills/moon-relay-kernel/SKILL.md', 'utf8');
+  const shippedSkill = await readFile('package/kernel/profiles/codex/skills/moon-relay-kernel/SKILL.md', 'utf8');
+
+  for (const text of [skill, shippedSkill]) {
+    assert.match(text, /Host-managed surfaces preserve the previous diagnosis capsule across retries/i);
+    assert.match(text, /does not maintain recovery fingerprints or counters/i);
+    assert.match(text, /Let the Host feed the previous diagnosis capsule back into recovery continuity/i);
+    assert.match(text, /stateless\/manual CLI process/i);
+    assert.doesNotMatch(text, /Retain the last diagnosis capsule and pass .* on each diagnostic retry/i);
+  }
+});
+
 test('provider prompts do not restate the common execution contract', () => {
   // A rule duplicated into both provider prompts costs bytes in every provider
   // prefix and makes one revision invalidate the other's cache.

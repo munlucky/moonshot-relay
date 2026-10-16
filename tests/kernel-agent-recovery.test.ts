@@ -150,3 +150,44 @@ test('native CLI returns recovery for an unseen failure, agent repairs and resum
     await rm(contract, { force: true });
   } finally { await cleanup(f); }
 });
+
+
+test('stateless CLI diagnosis reuses an embedded recovery capsule without a separate previous file', async () => {
+  const f = await fixture();
+  const failureFile = path.join(os.tmpdir(), `kernel-recovery-embedded-${path.basename(f.projectRoot)}.json`);
+  try {
+    const first = diagnoseKernelRecovery({
+      ...f,
+      runId: 'missing-run',
+      failure: { code: 'same-cli-failure' },
+    });
+    await writeFile(failureFile, JSON.stringify({
+      code: 'same-cli-failure',
+      recovery: first.recovery,
+    }));
+
+    let stdout = '';
+    const result = await runKernelCliApplication([
+      'next',
+      'missing-run',
+      '--diagnose',
+      '--failure-json',
+      failureFile,
+      '--json',
+    ], {
+      cwd: f.projectRoot,
+      env: { MOON_RELAY_KERNEL_HOME: f.runtimeHome },
+      managedRuntimeHome: f.runtimeHome,
+      readJsonFile: async file => JSON.parse(await readFile(file, 'utf8')),
+      emitOutput: value => { stdout += value; },
+      emitError: () => {},
+    });
+
+    assert.equal(result.exitCode, 0);
+    const payload = JSON.parse(stdout);
+    assert.equal(payload.recovery.unchangedAttempts, 1);
+  } finally {
+    await rm(failureFile, { force: true });
+    await cleanup(f);
+  }
+});

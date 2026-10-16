@@ -10,3 +10,8 @@ export {
   createKernelHostReviewBridge,
   isKernelReviewAction,
 } from './lifecycle-bridge.js';
+export {
+  createKernelRecoveryContinuity,
+  diagnoseKernelRecovery,
+  type KernelRecoveryContinuity,
+} from './run/agent-recovery.js';
