@@ -25,7 +25,7 @@ W0 시작 기준: planning commit/push 이후 실제 current HEAD를 `baseHead`�
 | W2 | Session source-selection/binding 경계 | W1 | VERIFIED_EXISTING | this Wave commit | verified after push |
 | W3 | Verification/report 사용 경로 | W2 | COMPLETE | this Wave commit | verified after push |
 | W4 | canonical next preparation 통합 | W3 | COMPLETE | this Wave commit | verified after push |
-| W5 | model-visible next 왕복 제거 | W4 equivalence 통과 | NOT_STARTED | - | - |
+| W5 | model-visible next 왕복 제거 | W4 equivalence 통과 | COMPLETE | this Wave commit | verified after push |
 | W6 | semantic Contract 입력 | W5 | NOT_STARTED | - | - |
 | W7 | Recovery continuity mechanics | W6 + 필요성 확인 | NOT_STARTED | - | - |
 | W8 | 전후 측정·통합 검증·잔여 단순화 | W7 또는 VERIFIED_EXISTING | NOT_STARTED | - | - |
@@ -310,4 +310,56 @@ push:
   parity: required before W5
 remaining: W5~W8
 nextWave: W5
+```
+
+## W5 결과
+
+```text
+wave: W5
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: 924e37aea56cf13cccd44a73ce9d300f3a854883
+resultHead: this Wave commit
+taskId: 4b8b1d6f-602d-4099-b965-b55f3f648055
+kernelRunId: 없음
+scope:
+  - src/kernel/bridge/mcp.ts
+  - skills/moon-relay-kernel/SKILL.md
+  - package/kernel/profiles/codex/skills/moon-relay-kernel/SKILL.md
+  - package/kernel/profiles/ade/QWEN.md
+  - tests/kernel-bridge-mcp.test.ts
+  - tests/kernel-prompt-legacy-instruction.test.ts
+  - STATUS.md
+acceptance:
+  - kernel_report가 이미 반환하는 canonical next continuation을 model-facing 기본 흐름으로 명시
+  - 정상 report 직후 별도 kernel_next 호출을 요구하지 않음
+  - 완료 판정은 kernel next 또는 kernel report.next의 canonical done continuation을 동일하게 인정
+  - MCP tool description이 kernel_next를 start/re-entry/explicit refresh 용도로 한정
+  - ADE/Qwen provider 지침의 강제 report→next 왕복 제거
+  - kernel_report 한 번으로 pending Host review dispatch와 refreshed continuation 반환 E2E 고정
+  - raw buildNextForRun report projection은 W4에서 이미 제거되어 추가 stale authority 없음
+  - kernel_next 호환성 표면, diagnostic refresh, authority/workspace 변경 후 explicit refresh는 유지
+checks:
+  - W5 focused suite 33/33 통과
+  - W4 equivalence/real-goal/scope/recovery 관련 suite 24/24 통과
+  - real-usage/profile/compression/command-catalog suite 34/34 통과
+  - npm run typecheck 통과
+  - npm run build:check: files 301, changed 0, removed 0
+  - npm run build:tests:check: tests 283, helpers 8, removed 0
+  - npm run check:boundaries: modules 9, files 301, edges 814
+  - git diff --check 통과
+structuralReview:
+  hardcoding: 없음
+  fallback: 없음
+  duplicatedAuthority: 없음; 기존 report.next canonical continuation을 소비하도록 지침만 수렴
+  newAbstraction: 없음
+  compatibility: kernel_next surface 유지, 정상 report 후 불필요한 왕복만 제거
+commit: this Wave commit
+push:
+  remote: origin
+  branch: main
+  remoteHead: verified after push
+  parity: required before W6
+remaining: W6~W8
+nextWave: W6
 ```

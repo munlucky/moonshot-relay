@@ -113,12 +113,16 @@ test('mcp bridge provides initialize, ping, tools/list, and tool execution', asy
 
   // 4. tools/list
   const listRes = await handler({ jsonrpc: '2.0', id: 3, method: 'tools/list' });
-  const toolNames = assertTestPresent(assertTestPresent(assertTestPresent(listRes).result).tools).map((tool) => tool.name);
+  const listedTools = assertTestArray(assertTestRecord(assertTestPresent(assertTestPresent(listRes).result)).tools);
+  const toolNames = listedTools.map((tool) => assertTestRecord(tool).name);
   assert.ok(toolNames.includes('kernel_attach'));
   assert.ok(toolNames.includes('kernel_next'));
   assert.ok(toolNames.includes('kernel_report'));
   assert.ok(toolNames.includes('kernel_status'));
   assert.ok(toolNames.includes('kernel_detach'));
+  const reportTool = assertTestPresent(listedTools.find((tool) => assertTestRecord(tool).name === 'kernel_report'));
+  assert.match(assertTestString(assertTestRecord(reportTool).description), /canonical continuation in next/i);
+  assert.match(assertTestString(assertTestRecord(reportTool).description), /instead of immediately calling kernel_next/i);
 
   // 5. tools/call kernel_next (contract-first)
   const taskContract = {
@@ -168,6 +172,7 @@ test('mcp bridge provides initialize, ping, tools/list, and tool execution', asy
   assert.ok(statusResult.completion);
 
   // 7. tools/call kernel_report
+  await writeFile(path.join(workspaceRoot, 'README.md'), '# Bridge Fixture\n\nchanged by report\n');
   const reportCall = await handler({
     jsonrpc: '2.0',
     id: 6,
@@ -188,6 +193,12 @@ test('mcp bridge provides initialize, ping, tools/list, and tool execution', asy
   });
 
   assert.equal(assertTestPresent(assertTestPresent(reportCall).result).isError, false);
+  const reportResult = parseToolText(reportCall);
+  const reportNext = assertTestRecord(reportResult.next);
+  assertTestString(assertTestRecord(reportNext.action).type);
+
+  // No second kernel_next call is needed here: kernel_report already returned
+  // the prepared canonical continuation for the next model decision.
 
   // 8. tools/call kernel_detach
   const detachCall = await handler({
@@ -295,6 +306,70 @@ test('mcp next automatically dispatches an independent Host review and returns t
       const receipts = cp.listReviewReceipts(runId);
       assert.equal(receipts.length, 1);
       assert.equal(receipts[0].verdict, 'pass');
+    } finally {
+      await cp.close();
+    }
+  } finally {
+    await cleanupMcpReviewRun(fixture);
+  }
+});
+
+test('mcp report dispatches pending Host review and returns the refreshed continuation without a second next call', async () => {
+  const runId = 'mcp-report-review-continuation';
+  const fixture = await prepareMcpReviewRun(runId);
+  try {
+    const reviewer = createClaudeAdapter({
+      launch: async ({ invocation }) => ({
+        resolvedModel: assertTestRecord(invocation).model,
+        observedModel: assertTestRecord(invocation).model,
+        resolvedEffort: assertTestRecord(invocation).effort,
+        observedEffort: assertTestRecord(invocation).effort,
+        sessionId: 'mcp-report-reviewer-session',
+        outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://mcp-report'] },
+      }),
+    });
+    const bridge = createKernelHostReviewBridge({
+      adapter: reviewer,
+      registry: createModelRegistry({
+        surface: 'claude',
+        env: {
+          MOON_RELAY_KERNEL_MODEL_FRONTIER: 'mcp-review-frontier',
+          MOON_RELAY_KERNEL_MODEL_FRONTIER_EFFORT: 'high',
+        },
+      }),
+      runtimeHome: fixture.runtimeHome,
+      env: {},
+      parentSessionId: 'mcp-report-owner-session',
+    });
+    const handler = createMcpBridgeHandler({ runtimeHome: fixture.runtimeHome, env: {}, hostBridge: bridge });
+    const response = await handler({
+      jsonrpc: '2.0',
+      id: 22,
+      method: 'tools/call',
+      params: {
+        name: 'kernel_report',
+        arguments: {
+          workspaceRoot: fixture.root,
+          runId,
+          surface: 'claude_app',
+          report: {
+            summary: 'continue proof with the already reported implementation',
+            changedPaths: ['app.mjs'],
+          },
+        },
+      },
+    });
+
+    assert.equal(assertTestPresent(assertTestPresent(response).result).isError, false);
+    const result = parseToolText(response);
+    assert.equal(assertTestRecord(result.hostReview).status, 'receipt-recorded');
+    assert.match(assertTestString(assertTestRecord(result.hostReview).reviewReceiptId), /^review-receipt-[a-f0-9]{24}$/);
+    const continuation = assertTestRecord(result.next);
+    assert.notEqual(assertTestRecord(continuation.action).type, 'review');
+
+    const cp = await createKernelControlPlane({ runtimeHome: fixture.runtimeHome, projectRoot: fixture.root });
+    try {
+      assert.equal(cp.listReviewReceipts(runId).length, 1);
     } finally {
       await cp.close();
     }

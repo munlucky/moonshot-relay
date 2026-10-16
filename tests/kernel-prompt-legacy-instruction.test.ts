@@ -56,6 +56,21 @@ test('Kernel authority rules survive the cleanup', async () => {
   assert.match(implementer, /Do not report success/i);
 });
 
+test('model-facing Kernel guidance consumes report continuation without an immediate next round trip', async () => {
+  const skill = await readFile('skills/moon-relay-kernel/SKILL.md', 'utf8');
+  const shippedSkill = await readFile('package/kernel/profiles/codex/skills/moon-relay-kernel/SKILL.md', 'utf8');
+  const qwen = await readFile('package/kernel/profiles/ade/QWEN.md', 'utf8');
+
+  for (const text of [skill, shippedSkill]) {
+    assert.match(text, /canonical continuation in `next`/i);
+    assert.match(text, /consume that returned continuation directly/i);
+    assert.match(text, /latest canonical continuation has `{ action: { type: "done" } }`/i);
+    assert.doesNotMatch(text, /run is done only when `kernel next` returns/i);
+  }
+  assert.match(qwen, /Continue from the canonical `next` returned by that report/i);
+  assert.doesNotMatch(qwen, /then call `kernel next` again/i);
+});
+
 test('provider prompts do not restate the common execution contract', () => {
   // A rule duplicated into both provider prompts costs bytes in every provider
   // prefix and makes one revision invalidate the other's cache.

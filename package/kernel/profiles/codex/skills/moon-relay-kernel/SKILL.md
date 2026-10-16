@@ -11,8 +11,8 @@ The account command skillset defaults to Kernel. Bind the current project/worktr
 ## Context
 - **Binding Scope**: `Project → Worktree → Run`, scoped by canonical root and Git worktree identity under runtime home `~/.moon-relay-kernel`.
 - **Two Core Commands**:
-  - `kernel next [--contract-json <file>]` (or MCP `kernel_next`): Returns objective, acceptance, constraints, context capsule, and the active work unit.
-  - `kernel report [--report-json <file>]` (or MCP `kernel_report`): Submits the work result, risks, and requested verifications. In an owner-direct Git workspace, omit `changedPaths` unless making an explicit claim; Kernel derives the authoritative delta. Non-Git reports must supply `changedPaths`, and isolated worker receipts keep their required path provenance.
+  - `kernel next [--contract-json <file>]` (or MCP `kernel_next`): Starts, re-enters, or explicitly refreshes the Run and returns objective, acceptance, constraints, context capsule, and the active work unit.
+  - `kernel report [--report-json <file>]` (or MCP `kernel_report`): Submits the work result, risks, and requested verifications, then returns the canonical continuation in `next`. After a normal report, consume that returned continuation directly instead of issuing an immediate `kernel next` only to advance. In an owner-direct Git workspace, omit `changedPaths` unless making an explicit claim; Kernel derives the authoritative delta. Non-Git reports must supply `changedPaths`, and isolated worker receipts keep their required path provenance.
 - **Task Contract**: Captured as compact JSON (objective, acceptance, constraints, non-goals) passed via `kernel next --contract-json <file>` on the first call to atomically create/bind the Run; do not bootstrap a fresh session with bare `kernel next` (use bare `kernel next` only after a Host binding exists).
 
 ## Autonomy & Priorities
@@ -31,11 +31,11 @@ The account command skillset defaults to Kernel. Bind the current project/worktr
 - Declare directory scope as globs such as `scripts/kernel/**`, not `scripts/kernel/`. For broad work (3+ acceptance criteria or files), supply bounded steps with acceptance IDs or a defensibly narrow explicit scope. Never invent file ownership by splitting acceptance text.
 
 ## Definition of Done
-- Treat Kernel completion decisions as the only completion authority; a run is done only when `kernel next` returns `{ action: { type: "done" } }`. Narration or plain text completion claims have zero authority.
+- Treat Kernel completion decisions as the only completion authority. A run is done only when the latest canonical continuation has `{ action: { type: "done" } }`; this can be the result of `kernel next` or the `next` returned by `kernel report`. Do not make an extra `kernel next` call only to reconfirm a `done` continuation. Narration or plain text completion claims have zero authority.
 - Reusable invariants, required verifications, architecture decisions, and failure patterns are recorded in `knowledgeObservations` upon completion.
 
 ## Verification
-- Request verifications using the command refs `next` lists for each outstanding obligation; the Kernel runtime executes them and owns the resulting evidence receipts.
+- Request verifications using the command refs listed by the current canonical continuation (`kernel next` or `kernel report.next`) for each outstanding obligation; the Kernel runtime executes them and owns the resulting evidence receipts.
 - For independent review actions (security review, protected T3 obligations, explicit flags), satisfy them via trusted review receipts recorded from an independent reviewer session (or native subagent fallback). In single-session environments where independent sessions cannot be spawned, request user operator approval. Resolve only outstanding judgment obligations via `kernel approve <run-id>` or `kernel-commit --approve` when the Host supplies an operator approval reference; hard evidence remains mandatory.
 - Use local tests when they help implementation feedback, but do not duplicate Kernel completion proof before `report`. Submit the work result and let Kernel settle outstanding hard obligations with trusted execution or exact reusable evidence. Request a fresh execution only when the obligation is stale, flaky, or explicitly requires fresh proof.
 

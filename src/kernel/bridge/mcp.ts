@@ -106,7 +106,7 @@ export const KERNEL_MCP_TOOLS = [
   },
   {
     name: 'kernel_next',
-    description: 'Fetch the next bounded work unit, context capsule, and task contract from Moon Relay Kernel.',
+    description: 'Start, re-enter, or explicitly refresh the Run and fetch its bounded work unit, context capsule, and task contract.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -121,7 +121,7 @@ export const KERNEL_MCP_TOOLS = [
   },
   {
     name: 'kernel_report',
-    description: 'Submit work unit completion, evidence, and observations. Git owner-direct paths are derived by Kernel; explicit changedPaths are validated when supplied and are required for non-Git workspaces.',
+    description: 'Submit work unit completion, evidence, and observations, then return the canonical continuation in next. Consume that continuation directly after a normal report instead of immediately calling kernel_next only to advance. Git owner-direct paths are derived by Kernel; explicit changedPaths are validated when supplied and are required for non-Git workspaces.',
     inputSchema: {
       type: 'object',
       properties: {
