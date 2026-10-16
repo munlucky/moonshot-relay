@@ -22,7 +22,7 @@ W0 시작 기준: planning commit/push 이후 실제 current HEAD를 `baseHead`�
 | --- | --- | --- | --- | --- | --- |
 | W0 | 안전 기준선과 characterization | 없음 | COMPLETE | this Wave commit | verified after push |
 | W1 | Git owner-direct changedPaths 정합화 | W0 | COMPLETE | this Wave commit | verified after push |
-| W2 | Session source-selection/binding 경계 | W1 | NOT_STARTED | - | - |
+| W2 | Session source-selection/binding 경계 | W1 | VERIFIED_EXISTING | this Wave commit | verified after push |
 | W3 | Verification/report 사용 경로 | W2 | NOT_STARTED | - | - |
 | W4 | canonical next preparation 통합 | W3 | NOT_STARTED | - | - |
 | W5 | model-visible next 왕복 제거 | W4 equivalence 통과 | NOT_STARTED | - | - |
@@ -179,4 +179,47 @@ push:
   parity: required before W2
 remaining: W2~W8
 nextWave: W2
+```
+
+
+## W2 결과
+
+```text
+wave: W2
+status: VERIFIED_EXISTING
+workspace: /shared/moonshot-relay
+baseHead: f25a53ccac4a9e9d2f4e1de2fd9a8c299646e908
+resultHead: this Wave commit
+taskId: 4b8b1d6f-602d-4099-b965-b55f3f648055
+kernelRunId: 없음
+scope:
+  - 기존 src/application/kernel-cli/main.ts source-selection 정책 검토
+  - 기존 src/host/kernel/host-session.ts canonical consistency 경계 검토
+  - 기존 standalone session context 소비자 검토
+  - 기존 skills/moon-relay-kernel/SKILL.md 수동 session 요구 여부 검토
+  - STATUS.md
+acceptance:
+  - explicit/env/thread source-selection 정책은 CLI 한 owner에만 존재
+  - resolver는 전달된 후보의 canonical consistency만 담당
+  - explicit session은 CODEX_THREAD_ID를 후보에서 제외하는 기존 정책 유지
+  - 정상 Codex thread는 수동 --session-id 없이 부트스트랩
+  - env/thread 및 explicit/env conflict는 fail-closed
+  - wrong project/worktree/owner binding 차단 유지
+  - Skill은 정상 흐름에서 수동 session 복사를 요구하지 않음
+checks:
+  - kernel-session-binding + kernel-run-env-resolution 32/32 통과
+  - current HEAD와 working tree clean 확인
+structuralReview:
+  hardcoding: 추가 없음
+  fallback: 추가 없음
+  duplicatedAuthority: source-selection을 다른 Host/Skill에 복제하지 않음
+  newAbstraction: 단일 consumer용 helper를 만들지 않음
+commit: this Wave commit
+push:
+  remote: origin
+  branch: main
+  remoteHead: verified after push
+  parity: required before W3
+remaining: W3~W8
+nextWave: W3
 ```
