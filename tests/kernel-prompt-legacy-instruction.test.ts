@@ -71,6 +71,20 @@ test('model-facing Kernel guidance consumes report continuation without an immed
   assert.doesNotMatch(qwen, /then call `kernel next` again/i);
 });
 
+test('Kernel skill asks for semantic contract meaning instead of internal wiring', async () => {
+  const skill = await readFile('skills/moon-relay-kernel/SKILL.md', 'utf8');
+  const shippedSkill = await readFile('package/kernel/profiles/codex/skills/moon-relay-kernel/SKILL.md', 'utf8');
+
+  for (const text of [skill, shippedSkill]) {
+    assert.match(text, /pass semantic `contractJson` directly/i);
+    assert.match(text, /Kernel assigns acceptance IDs, obligation wiring, digest, and revision/i);
+    assert.match(text, /do not author those internal identifiers/i);
+    assert.ok(text.includes('omit unknown scope instead of sending `allowedPaths: []` as a claim'));
+    assert.ok(text.includes('do not manufacture `AC-*` or obligation IDs'));
+    assert.doesNotMatch(text, /supply bounded steps with acceptance IDs/i);
+  }
+});
+
 test('provider prompts do not restate the common execution contract', () => {
   // A rule duplicated into both provider prompts costs bytes in every provider
   // prefix and makes one revision invalidate the other's cache.

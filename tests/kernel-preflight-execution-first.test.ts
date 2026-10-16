@@ -104,6 +104,43 @@ test('Preflight Wave 1: Missing verification commands at start do not block run 
   }
 });
 
+test('semantic declared steps do not require caller-authored acceptance or obligation ids', async () => {
+  const fixture = await setup();
+  const cp = await createKernelControlPlane(fixture);
+  try {
+    const runId = 'r-semantic-step-bindings';
+    const run = await cp.startRun({
+      runId,
+      objective: 'implement semantic multi-step input',
+      taskContract: {
+        acceptance: [
+          'implementation behavior is present',
+          'regression coverage is present',
+        ],
+        steps: [
+          { objective: 'implement behavior', allowedPaths: ['app.mjs'] },
+          { objective: 'finish goal proof', allowedPaths: ['app.mjs'] },
+        ],
+      },
+    });
+
+    assert.equal(run.runId, runId);
+    const normalizedAcceptance = run.taskContract?.acceptance || [];
+    assert.deepEqual(normalizedAcceptance.map((item) => item.id), ['AC-1', 'AC-2']);
+    const steps = cp.getRunSteps(runId);
+    assert.equal(steps.length, 2);
+    assert.deepEqual(steps[0].acceptanceIds || [], []);
+    assert.deepEqual(steps[1].acceptanceIds || [], ['AC-1', 'AC-2']);
+
+    const obligationIds = cp.getRunObligations(runId).map((item) => item.obligationId).sort();
+    assert.deepEqual(steps[0].obligationIds || [], []);
+    assert.deepEqual([...(steps[1].obligationIds || [])].sort(), obligationIds);
+  } finally {
+    await cp.close();
+    await cleanup(fixture);
+  }
+});
+
 test('Multi-acceptance contract alone does not invent a decomposition requirement', async () => {
   const fixture = await setup();
   const cp = await createKernelControlPlane(fixture);

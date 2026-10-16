@@ -1769,15 +1769,14 @@ export const createKernelControlPlane = async ({
       if (objective || (taskContract && Object.keys(taskContract).length > 0)) {
         // The replacement helper preserves only compatible step structure;
         // acceptance, scope, and obligations are authoritative in this input.
-        const mergedRevision = replaceContractRevisionWithBindings(
+        const merged = replaceContractRevisionWithBindings(
           existing.taskContract,
           normalizeTaskContract(taskContract, { objective: objective || existing.objective }),
-        );
-        const merged = mergedRevision.contract;
+        ).contract;
         if (existing.taskContract) {
           const contractChanged = merged.digest !== existing.taskContract.digest;
           if (contractChanged) {
-            await this.reviseContract(runId, merged, { acceptanceIdMap: mergedRevision.acceptanceIdMap });
+            await this.reviseContract(runId, merged);
           }
           const activeContract = contractChanged ? merged : existing.taskContract;
           const currentRun = requireRun(runId);
@@ -1822,7 +1821,7 @@ export const createKernelControlPlane = async ({
 
     // Persists a refined Task Contract and recompiles obligations against it,
     // so a plan supplied after FRAME is a binding change, not a note (P0-5).
-    async reviseContract(runId: string, contract: NormalizedTaskContract, { acceptanceIdMap = null }: { acceptanceIdMap?: Record<string, string> | null } = {}) {
+    async reviseContract(runId: string, contract: NormalizedTaskContract) {
       const run = getRunSnapshot(runId);
       if (!run) throw new Error(`Run ${runId} not found`);
       const nextContractRevision = Number(run.contractRevision || 1) + 1;
@@ -1843,12 +1842,7 @@ export const createKernelControlPlane = async ({
         ...contractPathAccess,
         commands: currentProjectCommands(),
         obligations,
-        acceptanceIdMap,
       });
-      // The contract already contains canonicalized successor references. Keep
-      // the mapping visible to this boundary for lineage, but never rewrite
-      // predecessor proof from an old AC namespace using successor-local IDs.
-      void acceptanceIdMap;
       const updated = typeof store.reviseTaskContractAtomic === 'function'
         ? store.reviseTaskContractAtomic(runId, contract, { obligations })
         : store.updateTaskContract(runId, contract);

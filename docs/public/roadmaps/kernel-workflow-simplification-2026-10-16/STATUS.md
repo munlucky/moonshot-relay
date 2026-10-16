@@ -26,7 +26,7 @@ W0 시작 기준: planning commit/push 이후 실제 current HEAD를 `baseHead`�
 | W3 | Verification/report 사용 경로 | W2 | COMPLETE | this Wave commit | verified after push |
 | W4 | canonical next preparation 통합 | W3 | COMPLETE | this Wave commit | verified after push |
 | W5 | model-visible next 왕복 제거 | W4 equivalence 통과 | COMPLETE | this Wave commit | verified after push |
-| W6 | semantic Contract 입력 | W5 | NOT_STARTED | - | - |
+| W6 | semantic Contract 입력 | W5 | COMPLETE | this Wave commit | verified after push |
 | W7 | Recovery continuity mechanics | W6 + 필요성 확인 | NOT_STARTED | - | - |
 | W8 | 전후 측정·통합 검증·잔여 단순화 | W7 또는 VERIFIED_EXISTING | NOT_STARTED | - | - |
 
@@ -362,4 +362,72 @@ push:
   parity: required before W6
 remaining: W6~W8
 nextWave: W6
+```
+
+## W6 결과
+
+```text
+wave: W6
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: 57c1a807d3d2e19adeec2783e2209b5412b43c5d
+resultHead: this Wave commit
+taskId: 4b8b1d6f-602d-4099-b965-b55f3f648055
+kernelRunId: 없음
+scope:
+  - src/kernel/bridge/mcp.ts
+  - src/kernel/control-plane.ts
+  - src/kernel/run/contract-preflight.ts
+  - src/kernel/run/step-planner.ts
+  - src/kernel/task/task-contract.ts
+  - skills/moon-relay-kernel/SKILL.md
+  - package/kernel/profiles/codex/skills/moon-relay-kernel/SKILL.md
+  - tests/kernel-bridge-mcp.test.ts
+  - tests/kernel-obligation-binding.test.ts
+  - tests/kernel-preflight-execution-first.test.ts
+  - tests/kernel-prompt-legacy-instruction.test.ts
+  - tests/kernel-run-step-ledger.test.ts
+  - STATUS.md
+acceptance:
+  - MCP contractJson은 기존 object schema 그대로 semantic Task Contract 입력으로 사용
+  - 모델은 objective, acceptance statements, constraints, nonGoals, 알려진 bounded scope만 제공
+  - acceptance ID, obligation wiring, digest, revision은 기존 Kernel normalization/compiler가 소유
+  - declared semantic steps는 AC-* 또는 obligation ID를 직접 만들지 않아도 됨
+  - 명시한 유효 ID는 narrowing으로 보존하고 unknown explicit ID는 기존처럼 fail-closed
+  - 미배정 goal acceptance/obligation은 prose/path 추론 없이 최종 Work Unit에 보수적으로 귀속
+  - initial plan과 replacement/replan이 동일한 final Work Unit settlement 규칙 사용
+  - active contract revision의 불필요한 acceptanceIdMap preflight 전달 제거
+  - successor compatibility merge의 canonical ID rebasing과 strict 검증은 유지
+  - declared implementation step의 allowedPaths 필수 경계와 scope 차단 유지
+  - objective를 acceptance로 복사하지 않으며 unknown scope를 모델이 allowedPaths: []로 주장하지 않도록 지침 정리
+  - CLI --contract-json 경로 유지, 새 Contract v2 / --auto-contract / parallel schema 없음
+checks:
+  - W6 full focused suite 107/107 통과
+  - final dead-wiring cleanup 후 preflight/obligation suite 53/53 통과
+  - final dead-wiring cleanup 후 session lifecycle/continuation suite 13/13 통과
+  - real-usage/profile/compression/golden suite 35/35 통과
+  - model-facing semantic contract guidance 8/8 통과
+  - npm run typecheck 통과
+  - npm run build 통과: files 301, changed 2, removed 0, edges 814
+  - npm run build:check 통과: files 301, changed 0, removed 0, edges 814
+  - npm run build:tests:check 통과: tests 283, helpers 8, removed 0
+  - npm run check:boundaries 통과: modules 9, files 301, edges 814
+  - git diff --check 통과
+structuralReview:
+  hardcoding: 없음
+  fallback: 없음
+  newSchema: 없음
+  newState: 없음
+  newFlag: 없음
+  duplicatedAuthority: active revision acceptanceIdMap 전달 제거
+  inference: step prose/file path 기반 acceptance ownership 추론 없음
+  compatibility: successor merge strict rebasing 유지, CLI contract-json 유지
+commit: this Wave commit
+push:
+  remote: origin
+  branch: main
+  remoteHead: verified after push
+  parity: required before W7
+remaining: W7~W8
+nextWave: W7
 ```

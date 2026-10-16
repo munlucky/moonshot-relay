@@ -13,7 +13,7 @@ The account command skillset defaults to Kernel. Bind the current project/worktr
 - **Two Core Commands**:
   - `kernel next [--contract-json <file>]` (or MCP `kernel_next`): Starts, re-enters, or explicitly refreshes the Run and returns objective, acceptance, constraints, context capsule, and the active work unit.
   - `kernel report [--report-json <file>]` (or MCP `kernel_report`): Submits the work result, risks, and requested verifications, then returns the canonical continuation in `next`. After a normal report, consume that returned continuation directly instead of issuing an immediate `kernel next` only to advance. In an owner-direct Git workspace, omit `changedPaths` unless making an explicit claim; Kernel derives the authoritative delta. Non-Git reports must supply `changedPaths`, and isolated worker receipts keep their required path provenance.
-- **Task Contract**: Captured as compact JSON (objective, acceptance, constraints, non-goals) passed via `kernel next --contract-json <file>` on the first call to atomically create/bind the Run; do not bootstrap a fresh session with bare `kernel next` (use bare `kernel next` only after a Host binding exists).
+- **Task Contract**: On MCP, pass semantic `contractJson` directly on the first `kernel_next`: objective, acceptance statements, constraints, non-goals, and a bounded mutation scope when it is known. The Kernel assigns acceptance IDs, obligation wiring, digest, and revision; do not author those internal identifiers. The CLI keeps `kernel next --contract-json <file>` for CLI callers. Do not copy an objective into acceptance, and omit unknown scope instead of sending `allowedPaths: []` as a claim; do not bootstrap a fresh session with bare `kernel next` (use bare `kernel next` only after a Host binding exists).
 
 ## Autonomy & Priorities
 - **Host Execution Policy**: Execute each model-owned work unit according to the active provider Host policy. A Host may use owner-direct execution or require an isolated child; the public Kernel skill does not override that provider boundary.
@@ -28,7 +28,7 @@ The account command skillset defaults to Kernel. Bind the current project/worktr
 - Search with `rg` first, then read the relevant function or section. Keep each tool result near 4,000 tokens or less; save long diagnostics to a file and inspect only failures or selected fields.
 - Inspect `git diff --stat` first, then one relevant file or hunk per read. Do not dump the entire multi-file diff into the model context.
 - For tests and report verification, use a 10–30 second initial wait and 30–60 second continuation waits supported by the tool. Avoid one-second polling; keep user progress updates within 60 seconds. Inspect completion and failures once the process exits.
-- Declare directory scope as globs such as `scripts/kernel/**`, not `scripts/kernel/`. For broad work (3+ acceptance criteria or files), supply bounded steps with acceptance IDs or a defensibly narrow explicit scope. Never invent file ownership by splitting acceptance text.
+- Declare directory scope as globs such as `scripts/kernel/**`, not `scripts/kernel/`. For broad work, supply bounded steps with an objective and explicit `allowedPaths`; do not manufacture `AC-*` or obligation IDs for those steps. Kernel keeps explicit valid bindings when supplied and conservatively settles otherwise-unclaimed goal criteria on the final Work Unit. Never invent file ownership by splitting acceptance text.
 
 ## Definition of Done
 - Treat Kernel completion decisions as the only completion authority. A run is done only when the latest canonical continuation has `{ action: { type: "done" } }`; this can be the result of `kernel next` or the `next` returned by `kernel report`. Do not make an extra `kernel next` call only to reconfirm a `done` continuation. Narration or plain text completion claims have zero authority.
@@ -46,6 +46,6 @@ The account command skillset defaults to Kernel. Bind the current project/worktr
     - Shell: `grep -nE '^#+ ' <planPath>`
   - Turn 2 (Targeted Slice): Extract only the targeted section or Wave range identified from the index scan, then proceed immediately to task contract creation.
 - **Contract Scale Sizing**:
-  - Small / Bounded Tasks (1–3 files): Produce a lightweight 1-step contract (30–40 lines) to enter execution within 30 seconds.
-  - Multi-Wave / Large Tasks (5+ subsystems): Map all waves into a structured task contract up front so the run executes autonomously under Kernel step sequencing.
+  - Small / Bounded Tasks: Send only the semantic contract fields needed for the goal; let Kernel create the synthetic Work Unit and internal IDs.
+  - Multi-Wave / Large Tasks: Declare the needed steps with semantic objectives and bounded `allowedPaths`; let Kernel bind acceptance and obligations instead of hand-wiring internal IDs.
 - **Ghost Run Recovery**: Starting a new task with `--invocation-intent new-task` or a distinct task contract automatically supersedes and archives any unresumed `blocked` run on the worktree, reclaiming the mutation lease.

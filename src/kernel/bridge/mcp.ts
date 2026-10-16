@@ -96,7 +96,7 @@ export const KERNEL_MCP_TOOLS = [
       type: 'object',
       properties: {
         workspaceRoot: { type: 'string', description: 'Canonical workspace root directory' },
-        contractJson: { type: 'object', description: 'Task contract JSON to bootstrap or match' },
+        contractJson: { type: 'object', description: 'Semantic Task Contract input: objective, acceptance statements, constraints, nonGoals, and bounded scope when known. Kernel normalizes acceptance IDs, obligation wiring, digest, and revision.' },
         runId: { type: 'string', description: 'Explicit run id to attach to' },
         surface: { type: 'string', description: 'Surface identifier (e.g. codex_app, claude_app, qwen_code_cli)' },
         verbose: { type: 'boolean', description: 'Return full diagnostic snapshots instead of the compact model view' },
@@ -111,7 +111,7 @@ export const KERNEL_MCP_TOOLS = [
       type: 'object',
       properties: {
         workspaceRoot: { type: 'string', description: 'Canonical workspace root directory' },
-        contractJson: { type: 'object', description: 'Task contract JSON for contract-first bootstrapping' },
+        contractJson: { type: 'object', description: 'Semantic Task Contract input for contract-first bootstrapping. Supply meaning, not Kernel-generated IDs or digests; omit unknown scope instead of sending an empty allowedPaths claim.' },
         runId: { type: 'string', description: 'Explicit run id' },
         surface: { type: 'string', description: 'Surface identifier' },
         verbose: { type: 'boolean', description: 'Return full diagnostic snapshots instead of the compact model view' },

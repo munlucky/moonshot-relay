@@ -9,7 +9,7 @@ import path from 'node:path';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
 import { compileRunObligations, assertVerificationSupport } from '../src/kernel/run/obligation-compiler.js';
 import { deriveVerificationSettlementScope } from '../src/contracts/verification-settlement.js';
-import { mergeContractRevisionWithBindings, normalizeTaskContract } from '../src/kernel/task/task-contract.js';
+import { mergeContractRevisionWithBindings, normalizeTaskContract, replaceContractRevisionWithBindings } from '../src/kernel/task/task-contract.js';
 import { discoverProjectCommands, classifyCommandName } from '../src/contracts/command-catalog.js';
 import { observeProjectCommandDeclarations } from '../src/host/kernel/proof/project-command-observation.js';
 import { createHostProcessObservation } from '../src/host/kernel/process-observation.js';
@@ -1196,6 +1196,37 @@ test('successor contract merge rebases local step AC ids to canonical merged ids
   assert.equal(merged.acceptanceIdMap['AC-1'], 'AC-2');
   assert.deepEqual(merged.contract.steps[0].acceptanceIds, ['AC-2']);
   assert.deepEqual(merged.contract.steps[0].obligationIds, ['successor-check']);
+});
+
+test('semantic contract normalization does not invent acceptance or mutation scope', () => {
+  const contract = normalizeTaskContract({
+    constraints: ['preserve current behavior'],
+    nonGoals: ['no unrelated cleanup'],
+  }, { objective: 'improve behavior safely' });
+
+  assert.equal(contract.objective, 'improve behavior safely');
+  assert.deepEqual(contract.acceptance, []);
+  assert.deepEqual(contract.allowedPaths, []);
+  assert.ok(contract.digest, 'Kernel still owns the normalized digest');
+});
+
+test('active contract replacement accepts semantic steps without caller-authored acceptance wiring', () => {
+  const previous = normalizeTaskContract({
+    acceptance: ['old acceptance'],
+    steps: [{ objective: 'old step', allowedPaths: ['app.mjs'], acceptanceIds: ['AC-1'] }],
+  }, { objective: 'old objective' });
+  const next = normalizeTaskContract({
+    acceptance: ['new behavior', 'new coverage'],
+    steps: [
+      { objective: 'implement behavior', allowedPaths: ['app.mjs'] },
+      { objective: 'finish goal', allowedPaths: ['app.mjs'] },
+    ],
+  }, { objective: 'new objective' });
+
+  const replaced = replaceContractRevisionWithBindings(previous, next);
+  assert.deepEqual(replaced.contract.acceptance.map((item) => item.id), ['AC-1', 'AC-2']);
+  assert.equal(replaced.contract.steps.length, 2);
+  assert.equal(replaced.contract.steps.some((step) => Array.isArray(step.acceptanceIds)), false);
 });
 
 test('successor contract merge fails closed for unknown or omitted acceptance bindings', () => {

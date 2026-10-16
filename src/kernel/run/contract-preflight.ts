@@ -76,7 +76,6 @@ interface ValidateDeclaredStepsInput extends ContractPathAccess {
   obligations?: ObligationLike[];
   projectRoot?: string;
   requireDetailedBindings?: boolean | null;
-  acceptanceIdMap?: Record<string, string> | null;
 }
 
 interface ValidateVerificationCommandsInput {
@@ -92,7 +91,6 @@ interface PreflightTaskContractInput extends ContractPathAccess {
   obligations?: ObligationLike[];
   requireImplementationScope?: boolean | null;
   strictVerificationCommands?: boolean;
-  acceptanceIdMap?: Record<string, string> | null;
 }
 
 type ContractPreflightError = Error & {
@@ -386,7 +384,6 @@ export const validateDeclaredSteps = ({
   obligations = [],
   projectRoot = process.cwd(),
   requireDetailedBindings = null,
-  acceptanceIdMap = null,
   resolveRealpath,
   checkExists,
   lstatPath,
@@ -400,12 +397,8 @@ export const validateDeclaredSteps = ({
     ? (requiresDetailedStepBindings(contract) || (isImplementationTask && requiresImplementationWorkUnitScope({ contract })))
     : Boolean(requireDetailedBindings);
   const acceptanceIds = acceptanceIdsFor(contract);
-  const targetAcceptanceIds: Set<string> = acceptanceIdMap
-    ? new Set(Object.values(acceptanceIdMap))
-    : acceptanceIds;
   const obligationIds = obligationIdsFor(obligations, contract);
   const seenStepIds = new Set<string>();
-  const claimedAcceptanceIds = new Set<string>();
   const normalizedSteps: Array<{
     stepId: string;
     allowedPaths: string[];
@@ -448,16 +441,13 @@ export const validateDeclaredSteps = ({
       throw fail(scope.errorCode, scope.message, { ...details, stepId, scope }, scope.nextAction);
     }
 
+    // Acceptance ids are Kernel-owned wiring. A caller may explicitly narrow a
+    // step to known ids, but semantic step declarations do not have to manufacture
+    // AC-* tokens. Unclaimed goal acceptance is conservatively settled on the
+    // final Work Unit by the step planner.
     const stepAcceptanceIds = Array.isArray(step.acceptanceIds)
       ? assertNonEmptyStringList(step.acceptanceIds, 'acceptanceIds', { ...details, stepId })
       : [];
-    if (detailedBindings && stepAcceptanceIds.length === 0 && targetAcceptanceIds.size > 0) {
-      throw fail(
-        CONTRACT_PREFLIGHT_ERROR_CODES.stepBindingInvalid,
-        'Each declared step requires a non-empty acceptanceIds list',
-        { ...details, stepId, field: 'acceptanceIds' },
-      );
-    }
     const unknownAcceptanceIds = stepAcceptanceIds.filter((id) => !acceptanceIds.has(id));
     if (unknownAcceptanceIds.length > 0) {
       throw fail(
@@ -466,7 +456,6 @@ export const validateDeclaredSteps = ({
         { ...details, stepId, unknownAcceptanceIds },
       );
     }
-    for (const id of stepAcceptanceIds) claimedAcceptanceIds.add(id);
 
     const stepObligationIds = Array.isArray(step.obligationIds)
       ? assertNonEmptyStringList(step.obligationIds, 'obligationIds', { ...details, stepId })
@@ -493,15 +482,9 @@ export const validateDeclaredSteps = ({
     normalizedSteps.push({ stepId, allowedPaths, acceptanceIds: stepAcceptanceIds, obligationIds: stepObligationIds, expectedOutputs });
   }
 
-  const unclaimedAcceptanceIds: string[] = [...targetAcceptanceIds].filter((id) => !claimedAcceptanceIds.has(id));
-  if (detailedBindings && targetAcceptanceIds.size > 0 && unclaimedAcceptanceIds.length > 0) {
-    throw fail(
-      CONTRACT_PREFLIGHT_ERROR_CODES.stepBindingInvalid,
-      `Declared steps do not bind acceptance ids: ${unclaimedAcceptanceIds.join(', ')}`,
-      { unclaimedAcceptanceIds, reason: 'acceptance-unbound' },
-    );
-  }
-
+  // Do not infer criterion ownership from step prose or paths. Any criterion not
+  // explicitly bound here remains goal-level input and the planner assigns it to
+  // the final Work Unit. Explicit unknown ids above still fail closed.
   return { valid: true, steps: normalizedSteps, detailedBindings };
 };
 
@@ -553,7 +536,6 @@ export const preflightTaskContract = ({
   obligations = [],
   requireImplementationScope = null,
   strictVerificationCommands = false,
-  acceptanceIdMap = null,
   resolveRealpath,
   checkExists,
   lstatPath,
@@ -594,7 +576,6 @@ export const preflightTaskContract = ({
     obligations,
     projectRoot,
     requireDetailedBindings: requiresScope ? true : null,
-    acceptanceIdMap,
     resolveRealpath,
     checkExists,
     lstatPath,

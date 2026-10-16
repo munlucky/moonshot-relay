@@ -197,6 +197,42 @@ const settleGoalBindingsOnFinalStep = ({
   return steps;
 };
 
+// Step declarations carry work meaning and bounded scope, not Kernel-generated
+// identity wiring. Preserve any explicit bindings, then conservatively attach
+// every still-unclaimed goal acceptance/obligation to the final Work Unit.
+// This does not infer ownership from prose, filenames, or step order.
+const settleUnclaimedGoalBindingsOnFinalStep = ({
+  steps = [],
+  obligations = [],
+  contract = {},
+}: {
+  steps?: PlannedWorkStep[];
+  obligations?: PlanningObligation[];
+  contract?: WorkPlanContract;
+} = {}): PlannedWorkStep[] => {
+  if (steps.length === 0) return steps;
+
+  const claimedObligations = new Set(steps.flatMap((step) => step.obligationIds));
+  const claimedAcceptance = new Set(steps.flatMap((step) => step.acceptanceIds));
+  const final = requiredIndex(steps, steps.length - 1);
+
+  final.obligationIds = [...new Set([
+    ...final.obligationIds,
+    ...obligations
+      .map((obligation) => String(obligation.obligationId))
+      .filter((id) => !claimedObligations.has(id)),
+  ])];
+
+  final.acceptanceIds = [...new Set([
+    ...final.acceptanceIds,
+    ...acceptanceEntries(contract)
+      .map((item) => String(item.id))
+      .filter((id) => !claimedAcceptance.has(id)),
+  ])];
+
+  return steps;
+};
+
 const normalizeDeclaredSteps = ({
   declared = [],
   runId,
@@ -296,29 +332,15 @@ export const planRunSteps = ({
     };
   }
 
-  const steps = settleGoalBindingsOnFinalStep({
-    steps: normalizeDeclaredSteps({ declared, runId: run.runId, planRevision, contract }),
+  const steps = settleUnclaimedGoalBindingsOnFinalStep({
+    steps: settleGoalBindingsOnFinalStep({
+      steps: normalizeDeclaredSteps({ declared, runId: run.runId, planRevision, contract }),
+      obligations,
+      contract,
+    }),
     obligations,
     contract,
   });
-
-  const claimedObligations = new Set(steps.flatMap((step) => step.obligationIds));
-  const claimedAcceptance = new Set(steps.flatMap((step) => step.acceptanceIds));
-  const last = requiredIndex(steps, steps.length - 1);
-
-  last.obligationIds = [...new Set([
-    ...last.obligationIds,
-    ...obligations
-      .map((obligation) => String(obligation.obligationId))
-      .filter((id) => !claimedObligations.has(id)),
-  ])];
-
-  last.acceptanceIds = [...new Set([
-    ...last.acceptanceIds,
-    ...acceptanceEntries(contract)
-      .map((item) => String(item.id))
-      .filter((id) => !claimedAcceptance.has(id)),
-  ])];
 
   for (const step of steps) {
     if (step.dependencyIds.length === 0) step.state = 'ready';
@@ -339,13 +361,17 @@ export const planReplacementSteps = ({
     return [buildSyntheticStep({ run, contract, obligations, planRevision })];
   }
 
-  return settleGoalBindingsOnFinalStep({
-    steps: normalizeDeclaredSteps({
-      declared: deltaSteps,
-      runId: run.runId,
-      planRevision,
+  return settleUnclaimedGoalBindingsOnFinalStep({
+    steps: settleGoalBindingsOnFinalStep({
+      steps: normalizeDeclaredSteps({
+        declared: deltaSteps,
+        runId: run.runId,
+        planRevision,
+        contract,
+        reservedStepIds,
+      }),
+      obligations,
       contract,
-      reservedStepIds,
     }),
     obligations,
     contract,

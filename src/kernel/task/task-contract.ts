@@ -923,9 +923,10 @@ export const replaceContractRevisionWithBindings = (
     // this normalized contract is current authority.
     digest: contractDigest({ ...next, steps }),
   };
-  if (explicitSteps) {
-    assertIntroducedBindingsAreClaimed({ previous: null, next, merged: contract, idMap: identity, steps });
-  }
+  // Active replacements use the same semantic step contract as initial Runs.
+  // Explicit step bindings are preserved and validated, while unclaimed goal
+  // acceptance/obligations are settled on the final Work Unit by the planner.
+  // The compatibility merge path remains strict for additive lineage merging.
   return { contract, acceptanceIdMap: Object.fromEntries(identity) };
 };
 

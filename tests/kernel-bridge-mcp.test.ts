@@ -120,6 +120,14 @@ test('mcp bridge provides initialize, ping, tools/list, and tool execution', asy
   assert.ok(toolNames.includes('kernel_report'));
   assert.ok(toolNames.includes('kernel_status'));
   assert.ok(toolNames.includes('kernel_detach'));
+  const nextTool = assertTestRecord(assertTestPresent(listedTools.find((tool) => assertTestRecord(tool).name === 'kernel_next')));
+  const nextContractDescription = assertTestString(
+    assertTestRecord(assertTestRecord(assertTestRecord(nextTool.inputSchema).properties).contractJson).description,
+  );
+  assert.match(nextContractDescription, /Semantic Task Contract input/i);
+  assert.match(nextContractDescription, /Supply meaning, not Kernel-generated IDs or digests/i);
+  assert.match(nextContractDescription, /omit unknown scope instead of sending an empty allowedPaths claim/i);
+
   const reportTool = assertTestPresent(listedTools.find((tool) => assertTestRecord(tool).name === 'kernel_report'));
   assert.match(assertTestString(assertTestRecord(reportTool).description), /canonical continuation in next/i);
   assert.match(assertTestString(assertTestRecord(reportTool).description), /instead of immediately calling kernel_next/i);
@@ -149,6 +157,11 @@ test('mcp bridge provides initialize, ping, tools/list, and tool execution', asy
   assert.equal(assertTestPresent(assertTestPresent(nextCall).result).isError, false);
   const nextResult = JSON.parse(assertTestString(assertTestRecord(assertTestArray(assertTestPresent(assertTestPresent(nextCall).result).content)[0]).text));
   assert.ok(nextResult.runId || nextResult.action);
+  assert.deepEqual(
+    nextResult.acceptancePlans.map((item: { id: string; statement: string }) => ({ id: item.id, statement: item.statement })),
+    [{ id: 'AC-1', statement: 'bridge responds' }],
+    'MCP accepts semantic statements and Kernel owns canonical acceptance IDs',
+  );
 
   const runId = nextResult.runId;
 

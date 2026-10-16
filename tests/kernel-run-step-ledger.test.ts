@@ -347,6 +347,35 @@ test('K2: a step is only complete with current-revision evidence for what it own
   );
 });
 
+test('K2: semantic replacement steps settle unclaimed goal bindings on the final Work Unit', () => {
+  const run = { runId: 'r-semantic-replan', objective: 'Semantic replan' };
+  const contract = {
+    acceptance: [
+      { id: 'AC-1', statement: 'behavior is complete' },
+      { id: 'AC-2', statement: 'coverage is complete' },
+    ],
+  };
+  const obligations = [
+    { obligationId: 'unit-test' },
+    { obligationId: 'static-analysis' },
+  ];
+  const steps = planReplacementSteps({
+    run,
+    contract,
+    obligations,
+    planRevision: 2,
+    deltaSteps: [
+      { objective: 'implement behavior', allowedPaths: ['src/auth/**'] },
+      { objective: 'finish goal', allowedPaths: ['tests/**'] },
+    ],
+  });
+
+  assert.deepEqual(steps[0].acceptanceIds, []);
+  assert.deepEqual(steps[0].obligationIds, []);
+  assert.deepEqual(steps[1].acceptanceIds, ['AC-1', 'AC-2']);
+  assert.deepEqual(steps[1].obligationIds, ['unit-test', 'static-analysis']);
+});
+
 test('K2: explicit dependencies are remapped to qualified step IDs during replan', () => {
   const run = { runId: 'r-replan-deps', objective: 'Replan test' };
   const reservedStepIds = ['auth-slice'];
