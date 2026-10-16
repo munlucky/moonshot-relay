@@ -231,6 +231,103 @@ test('conflicting Codex and Kernel session bindings fail closed with one recover
   assert.match(assertTestString(assertTestRecord(assertTestRecord(payload.diagnostics).remediation).command), /kernel next --diagnose/);
 });
 
+test('explicit CLI session replaces Codex thread as a source candidate', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-explicit-session-project-'));
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-explicit-session-state-'));
+  const contractPath = path.join(root, 'task-contract.json');
+  await mkdir(path.join(root, '.moon-relay'), { recursive: true });
+  await writeFile(path.join(root, '.moon-relay', 'track.yaml'), 'track: kernel\n');
+  await writeFile(path.join(root, 'package.json'), JSON.stringify({
+    name: 'kernel-explicit-session-source-selection',
+    version: '0.0.1',
+    scripts: { test: 'node -e "process.exit(0)"' },
+  }));
+  await writeFile(contractPath, JSON.stringify({
+    objective: 'characterize explicit session source selection',
+    acceptance: ['the explicit session is authoritative for this CLI invocation'],
+  }));
+
+  try {
+    const result = spawnSync(process.execPath, [
+      path.join(process.cwd(), 'bin', 'moon-relay-kernel.mjs'),
+      'next',
+      '--session-id', 'explicit-session',
+      '--provider', 'codex',
+      '--contract-json', contractPath,
+      '--project-root', root,
+      '--runtime-home', runtimeHome,
+      '--json',
+    ], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        CODEX_THREAD_ID: 'different-codex-thread',
+        MOON_RELAY_KERNEL_SESSION_ID: '',
+        MOON_RELAY_KERNEL_RUN_ID: '',
+        MOON_RELAY_KERNEL_REEXEC: '1',
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const payload = JSON.parse(result.stdout);
+    assert.match(payload.runId, /^run-[0-9a-f-]{36}$/i);
+  } finally {
+    await rm(runtimeHome, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('explicit CLI session still conflicts with a different environment session without consulting Codex thread', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-explicit-env-conflict-project-'));
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-explicit-env-conflict-state-'));
+  const contractPath = path.join(root, 'task-contract.json');
+  await mkdir(path.join(root, '.moon-relay'), { recursive: true });
+  await writeFile(path.join(root, '.moon-relay', 'track.yaml'), 'track: kernel\n');
+  await writeFile(path.join(root, 'package.json'), JSON.stringify({
+    name: 'kernel-explicit-env-session-conflict',
+    version: '0.0.1',
+    scripts: { test: 'node -e "process.exit(0)"' },
+  }));
+  await writeFile(contractPath, JSON.stringify({
+    objective: 'characterize explicit and environment session conflict',
+    acceptance: ['conflicting selected session sources fail closed'],
+  }));
+
+  try {
+    const result = spawnSync(process.execPath, [
+      path.join(process.cwd(), 'bin', 'moon-relay-kernel.mjs'),
+      'next',
+      '--session-id', 'explicit-session',
+      '--provider', 'codex',
+      '--contract-json', contractPath,
+      '--project-root', root,
+      '--runtime-home', runtimeHome,
+      '--json',
+    ], {
+      cwd: root,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        CODEX_THREAD_ID: 'third-session-that-is-not-a-candidate',
+        MOON_RELAY_KERNEL_SESSION_ID: 'codex:environment-session',
+        MOON_RELAY_KERNEL_RUN_ID: '',
+        MOON_RELAY_KERNEL_REEXEC: '1',
+      },
+    });
+
+    assert.notEqual(result.status, 0);
+    const payload = parseCliErrorReceipt(result.stderr || result.stdout);
+    assert.equal(payload.errorCode, 'host_binding_conflict');
+    const bindings = assertTestRecord(payload.diagnostics).bindings;
+    assert.ok(Array.isArray(bindings));
+    assert.deepEqual(bindings.map((binding) => assertTestRecord(binding).source), ['cli', 'environment']);
+  } finally {
+    await rm(runtimeHome, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('binding recovery command quotes hostile workspace paths without shell expansion', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-recovery-quote-'));
   const marker = path.join(root, 'expanded');

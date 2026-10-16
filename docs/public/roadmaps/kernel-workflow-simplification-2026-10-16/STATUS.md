@@ -20,7 +20,7 @@ W0 시작 기준: planning commit/push 이후 실제 current HEAD를 `baseHead`�
 
 | Wave | 목표 | 선행 | 상태 | Commit | Remote parity |
 | --- | --- | --- | --- | --- | --- |
-| W0 | 안전 기준선과 characterization | 없음 | NOT_STARTED | - | - |
+| W0 | 안전 기준선과 characterization | 없음 | COMPLETE | this Wave commit | verified after push |
 | W1 | Git owner-direct changedPaths 정합화 | W0 | NOT_STARTED | - | - |
 | W2 | Session source-selection/binding 경계 | W1 | NOT_STARTED | - | - |
 | W3 | Verification/report 사용 경로 | W2 | NOT_STARTED | - | - |
@@ -87,3 +87,48 @@ Wave 완료는 로컬 commit 생성만으로 끝나지 않는다.
 6. checkpoint에 commit/push evidence 기록.
 
 push가 불명확하면 다음 Wave로 넘어가지 않는다.
+
+
+## W0 결과
+
+```text
+wave: W0
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: 6c9e22aedd6c0633bd4cb38e1dabe97b2462225e
+resultHead: this Wave commit
+taskId: 4b8b1d6f-602d-4099-b965-b55f3f648055
+kernelRunId: 없음
+scope:
+  - tests/kernel-run-env-resolution.test.ts
+  - tests/kernel-efficiency-telemetry.test.ts
+  - STATUS.md
+acceptance:
+  - explicit --session-id가 있으면 CODEX_THREAD_ID를 resolver 후보에서 제외하는 CLI source-selection을 고정
+  - explicit/env session 충돌은 thread와 무관하게 fail-closed임을 고정
+  - Git actual change, index-only change, immutable baseline unknown, explicit [] mismatch 기존 회귀 유지
+  - canonical next의 contract preflight/baseline-required 안전 경계 기존 회귀 유지
+  - exact reusable proof와 flaky fresh 실행 기존 회귀 유지
+  - timeToFirstMutationMs와 contractRepairCount의 현재 실제 의미를 characterization
+checks:
+  - npm run build:tests: 283 tests, 8 helpers 생성 성공
+  - kernel-run-env-resolution: 21/21 통과
+  - W0 focused suite: source runtime build 후 timeout 전 68/68 통과; 나머지 session suite는 별도 21/21로 완결
+  - npm run typecheck 통과
+  - npm run build:check: 301 files, 814 edges, changed 0
+  - npm run build:tests:check: 283 tests, 8 helpers, removed 0
+  - git diff --check 통과
+structuralReview:
+  hardcoding: 없음. production 코드 변경 없음
+  fallback: 없음
+  duplicatedAuthority: 없음
+  newAbstraction: 없음
+commit: this Wave commit
+push:
+  remote: origin
+  branch: main
+  remoteHead: verified after push
+  parity: required before W1
+remaining: W1~W8
+nextWave: W1
+```

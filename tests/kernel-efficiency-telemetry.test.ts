@@ -54,7 +54,52 @@ test('efficiency telemetry is durable on the existing Run signals ledger', async
     assert.equal(persisted.reportCount, 2);
     assert.equal(persisted.verificationTimeoutCount, 1);
     assert.ok(Number.isInteger(persisted.timeToFirstMutationMs));
+    assert.equal(typeof persisted.runStartedAt, 'string');
+    const runStartedAt = String(persisted.runStartedAt);
+    assert.equal(
+      persisted.timeToFirstMutationMs,
+      Date.parse(mutationAt) - Date.parse(runStartedAt),
+      'timeToFirstMutationMs is measured from Run start to Kernel first-observed mutation',
+    );
     assert.equal(persisted.firstMutationAt, mutationAt);
+  } finally {
+    await cp.close();
+    await rm(fixture.runtimeHome, { recursive: true, force: true });
+    await rm(fixture.projectRoot, { recursive: true, force: true });
+  }
+});
+
+test('contractRepairCount currently counts any successful contract revision', async () => {
+  const fixture = await setup();
+  const cp = await createKernelControlPlane(fixture);
+  try {
+    await cp.startRun({
+      runId: 'efficiency-contract-revision',
+      objective: 'characterize contract revision telemetry',
+      taskContract: {
+        acceptance: ['a normal owner revision remains valid'],
+      },
+    });
+    const before = await cp.status('efficiency-contract-revision');
+    assert.ok(before && 'measurement' in before);
+    assert.ok('value' in before.measurement.efficiencyTelemetry);
+    assert.equal(before.measurement.efficiencyTelemetry.value.contractRepairCount, 0);
+
+    const run = await cp.getRun('efficiency-contract-revision');
+    assert.ok(run?.taskContract);
+    await cp.reviseContract('efficiency-contract-revision', {
+      ...run.taskContract,
+      constraints: [...run.taskContract.constraints, 'normal owner-requested revision'],
+    });
+
+    const after = await cp.status('efficiency-contract-revision');
+    assert.ok(after && 'measurement' in after);
+    assert.ok('value' in after.measurement.efficiencyTelemetry);
+    assert.equal(
+      after.measurement.efficiencyTelemetry.value.contractRepairCount,
+      1,
+      'the current field name must not be interpreted as repair-only telemetry',
+    );
   } finally {
     await cp.close();
     await rm(fixture.runtimeHome, { recursive: true, force: true });
