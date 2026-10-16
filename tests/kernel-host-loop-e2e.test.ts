@@ -198,6 +198,11 @@ test('host loop E2E: fail -> fix -> hard evidence -> accepted completion', async
     assert.equal(assertTestPresent(failedReport).status, 'evidence-failed');
     assert.equal(assertTestRecord(assertTestPresent(failedReport)).finalization, null);
     assert.equal(assertTestRecord(assertTestRecord(assertTestRecord(assertTestPresent(failedReport)).next).action).type, 'fix');
+    assert.deepEqual(
+      assertTestRecord(assertTestPresent(failedReport)).next,
+      await cp.next('host-loop-1'),
+      'report continuation must use the same canonical preparation as an explicit next call',
+    );
     assert.ok(assertTestString(assertTestRecord(assertTestArray(assertTestRecord(assertTestPresent(failedReport)).failures)[0]).errorSummary).includes('expected 401'));
 
     // Model actually fixes the bug and reports again.
@@ -212,6 +217,11 @@ test('host loop E2E: fail -> fix -> hard evidence -> accepted completion', async
     assert.equal(assertTestPresent(passedReport).status, 'completed');
     assert.equal(assertTestRecord(assertTestRecord(assertTestPresent(passedReport)).finalization).completionStatus, 'accepted');
     assert.equal(assertTestRecord(assertTestRecord(assertTestRecord(assertTestPresent(passedReport)).next).action).type, 'done');
+    assert.deepEqual(
+      assertTestRecord(assertTestPresent(passedReport)).next,
+      await cp.next('host-loop-1'),
+      'completed report continuation must remain canonical next output',
+    );
 
     const finalRun = await cp.getRun('host-loop-1');
     assert.ok(assertTestPresent(finalRun).mutationRevision >= 1, 'mutation revision must reflect the actual source change');

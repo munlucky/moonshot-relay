@@ -3418,13 +3418,25 @@ export const createKernelControlPlane = async ({
       }
     },
 
-    // Model-visible command 1 of 2: what to do now.
+    // Model-visible command 1 of 2: validate caller binding, then prepare the
+    // canonical continuation. Internal lifecycle paths that already passed
+    // their binding boundary use prepareNext directly instead of re-running a
+    // model-facing Host binding check.
     async next(runId: string, { stepId = null }: { stepId?: string | null } = {}) {
       try {
         preflight(runId, 'next');
       } catch (error) {
         return bindingErrorPayload(error, { projectRoot, provider: hostProvider });
       }
+      return this.prepareNext(runId, { stepId });
+    },
+
+    // One canonical continuation preparation path for next/report/resume.
+    // This owns contract preflight, delivery recovery, knowledge refresh,
+    // verification support, capability selection, baseline gating, and Work
+    // Unit scope checks. It is an internal lifecycle primitive, not a new
+    // model-visible command.
+    async prepareNext(runId: string, { stepId = null }: { stepId?: string | null } = {}) {
       let run = getRunSnapshot(runId);
       if (!run) return { schemaVersion: 1, runId, status: 'not_found' };
       const projectCommands = currentProjectCommands();
@@ -3900,7 +3912,7 @@ export const createKernelControlPlane = async ({
       }
       const leaseResult = acquireRunLease(runId, REPORT_LEASE_TTL_MS);
       if (!leaseResult.acquired) {
-        return { schemaVersion: 1, runId, status: 'lease-conflict', lease: leaseResult.lease, next: await this.next(runId) };
+        return { schemaVersion: 1, runId, status: 'lease-conflict', lease: leaseResult.lease, next: await this.prepareNext(runId) };
       }
       const fencingToken = leaseResult.lease.fencingToken;
       try {
@@ -3944,7 +3956,7 @@ export const createKernelControlPlane = async ({
       // (P0-7); a partial finalization stays retryable instead of reporting a
       // success the Kernel did not actually achieve.
       if (run.status === 'completed' && run.finalizationStatus === 'completed' && !incomingOperation.attempt?.reportCheckpoint) {
-        return { schemaVersion: 1, runId, status: 'completed', workUnitStatus: 'complete', goalStatus: 'complete', next: await this.next(runId) };
+        return { schemaVersion: 1, runId, status: 'completed', workUnitStatus: 'complete', goalStatus: 'complete', next: await this.prepareNext(runId) };
       }
 
       // Enforce the run lease before mutating any state (F4). If another runner
@@ -3952,7 +3964,7 @@ export const createKernelControlPlane = async ({
       // interleave attempts, transitions, and finalization on the same run.
       const leaseResult = acquireRunLease(runId, REPORT_LEASE_TTL_MS);
       if (!leaseResult.acquired) {
-        return { schemaVersion: 1, runId, status: 'lease-conflict', lease: leaseResult.lease, next: await this.next(runId) };
+        return { schemaVersion: 1, runId, status: 'lease-conflict', lease: leaseResult.lease, next: await this.prepareNext(runId) };
       }
       const fencingToken = leaseResult.lease.fencingToken;
       try {
@@ -3994,50 +4006,34 @@ export const createKernelControlPlane = async ({
         return this.settleVerifiedReport(runId, recoveryCheckpoint, { fencingToken });
       }
       recordEfficiency(runId, { increments: { reportCount: 1 } });
-      const evidenceRejected = (failures: ReportFailure[]) => {
-        const currentRun = requireRun(runId);
-        return {
-          schemaVersion: 1,
-          runId,
-          status: 'evidence-rejected',
-          executed: [],
-          failures,
-          finalization: null,
-          next: buildNextForRun(currentRun, {
-            verifications: store.getVerifications(runId),
-            requiredObligations: currentRun.requiredObligations,
-            contract: currentRun.taskContract ? contractBriefing(currentRun.taskContract) : null,
-            failures,
-          }),
-        };
-      };
-      const workspaceScopeRejected = ({
+      const evidenceRejected = async (failures: ReportFailure[]) => ({
+        schemaVersion: 1,
+        runId,
+        status: 'evidence-rejected',
+        executed: [],
+        failures,
+        finalization: null,
+        next: await this.prepareNext(runId),
+      });
+      const workspaceScopeRejected = async ({
         actualChangedPaths = null,
         reportedChangedPaths = [],
         failure,
         observation = null,
-      }: { actualChangedPaths?: string[] | null; reportedChangedPaths?: string[]; failure: ReportFailure; observation?: WorkspaceObservation | null }) => {
-        const currentRun = requireRun(runId);
-        return {
-          schemaVersion: 1,
-          runId,
-          status: 'scope-rejected',
-          actualChangedPaths,
-          reportedChangedPaths,
-          workspaceObservation: observation
-            ? { method: observation.method || null, status: asRecord(observation).status || 'observed', reason: asRecord(observation).reason || null }
-            : { method: null, status: 'unavailable', reason: 'workspace-observation-unavailable' },
-          executed: [],
-          failures: [failure],
-          finalization: null,
-          next: buildNextForRun(currentRun, {
-            verifications: store.getVerifications(runId),
-            requiredObligations: currentRun.requiredObligations,
-            contract: currentRun.taskContract ? contractBriefing(currentRun.taskContract) : null,
-            failures: [failure],
-          }),
-        };
-      };
+      }: { actualChangedPaths?: string[] | null; reportedChangedPaths?: string[]; failure: ReportFailure; observation?: WorkspaceObservation | null }) => ({
+        schemaVersion: 1,
+        runId,
+        status: 'scope-rejected',
+        actualChangedPaths,
+        reportedChangedPaths,
+        workspaceObservation: observation
+          ? { method: observation.method || null, status: asRecord(observation).status || 'observed', reason: asRecord(observation).reason || null }
+          : { method: null, status: 'unavailable', reason: 'workspace-observation-unavailable' },
+        executed: [],
+        failures: [failure],
+        finalization: null,
+        next: await this.prepareNext(runId),
+      });
       // A run that already reached accepted completion but whose finalization
       // is partial re-enters finalization instead of restarting the loop.
       if (run.status === 'completed' && run.finalizationStatus !== 'completed') {
@@ -4054,7 +4050,7 @@ export const createKernelControlPlane = async ({
           executed: [],
           failures: [],
           finalization: retried,
-          next: await this.next(runId),
+          next: await this.prepareNext(runId),
         };
       }
 
@@ -4206,7 +4202,6 @@ export const createKernelControlPlane = async ({
         );
         const failures = stepResolution.rejection || actualScopeRejection || claimedScopeRejection;
         if (failures) {
-          const currentRun = requireRun(runId);
           return {
             schemaVersion: 1,
             runId,
@@ -4214,12 +4209,7 @@ export const createKernelControlPlane = async ({
             executed: [],
             failures,
             finalization: null,
-            next: buildNextForRun(currentRun, {
-              verifications: store.getVerifications(runId),
-              requiredObligations: currentRun.requiredObligations,
-              contract: currentRun.taskContract ? contractBriefing(currentRun.taskContract) : null,
-              failures,
-            }),
+            next: await this.prepareNext(runId),
           };
         }
         return workspaceScopeRejected({
@@ -4257,7 +4247,6 @@ export const createKernelControlPlane = async ({
         ? (lineageRejection || capsuleScopeRejection)
         : (staleCapsuleRejection || lineageRejection || this.assertCapsuleScope(runId, report, activeStep));
       if (capsuleRejection) {
-        const currentRun = requireRun(runId);
         return {
           schemaVersion: 1,
           runId,
@@ -4265,12 +4254,7 @@ export const createKernelControlPlane = async ({
           executed: [],
           failures: capsuleRejection,
           finalization: null,
-          next: buildNextForRun(currentRun, {
-            verifications: store.getVerifications(runId),
-            requiredObligations: currentRun.requiredObligations,
-            contract: currentRun.taskContract ? contractBriefing(currentRun.taskContract) : null,
-            failures: capsuleRejection,
-          }),
+          next: await this.prepareNext(runId),
         };
       }
 
@@ -4475,7 +4459,7 @@ export const createKernelControlPlane = async ({
           });
         }
       }
-      if (bindingFailures.length > 0) return settleEarlyAttemptResult(evidenceRejected(bindingFailures));
+      if (bindingFailures.length > 0) return settleEarlyAttemptResult(await evidenceRejected(bindingFailures));
 
       // Proof is Kernel-planned. A model report may contain verification hints,
       // but only an explicit fresh request is allowed to rerun a satisfied or
@@ -4538,7 +4522,7 @@ export const createKernelControlPlane = async ({
           });
         }
       }
-      if (coverageFailures.length > 0) return settleEarlyAttemptResult(evidenceRejected(coverageFailures));
+      if (coverageFailures.length > 0) return settleEarlyAttemptResult(await evidenceRejected(coverageFailures));
 
       if (proofRequests.length === 0 && judgmentRequests.length === 0 && preProofCompletion.unsatisfiedObligations.some((o) => o.requiredEvidenceClass === 'hard')) {
         const current = requireRun(runId);
@@ -4846,7 +4830,7 @@ export const createKernelControlPlane = async ({
       if (failures.length === 0 && outstanding.length === 0 && stepsSettled && (refreshed.state === 'PROVE' || refreshed.status === 'completed')) {
         // Only the runner that still holds the lease it acquired may finalize.
         if (!store.isLeaseHeld(runId, { holder, fencingToken })) {
-          return { schemaVersion: 1, runId, status: 'lease-conflict', lease: store.getLease(runId), next: await this.next(runId) };
+          return { schemaVersion: 1, runId, status: 'lease-conflict', lease: store.getLease(runId), next: await this.prepareNext(runId) };
         }
         let finalizationChangedPaths = report.changedPaths;
         if (!parallelSettlement) {
@@ -4931,12 +4915,11 @@ export const createKernelControlPlane = async ({
         failureClassification,
         step: stepOutcome ? { ...stepOutcome } : null,
         finalization,
-        next: buildNextForRun(finalRun, {
-          verifications: store.getVerifications(runId),
-          requiredObligations: finalRun.requiredObligations,
-          contract: finalRun.taskContract ? contractBriefing(finalRun.taskContract) : null,
-          failures,
-        }),
+        // Report continuation must pass through the same preparation as an
+        // explicit next call. This keeps contract preflight, delivery recovery,
+        // knowledge refresh, verification support, capability selection, and
+        // fail-closed Work Unit scope checks on one canonical path.
+        next: await this.prepareNext(runId),
       };
       if (stepAttempt?.attemptId && stepOutcome?.attemptSettlement) {
         // Journal the exact result before the settlement transaction. If the

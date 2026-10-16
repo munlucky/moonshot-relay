@@ -24,7 +24,7 @@ W0 시작 기준: planning commit/push 이후 실제 current HEAD를 `baseHead`�
 | W1 | Git owner-direct changedPaths 정합화 | W0 | COMPLETE | this Wave commit | verified after push |
 | W2 | Session source-selection/binding 경계 | W1 | VERIFIED_EXISTING | this Wave commit | verified after push |
 | W3 | Verification/report 사용 경로 | W2 | COMPLETE | this Wave commit | verified after push |
-| W4 | canonical next preparation 통합 | W3 | NOT_STARTED | - | - |
+| W4 | canonical next preparation 통합 | W3 | COMPLETE | this Wave commit | verified after push |
 | W5 | model-visible next 왕복 제거 | W4 equivalence 통과 | NOT_STARTED | - | - |
 | W6 | semantic Contract 입력 | W5 | NOT_STARTED | - | - |
 | W7 | Recovery continuity mechanics | W6 + 필요성 확인 | NOT_STARTED | - | - |
@@ -265,4 +265,49 @@ push:
   parity: required before W4
 remaining: W4~W8
 nextWave: W4
+```
+
+## W4 결과
+
+```text
+wave: W4
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: ff965da0ff70e3338d45fe8c8ef60728d8afd741
+resultHead: this Wave commit
+taskId: 4b8b1d6f-602d-4099-b965-b55f3f648055
+kernelRunId: 없음
+scope:
+  - src/kernel/control-plane.ts
+  - tests/kernel-host-loop-e2e.test.ts
+  - STATUS.md
+acceptance:
+  - 외부 next의 Host binding preflight와 내부 continuation preparation 책임을 분리
+  - contract preflight, delivery recovery, knowledge refresh, verification support, capability, baseline, Work Unit scope 검사를 prepareNext 단일 경로로 유지
+  - report의 evidence/scope/capsule/finalization/success continuation이 raw buildNextForRun projection을 직접 만들지 않음
+  - owner-direct failed/completed report.next가 explicit next와 semantic equivalence를 가짐
+  - routed worker, review readiness, scope/recovery 안전 경계 유지
+  - model-visible next 왕복 제거는 W5로 남기고 이번 Wave에서는 수행하지 않음
+checks:
+  - W4 focused core suite 44/44 통과
+  - kernel-run-step-scope 2/2 통과
+  - kernel-work-unit-recovery-e2e 4/4 통과
+  - npm run typecheck 통과
+  - npm run build:check: files 301, changed 0, removed 0
+  - npm run build:tests:check: tests 283, helpers 8, removed 0
+  - npm run check:boundaries: modules 9, files 301, edges 814
+  - git diff --check 통과
+structuralReview:
+  hardcoding: 없음
+  fallback: 없음
+  duplicatedAuthority: report-side 직접 buildNextForRun projection 제거
+  newAbstraction: 기존 next 준비 책임을 prepareNext 내부 primitive로 추출, 새 workflow/state 없음
+commit: this Wave commit
+push:
+  remote: origin
+  branch: main
+  remoteHead: verified after push
+  parity: required before W5
+remaining: W5~W8
+nextWave: W5
 ```
