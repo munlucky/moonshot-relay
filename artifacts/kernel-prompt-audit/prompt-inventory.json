@@ -3,8 +3,8 @@
   "surfaces": [
     {
       "path": "skills/moon-relay-kernel/SKILL.md",
-      "bytes": 5685,
-      "lines": 50
+      "bytes": 6903,
+      "lines": 51
     },
     {
       "path": "package/profile-templates/claude/.claude/agents/kernel-planner.md",

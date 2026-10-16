@@ -47,6 +47,9 @@ test('Kernel authority rules survive the cleanup', async () => {
   assert.match(skill, /Kernel runtime executes them/i);
   assert.match(skill, /independent reviewer session/i);
   assert.match(skill, /only completion authority/i);
+  assert.match(skill, /exact reusable evidence/i);
+  assert.match(skill, /do not duplicate Kernel completion proof before `report`/i);
+  assert.doesNotMatch(skill, /report only after all required evidence is recorded/i);
 
   const implementer = await readFile('package/profile-templates/claude/.claude/agents/kernel-implementer.md', 'utf8');
   assert.match(implementer, /allowedPaths/);

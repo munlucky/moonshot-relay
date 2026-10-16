@@ -23,7 +23,7 @@ W0 시작 기준: planning commit/push 이후 실제 current HEAD를 `baseHead`�
 | W0 | 안전 기준선과 characterization | 없음 | COMPLETE | this Wave commit | verified after push |
 | W1 | Git owner-direct changedPaths 정합화 | W0 | COMPLETE | this Wave commit | verified after push |
 | W2 | Session source-selection/binding 경계 | W1 | VERIFIED_EXISTING | this Wave commit | verified after push |
-| W3 | Verification/report 사용 경로 | W2 | NOT_STARTED | - | - |
+| W3 | Verification/report 사용 경로 | W2 | COMPLETE | this Wave commit | verified after push |
 | W4 | canonical next preparation 통합 | W3 | NOT_STARTED | - | - |
 | W5 | model-visible next 왕복 제거 | W4 equivalence 통과 | NOT_STARTED | - | - |
 | W6 | semantic Contract 입력 | W5 | NOT_STARTED | - | - |
@@ -222,4 +222,47 @@ push:
   parity: required before W3
 remaining: W3~W8
 nextWave: W3
+```
+
+## W3 결과
+
+```text
+wave: W3
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: c1880e4b9705d0e2d169426bb72eee8a0b04f6e7
+resultHead: this Wave commit
+taskId: 4b8b1d6f-602d-4099-b965-b55f3f648055
+kernelRunId: 없음
+scope:
+  - skills/moon-relay-kernel/SKILL.md
+  - package/kernel/profiles/codex/skills/moon-relay-kernel/SKILL.md
+  - tests/kernel-prompt-legacy-instruction.test.ts
+  - artifacts/kernel-prompt-audit/prompt-inventory.json
+  - STATUS.md
+acceptance:
+  - local debugging test와 Kernel completion proof의 역할을 분리
+  - report 이후 Kernel이 outstanding hard obligation을 trusted execution 또는 exact reusable evidence로 settle하도록 안내
+  - stale/flaky/explicit fresh 조건에서만 fresh execution을 요청하도록 지침 정합화
+  - focused/integration/goal settlement와 existing evidence reuse semantics는 production 변경 없이 유지
+  - canonical skill과 shipped Codex skill을 동일하게 유지
+checks:
+  - npm run build:tests: 283 tests, 8 helpers 생성 성공
+  - W3 focused suite 45/45 통과
+  - npm run typecheck 통과
+  - npm run build:tests:check: 283 tests, 8 helpers, removed 0
+  - git diff --check 통과
+structuralReview:
+  hardcoding: 없음
+  fallback: 없음
+  duplicatedAuthority: verification policy를 Skill에 새로 구현하지 않고 기존 Kernel settlement를 안내
+  newAbstraction: 없음
+commit: this Wave commit
+push:
+  remote: origin
+  branch: main
+  remoteHead: verified after push
+  parity: required before W4
+remaining: W4~W8
+nextWave: W4
 ```
