@@ -4113,9 +4113,21 @@ export const createKernelControlPlane = async ({
             },
           });
         }
-        // A non-Git project has no Git change-set authority. Preserve the
-        // existing stat-walk compatibility path while making the limitation
-        // visible in the response; Git projects remain fail-closed above.
+        // A non-Git project has no authoritative Git change set. It may use
+        // an explicit caller claim, but omission cannot mean "no changes":
+        // the stat-walk identity is not promoted into a second change authority.
+        if (changeSet.status !== 'observed' && !changedPathsClaimed) {
+          return workspaceScopeRejected({
+            reportedChangedPaths,
+            observation: liveWorkspaceObservation,
+            failure: {
+              obligationId: 'workspace-scope',
+              command: 'kernel report',
+              errorSummary: 'Non-Git workspaces require an explicit changedPaths claim because Kernel cannot derive an authoritative Git change set',
+              errorCode: 'workspace_observation_unavailable',
+            },
+          });
+        }
         actualChangedPaths = changeSet.status === 'observed'
           ? canonicalChangedPaths(changeSet.actualChangedPaths)
           : reportedChangedPaths;

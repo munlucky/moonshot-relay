@@ -121,7 +121,7 @@ export const KERNEL_MCP_TOOLS = [
   },
   {
     name: 'kernel_report',
-    description: 'Submit work unit completion, changed files, evidence, and observations to Moon Relay Kernel.',
+    description: 'Submit work unit completion, evidence, and observations. Git owner-direct paths are derived by Kernel; explicit changedPaths are validated when supplied and are required for non-Git workspaces.',
     inputSchema: {
       type: 'object',
       properties: {

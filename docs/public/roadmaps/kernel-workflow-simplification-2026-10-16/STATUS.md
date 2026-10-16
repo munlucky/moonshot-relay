@@ -21,7 +21,7 @@ W0 시작 기준: planning commit/push 이후 실제 current HEAD를 `baseHead`�
 | Wave | 목표 | 선행 | 상태 | Commit | Remote parity |
 | --- | --- | --- | --- | --- | --- |
 | W0 | 안전 기준선과 characterization | 없음 | COMPLETE | this Wave commit | verified after push |
-| W1 | Git owner-direct changedPaths 정합화 | W0 | NOT_STARTED | - | - |
+| W1 | Git owner-direct changedPaths 정합화 | W0 | COMPLETE | this Wave commit | verified after push |
 | W2 | Session source-selection/binding 경계 | W1 | NOT_STARTED | - | - |
 | W3 | Verification/report 사용 경로 | W2 | NOT_STARTED | - | - |
 | W4 | canonical next preparation 통합 | W3 | NOT_STARTED | - | - |
@@ -131,4 +131,52 @@ push:
   parity: required before W1
 remaining: W1~W8
 nextWave: W1
+```
+
+
+## W1 결과
+
+```text
+wave: W1
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: ea784415c2714725af832695fea31af65274b7ec
+resultHead: this Wave commit
+taskId: 4b8b1d6f-602d-4099-b965-b55f3f648055
+kernelRunId: 없음
+scope:
+  - src/kernel/control-plane.ts
+  - src/kernel/bridge/mcp.ts
+  - skills/moon-relay-kernel/SKILL.md
+  - tests/kernel-host-loop-e2e.test.ts
+  - STATUS.md
+acceptance:
+  - Git owner-direct omission은 기존 live Git authority에서 actualChangedPaths를 파생
+  - explicit [] 또는 잘못된 claim은 기존 mismatch 차단 유지
+  - non-Git omission은 빈 변경으로 간주하지 않고 기존 workspace_observation_unavailable로 fail-closed
+  - non-Git explicit claim 경로 유지
+  - isolated worker/parallel receipt의 required changedPaths provenance 유지
+  - MCP/Skill 설명을 실제 authority semantics와 정합화
+checks:
+  - npm run build: 301 files, 814 edges
+  - npm run build:tests: 283 tests, 8 helpers
+  - W1 focused suite 41/41 통과
+  - npm run typecheck 통과
+  - npm run build:check 통과
+  - npm run build:tests:check 통과
+  - npm run check:boundaries: 9 modules, 301 files, 814 edges
+  - git diff --check 통과
+structuralReview:
+  hardcoding: 없음
+  fallback: non-Git stat-walk fallback을 추가하지 않고 omission을 차단
+  duplicatedAuthority: stat-walk을 change authority로 승격하지 않음
+  newAbstraction: 없음
+commit: this Wave commit
+push:
+  remote: origin
+  branch: main
+  remoteHead: verified after push
+  parity: required before W2
+remaining: W2~W8
+nextWave: W2
 ```

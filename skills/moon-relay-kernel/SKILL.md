@@ -12,7 +12,7 @@ The account command skillset defaults to Kernel. Bind the current project/worktr
 - **Binding Scope**: `Project → Worktree → Run`, scoped by canonical root and Git worktree identity under runtime home `~/.moon-relay-kernel`.
 - **Two Core Commands**:
   - `kernel next [--contract-json <file>]` (or MCP `kernel_next`): Returns objective, acceptance, constraints, context capsule, and the active work unit.
-  - `kernel report [--report-json <file>]` (or MCP `kernel_report`): Submits change summary, changed paths, risks, and requested verifications.
+  - `kernel report [--report-json <file>]` (or MCP `kernel_report`): Submits the work result, risks, and requested verifications. In an owner-direct Git workspace, omit `changedPaths` unless making an explicit claim; Kernel derives the authoritative delta. Non-Git reports must supply `changedPaths`, and isolated worker receipts keep their required path provenance.
 - **Task Contract**: Captured as compact JSON (objective, acceptance, constraints, non-goals) passed via `kernel next --contract-json <file>` on the first call to atomically create/bind the Run; do not bootstrap a fresh session with bare `kernel next` (use bare `kernel next` only after a Host binding exists).
 
 ## Autonomy & Priorities

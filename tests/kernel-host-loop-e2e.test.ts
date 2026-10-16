@@ -480,6 +480,72 @@ test('report rejects a changed workspace when changedPaths omits the actual delt
   }
 });
 
+test('Git owner-direct report derives changed paths when the caller omits the claim', async () => {
+  const fixture = await setupActualDiffFixture();
+  const cp = await createKernelControlPlane({ runtimeHome: fixture.runtimeHome, projectRoot: fixture.projectRoot });
+  try {
+    await cp.startRun({
+      runId: 'run-owner-derived-diff',
+      objective: 'Derive the owner workspace delta',
+      taskContract: {
+        behaviorChanging: true,
+        allowedPaths: ['src/**'],
+        acceptance: [{
+          acceptance: 'the changed path is derived from Git',
+          evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test:ok'], obligationId: 'default' },
+        }],
+      },
+    });
+    await writeFile(path.join(fixture.projectRoot, 'src', 'tracked.mjs'), 'export const value = 3;\n');
+    const reported = await cp.report('run-owner-derived-diff', { summary: 'owner finished the scoped edit' });
+    assert.deepEqual(assertTestRecord(assertTestPresent(reported)).actualChangedPaths, ['src/tracked.mjs']);
+    assert.deepEqual(assertTestRecord(assertTestPresent(reported)).reportedChangedPaths, []);
+    assert.notEqual(assertTestPresent(reported).status, 'scope-rejected');
+  } finally {
+    await cp.close();
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('non-Git owner report fails closed when changedPaths is omitted', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-non-git-report-'));
+  const runtimeHome = path.join(root, 'runtime');
+  const projectRoot = path.join(root, 'project');
+  await mkdir(projectRoot, { recursive: true });
+  await writeFile(path.join(projectRoot, 'package.json'), JSON.stringify({
+    name: 'kernel-non-git-report-fixture',
+    version: '1.0.0',
+    scripts: { 'test:ok': 'node -e "process.exit(0)"' },
+  }));
+  await writeFile(path.join(projectRoot, 'app.mjs'), 'export const value = 0;\n');
+  const cp = await createKernelControlPlane({ runtimeHome, projectRoot });
+  try {
+    await cp.startRun({
+      runId: 'run-non-git-omission',
+      objective: 'Require an explicit non-Git change claim',
+      taskContract: {
+        behaviorChanging: true,
+        allowedPaths: ['app.mjs'],
+        acceptance: [{
+          acceptance: 'the caller identifies the changed path',
+          evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test:ok'], obligationId: 'default' },
+        }],
+      },
+    });
+    await writeFile(path.join(projectRoot, 'app.mjs'), 'export const value = 1;\n');
+    const rejected = await cp.report('run-non-git-omission', { summary: 'edited without an explicit path claim' });
+    assert.equal(assertTestPresent(rejected).status, 'scope-rejected');
+    assert.equal(
+      assertTestRecord(assertTestArray(assertTestRecord(assertTestPresent(rejected)).failures)[0]).errorCode,
+      'workspace_observation_unavailable',
+    );
+    assert.deepEqual(assertTestRecord(assertTestPresent(rejected)).reportedChangedPaths, []);
+  } finally {
+    await cp.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('blocker reports cannot hide an actual change outside the issued capsule scope', async () => {
   const fixture = await setupActualDiffFixture();
   const cp = await createKernelControlPlane({ runtimeHome: fixture.runtimeHome, projectRoot: fixture.projectRoot });
