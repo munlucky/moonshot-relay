@@ -543,6 +543,12 @@ test('real Control Plane settles worker receipts only after owner Delivery CAS',
       steps: controlPlane.stateStore.getRunSteps(runId).map((step) => ({ stepId: step.stepId, state: step.state, blockedReason: step.blockedReason })),
       verifications: controlPlane.stateStore.getVerifications(runId).map((verification) => ({ obligationId: verification.obligationId, status: verification.status, errorSummary: verification.errorSummary })),
     }, null, 2));
+    assertTestRecord(assertTestRecord(result).next);
+    assert.ok(
+      assertTestArray(assertTestRecord(result).executionResults)
+        .every((entry: unknown) => assertTestRecord(assertTestRecord(entry).reportResult).next === null),
+      'individual parallel settlements defer continuation preparation until the batch boundary',
+    );
     assert.equal(assertTestRecord(assertTestRecord(assertTestRecord(result).integration).deliveryMutation).mutationRevision, 1);
     assert.equal(assertTestRecord(assertTestRecord(assertTestRecord(result).integration).deliveryMutation).expectedMutationRevision, 0);
     const finalRun = await controlPlane.getRun(runId);

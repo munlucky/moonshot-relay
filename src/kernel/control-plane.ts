@@ -4909,11 +4909,13 @@ export const createKernelControlPlane = async ({
         failureClassification,
         step: stepOutcome ? { ...stepOutcome } : null,
         finalization,
-        // Report continuation must pass through the same preparation as an
-        // explicit next call. This keeps contract preflight, delivery recovery,
-        // knowledge refresh, verification support, capability selection, and
-        // fail-closed Work Unit scope checks on one canonical path.
-        next: await this.prepareNext(runId),
+        // A model-visible report prepares its canonical continuation here.
+        // Parallel worker settlement is an internal Host batch primitive: if it
+        // ran restart recovery between sibling receipts, an in-flight Delivery
+        // would be mistaken for a crashed Delivery. The parallel dispatcher
+        // prepares one canonical continuation after every worker receipt has
+        // settled.
+        next: parallelSettlement ? null : await this.prepareNext(runId),
       };
       if (stepAttempt?.attemptId && stepOutcome?.attemptSettlement) {
         // Journal the exact result before the settlement transaction. If the

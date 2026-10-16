@@ -155,6 +155,7 @@ type ParallelControlPlane = StepControlPlane & {
   registerExecutionWorkspace?: (...args: Parameters<ControlPlaneLike['registerExecutionWorkspace']>) => { workspaceId: string };
   acquireOwnerWorkspaceMutationFence?: (...args: Parameters<ControlPlaneLike['acquireOwnerWorkspaceMutationFence']>) => OwnerFenceLike | Promise<OwnerFenceLike>;
   renewOwnerWorkspaceMutationFence?: (...args: Parameters<ControlPlaneLike['renewOwnerWorkspaceMutationFence']>) => OwnerFenceLike | Promise<OwnerFenceLike>;
+  prepareNext?: (...args: Parameters<ControlPlaneLike['prepareNext']>) => unknown | Promise<unknown>;
 } & {
   [K in 'assertOwnerWorkspaceMutationReady' | 'recordOwnerWorkspaceMutation' | 'releaseOwnerWorkspaceMutationFence' | 'settleParallelResult' | 'blockDeliveryMaterialization' | 'recordStepResult' | 'failStepAttempt']?: (...args: Parameters<ControlPlaneLike[K]>) => unknown | Promise<unknown>;
 };
@@ -1055,6 +1056,9 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
     }
   }
   const failed = dispatchFailures.length + resultProcessingFailures.length + settlementFailures.length;
+  const continuation = integration.status === 'integrated' && failed === 0 && controlPlane.prepareNext
+    ? asRecord(await controlPlane.prepareNext(runId))
+    : null;
   const cleanup = integration.status === 'integrated' && failed === 0
     ? await cleanupExecutionWorkspaces({ runtimeHome, projectId: run.projectId, runId, repoRoot, retain: false })
     : await cleanupExecutionWorkspaces({ runtimeHome, projectId: run.projectId, runId, repoRoot, retain: true });
@@ -1072,6 +1076,7 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
     settlementFailures,
     integration,
     deliveryMutation: integration.deliveryMutation || null,
+    next: continuation,
     cleanup,
     baseWorkspaceIdentity: deliveryIdentity,
   };

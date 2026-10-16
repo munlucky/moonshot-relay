@@ -96,7 +96,7 @@ for (const named of [true, false]) test(`S-03/S-04: direct ${named ? 'named' : '
       { stepId: 'first', objective: 'first', allowedPaths: ['package.json'], acceptanceIds: ['AC-1'] },
       { stepId: 'second', objective: 'second', allowedPaths: ['package.json'], acceptanceIds: ['AC-1'] },
     ] } });
-    const payload = { summary: 'first delivery', ...(named ? { stepId: 'first' } : {}) };
+    const payload = { summary: 'first delivery', changedPaths: [], ...(named ? { stepId: 'first' } : {}) };
     const first = await cp.report(runId, payload);
     assert.equal(assertTestRecord(assertTestRecord(assertTestPresent(first)).step).state, 'passed');
     assert.ok(assertTestRecord(assertTestPresent(first)).reportKey);
@@ -372,7 +372,7 @@ const verifyFinalizationCheckpoint = async (gitCrashStage: string | null) => {
     if(gitCrashStage)await writeFile(path.join(projectRoot,'app.mjs'),'export const v=2;');
     await cp.close();cp=null;
     const sourceFile=path.join(coordination,'child.mjs'),payloadFile=path.join(coordination,'payload.json'),resultFile=path.join(coordination,'result.json');
-    const payload={runId,summary:'final delivery',...(gitCrashStage?{changedPaths:['app.mjs'],gitCloseoutRequest:{requested:true,mode:'commit',approvalReceipt:'fixture-explicit-approval'}}:{})};
+    const payload={runId,summary:'final delivery',...(gitCrashStage?{changedPaths:['app.mjs'],gitCloseoutRequest:{requested:true,mode:'commit',approvalReceipt:'fixture-explicit-approval'}}:{changedPaths:[]})};
     await writeFile(payloadFile,JSON.stringify(payload));
     const moduleUrl=pathToFileURL(path.join(process.cwd(),'scripts/host/kernel/control-plane-runtime.js')).href;
     await writeFile(sourceFile,`import {readFile} from 'node:fs/promises';

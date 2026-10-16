@@ -28,7 +28,7 @@ W0 시작 기준: planning commit/push 이후 실제 current HEAD를 `baseHead`�
 | W5 | model-visible next 왕복 제거 | W4 equivalence 통과 | COMPLETE | this Wave commit | verified after push |
 | W6 | semantic Contract 입력 | W5 | COMPLETE | this Wave commit | verified after push |
 | W7 | Recovery continuity mechanics | W6 + 필요성 확인 | COMPLETE | this Wave commit | verified after push |
-| W8 | 전후 측정·통합 검증·잔여 단순화 | W7 또는 VERIFIED_EXISTING | NOT_STARTED | - | - |
+| W8 | 전후 측정·통합 검증·잔여 단순화 | W7 또는 VERIFIED_EXISTING | COMPLETE | this Wave commit | verified after push |
 
 ## Wave 결과 기록 템플릿
 
@@ -501,4 +501,92 @@ push:
   parity: required before W8
 remaining: W8
 nextWave: W8
+```
+
+## W8 결과
+
+```text
+wave: W8
+status: COMPLETE
+workspace: /shared/moonshot-relay
+baseHead: df3aec6987ecfc3259fa0229846fb78047a308fe
+resultHead: this Wave commit
+taskId: 4b8b1d6f-602d-4099-b965-b55f3f648055
+kernelRunId: 없음
+scope:
+  - docs/public/roadmaps/kernel-workflow-simplification-2026-10-16/W8_MEASUREMENT.md
+  - docs/public/roadmaps/kernel-workflow-simplification-2026-10-16/STATUS.md
+  - src/kernel/control-plane.ts
+  - src/host/kernel/parallel-dispatcher.ts
+  - tests/kernel-parallel-dispatch.test.ts
+  - tests/kernel-report-replay.test.ts
+  - tests/kernel-review-host-bridge.test.ts
+  - package/kernel/skills.lock.json
+  - artifacts/kernel-prompt-audit/prompt-inventory.json
+acceptance:
+  - 2026-10-12~2026-10-16 Codex export를 timestamp 기준으로 앱/Harness 세션 분리 측정
+  - 개선 후 실사용 export가 없으므로 실제 감소율을 임의 추정하지 않음
+  - 일반 앱 baseline friction을 실제 CommandExecution 기반으로 기록
+  - report→next, contract wiring, changedPaths, recovery bookkeeping이 현재 정상 경로에서 필수인지 구조적으로 판정
+  - 실제 consumer/safety 의미가 남은 unbound next, successor ID rebasing, stateless recovery CLI는 유지
+  - non-Git fixture는 explicit changedPaths 계약으로 정합화
+  - stale Kernel skills lock은 기존 buildSkillsLock(scope=kernel) 경로로 재생성
+  - stale prompt inventory는 등록된 모든 surface의 실제 bytes/lines를 재계산
+  - parallel 내부 worker settlement는 model-visible continuation을 준비하지 않음
+  - parallel batch의 sibling receipt가 모두 정산된 뒤 Host가 canonical prepareNext를 한 번만 호출
+  - owner mutation provenance/restart recovery 검사를 약화시키지 않고 Delivery 경계 회귀 해결
+checks:
+  - 전체 tests/kernel-*.test.mjs 277개 파일: 1437 pass / 0 fail / 12 skip
+  - batch 0~46: 271 pass / 0 fail
+  - batch 47~92: 215 pass / 0 fail
+  - batch 93~138: 177 pass / 0 fail
+  - batch 139~184: 231 pass / 0 fail / 4 skip
+  - batch 185~230: 276 pass / 0 fail / 8 skip
+  - batch 231~276: 267 pass / 0 fail
+  - parallel dispatch/recovery focused: 16/16 통과
+  - prompt audit focused: 13/13 통과
+  - package materialization: 3/3 통과
+  - test:kernel-lifecycle: 65/65 통과
+  - test:kernel-reliability: 251/251 통과 (117/117 + 134/134 split closeout)
+  - npm run typecheck 통과
+  - npm run build 통과: files 301, edges 815
+  - npm run build:check 통과: files 301, changed 0, removed 0, edges 815
+  - npm run build:tests:check 통과: tests 284, helpers 8, removed 0
+  - npm run check:boundaries 통과: modules 9, files 301, edges 815
+  - git diff --check 통과
+measurement:
+  records: 18321
+  customToolCalls: 1776
+  commandExecutions: 2257
+  failedCommands: 202
+  compacted: 11
+  appSessions:
+    files: 13
+    records: 16724
+    actualKernelNext: 150
+    actualKernelReport: 81
+    adjacentReportToNext: 62
+    contractJsonCli: 63
+    manualContractEditObserved: 22
+    previousRecoveryJson: 8
+    changedPathsManualAssemblyObserved: 93
+    kernelInternalSourceReadSearchObserved: 91
+  limitation: post-change 앱 실사용 세션 미수집, 실제 감소율은 후속 export에서 측정
+structuralReview:
+  hardcoding: 없음
+  fallback: 없음
+  newPersistentState: 없음
+  newWorkflowEngine: 없음
+  duplicatedAuthority: 없음
+  providerSpecificRuntimeBranch: 없음
+  safetyBoundaryWeakening: 없음
+  residualRemoval: 실제 consumer 또는 safety/compatibility 의미가 없는 경로 없음
+commit: this Wave commit
+push:
+  remote: origin
+  branch: main
+  remoteHead: verified after push
+  parity: required before task closeout
+remaining: 없음
+nextWave: 없음
 ```

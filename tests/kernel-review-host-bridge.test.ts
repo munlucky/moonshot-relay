@@ -245,6 +245,7 @@ test('report idempotency replays one canonical operation and retries with a new 
     const firstPayload = {
       attemptId: assertTestPresent(firstAttempt).attemptId,
       summary: 'first attempt',
+      changedPaths: [],
       verifications: [{ obligationId: 'default', commandRef: 'test:fail' }],
     };
     const first = await cp.report('report-idempotency', firstPayload);
@@ -1243,6 +1244,7 @@ test('one trusted proof execution is shared across identical hard obligations in
 
     const result = await cp.report('proof-coalescing-chain', {
       summary: 'shared proof completed',
+      changedPaths: [],
       verifications: [
         { obligationId: 'proof-a', commandRef: 'test:coalesce' },
         { obligationId: 'proof-b', commandRef: 'test:coalesce' },
@@ -1296,6 +1298,7 @@ test('same-report proof coalescing shares an exact reused proof before executing
     });
     const seedResult = await cp.report('proof-reuse-coalescing-seed', {
       summary: 'seed proof completed',
+      changedPaths: [],
       verifications: [{ obligationId: 'proof-a', commandRef: 'test:coalesce' }],
     });
     assert.equal(assertTestPresent(seedResult).status, 'completed', JSON.stringify(seedResult));
@@ -1308,6 +1311,7 @@ test('same-report proof coalescing shares an exact reused proof before executing
     });
     const result = await cp.report('proof-reuse-coalescing-chain', {
       summary: 'reused proof completed',
+      changedPaths: [],
       verifications: [
         { obligationId: 'proof-a', commandRef: 'test:coalesce' },
         { obligationId: 'proof-b', commandRef: 'test:coalesce' },
@@ -1364,6 +1368,7 @@ test('report-level flaky rerun policy reaches proof execution and blocks diverge
 
       const result = await cp.report('report-flaky-chain', {
         summary: 'run flaky proof through report',
+        changedPaths: [],
         verifications: [{ commandRef: 'test:flaky', flakyRerun: true }],
       });
 
@@ -1413,6 +1418,7 @@ test('flaky report requests bypass prior reusable proof evidence', async () => {
       await cp.startRun({ runId: 'report-flaky-reuse-seed', objective: 'seed reusable evidence', taskContract: contract });
       const seed = await cp.report('report-flaky-reuse-seed', {
         summary: 'seed a passing proof',
+        changedPaths: [],
         verifications: [{ commandRef: 'test:flaky', acceptanceCoverage: ['AC-1'] }],
       });
       assert.equal(assertTestPresent(seed).status, 'completed', JSON.stringify(seed));
@@ -1421,6 +1427,7 @@ test('flaky report requests bypass prior reusable proof evidence', async () => {
       await cp.startRun({ runId: 'report-flaky-reuse-chain', objective: 'force a fresh flaky proof', taskContract: contract });
       const result = await cp.report('report-flaky-reuse-chain', {
         summary: 'rerun the flaky proof',
+        changedPaths: [],
         verifications: [{ commandRef: 'test:flaky', flakyRerun: true, acceptanceCoverage: ['AC-1'] }],
       });
 
