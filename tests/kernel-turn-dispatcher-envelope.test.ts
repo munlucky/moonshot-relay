@@ -89,6 +89,14 @@ test('a real dispatch records a non-null prefix digest and cache mode on the rec
     assert.match(assertTestString(assertTestRecord(result.receipt).promptPrefixDigest), /^sha256:[a-f0-9]{64}$/);
     assert.equal(assertTestRecord(result.receipt).promptPrefixDigest, assertTestRecord(assertTestRecord(result.envelope).cacheIdentity).prefixDigest);
     assert.equal(assertTestRecord(result.receipt).cacheMode, 'shadow');
+    assert.match(
+      assertTestString(assertTestRecord(result.receipt).executionProfileRevision),
+      /^host-execution-profile\.v1:sha256:[a-f0-9]{64}$/,
+    );
+    assert.equal(
+      assertTestRecord(assertTestRecord(result.envelope).modelPolicy).policyRevision,
+      'kernel-claude-effort.v1',
+    );
     assert.ok(assertTestRecord(result.receipt).sessionLineageId);
     // Regression: without reading the current step from action.step, and
     // without forwarding the envelope's cacheable segment tokens, these two

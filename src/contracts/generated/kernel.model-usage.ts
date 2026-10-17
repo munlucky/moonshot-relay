@@ -14,6 +14,7 @@ export interface KernelModelUsage {
   requestedEffort: null | string;
   observedModel: null | string;
   observedEffort: null | string;
+  executionProfileRevision?: null | string;
   role: null | string;
   actionKind: null | string;
   workProfile: null | {

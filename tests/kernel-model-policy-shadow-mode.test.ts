@@ -45,4 +45,5 @@ test('every routing decision carries the reasons that produced it', () => {
   assert.equal(standard.policyRevision, 'kernel-codex-execution-class.v1');
   const claude = resolveClaudeEffort({ actionKind: 'implement', triggers: ['broad-refactor'] });
   assert.ok(claude.reasons.includes('broad-refactor'));
+  assert.equal(claude.policyRevision, 'kernel-claude-effort.v1');
 });

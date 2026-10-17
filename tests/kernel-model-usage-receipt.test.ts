@@ -72,7 +72,9 @@ test('receipts reject raw session identifiers, negative counts, and unknown stat
   assert.throws(() => normalizeModelUsageReceipt({ ...base, inputTokens: -1 }), /non-negative integer or null/);
   assert.throws(() => normalizeModelUsageReceipt({ ...base, enforcementStatus: 'pretend' }), /enforcementStatus must be one of/);
   assert.throws(() => normalizeModelUsageReceipt({ ...base, resultStatus: 'maybe' }), /resultStatus must be one of/);
-  assert.equal(normalizeModelUsageReceipt(base).inputTokens, null);
+  const normalized = normalizeModelUsageReceipt(base);
+  assert.equal(normalized.inputTokens, null);
+  assert.equal(normalized.executionProfileRevision, null);
 });
 
 test('an enforced receipt requires requested, resolved, and observed identity to agree', () => {

@@ -243,6 +243,7 @@ export const normalizeModelUsageReceipt = (receipt = {}) => {
         requestedEffort,
         observedModel,
         observedEffort,
+        executionProfileRevision: optionalText(input.executionProfileRevision),
         role: optionalText(input.role),
         actionKind: optionalText(input.actionKind),
         workProfile: normalizeWorkProfile(input.workProfile, { actionKind: String(input.actionKind || 'implement') }),

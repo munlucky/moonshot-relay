@@ -87,6 +87,7 @@ export interface PromptModelPolicy {
   resolvedModel?: unknown;
   resolvedEffort?: unknown;
   speedMode?: unknown;
+  policyRevision?: unknown;
 }
 
 export interface PromptControl {
@@ -109,6 +110,7 @@ export interface PromptEnvelope {
     resolvedModel: unknown;
     resolvedEffort: unknown;
     speedMode: unknown;
+    policyRevision: unknown;
     reasoningContext: string;
     delegationMode: 'bounded' | 'none';
   }>;
@@ -455,6 +457,7 @@ export const buildPromptEnvelope = ({
       resolvedModel: modelPolicy.resolvedModel ?? null,
       resolvedEffort: modelPolicy.resolvedEffort ?? null,
       speedMode: modelPolicy.speedMode ?? null,
+      policyRevision: modelPolicy.policyRevision ?? null,
       reasoningContext: policy.reasoningPolicy.persistedReasoning,
       delegationMode: policy.allowNestedDelegation ? 'bounded' : 'none',
     }),

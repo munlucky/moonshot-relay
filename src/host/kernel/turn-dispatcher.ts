@@ -748,7 +748,12 @@ export const resolveTurnModelPolicy = ({ decision = {}, hostCapabilities = {} }:
   }
   if (hostCapabilities.surface === 'claude') {
     const policy = resolveClaudeEffort({ actionKind: String(decision.actionKind || 'implement'), riskTier: decision.riskTier || undefined, triggers: repeatedFailure ? ['repeated-failure'] : [] });
-    return { model: null, effort: policy.effort, reasons: policy.reasons };
+    return {
+      model: null,
+      effort: policy.effort,
+      reasons: policy.reasons,
+      policyRevision: policy.policyRevision,
+    };
   }
   return null;
 };
@@ -837,7 +842,21 @@ const buildReviewerOutcomeForIngestion = ({ outcome, executionCapsule }: { outco
 // tracked separately; this wiring does not fabricate a split it cannot prove.
 // Likewise no tool schema reaches this generic dispatcher yet, so the tool
 // manifest is empty rather than guessed.
-export const buildTurnPromptEnvelope = ({ modelInput = {}, decision = {}, resolution, hostCapabilities = {}, env = process.env }: { modelInput?: HostRecord; decision?: HostRecord; resolution: ModelResolution; hostCapabilities?: HostRecord; env?: NodeJS.ProcessEnv }) => {
+export const buildTurnPromptEnvelope = ({
+  modelInput = {},
+  decision = {},
+  resolution,
+  hostCapabilities = {},
+  modelPolicyRevision = null,
+  env = process.env,
+}: {
+  modelInput?: HostRecord;
+  decision?: HostRecord;
+  resolution: ModelResolution;
+  hostCapabilities?: HostRecord;
+  modelPolicyRevision?: unknown;
+  env?: NodeJS.ProcessEnv;
+}) => {
   const action = asRecord(modelInput.action);
   // The current work unit lives at action.step (run-loop.js's buildNextPayload
   // only sets it there for implement/fix actions), not at a top-level `step` —
@@ -881,6 +900,7 @@ export const buildTurnPromptEnvelope = ({ modelInput = {}, decision = {}, resolu
       modelClass: decision.modelClass,
       resolvedModel: resolution.model,
       resolvedEffort: resolution.effort,
+      policyRevision: modelPolicyRevision,
     },
     capabilities: hostCapabilities,
     control: { runId: decision.runId, stepId: step.stepId, capsuleId: action.capsuleId },
@@ -1000,7 +1020,14 @@ export const prepareParallelWorkerDispatch = async ({
     hostExecutionContract: asRecord(hostBoundary.contract),
     admission,
     strategy: hostDirective.enforcementStrategy,
-    envelope: buildTurnPromptEnvelope({ modelInput, decision, resolution, hostCapabilities, env }),
+    envelope: buildTurnPromptEnvelope({
+      modelInput,
+      decision,
+      resolution,
+      hostCapabilities,
+      modelPolicyRevision: modelPolicyRecommendation?.policyRevision ?? null,
+      env,
+    }),
   };
 };
 
@@ -1320,7 +1347,14 @@ const dispatchKernelTurnAttempt = async ({
   // `executionContract`, so a Host still on the legacy path behaves exactly
   // as before; a Host whose `launch()` reads `envelope.segments` gets the
   // cache-stable prompt and breakpoints described in Waves 3-5.
-  const envelope = buildTurnPromptEnvelope({ modelInput, decision, resolution, hostCapabilities, env });
+  const envelope = buildTurnPromptEnvelope({
+    modelInput,
+    decision,
+    resolution,
+    hostCapabilities,
+    modelPolicyRevision: modelPolicyRecommendation?.policyRevision ?? null,
+    env,
+  });
   // No persisted cross-turn lineage store exists yet (§Wave 7 follow-up), so
   // `previous` stays null and continuity is never claimed (`continued` is
   // always false here). `instanceSeed` still keys the id off this turn's own

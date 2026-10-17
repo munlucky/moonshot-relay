@@ -310,6 +310,20 @@ export const createClaudeAdapter = ({
   const resolvedCapabilities = {
     ...CLAUDE_CAPABILITIES,
     ...capabilities,
+    // CLAUDE_CAPABILITIES describes the provider feature set. The active Host
+    // surface can only claim launcher-dependent controls when a launcher is
+    // actually connected.
+    supportsSubagentModel: hasLauncher && capabilities.supportsSubagentModel !== false,
+    supportsResolvedModelIdentity:
+      hasLauncher && capabilities.supportsResolvedModelIdentity !== false,
+    supportsUsageTokens: hasLauncher && capabilities.supportsUsageTokens !== false,
+    supportsPromptCache: hasLauncher && capabilities.supportsPromptCache !== false,
+    supportsExplicitCacheBreakpoints:
+      hasLauncher && capabilities.supportsExplicitCacheBreakpoints !== false,
+    supportsCacheReadTokens:
+      hasLauncher && capabilities.supportsCacheReadTokens !== false,
+    supportsCacheWriteTokens:
+      hasLauncher && capabilities.supportsCacheWriteTokens !== false,
     supportsIndependentContext: hasLauncher,
     supportsCrossSurfaceReview: false,
     semantic: Object.freeze({

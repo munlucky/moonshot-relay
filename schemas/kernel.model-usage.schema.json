@@ -89,6 +89,16 @@
         }
       ]
     },
+    "executionProfileRevision": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
     "role": {
       "anyOf": [
         {

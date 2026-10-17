@@ -1,6 +1,7 @@
 // Host usage receipt builder (§6.3 / §16.1). Its whole job is to report what
 // really happened, including "I could not do what the Kernel asked".
 
+import { createHash } from 'node:crypto';
 import {
   buildReceiptId,
   hashSessionId,
@@ -20,6 +21,39 @@ const countOrNull = (value: unknown, allowed: boolean): number | null => (
     ? Number(value)
     : null
 );
+
+const buildExecutionProfileRevision = ({
+  decision,
+  capabilities,
+  envelope,
+}: {
+  decision: UnknownRecord;
+  capabilities: UnknownRecord;
+  envelope: UnknownRecord;
+}): string => {
+  const modelPolicy = asRecord(envelope.modelPolicy);
+  const profile = {
+    schemaVersion: 1,
+    surface: capabilities.surface ? String(capabilities.surface) : null,
+    routePolicyRevision:
+      decision.policyRevision ? String(decision.policyRevision) : null,
+    modelPolicyRevision:
+      modelPolicy.policyRevision ? String(modelPolicy.policyRevision) : null,
+    supportsSubagentModel: capabilities.supportsSubagentModel === true,
+    supportsSessionModelOverride:
+      capabilities.supportsSessionModelOverride === true,
+    supportsResolvedModelIdentity:
+      capabilities.supportsResolvedModelIdentity === true,
+    supportsUsageTokens: capabilities.supportsUsageTokens === true,
+    supportsSessionContinuation:
+      capabilities.supportsSessionContinuation === true,
+    supportsIndependentContext:
+      capabilities.supportsIndependentContext === true,
+  };
+  return 'host-execution-profile.v1:sha256:' + createHash('sha256')
+    .update(JSON.stringify(profile))
+    .digest('hex');
+};
 
 const resolveEnforcementStatus = ({
   resolution,
@@ -194,6 +228,11 @@ export const buildUsageReceipt = ({
     requestedEffort: resolution.effort || null,
     observedModel: dispatch.observedModel || null,
     observedEffort: dispatch.observedEffort || null,
+    executionProfileRevision: buildExecutionProfileRevision({
+      decision,
+      capabilities,
+      envelope: envelopeRecord,
+    }),
     role: decision.role || null,
     actionKind: decision.actionKind || null,
     workProfile: decision.workProfile || null,

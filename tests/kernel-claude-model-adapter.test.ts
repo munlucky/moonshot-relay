@@ -87,6 +87,13 @@ test('resolved Claude configuration is not promoted to observed execution identi
 
 test('a Host with no launcher keeps ordinary work owner-direct instead of inventing a worker blocker', async () => {
   const adapter = createClaudeAdapter();
+  assert.equal(adapter.capabilities.supportsSubagentModel, false);
+  assert.equal(adapter.capabilities.supportsResolvedModelIdentity, false);
+  assert.equal(adapter.capabilities.supportsUsageTokens, false);
+  assert.equal(adapter.capabilities.supportsPromptCache, false);
+  assert.equal(adapter.capabilities.supportsCacheReadTokens, false);
+  assert.equal(adapter.capabilities.supportsCacheWriteTokens, false);
+  assert.equal(adapter.capabilities.supportsSessionContinuation, true);
   const decision = decisionFor('implement');
   const dispatch = await adapter.dispatch({ decision, resolution: resolution('registry-value'), strategy: 'subagent', executionContract: {} });
   assert.equal(dispatch.status, 'owner-direct');
@@ -99,7 +106,7 @@ test('a Host with no launcher keeps ordinary work owner-direct instead of invent
     dispatch,
     actorSessionId: 'no-launcher',
   });
-  assert.equal(receipt.enforcementStatus, 'advisory');
+  assert.equal(receipt.enforcementStatus, 'unsupported');
   assert.equal(receipt.resolvedModel, null);
 });
 

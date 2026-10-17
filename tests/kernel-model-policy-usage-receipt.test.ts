@@ -11,7 +11,13 @@ const envelope = buildPromptEnvelope({
   role: 'implementer',
   toolManifest: buildToolManifest([{ name: 'read_file', description: 'Read a file' }]),
   contextSegments: {},
-  modelPolicy: { modelClass: 'value_coding', resolvedModel: 'model-a', resolvedEffort: 'high', speedMode: 'standard' },
+  modelPolicy: {
+    modelClass: 'value_coding',
+    resolvedModel: 'model-a',
+    resolvedEffort: 'high',
+    speedMode: 'standard',
+    policyRevision: 'kernel-claude-effort.v1',
+  },
   capabilities: CLAUDE_CAPABILITIES,
   env: { MOON_RELAY_KERNEL_CLAUDE_OPTIMIZATION: 'on' },
 });
@@ -19,7 +25,12 @@ const envelope = buildPromptEnvelope({
 const lineage = resolveSessionLineage({ previous: null, current: envelope.cacheIdentity });
 
 const receipt = buildUsageReceipt({
-  decision: { decisionId: 'route-abcdef12', runId: 'run-1', modelClass: 'value_coding' },
+  decision: {
+    decisionId: 'route-abcdef12',
+    runId: 'run-1',
+    modelClass: 'value_coding',
+    policyRevision: 'kernel-model-routing.v1',
+  },
   capabilities: CLAUDE_CAPABILITIES,
   strategy: 'subagent',
   resolution: { model: 'model-a', effort: 'high', enforcementIntent: 'enforced' },
@@ -48,6 +59,37 @@ test('the receipt records which prompt shape produced the cache result', () => {
   assert.equal(receipt.cacheMode, 'on');
   assert.equal(receipt.cacheTtl, 'default');
   assert.equal(receipt.eligiblePrefixTokens, 900);
+});
+
+test('the receipt pins the derived Host execution profile revision', () => {
+  assert.ok(receipt.executionProfileRevision);
+  assert.match(
+    receipt.executionProfileRevision,
+    /^host-execution-profile\.v1:sha256:[a-f0-9]{64}$/,
+  );
+  const downgraded = buildUsageReceipt({
+    decision: {
+      decisionId: 'route-abcdef13',
+      runId: 'run-1',
+      modelClass: 'value_coding',
+      policyRevision: 'kernel-model-routing.v1',
+    },
+    capabilities: { ...CLAUDE_CAPABILITIES, supportsUsageTokens: false },
+    strategy: 'subagent',
+    resolution: { model: 'model-a', effort: 'high', enforcementIntent: 'enforced' },
+    dispatch: {
+      resolvedModel: 'model-a',
+      resolvedEffort: 'high',
+      observedModel: 'model-a',
+      observedEffort: 'high',
+    },
+    actorSessionId: 'session-2',
+    envelope,
+  });
+  assert.notEqual(
+    downgraded.executionProfileRevision,
+    receipt.executionProfileRevision,
+  );
 });
 
 test('model, effort, speed, reasoning context, and delegation mode are all recorded', () => {
