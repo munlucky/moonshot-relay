@@ -82,6 +82,47 @@ test('Kernel installer creates a backup and rollback restores owned files', asyn
   assert.ok(first.manifestPath);
 });
 
+test('Kernel source-only sync preserves an existing trusted managed runtime', async (t) => {
+  const root = await temp(t, 'krn-install-preserve-runtime-');
+  const runtime = await temp(t, 'krn-install-preserve-runtime-source-');
+  const nodeRel = process.platform === 'win32' ? 'node.exe' : path.join('bin', 'node');
+  const runtimeCurrent = path.join(runtime, 'runtime', 'current');
+  await mkdir(path.join(runtimeCurrent, path.dirname(nodeRel)), { recursive: true });
+  await writeFile(path.join(runtimeCurrent, nodeRel), 'managed-node');
+  await writeFile(path.join(runtimeCurrent, 'runtime-extra.txt'), 'managed-extra');
+
+  const first = await installKernel({
+    targetRoot: root,
+    sourceRoot: process.cwd(),
+    runtimeSource: runtime,
+  });
+  assert.ok(first.manifestPath);
+  const installedCurrent = path.join(root, '.moon-relay', 'kernel-payload', 'runtime', 'current');
+  const firstManifest = JSON.parse(await readFile(first.manifestPath, 'utf8'));
+  const runtimePaths = firstManifest.files
+    .filter((file: { path?: string }) => file.path?.startsWith('kernel-payload/runtime/current/'))
+    .map((file: { path: string }) => file.path)
+    .sort();
+  assert.ok(runtimePaths.includes('kernel-payload/runtime/current/' + nodeRel.replaceAll('\\', '/')));
+  assert.ok(runtimePaths.includes('kernel-payload/runtime/current/runtime-manifest.json'));
+  assert.equal(await readFile(path.join(installedCurrent, 'runtime-extra.txt'), 'utf8'), 'managed-extra');
+
+  const synced = await installKernel({
+    targetRoot: root,
+    sourceRoot: process.cwd(),
+    replaceModified: true,
+  });
+  assert.ok(synced.manifestPath);
+  assert.equal(await readFile(path.join(installedCurrent, nodeRel), 'utf8'), 'managed-node');
+  assert.equal(await readFile(path.join(installedCurrent, 'runtime-extra.txt'), 'utf8'), 'managed-extra');
+  const syncedManifest = JSON.parse(await readFile(synced.manifestPath, 'utf8'));
+  const syncedRuntimePaths = syncedManifest.files
+    .filter((file: { path?: string }) => file.path?.startsWith('kernel-payload/runtime/current/'))
+    .map((file: { path: string }) => file.path)
+    .sort();
+  assert.deepEqual(syncedRuntimePaths, runtimePaths);
+});
+
 test('Kernel rollback removes runtime files introduced by a later install and restores the prior manifest', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'krn-install-extra-'));
   const runtimeOne = await mkdtemp(path.join(os.tmpdir(), 'krn-runtime-one-'));

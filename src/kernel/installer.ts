@@ -329,6 +329,10 @@ export const installKernel = async ({ targetRoot = process.cwd(), sourceRoot = p
   // are no longer present in the current source tree. Keep this set limited
   // to the trusted prior manifest so unrelated files under the target remain
   // untouched.
+  const existingFiles = existingManifest?.files || [];
+  const preservedManagedRuntimeFiles = managedRuntimePlan
+    ? []
+    : existingFiles.filter((file) => file.path.startsWith('kernel-payload/runtime/current/'));
   const desiredPaths = new Set(['track.yaml']);
   for (const item of planned) {
     item.files = (await collectFiles(item.sourcePath, '')).filter((rel) => !isGeneratedPythonArtifact(rel));
@@ -341,9 +345,13 @@ export const installKernel = async ({ targetRoot = process.cwd(), sourceRoot = p
       desiredPaths.add(path.join('kernel-payload', 'runtime', 'current', rel).replaceAll('\\', '/'));
     }
     desiredPaths.add('kernel-payload/runtime/current/runtime-manifest.json');
+  } else {
+    // Account/profile updates do not necessarily provide a runtime source.
+    // Preserve a trusted managed runtime already owned by the prior manifest
+    // instead of treating platform-specific runtime files as retired payload.
+    for (const file of preservedManagedRuntimeFiles) desiredPaths.add(file.path);
   }
 
-  const existingFiles = existingManifest?.files || [];
   const collisions = [];
   for (const file of existingFiles) {
     const target = assertContained(kernelDir, path.join(kernelDir, file.path));
@@ -375,6 +383,14 @@ export const installKernel = async ({ targetRoot = process.cwd(), sourceRoot = p
         const absolute = path.join(item.targetPath, rel);
         const manifestRel = path.join(item.targetRel, rel).replaceAll('\\', '/');
         installed.push({ path: manifestRel, checksum: await sha256File(absolute) });
+      }
+    }
+    if (!runtimeSource) {
+      for (const file of preservedManagedRuntimeFiles) {
+        const target = assertContained(kernelDir, path.join(kernelDir, file.path));
+        if (await exists(target)) {
+          installed.push({ path: file.path, checksum: await sha256File(target) });
+        }
       }
     }
     if (runtimeSource) {
