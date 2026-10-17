@@ -24,7 +24,7 @@ export const CODEX_EXECUTION_CLASSES = Object.freeze([
 export type CodexReasoningEffort = typeof CODEX_REASONING_EFFORTS[number];
 export type CodexExecutionClass = typeof CODEX_EXECUTION_CLASSES[number];
 
-export const CODEX_MODEL_POLICY_REVISION = 'kernel-codex-execution-class.v2';
+const CODEX_MODEL_POLICY_REVISION = 'kernel-codex-execution-class.v2';
 
 export const CODEX_EXECUTION_POLICY = Object.freeze({
   planning: Object.freeze({ model: CODEX_MODELS.astra, effort: 'high' }),
