@@ -9,11 +9,11 @@
     "estimatedPromptTokens": 3093984
   },
   "allowedDelta": {
-    "files": 200,
+    "files": 218,
     "nonblankLines": 62000,
     "utf8Bytes": 2400000,
     "estimatedPromptTokens": 600000
   },
-  "allowedDeltaRationale": "The immutable aca19ec baseline is retained. After Typed Authority Architecture plus the reviewed C00-C31 roadmap, the measured canonical surface is 2204 files, 329014 nonblank lines, 14493472 UTF-8 bytes and 3623368 estimated prompt tokens. Since the previous reviewed budget, growth is dominated by regression tests (5750 added lines), implementation source (4415), and roadmap/contracts/evidence docs (2915), while the common complexity budget still adds zero public Kernel commands, workflow stages, Authorities, always-on agents, execution classes, memory services, vector DBs, Kernel model/project hardcoding, per-run reflection agents, or model-specific full prompt forks. Compiler-owned outputs remain excluded. The file cap is unchanged; line/byte/token headroom is bounded above the measured reviewed surface rather than auto-ratcheted.",
+  "allowedDeltaRationale": "The immutable aca19ec baseline is retained. After Typed Authority Architecture, the reviewed C00-C32 roadmap, recovery continuity work, and the Model & Prompt Rebaseline waves, the measured canonical surface is 2222 files, 333652 nonblank lines, 14726425 UTF-8 bytes and 3681607 estimated prompt tokens. Since the previous reviewed surface of 2204 files, canonical file growth is +18: ten reviewed docs, four implementation source files, and four typed test sources; compiler-owned JS/MJS outputs remain excluded. The file allowance increases by the same +18 so the prior four-file headroom is preserved rather than auto-ratcheted. Line, byte, and token allowances are unchanged. The reviewed growth still adds zero public Kernel commands, workflow stages, Authorities, always-on agents, execution classes, memory services, vector DBs, Kernel model/project hardcoding, per-run reflection agents, automatic model fallbacks, or model-specific full prompt forks.",
   "allowedUnregisteredTests": 0
 }
