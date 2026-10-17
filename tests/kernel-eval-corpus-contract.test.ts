@@ -20,7 +20,6 @@ import {
   CLAUDE_PROVIDER_PROMPT,
   CLAUDE_PROMPT_REVISION,
 } from '../src/host/kernel/prompts/claude-opus-5.js';
-import { resolveCodexModelPolicy } from '../src/host/kernel/codex-model-policy.js';
 import { resolveClaudeEffort } from '../src/host/kernel/claude-effort-policy.js';
 
 type RiskTier = 'T0' | 'T1' | 'T2' | 'T3';
@@ -144,7 +143,7 @@ test('corpus contains thirty balanced representative cases', () => {
   }
 });
 
-test('prompt comparison baseline is digest-bound to the current stable prompts and host execution conditions', () => {
+test('prompt comparison baseline is digest-bound to its historical prompts and host execution conditions', () => {
   const comparison = corpus.promptComparison;
   assert.equal(comparison.schemaVersion, 1);
   assert.match(comparison.baseline.sourceHead, /^[0-9a-f]{40}$/);
@@ -166,9 +165,11 @@ test('prompt comparison baseline is digest-bound to the current stable prompts a
     codex.combinedPromptDigest,
     sha256(`${COMMON_EXECUTION_PROMPT}\n${CODEX_PROVIDER_PROMPT}`),
   );
-  const codexPolicy = resolveCodexModelPolicy({ executionClass: 'standard' });
-  assert.equal(codex.model, codexPolicy.model);
-  assert.equal(codex.effort, codexPolicy.effort);
+  // C01 is a historical replay baseline. Production policy changes must not
+  // silently rewrite the model/effort conditions that the old prompt was
+  // measured against.
+  assert.equal(codex.model, 'gpt-5.6-luna');
+  assert.equal(codex.effort, 'max');
   assert.equal(codex.modelSource, 'model-policy');
 
   assert.equal(claude.providerPromptRevision, CLAUDE_PROMPT_REVISION);

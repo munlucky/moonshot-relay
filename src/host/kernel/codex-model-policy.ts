@@ -24,11 +24,13 @@ export const CODEX_EXECUTION_CLASSES = Object.freeze([
 export type CodexReasoningEffort = typeof CODEX_REASONING_EFFORTS[number];
 export type CodexExecutionClass = typeof CODEX_EXECUTION_CLASSES[number];
 
+export const CODEX_MODEL_POLICY_REVISION = 'kernel-codex-execution-class.v2';
+
 export const CODEX_EXECUTION_POLICY = Object.freeze({
   planning: Object.freeze({ model: CODEX_MODELS.astra, effort: 'high' }),
   complex_implementation: Object.freeze({ model: CODEX_MODELS.astra, effort: 'high' }),
   review: Object.freeze({ model: CODEX_MODELS.astra, effort: 'high' }),
-  standard: Object.freeze({ model: CODEX_MODELS.luna, effort: 'max' }),
+  standard: Object.freeze({ model: CODEX_MODELS.luna, effort: 'high' }),
 });
 
 // `gpt-5.6` is an alias that resolves to the Sol tier. `gpt-6` resolves to Astra.
@@ -115,7 +117,7 @@ export const resolveCodexModelPolicy = ({
       reasoning: null,
       reasons: Object.freeze(['kernel-owned-action']),
       offDefaultPath: false,
-      policyRevision: 'kernel-codex-execution-class.v1',
+      policyRevision: CODEX_MODEL_POLICY_REVISION,
     });
   }
   const base = CODEX_EXECUTION_POLICY[resolvedExecutionClass];
@@ -143,7 +145,7 @@ export const resolveCodexModelPolicy = ({
     reasoning,
     reasons: Object.freeze(reasons),
     offDefaultPath: Boolean(userRequested?.model || requestedReasoning),
-    policyRevision: 'kernel-codex-execution-class.v1',
+    policyRevision: CODEX_MODEL_POLICY_REVISION,
   });
 };
 

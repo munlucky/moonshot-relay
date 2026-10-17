@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveCodexModelPolicy, CODEX_MODELS, CODEX_REASONING_EFFORTS } from '../src/host/kernel/codex-model-policy.js';
 
-test('max is the starting point for ordinary work', () => {
-  assert.equal(resolveCodexModelPolicy({ actionKind: 'implement' }).reasoning, 'max');
+test('high is the starting point for ordinary work', () => {
+  assert.equal(resolveCodexModelPolicy({ actionKind: 'implement' }).reasoning, 'high');
 });
 
 test('all review execution classes use Astra high, including protected reviews', () => {
@@ -26,13 +26,13 @@ test('repeated failure does not change the standard execution class policy', () 
   const input = { actionKind: 'implement', repeatedFailure: true };
   const policy = resolveCodexModelPolicy(input);
   assert.equal(policy.model, CODEX_MODELS.luna);
-  assert.equal(policy.reasoning, 'max');
+  assert.equal(policy.reasoning, 'high');
   assert.ok(!policy.reasons.includes('repeated-failure-escalation'));
 });
 
 test('an unrecognized requested reasoning is ignored rather than passed through', () => {
   const policy = resolveCodexModelPolicy({ actionKind: 'implement', userRequested: { reasoning: 'ultra' } });
-  assert.equal(policy.reasoning, 'max');
+  assert.equal(policy.reasoning, 'high');
   assert.ok(!policy.reasons.includes('user-requested-reasoning'));
 });
 

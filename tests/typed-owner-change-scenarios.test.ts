@@ -23,10 +23,10 @@ const scenarios: Scenario[] = [
   {
     name: 'Codex model policy belongs to Host',
     source: 'src/host/kernel/codex-model-policy.ts', output: 'scripts/host/kernel/codex-model-policy.js',
-    before: "standard: Object.freeze({ model: CODEX_MODELS.luna, effort: 'max' })",
-    after: "standard: Object.freeze({ model: CODEX_MODELS.luna, effort: 'high' })",
+    before: "standard: Object.freeze({ model: CODEX_MODELS.luna, effort: 'high' })",
+    after: "standard: Object.freeze({ model: CODEX_MODELS.luna, effort: 'max' })",
     probe: "const { CODEX_EXECUTION_POLICY } = await import('./scripts/host/kernel/codex-model-policy.js'); console.log(JSON.stringify(CODEX_EXECUTION_POLICY.standard.effort));",
-    baseline: 'max', changed: 'high',
+    baseline: 'high', changed: 'max',
   },
   {
     name: 'Knowledge path ranking belongs to Knowledge',
