@@ -46,8 +46,43 @@ test('the adapter injects the registry model rather than pinning one of its own'
   });
   assert.equal(planned.resolvedModel, 'registry-frontier');
   assert.equal(planned.resolvedEffort, 'high');
+  assert.equal(planned.observedModel, null);
+  assert.equal(planned.observedEffort, null);
   // No provider model id may appear anywhere in the adapter source contract.
   assert.doesNotMatch(JSON.stringify(CLAUDE_AGENT_FOR_ROLE), /gpt-|claude-|gemini/i);
+});
+
+test('resolved Claude configuration is not promoted to observed execution identity', async () => {
+  const adapter = createClaudeAdapter({ launch: async ({ invocation }) => ({
+    resolvedModel: invocation && typeof invocation === 'object' && 'model' in invocation ? invocation.model : null,
+    resolvedEffort: invocation && typeof invocation === 'object' && 'effort' in invocation ? invocation.effort : null,
+    sessionId: 's-observation-missing',
+  }) });
+  const decision = decisionFor('implement');
+  const requested = resolution('registry-value');
+  const dispatch = await adapter.dispatch({
+    decision,
+    resolution: requested,
+    strategy: 'subagent',
+    executionContract: {},
+    executionMode: 'native-subagent',
+    delegationRequested: true,
+  });
+  assert.equal(dispatch.resolvedModel, 'registry-value');
+  assert.equal(dispatch.resolvedEffort, 'high');
+  assert.equal(dispatch.observedModel, null);
+  assert.equal(dispatch.observedEffort, null);
+  const receipt = buildUsageReceipt({
+    decision,
+    capabilities: adapter.capabilities,
+    strategy: 'subagent',
+    resolution: requested,
+    dispatch,
+    actorSessionId: 's-observation-missing',
+  });
+  assert.equal(receipt.enforcementStatus, 'advisory');
+  assert.equal(receipt.observedModel, null);
+  assert.equal(receipt.observedEffort, null);
 });
 
 test('a Host with no launcher keeps ordinary work owner-direct instead of inventing a worker blocker', async () => {

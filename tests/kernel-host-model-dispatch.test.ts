@@ -34,8 +34,15 @@ const withRun = async (fn: (cp: KernelControlPlane, runId: string) => Promise<un
 test('a Host that applies the requested model records an enforced receipt', async () => {
   await withRun(async (cp, runId) => {
     const adapter = createClaudeAdapter({
-      launch: async ({ invocation }) => { assert.ok(invocation && typeof invocation === 'object'); assert.ok(invocation && typeof invocation === 'object' && 'model' in invocation);
-      return ({ resolvedModel: invocation.model, sessionId: 'claude-session-1', inputTokens: 900, outputTokens: 120 }); },
+      launch: async ({ invocation }) => { assert.ok(invocation && typeof invocation === 'object'); assert.ok(invocation && typeof invocation === 'object' && 'model' in invocation && 'effort' in invocation);
+      return ({
+        resolvedModel: invocation.model,
+        resolvedEffort: invocation.effort,
+        observedSessionConfig: { model: invocation.model, effort: invocation.effort },
+        sessionId: 'claude-session-1',
+        inputTokens: 900,
+        outputTokens: 120,
+      }); },
     });
     const result = await dispatchKernelTurn({ controlPlane: cp, runId, adapter, registry: registryFor('claude', FRONTIER_ENV), actionContext: { executionMode: 'native-subagent', delegationRequested: true } });
     assert.equal(result.dispatched, true);
@@ -61,6 +68,24 @@ test('a Host that applies the requested model records an enforced receipt', asyn
     assert.ok(typeof result.receipt.actorSessionId === 'string');
     assert.match(result.receipt.actorSessionId, /^sha256:[a-f0-9]{64}$/);
     assert.equal(cp.modelRoutingSummary(runId).enforcedTurns, 1);
+  });
+});
+
+test('a Claude launcher without observed identity stays advisory instead of assuming requested equals actual', async () => {
+  await withRun(async (cp, runId) => {
+    const adapter = createClaudeAdapter({ launch: async ({ invocation }) => ({
+      resolvedModel: invocation && typeof invocation === 'object' && 'model' in invocation ? invocation.model : null,
+      resolvedEffort: invocation && typeof invocation === 'object' && 'effort' in invocation ? invocation.effort : null,
+      sessionId: 'claude-session-unobserved',
+    }) });
+    const result = await dispatchKernelTurn({ controlPlane: cp, runId, adapter, registry: registryFor('claude', FRONTIER_ENV), actionContext: { executionMode: 'native-subagent', delegationRequested: true } });
+    assert.ok(result.receipt && typeof result.receipt === 'object');
+    const receipt = result.receipt as Record<string, unknown>;
+    assert.equal(receipt.enforcementStatus, 'advisory');
+    assert.equal(receipt.requestedModel, 'configured-value');
+    assert.equal(receipt.resolvedModel, 'configured-value');
+    assert.equal(receipt.observedModel, null);
+    assert.equal(receipt.observedEffort, null);
   });
 });
 

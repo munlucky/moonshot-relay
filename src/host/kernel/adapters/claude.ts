@@ -191,6 +191,33 @@ const hasClaudeProviderExecutionEvidence = (
   );
 };
 
+// A launcher may report the configuration it resolved separately from the
+// provider telemetry it observed. Keep those concepts distinct: only explicit
+// observation fields can populate observed model/effort.
+const resolveClaudeObservedConfig = (result: UnknownRecord) => {
+  const observedConfig = [
+    result.observedSessionConfig,
+    result.observed_session_config,
+    result.observedConfig,
+    result.observed_config,
+  ].find(isRecord) ?? null;
+  const model = result.observedModel ?? observedConfig?.model;
+  const effort = result.observedEffort
+    ?? observedConfig?.effort
+    ?? observedConfig?.reasoning_effort
+    ?? observedConfig?.reasoningEffort;
+  return {
+    observedModel:
+      typeof model === 'string' && model.trim()
+        ? model.trim()
+        : null,
+    observedEffort:
+      typeof effort === 'string' && effort.trim()
+        ? effort.trim().toLowerCase()
+        : null,
+  };
+};
+
 const providerEnvironment = (
   value: unknown,
 ): UnknownRecord | null => {
@@ -398,6 +425,7 @@ export const createClaudeAdapter = ({
         && result.failureStage === 'pre-spawn';
       const providerExecutionEvidence =
         hasClaudeProviderExecutionEvidence(result);
+      const observedConfig = resolveClaudeObservedConfig(result);
 
       return {
         status: result.status || 'completed',
@@ -420,19 +448,10 @@ export const createClaudeAdapter = ({
           ),
         observedModel: preSpawnFailure
           ? null
-          : (
-              result.observedModel
-              ?? result.resolvedModel
-              ?? null
-            ),
+          : observedConfig.observedModel,
         observedEffort: preSpawnFailure
           ? null
-          : (
-              result.observedEffort
-              ?? result.resolvedEffort
-              ?? invocation.effort
-              ?? null
-            ),
+          : observedConfig.observedEffort,
         actorSessionId: preSpawnFailure
           ? null
           : result.sessionId || null,

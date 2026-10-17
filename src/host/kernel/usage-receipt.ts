@@ -47,6 +47,19 @@ const resolveEnforcementStatus = ({
   if (resolution.effort && dispatch.resolvedEffort !== resolution.effort) {
     return 'fallback';
   }
+  // Requested/resolved identity describes Host configuration. It is not
+  // evidence of what the provider actually ran. An enforced receipt is only
+  // valid when the execution surface also reports the observed identity.
+  if (!dispatch.observedModel) return 'advisory';
+  if (dispatch.observedModel !== resolution.model) return 'fallback';
+  if (resolution.effort && !dispatch.observedEffort) return 'advisory';
+  if (
+    resolution.effort
+    && String(dispatch.observedEffort).toLowerCase()
+      !== String(resolution.effort).toLowerCase()
+  ) {
+    return 'fallback';
+  }
   return 'enforced';
 };
 
