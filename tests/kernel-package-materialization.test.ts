@@ -7,7 +7,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { planKernelPackage, materializeKernelPackage } from '../src/kernel/package-build.js';
-import { assertRuntimeDependencyCompatibility } from '../src/shared/runtime-dependencies.js';
+import {
+  assertRuntimeDependencyCompatibility,
+  resolveRuntimeDependencyEntries,
+} from '../src/shared/runtime-dependencies.js';
 
 const sourceRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -58,6 +61,14 @@ test('native runtime dependency preflight fails closed without mutating an incom
     },
   );
   assert.deepEqual(await readFile(addon), bytes);
+});
+
+test('native runtime dependency preflight selects only the current surface prebuild', async () => {
+  const entries = await resolveRuntimeDependencyEntries({
+    sourceRoot,
+    dependencyNames: ['better-sqlite3'],
+  });
+  await assert.doesNotReject(() => assertRuntimeDependencyCompatibility(entries));
 });
 
 test('Kernel package materialization creates files on disk, validates mandatory files, and executes doctor cleanly', async (t) => {

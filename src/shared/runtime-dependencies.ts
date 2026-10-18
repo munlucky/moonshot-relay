@@ -14,6 +14,19 @@ export interface RuntimeDependencyEntry {
   relativePath: string;
 }
 
+const currentPrebuildToken = (): string => {
+  if (process.platform !== 'linux') return `${process.platform}-${process.arch}`;
+  const report = process.report?.getReport() as { header?: { glibcVersionRuntime?: string } } | undefined;
+  const libc = report?.header?.glibcVersionRuntime ? 'linux' : 'linuxmusl';
+  return `${libc}-${process.arch}`;
+};
+
+const isCurrentSurfacePrebuild = (relativePath: string): boolean => {
+  const normalized = relativePath.split(path.sep).join('/').toLowerCase();
+  const isPrebuild = normalized.startsWith('prebuilds/') || normalized.includes('/prebuilds/');
+  return !isPrebuild || normalized.includes(currentPrebuildToken());
+};
+
 const nativeAddonPaths = async (root: string, relative = ''): Promise<string[]> => {
   const directory = path.join(root, relative);
   const addons: string[] = [];
@@ -21,7 +34,13 @@ const nativeAddonPaths = async (root: string, relative = ''): Promise<string[]> 
     if (entry.name === 'node_modules') continue;
     const childRelative = path.join(relative, entry.name);
     if (entry.isDirectory()) addons.push(...await nativeAddonPaths(root, childRelative));
-    else if (entry.isFile() && entry.name.endsWith('.node')) addons.push(path.join(root, childRelative));
+    else if (
+      entry.isFile()
+      && entry.name.endsWith('.node')
+      && isCurrentSurfacePrebuild(childRelative)
+    ) {
+      addons.push(path.join(root, childRelative));
+    }
   }
   return addons.sort();
 };

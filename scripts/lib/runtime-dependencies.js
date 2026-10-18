@@ -3,6 +3,18 @@ import { requiredIndex } from './required-index.js';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { readFile, readdir, realpath, stat } from 'node:fs/promises';
+const currentPrebuildToken = () => {
+    if (process.platform !== 'linux')
+        return `${process.platform}-${process.arch}`;
+    const report = process.report?.getReport();
+    const libc = report?.header?.glibcVersionRuntime ? 'linux' : 'linuxmusl';
+    return `${libc}-${process.arch}`;
+};
+const isCurrentSurfacePrebuild = (relativePath) => {
+    const normalized = relativePath.split(path.sep).join('/').toLowerCase();
+    const isPrebuild = normalized.startsWith('prebuilds/') || normalized.includes('/prebuilds/');
+    return !isPrebuild || normalized.includes(currentPrebuildToken());
+};
 const nativeAddonPaths = async (root, relative = '') => {
     const directory = path.join(root, relative);
     const addons = [];
@@ -12,8 +24,11 @@ const nativeAddonPaths = async (root, relative = '') => {
         const childRelative = path.join(relative, entry.name);
         if (entry.isDirectory())
             addons.push(...await nativeAddonPaths(root, childRelative));
-        else if (entry.isFile() && entry.name.endsWith('.node'))
+        else if (entry.isFile()
+            && entry.name.endsWith('.node')
+            && isCurrentSurfacePrebuild(childRelative)) {
             addons.push(path.join(root, childRelative));
+        }
     }
     return addons.sort();
 };
