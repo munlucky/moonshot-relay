@@ -8,9 +8,8 @@
 
 export const CODEX_MODELS = Object.freeze({
   astra: 'gpt-6-astra',
-  sol: 'gpt-5.6-sol',
-  terra: 'gpt-5.6-terra',
-  luna: 'gpt-5.6-luna',
+  sol: 'gpt-6.1-sol',
+  luna: 'gpt-6-luna',
 });
 export const CODEX_REASONING_EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max'] as const);
 
@@ -24,20 +23,20 @@ export const CODEX_EXECUTION_CLASSES = Object.freeze([
 export type CodexReasoningEffort = typeof CODEX_REASONING_EFFORTS[number];
 export type CodexExecutionClass = typeof CODEX_EXECUTION_CLASSES[number];
 
-const CODEX_MODEL_POLICY_REVISION = 'kernel-codex-execution-class.v2';
+const CODEX_MODEL_POLICY_REVISION = 'kernel-codex-execution-class.v3';
 
 export const CODEX_EXECUTION_POLICY = Object.freeze({
-  planning: Object.freeze({ model: CODEX_MODELS.astra, effort: 'high' }),
-  complex_implementation: Object.freeze({ model: CODEX_MODELS.astra, effort: 'high' }),
-  review: Object.freeze({ model: CODEX_MODELS.astra, effort: 'high' }),
-  standard: Object.freeze({ model: CODEX_MODELS.luna, effort: 'high' }),
+  planning: Object.freeze({ model: CODEX_MODELS.sol, effort: 'high' }),
+  complex_implementation: Object.freeze({ model: CODEX_MODELS.sol, effort: 'high' }),
+  review: Object.freeze({ model: CODEX_MODELS.sol, effort: 'xhigh' }),
+  standard: Object.freeze({ model: CODEX_MODELS.luna, effort: 'medium' }),
 });
 
-// `gpt-5.6` is an alias that resolves to the Sol tier. `gpt-6` resolves to Astra.
-// The Host records the explicit id in the receipt so a replay is reproducible even if the alias moves.
+// Family aliases resolve to the current validated tier. Explicit model ids pass through unchanged.
+// The Host records the resolved id in the receipt so a replay remains reproducible if an alias moves.
 export const CODEX_MODEL_ALIASES = Object.freeze({
-  'gpt-5.6': CODEX_MODELS.sol,
   'gpt-6': CODEX_MODELS.astra,
+  'gpt-6.1': CODEX_MODELS.sol,
   'gpt-6-astra': CODEX_MODELS.astra,
 });
 

@@ -39,7 +39,7 @@ const withRun = async (fn: (cp: KernelControlPlane, runId: string) => Promise<un
 
 const stableParentObserver = async ({ parentSessionId }: { parentSessionId?: string | null }) => ({ sessionId: parentSessionId, model: null, effort: null });
 
-test('resolveTurnModelPolicy recommends Luna/high for a standard Codex implement turn', () => {
+test('resolveTurnModelPolicy recommends Luna/medium for a standard Codex implement turn', () => {
   const recommendation = resolveTurnModelPolicy({
     decision: { actionKind: 'implement', riskTier: 'T1', reasonCodes: ['ACTION_DEFAULT'] },
     hostCapabilities: { surface: 'codex' },
@@ -47,7 +47,7 @@ test('resolveTurnModelPolicy recommends Luna/high for a standard Codex implement
   assert.ok(recommendation && typeof recommendation === 'object' && 'model' in recommendation);
   assert.equal(recommendation.model, CODEX_MODELS.luna);
   assert.ok(recommendation && typeof recommendation === 'object' && 'effort' in recommendation);
-  assert.equal(recommendation.effort, 'high');
+  assert.equal(recommendation.effort, 'medium');
 });
 
 test('resolveTurnModelPolicy recommends a Claude effort with no model override', () => {
@@ -93,7 +93,7 @@ test('Codex shadow mode computes the recommendation but does not apply it', asyn
   });
 });
 
-test('Codex-specific on mode applies Luna/high to the actual dispatch', async () => {
+test('Codex-specific on mode applies Luna/medium to the actual dispatch', async () => {
   await withRun(async (cp, runId) => {
     const launchObservation: { invocation?: unknown } = {};
     const adapter = createCodexAdapter({
@@ -116,11 +116,11 @@ test('Codex-specific on mode applies Luna/high to the actual dispatch', async ()
     assert.equal(result.resolution.model, CODEX_MODELS.luna);
     assert.ok(result && typeof result === 'object' && 'resolution' in result);
     assert.ok(result.resolution && typeof result.resolution === 'object' && 'effort' in result.resolution);
-    assert.equal(result.resolution.effort, 'high');
+    assert.equal(result.resolution.effort, 'medium');
     assert.ok(launchObservation.invocation && typeof launchObservation.invocation === 'object' && 'model' in launchObservation.invocation);
     assert.equal(launchObservation.invocation.model, CODEX_MODELS.luna);
     assert.ok(launchObservation.invocation && typeof launchObservation.invocation === 'object' && 'effort' in launchObservation.invocation);
-    assert.equal(launchObservation.invocation.effort, 'high');
+    assert.equal(launchObservation.invocation.effort, 'medium');
   });
 });
 
@@ -148,7 +148,7 @@ test('MOON_RELAY_KERNEL_MODEL_POLICY_MODE=on applies the recommendation to the a
     assert.equal(result.resolution.model, CODEX_MODELS.luna);
     assert.ok(result && typeof result === 'object' && 'resolution' in result);
     assert.ok(result.resolution && typeof result.resolution === 'object' && 'effort' in result.resolution);
-    assert.equal(result.resolution.effort, 'high');
+    assert.equal(result.resolution.effort, 'medium');
     assert.ok(result && typeof result === 'object' && 'resolution' in result);
     assert.ok(result.resolution && typeof result.resolution === 'object' && 'source' in result.resolution);
     assert.equal(result.resolution.source, 'model-policy');
@@ -197,7 +197,7 @@ test('an escalation signal does not change the Codex standard execution class', 
   assert.ok(recommendation && typeof recommendation === 'object' && 'model' in recommendation);
   assert.equal(recommendation.model, CODEX_MODELS.luna);
   assert.ok(recommendation && typeof recommendation === 'object' && 'effort' in recommendation);
-  assert.equal(recommendation.effort, 'high');
+  assert.equal(recommendation.effort, 'medium');
 });
 
 test('an explicit invocation-override model survives model-policy mode', async () => {
