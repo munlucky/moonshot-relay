@@ -26,8 +26,8 @@ test('a recommendation is produced regardless of the active mode', () => {
     resolveOptimizationModes({ MOON_RELAY_KERNEL_MODEL_POLICY_MODE: mode });
     const codex = resolveCodexModelPolicy({ actionKind: 'implement' });
     const claude = resolveClaudeEffort({ actionKind: 'implement' });
-    assert.equal(codex.model, 'gpt-5.6-luna');
-    assert.equal(codex.reasoning, 'high');
+    assert.equal(codex.model, 'gpt-6-luna');
+    assert.equal(codex.reasoning, 'medium');
     assert.equal(claude.effort, 'high');
   }
 });
@@ -42,7 +42,7 @@ test('every routing decision carries the reasons that produced it', () => {
   const input = { executionClass: 'standard', repeatedFailure: true };
   const standard = resolveCodexModelPolicy(input);
   assert.ok(standard.reasons.includes('execution-class:standard'));
-  assert.equal(standard.policyRevision, 'kernel-codex-execution-class.v2');
+  assert.equal(standard.policyRevision, 'kernel-codex-execution-class.v3');
   const claude = resolveClaudeEffort({ actionKind: 'implement', triggers: ['broad-refactor'] });
   assert.ok(claude.reasons.includes('broad-refactor'));
   assert.equal(claude.policyRevision, 'kernel-claude-effort.v1');
