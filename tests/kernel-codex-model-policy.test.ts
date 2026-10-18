@@ -10,13 +10,13 @@ import {
   resolveCodexModelPolicy,
 } from '../src/host/kernel/codex-model-policy.js';
 
-test('the Codex Host policy maps exactly four execution classes to two settings', () => {
+test('the Codex Host policy maps exactly four execution classes to three settings', () => {
   assert.deepEqual([...CODEX_EXECUTION_CLASSES], ['planning', 'complex_implementation', 'review', 'standard']);
   const expected = {
-    planning: [CODEX_MODELS.astra, 'high'],
-    complex_implementation: [CODEX_MODELS.astra, 'high'],
-    review: [CODEX_MODELS.astra, 'high'],
-    standard: [CODEX_MODELS.luna, 'high'],
+    planning: [CODEX_MODELS.sol, 'high'],
+    complex_implementation: [CODEX_MODELS.sol, 'high'],
+    review: [CODEX_MODELS.sol, 'xhigh'],
+    standard: [CODEX_MODELS.luna, 'medium'],
   };
   for (const executionClass of CODEX_EXECUTION_CLASSES) {
     const policy = resolveCodexModelPolicy({ executionClass });
@@ -28,17 +28,17 @@ test('the Codex Host policy maps exactly four execution classes to two settings'
 
 test('B12 rejects cross-class model pairings and max as a default effort', () => {
   const expected = {
-    planning: [CODEX_MODELS.astra, 'high'],
-    complex_implementation: [CODEX_MODELS.astra, 'high'],
-    review: [CODEX_MODELS.astra, 'high'],
-    standard: [CODEX_MODELS.luna, 'high'],
+    planning: [CODEX_MODELS.sol, 'high'],
+    complex_implementation: [CODEX_MODELS.sol, 'high'],
+    review: [CODEX_MODELS.sol, 'xhigh'],
+    standard: [CODEX_MODELS.luna, 'medium'],
   };
   for (const [executionClass, [model, effort]] of Object.entries(expected)) {
     const policy = resolveCodexModelPolicy({ executionClass });
-    for (const otherModel of [CODEX_MODELS.astra, CODEX_MODELS.luna]) {
+    for (const otherModel of [CODEX_MODELS.astra, CODEX_MODELS.sol, CODEX_MODELS.luna]) {
       if (otherModel !== model) assert.notEqual(policy.model, otherModel, `${executionClass} must not route to ${otherModel}`);
     }
-    for (const otherEffort of ['high', 'max']) {
+    for (const otherEffort of ['medium', 'high', 'xhigh', 'max']) {
       if (otherEffort !== effort) assert.notEqual(policy.effort, otherEffort, `${executionClass} must not use ${otherEffort}`);
     }
   }
@@ -47,12 +47,12 @@ test('B12 rejects cross-class model pairings and max as a default effort', () =>
 test('the default class policy ignores risk and retry signals rather than escalating silently', () => {
   const reviewInput = { executionClass: 'review', riskTier: 'T3', shapes: ['security'], repeatedFailure: true };
   const review = resolveCodexModelPolicy(reviewInput);
-  assert.equal(review.model, CODEX_MODELS.astra);
-  assert.equal(review.effort, 'high');
+  assert.equal(review.model, CODEX_MODELS.sol);
+  assert.equal(review.effort, 'xhigh');
   const standardInput = { executionClass: 'standard', repeatedFailure: true };
   const standard = resolveCodexModelPolicy(standardInput);
   assert.equal(standard.model, CODEX_MODELS.luna);
-  assert.equal(standard.effort, 'high');
+  assert.equal(standard.effort, 'medium');
   assert.throws(() => resolveCodexModelPolicy({ executionClass: 'ultrabrain' }), /executionClass must be one of/);
 });
 
@@ -63,39 +63,39 @@ test('legacy action inputs normalize into the canonical class vocabulary', () =>
   assert.equal(resolveCodexExecutionClass({ actionKind: 'implement' }), 'standard');
 });
 
-test('ordinary implementation and debugging default to Luna at high', () => {
+test('ordinary implementation and debugging default to Luna at medium', () => {
   for (const actionKind of ['implement', 'debug']) {
     const policy = resolveCodexModelPolicy({ actionKind });
     assert.equal(policy.model, CODEX_MODELS.luna);
-    assert.equal(policy.reasoning, 'high');
+    assert.equal(policy.reasoning, 'medium');
     assert.ok(policy.reasons.includes('execution-class:standard'));
   }
 });
 
-test('planning actions route to Astra at high', () => {
+test('planning actions route to Sol at high', () => {
   for (const actionKind of ['understand', 'design', 'plan', 'replan']) {
     const policy = resolveCodexModelPolicy({ actionKind });
-    assert.equal(policy.model, CODEX_MODELS.astra);
+    assert.equal(policy.model, CODEX_MODELS.sol);
     assert.equal(policy.reasoning, 'high');
   }
 });
 
-test('complex implementation and large refactors escalate to Astra high', () => {
+test('complex implementation and large refactors route to Sol high', () => {
   for (const complexity of ['complex', 'large-refactor']) {
     const policy = resolveCodexModelPolicy({ actionKind: 'implement', complexity });
-    assert.equal(policy.model, CODEX_MODELS.astra);
+    assert.equal(policy.model, CODEX_MODELS.sol);
     assert.equal(policy.reasoning, 'high');
   }
 });
 
-test('routine batch uses the same Luna high actor as ordinary work', () => {
+test('routine batch uses the same Luna medium actor as ordinary work', () => {
   const luna = resolveCodexModelPolicy({ actionKind: 'implement', complexity: 'routine-batch' });
   assert.equal(luna.model, CODEX_MODELS.luna);
-  assert.equal(luna.reasoning, 'high');
+  assert.equal(luna.reasoning, 'medium');
   assert.equal(resolveCodexModelPolicy({ actionKind: 'implement', complexity: 'standard' }).model, CODEX_MODELS.luna);
 });
 
-test('high is the default implementation effort and explicit max requests remain attributable', () => {
+test('class defaults remain explicit and max requests remain attributable', () => {
   const selections = [
     { actionKind: 'implement' }, { actionKind: 'debug' }, { actionKind: 'plan' },
     { actionKind: 'design' }, { actionKind: 'review_engineering' },
@@ -109,13 +109,14 @@ test('high is the default implementation effort and explicit max requests remain
   assert.ok(policy.reasons.includes('user-requested-reasoning'));
 });
 
-test('the gpt-5.6 alias resolves to an explicit Sol id and gpt-6 to Astra for reproducibility', () => {
-  assert.equal(resolveCodexModelAlias('gpt-5.6'), CODEX_MODELS.sol);
-  assert.equal(resolveCodexModelAlias('gpt-5.6-terra'), CODEX_MODELS.terra);
+test('family aliases resolve to the current explicit Sol/Astra ids for reproducibility', () => {
+  assert.equal(resolveCodexModelAlias('gpt-5.6'), 'gpt-5.6');
+  assert.equal(resolveCodexModelAlias('gpt-5.6-terra'), 'gpt-5.6-terra');
   assert.equal(resolveCodexModelAlias('gpt-6'), CODEX_MODELS.astra);
+  assert.equal(resolveCodexModelAlias('gpt-6.1'), CODEX_MODELS.sol);
   assert.equal(resolveCodexModelAlias('gpt-6-astra'), CODEX_MODELS.astra);
-  const solPolicy = resolveCodexModelPolicy({ userRequested: { model: 'gpt-5.6' } });
-  assert.equal(solPolicy.model, CODEX_MODELS.sol);
+  const legacyPolicy = resolveCodexModelPolicy({ userRequested: { model: 'gpt-5.6' } });
+  assert.equal(legacyPolicy.model, 'gpt-5.6');
   const astraPolicy = resolveCodexModelPolicy({ userRequested: { model: 'gpt-6' } });
   assert.equal(astraPolicy.model, CODEX_MODELS.astra);
 });
