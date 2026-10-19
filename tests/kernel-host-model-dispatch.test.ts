@@ -10,6 +10,7 @@ import { createModelRegistry } from '../src/host/kernel/model-registry.js';
 import { createClaudeAdapter } from '../src/host/kernel/adapters/claude.js';
 import { createCodexAdapter } from '../src/host/kernel/adapters/codex.js';
 import { createFableAdapter } from '../src/host/kernel/adapters/fable.js';
+import { CODEX_EXECUTION_POLICY } from '../src/host/kernel/codex-model-policy.js';
 
 const registryFor = (surface: string, env: NodeJS.ProcessEnv) => createModelRegistry({ surface, env });
 const stableParentObserver = async ({ parentSessionId }: { parentSessionId?: string | null }) => ({ sessionId: parentSessionId, model: null, effort: null });
@@ -195,16 +196,16 @@ test('Codex actual model and effort mismatch is recorded as a fallback, never si
     });
     assert.ok(result && typeof result === 'object' && 'resolution' in result);
     assert.ok(result.resolution && typeof result.resolution === 'object' && 'model' in result.resolution);
-    assert.equal(result.resolution.model, 'gpt-5.6-luna');
+    assert.equal(result.resolution.model, CODEX_EXECUTION_POLICY.standard.model);
     assert.ok(result && typeof result === 'object' && 'resolution' in result);
     assert.ok(result.resolution && typeof result.resolution === 'object' && 'effort' in result.resolution);
-    assert.equal(result.resolution.effort, 'max');
+    assert.equal(result.resolution.effort, CODEX_EXECUTION_POLICY.standard.effort);
     assert.ok(result && typeof result === 'object' && 'receipt' in result);
     assert.ok(result.receipt && typeof result.receipt === 'object' && 'requestedModel' in result.receipt);
-    assert.equal(result.receipt.requestedModel, 'gpt-5.6-luna');
+    assert.equal(result.receipt.requestedModel, CODEX_EXECUTION_POLICY.standard.model);
     assert.ok(result && typeof result === 'object' && 'receipt' in result);
     assert.ok(result.receipt && typeof result.receipt === 'object' && 'requestedEffort' in result.receipt);
-    assert.equal(result.receipt.requestedEffort, 'max');
+    assert.equal(result.receipt.requestedEffort, CODEX_EXECUTION_POLICY.standard.effort);
     assert.ok(result && typeof result === 'object' && 'receipt' in result);
     assert.ok(result.receipt && typeof result.receipt === 'object' && 'resolvedModel' in result.receipt);
     assert.equal(result.receipt.resolvedModel, 'gpt-6-astra');

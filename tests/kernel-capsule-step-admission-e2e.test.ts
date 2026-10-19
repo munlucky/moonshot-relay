@@ -43,7 +43,15 @@ const cleanup = async ({ runtimeHome, projectRoot }: { runtimeHome: string; proj
 const edit = (fixture: { projectRoot: string; runtimeHome: string }, relative: string, value: string | number) => writeFile(path.join(fixture.projectRoot, relative), `export const v = ${value};\n`);
 
 const adapterFor = (sessionId: string) => createClaudeAdapter({
-  launch: async ({ invocation }) => ({ resolvedModel: assertTestRecord(invocation).model, sessionId, inputTokens: 100, outputTokens: 20 }),
+  launch: async ({ invocation }) => ({
+    resolvedModel: assertTestRecord(invocation).model,
+    resolvedEffort: assertTestRecord(invocation).effort,
+    observedModel: assertTestRecord(invocation).model,
+    observedEffort: assertTestRecord(invocation).effort,
+    sessionId,
+    inputTokens: 100,
+    outputTokens: 20,
+  }),
 });
 
 const dispatch = (cp: TestControlPlane, runId: string, sessionId: string, actionContext = {}) => dispatchKernelTurn({

@@ -12,6 +12,7 @@ import { createClaudeAdapter } from '../src/host/kernel/adapters/claude.js';
 import { createKernelHostReviewBridge } from '../src/host/kernel/lifecycle-bridge.js';
 import { assessReviewReadiness } from '../src/host/kernel/review-readiness.js';
 import { createModelRegistry } from '../src/host/kernel/model-registry.js';
+import { CODEX_EXECUTION_POLICY } from '../src/host/kernel/codex-model-policy.js';
 
 const tempRoots: string[] = [];
 
@@ -485,8 +486,8 @@ test('review readiness uses the enforced Codex policy and requires independent c
 
   assert.equal(readiness.status, 'BLOCKED');
   assert.ok(readiness.blockers.includes('review-independent-context-unavailable'));
-  assert.equal(readiness.review.model, 'gpt-6-astra');
-  assert.equal(readiness.review.effort, 'high');
+  assert.equal(readiness.review.model, CODEX_EXECUTION_POLICY.review.model);
+  assert.equal(readiness.review.effort, CODEX_EXECUTION_POLICY.review.effort);
   assert.equal(readiness.review.modelSource, 'codex-model-policy');
 });
 

@@ -88,8 +88,10 @@ GitHub branch protection, required status checks, CODEOWNERS review enforcement,
 | `harness-bootstrap-lab.md` | operational-procedure | `tools/harness-lab/harness-lab.mjs`, `tests/harness-lab-contract.test.mjs` |
 | `kernel-codex-host-dispatch-recovery.md` | policy-anchor | `scripts/host/kernel/adapters/codex.mjs`, Kernel Codex host tests |
 | `kernel-codex-independent-review.md` | policy-anchor | `scripts/host/kernel/adapters/codex.mjs`, `scripts/kernel/proof/review-receipt.mjs`, Kernel review tests |
+| `kernel-agent-recovery.md` | operational-procedure | `src/kernel/run/agent-recovery.ts`, `src/host/kernel/run/agent-recovery.ts`, `src/host/kernel/mcp-composition.ts`, Kernel recovery tests |
 | `kernel-execution-capsule-and-step-ledger.md` | policy-anchor | `scripts/kernel/run/execution-capsule.mjs`, `scripts/kernel/run/run-step-ledger.mjs`, `scripts/kernel/routing/route-admission.mjs`, `scripts/kernel/proof/review-receipt.mjs`, `schemas/kernel.execution-capsule.schema.json`, `schemas/kernel.route-admission.schema.json` |
 | `kernel-evidence-and-completion-lifecycle.md` | policy-anchor | `scripts/kernel/control-plane.mjs`, `scripts/kernel/proof/proof-executor.mjs`, `scripts/kernel/run/run-loop.mjs`, Kernel completion/evidence tests |
+| `kernel-git-closeout.md` | operational-procedure | `src/kernel/git/closeout.ts`, `src/host/kernel/git/**`, `src/kernel/run/finalization.ts`, Kernel Git closeout tests |
 | `knowledge-repository-ops.md` | policy-anchor | `scripts/knowledge-*.mjs`, `docs/public/project-knowledge-plane.md` |
 | `long-running-harness.ko.md` | policy-anchor | `skills/moonshot-phase-runner/**`, `skills/moonshot-in-session-coordinator/**` |
 | `memory-control-plane.md` | policy-anchor | `schemas/memory-claim.schema.json`, `schemas/task-evidence-graph.schema.json`, `scripts/lib/memory-control-plane-contracts.mjs`, `tests/*memory*contract.test.mjs` |

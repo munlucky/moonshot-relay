@@ -23,7 +23,16 @@ const adapterFor = (sessions: { role: string; model: string | null }[]) => creat
         ? 'reviewer'
         : 'implementer';
     sessions.push({ role, model: invocation.model });
-    return { resolvedModel: invocation.model, sessionId: `${role}-session`, inputTokens: 1000, outputTokens: 200, wallClockMs: 5000 };
+    return {
+      resolvedModel: invocation.model,
+      resolvedEffort: Reflect.get(invocation, 'effort'),
+      observedModel: invocation.model,
+      observedEffort: Reflect.get(invocation, 'effort'),
+      sessionId: `${role}-session`,
+      inputTokens: 1000,
+      outputTokens: 200,
+      wallClockMs: 5000,
+    };
   },
 });
 

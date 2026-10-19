@@ -2992,6 +2992,214 @@
     "schemas/kernel.work-authority.schema.json": {
       "classification": "capability",
       "capability": "task-contract-and-bounded-work"
+    },
+    "src/application/kernel-cli/recovery.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/application/kernel-cli/recovery.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/contracts/futures-evidence.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/contracts/futures-evidence.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/host-tooling/kernel-eval/follow-up-eval.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/eval/follow-up-eval.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/host-tooling/kernel-eval/model-prompt-replay.ts": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "scripts/kernel/eval/model-prompt-replay.js": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "src/host-tooling/kernel-eval/retrieval-eval.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/eval/retrieval-eval.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/host/kernel/claude-prompt-renderer.ts": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "scripts/host/kernel/claude-prompt-renderer.js": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "src/host/kernel/openai-prompt-renderer.ts": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "scripts/host/kernel/openai-prompt-renderer.js": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "src/host/kernel/run/agent-recovery.ts": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "scripts/host/kernel/run/agent-recovery.js": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "src/kernel/knowledge/cross-run-evidence.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/cross-run-evidence.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/knowledge/improvement-pair.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/improvement-pair.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "src/kernel/proof/futures-assessment.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/kernel/proof/futures-assessment.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/kernel/proof/futures-evidence.ts": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "scripts/kernel/proof/futures-evidence.js": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "src/kernel/run/agent-recovery.ts": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "scripts/kernel/run/agent-recovery.js": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "tests/kernel-agent-recovery.test.mjs": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "tests/kernel-claude-prompt-renderer.test.mjs": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "tests/kernel-cli-main-contract.test.mjs": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "tests/kernel-completion-provenance.test.mjs": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "tests/kernel-feedback-candidate-lifecycle.test.mjs": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "tests/kernel-feedback-root-cause.test.mjs": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "tests/kernel-follow-up-eval.test.mjs": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "tests/kernel-futures-architecture-handoff.test.mjs": {
+      "classification": "capability",
+      "capability": "standalone-architecture-and-research-tools"
+    },
+    "tests/kernel-futures-assessment.test.mjs": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "tests/kernel-futures-bounded-restore.test.mjs": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
+    },
+    "tests/kernel-futures-evidence.test.mjs": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "tests/kernel-futures-review-gate.test.mjs": {
+      "classification": "capability",
+      "capability": "evidence-completion-and-review-authority"
+    },
+    "tests/kernel-git-initial-closeout.test.mjs": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "tests/kernel-knowledge-cross-run-evidence.test.mjs": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "tests/kernel-knowledge-cross-run-promotion.test.mjs": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "tests/kernel-knowledge-improvement-pair.test.mjs": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "tests/kernel-knowledge-improvement-promotion.test.mjs": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "tests/kernel-knowledge-procedure-context.test.mjs": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "tests/kernel-knowledge-procedure-representation.test.mjs": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "tests/kernel-model-prompt-replay.test.mjs": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "tests/kernel-openai-prompt-renderer.test.mjs": {
+      "classification": "capability",
+      "capability": "context-prompt-cache-and-optimization"
+    },
+    "tests/kernel-owner-mutation-recovery.test.mjs": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "tests/kernel-profile-cache-ownership.test.mjs": {
+      "classification": "capability",
+      "capability": "account-root-package-and-profile-adoption"
+    },
+    "tests/kernel-recovery-continuity.test.mjs": {
+      "classification": "capability",
+      "capability": "step-ledger-resume"
+    },
+    "tests/kernel-retrieval-eval.test.mjs": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "tests/kernel-task-contract-snapshot.test.mjs": {
+      "classification": "capability",
+      "capability": "task-contract-and-bounded-work"
     }
   }
 }

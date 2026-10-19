@@ -16,6 +16,7 @@ import { MODEL_VISIBLE_PROMPT_FIELDS } from '../src/host/kernel/model-capsule-vi
 import { createModelRegistry } from '../src/host/kernel/model-registry.js';
 import { createClaudeAdapter } from '../src/host/kernel/adapters/claude.js';
 import { createCodexAdapter } from '../src/host/kernel/adapters/codex.js';
+import { CODEX_EXECUTION_POLICY } from '../src/host/kernel/codex-model-policy.js';
 
 const REVIEW_ACTION = {
   actionKind: 'review_engineering',
@@ -199,8 +200,8 @@ test('Kernel Host bridge auto-injects the independent subagent fallback and repo
     assert.equal(readiness.status, 'READY', JSON.stringify(readiness));
     assert.equal(assertTestRecord(readiness.review).reviewExecutionAvailable, true);
     assert.equal(assertTestRecord(readiness.review).reviewIndependentContextAvailable, true);
-    assert.equal(assertTestRecord(readiness.review).model, 'gpt-6-astra');
-    assert.equal(assertTestRecord(readiness.review).effort, 'high');
+    assert.equal(assertTestRecord(readiness.review).model, CODEX_EXECUTION_POLICY.review.model);
+    assert.equal(assertTestRecord(readiness.review).effort, CODEX_EXECUTION_POLICY.review.effort);
 
     const result = await bridge.dispatchReview({
       controlPlane: fixture.cp,

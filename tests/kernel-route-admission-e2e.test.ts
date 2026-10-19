@@ -37,7 +37,15 @@ const withRun = async (fn: (cp: KernelControlPlane, runId: string, fixture: { ru
 test('K3-1/10: a value implementation turn is admitted and its receipt carries the lineage', async () => {
   await withRun(async (cp, runId, fixture) => {
     const adapter = createClaudeAdapter({ launch: async ({ invocation }) => { assert.ok(invocation && typeof invocation === 'object'); assert.ok(invocation && typeof invocation === 'object' && 'model' in invocation);
-    return ({ resolvedModel: invocation.model, sessionId: 'worker-1', inputTokens: 10, outputTokens: 5 }); } });
+    return ({
+      resolvedModel: invocation.model,
+      resolvedEffort: Reflect.get(invocation, 'effort'),
+      observedModel: invocation.model,
+      observedEffort: Reflect.get(invocation, 'effort'),
+      sessionId: 'worker-1',
+      inputTokens: 10,
+      outputTokens: 5,
+    }); } });
     const result = await dispatchKernelTurn({
       controlPlane: cp,
       runId,

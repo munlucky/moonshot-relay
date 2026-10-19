@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
-import { resolveCodexModelPolicy } from '../src/host/kernel/codex-model-policy.js';
+import { CODEX_EXECUTION_POLICY, resolveCodexModelPolicy } from '../src/host/kernel/codex-model-policy.js';
 import { cleanupWindowsTimeoutProcessTree } from '../src/host/kernel/proof/process-tree.js';
 import { openSqliteDb } from '../src/kernel/sqlite-adapter.js';
 
@@ -279,10 +279,10 @@ test('Golden E2E: multi-step plan preserved, step 1 continues to step 2, and goa
   }
 });
 
-test('Golden E2E: reviewer policy resolution enforces gpt-6-astra and high effort', () => {
+test('Golden E2E: reviewer policy resolution enforces the canonical review policy', () => {
   const policy = resolveCodexModelPolicy({ executionClass: 'review' });
-  assert.equal(policy.model, 'gpt-6-astra');
-  assert.equal(policy.effort, 'high');
+  assert.equal(policy.model, CODEX_EXECUTION_POLICY.review.model);
+  assert.equal(policy.effort, CODEX_EXECUTION_POLICY.review.effort);
 });
 
 test('Golden E2E: process tree timeout cleanup terminates safely without indefinite hang', () => {

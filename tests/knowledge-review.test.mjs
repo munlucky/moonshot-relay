@@ -16,6 +16,9 @@ test('Knowledge Review binds a candidate to the matching persisted verification'
     runId: 'run-rev-1',
     stateStore: {
       listKnowledgeRecords: () => [],
+      getRun: () => ({ sourceIdentity: 'source-review', mutationRevision: 0 }),
+      ensureRunObligation: () => {},
+      getRunObligations: () => [],
       getVerifications: () => [{
         id: 7,
         obligationId: 'default',

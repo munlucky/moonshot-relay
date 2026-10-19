@@ -30,8 +30,8 @@
 
 분류:
 
-- 일반 앱: 프로젝트 경로가 `/Users/dev/moonshot-relay`가 아닌 세션.
-- Harness 유지보수: 프로젝트 경로가 `/Users/dev/moonshot-relay`인 세션.
+- 일반 앱: 프로젝트가 Moonshot Relay 소스 checkout이 아닌 세션.
+- Harness 유지보수: 프로젝트가 Moonshot Relay 소스 checkout인 세션.
 
 전체 기록:
 
