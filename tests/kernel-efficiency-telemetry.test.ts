@@ -62,6 +62,26 @@ test('efficiency telemetry is durable on the existing Run signals ledger', async
       'timeToFirstMutationMs is measured from Run start to Kernel first-observed mutation',
     );
     assert.equal(persisted.firstMutationAt, mutationAt);
+
+    const proofStartedAt = new Date(Date.parse(mutationAt) + 2000).toISOString();
+    const proofFinishedAt = new Date(Date.parse(proofStartedAt) + 250).toISOString();
+    const reviewSpawnedAt = new Date(Date.parse(proofFinishedAt) + 100).toISOString();
+    const reviewFinishedAt = new Date(Date.parse(reviewSpawnedAt) + 400).toISOString();
+    cp.stateStore.recordRunEfficiency('efficiency-ledger', {
+      timestamps: {
+        focusedVerificationStartedAt: proofStartedAt,
+        focusedVerificationFinishedAt: proofFinishedAt,
+        reviewSpawnedAt,
+        reviewFinishedAt,
+      },
+    });
+    const withDurations = await cp.status('efficiency-ledger');
+    assert.ok(withDurations && 'measurement' in withDurations);
+    assert.equal(withDurations.measurement.workflowEfficiency.status, 'observed');
+    assert.equal(withDurations.measurement.workflowEfficiency.value.proofWallMs, 250);
+    assert.equal(withDurations.measurement.workflowEfficiency.value.reviewWallMs, 400);
+    assert.equal(withDurations.measurement.workflowEfficiency.value.lockWaitMs, null);
+    assert.equal(withDurations.measurement.workflowEfficiency.value.nextPayloadBytes, null);
   } finally {
     await cp.close();
     await rm(fixture.runtimeHome, { recursive: true, force: true });

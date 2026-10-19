@@ -452,6 +452,7 @@ export const normalizeModelUsageReceipt = (
       'cacheWriteInputTokens',
     ),
     reasoningTokens: optionalCount(input.reasoningTokens ?? null, 'reasoningTokens'),
+    promptMeasurement: input.promptMeasurement ?? null,
     createdAt: input.createdAt ? String(input.createdAt) : new Date().toISOString(),
   }));
 };

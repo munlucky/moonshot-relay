@@ -90,4 +90,22 @@ export interface KernelModelUsage {
   cacheWriteInputTokens: null | number;
   reasoningTokens: null | number;
   createdAt: string;
+  promptMeasurement?: null | {
+    segments: {
+      kind: string;
+      digest: string;
+      cacheable: boolean;
+      renderedBytes: number;
+      tokenEstimate: number;
+      loaded: boolean;
+      includedVerbatimInProviderMessage: boolean;
+    }[];
+    renderedPromptBytes: number;
+    renderedPromptTokenEstimate: number;
+    cacheablePromptBytes: number;
+    cacheablePromptTokenEstimate: number;
+    providerMessageBytes: null | number;
+    providerMessageTokenEstimate: null | number;
+    providerMessageDigest: null | string;
+  };
 }

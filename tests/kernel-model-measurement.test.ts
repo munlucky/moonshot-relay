@@ -49,8 +49,27 @@ test('measurement moves provider identity and tokens from unavailable to observe
     assert.equal(before.measurement.providerModelIdentity.status, 'unavailable');
     assert.equal(before.measurement.modelRouting.status, 'unavailable');
 
-    await fileReceipt(cp, runId, 'plan', 'planner', { inputTokens: 4000, cachedInputTokens: 3000, outputTokens: 800, wallClockMs: 30000 });
-    await fileReceipt(cp, runId, 'implement', 'implementer', { inputTokens: 9000, outputTokens: 2200, wallClockMs: 90000 });
+    await fileReceipt(cp, runId, 'plan', 'planner', {
+      inputTokens: 4000, cachedInputTokens: 3000, outputTokens: 800, wallClockMs: 30000,
+      promptMeasurement: {
+        renderedPromptBytes: 1200, renderedPromptTokenEstimate: 300,
+        cacheablePromptBytes: 800, cacheablePromptTokenEstimate: 200,
+        providerMessageBytes: 1400, providerMessageTokenEstimate: 350, providerMessageDigest: 'sha256:planner',
+        segments: [{ kind: 'common-host-stable', digest: 'sha256:common', cacheable: true, renderedBytes: 400, tokenEstimate: 100, loaded: true, includedVerbatimInProviderMessage: true }],
+      },
+    });
+    await fileReceipt(cp, runId, 'implement', 'implementer', {
+      inputTokens: 9000, outputTokens: 2200, wallClockMs: 90000,
+      promptMeasurement: {
+        renderedPromptBytes: 1600, renderedPromptTokenEstimate: 400,
+        cacheablePromptBytes: 1000, cacheablePromptTokenEstimate: 250,
+        providerMessageBytes: 1800, providerMessageTokenEstimate: 450, providerMessageDigest: 'sha256:implementer',
+        segments: [
+          { kind: 'common-host-stable', digest: 'sha256:common', cacheable: true, renderedBytes: 400, tokenEstimate: 100, loaded: true, includedVerbatimInProviderMessage: true },
+          { kind: 'volatile', digest: 'sha256:volatile', cacheable: false, renderedBytes: 600, tokenEstimate: 150, loaded: true, includedVerbatimInProviderMessage: true },
+        ],
+      },
+    });
 
     const after = await cp.status(runId);
 
@@ -65,6 +84,17 @@ test('measurement moves provider identity and tokens from unavailable to observe
     assert.equal(after.measurement.actualOutputTokens.value.total, 3000);
     assert.equal(after.measurement.wallClockMs.status, 'observed');
     assert.equal(after.measurement.wallClockMs.value.modelTurnsTotalMs, 120000);
+    assert.equal(after.measurement.workflowEfficiency.status, 'observed');
+    const promptFootprint = after.measurement.workflowEfficiency.value.promptFootprint;
+    assert.ok(promptFootprint);
+    assert.equal(promptFootprint.turns, 2);
+    assert.ok(promptFootprint.providerMessageBytes);
+    assert.ok(promptFootprint.providerMessageTokenEstimate);
+    assert.equal(promptFootprint.providerMessageBytes.total, 3200);
+    assert.equal(promptFootprint.providerMessageTokenEstimate.total, 800);
+    assert.equal(promptFootprint.segments['common-host-stable'].renderedBytes, 800);
+    assert.equal(promptFootprint.segments['common-host-stable'].reportedTurns, 2);
+    assert.equal(promptFootprint.segments.volatile.tokenEstimate, 150);
 
     assert.equal(after.measurement.modelRouting.status, 'observed');
     const routing = after.measurement.modelRouting.value;

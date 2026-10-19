@@ -11,11 +11,14 @@ import { resolveKernelProjectIdentity } from '../src/kernel/project-identity.js'
 
 const unavailableFields = ['providerModelIdentity', 'actualInputTokens', 'actualOutputTokens', 'falseCompletionDecision', 'wallClockMs', 'modelRouting'] as const;
 const observedFields = ['retryCount', 'replanCount', 'userInterventionCount', 'hardEvidenceCoverage', 'promptTokenBudget'] as const;
-const workflowEfficiencyFields = [
+const workflowEfficiencyNumericFields = [
   'transitions', 'modelTurns', 'proofExecutions', 'proofReuses', 'reviewExecutions',
-  'frameMs', 'executeMs', 'proveMs', 'closeMs', 'proofWallMs', 'reviewWallMs',
-  'lockWaitMs', 'nextPayloadBytes',
+  'frameMs', 'executeMs', 'proveMs', 'closeMs',
 ] as const;
+const workflowEfficiencyNullableFields = [
+  'proofWallMs', 'reviewWallMs', 'lockWaitMs', 'nextPayloadBytes', 'promptFootprint',
+] as const;
+const workflowEfficiencyFields = [...workflowEfficiencyNumericFields, ...workflowEfficiencyNullableFields] as const;
 
 test('measurement schema is closed and status exposes typed unavailable fields', async () => {
   const schema = JSON.parse(await readFile(new URL('../schemas/kernel.measurement.schema.json', import.meta.url), 'utf8'));
@@ -43,9 +46,12 @@ test('measurement schema is closed and status exposes typed unavailable fields',
   assert.equal(status.measurement.contaminationSignals.status, 'observed');
   assert.equal(status.measurement.workflowEfficiency.status, 'observed');
   assert.deepEqual(Object.keys(status.measurement.workflowEfficiency.value).sort(), [...workflowEfficiencyFields].sort());
-  for (const field of workflowEfficiencyFields) {
+  for (const field of workflowEfficiencyNumericFields) {
     assert.equal(typeof status.measurement.workflowEfficiency.value[field], 'number', field);
     assert.ok(Number.isInteger(status.measurement.workflowEfficiency.value[field]), field);
+  }
+  for (const field of workflowEfficiencyNullableFields) {
+    assert.equal(status.measurement.workflowEfficiency.value[field], null, field);
   }
   await cp.close();
 });

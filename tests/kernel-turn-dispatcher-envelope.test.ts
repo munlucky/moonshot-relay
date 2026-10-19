@@ -104,6 +104,7 @@ test('a real dispatch records a non-null prefix digest and cache mode on the rec
     assert.ok(assertTestRecord(assertTestRecord(result.envelope).control).stepId, 'the live envelope must carry a real stepId, not the undefined a wrong modelInput.step read would produce');
     assert.ok(assertTestNumber(assertTestRecord(result.receipt).eligiblePrefixTokens) > 0);
     const measurement = assertTestRecord(result.promptMeasurement);
+    assert.deepEqual(assertTestRecord(result.receipt).promptMeasurement, result.promptMeasurement);
     assert.ok(assertTestNumber(measurement.renderedPromptBytes) > 0);
     assert.ok(assertTestNumber(measurement.renderedPromptTokenEstimate) > 0);
     assert.ok(assertTestNumber(measurement.providerMessageBytes) > 0);

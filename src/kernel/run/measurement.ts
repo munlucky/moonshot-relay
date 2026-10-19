@@ -19,7 +19,25 @@ interface MeasurementVerification {
   executor?: unknown; status?: unknown; reuseOfVerificationId?: unknown;
 }
 interface MeasurementAttempt { startedAt?: string | null; finishedAt?: string | null; state?: string | null; status?: string }
-interface MeasurementUsageReceipt extends ModelUsageMetricReceipt { wallClockMs?: number | null }
+interface MeasurementPromptSegment {
+  kind?: unknown;
+  renderedBytes?: unknown;
+  tokenEstimate?: unknown;
+  loaded?: unknown;
+}
+interface MeasurementPromptMeasurement {
+  segments?: MeasurementPromptSegment[];
+  renderedPromptBytes?: unknown;
+  renderedPromptTokenEstimate?: unknown;
+  cacheablePromptBytes?: unknown;
+  cacheablePromptTokenEstimate?: unknown;
+  providerMessageBytes?: unknown;
+  providerMessageTokenEstimate?: unknown;
+}
+interface MeasurementUsageReceipt extends ModelUsageMetricReceipt {
+  wallClockMs?: number | null;
+  promptMeasurement?: MeasurementPromptMeasurement | null;
+}
 interface WorkflowMeasurementInput {
   run: MeasurementRun;
   verifications?: MeasurementVerification[];
@@ -105,9 +123,58 @@ const providerUsageMeasurement = (receipts: MeasurementUsageReceipt[] = []) => {
   };
 };
 
+const promptFootprintMeasurement = (receipts: MeasurementUsageReceipt[] = []) => {
+  const measurements = receipts
+    .map((receipt) => receipt.promptMeasurement)
+    .filter((value): value is MeasurementPromptMeasurement => Boolean(value && typeof value === 'object' && !Array.isArray(value)));
+  if (measurements.length === 0) return null;
+
+  const count = (value: unknown): number | null => (
+    Number.isInteger(value) && Number(value) >= 0 ? Number(value) : null
+  );
+  const sumField = (key: keyof MeasurementPromptMeasurement) => {
+    const values = measurements
+      .map((measurement) => count(measurement[key]))
+      .filter((value): value is number => value !== null);
+    return values.length > 0
+      ? { total: values.reduce((total, value) => total + value, 0), reportedTurns: values.length }
+      : null;
+  };
+  const segments = new Map<string, { renderedBytes: number; tokenEstimate: number; loadedTurns: number; reportedTurns: number }>();
+  for (const measurement of measurements) {
+    for (const segment of Array.isArray(measurement.segments) ? measurement.segments : []) {
+      const kind = typeof segment.kind === 'string' ? segment.kind : null;
+      const renderedBytes = count(segment.renderedBytes);
+      const tokenEstimate = count(segment.tokenEstimate);
+      if (!kind || renderedBytes === null || tokenEstimate === null) continue;
+      const current = segments.get(kind) || { renderedBytes: 0, tokenEstimate: 0, loadedTurns: 0, reportedTurns: 0 };
+      current.renderedBytes += renderedBytes;
+      current.tokenEstimate += tokenEstimate;
+      current.loadedTurns += segment.loaded === true ? 1 : 0;
+      current.reportedTurns += 1;
+      segments.set(kind, current);
+    }
+  }
+
+  return {
+    turns: measurements.length,
+    renderedPromptBytes: sumField('renderedPromptBytes'),
+    renderedPromptTokenEstimate: sumField('renderedPromptTokenEstimate'),
+    cacheablePromptBytes: sumField('cacheablePromptBytes'),
+    cacheablePromptTokenEstimate: sumField('cacheablePromptTokenEstimate'),
+    providerMessageBytes: sumField('providerMessageBytes'),
+    providerMessageTokenEstimate: sumField('providerMessageTokenEstimate'),
+    segments: Object.fromEntries([...segments.entries()].sort(([a], [b]) => a.localeCompare(b))),
+  };
+};
+
 const workflowEfficiencyMeasurement = ({ run, verifications = [], verificationHistory = [], attempts = [], usageReceipts = [], reviewReceipts = [] }: WorkflowMeasurementInput) => {
   const stages = Array.isArray(run.route?.stages) ? run.route.stages : [];
   const currentStageIndex = stages.indexOf(run.state);
+  const rawEfficiency = run.runSignals?.efficiency;
+  const efficiency = rawEfficiency && typeof rawEfficiency === 'object' && !Array.isArray(rawEfficiency)
+    ? rawEfficiency as Record<string, unknown>
+    : {};
   const durationByStage: Record<string, number> = Object.fromEntries(['FRAME', 'EXECUTE', 'PROVE', 'CLOSE'].map((stage) => [stage, 0]));
   for (const attempt of attempts) {
     const started = Date.parse(attempt.startedAt || '');
@@ -132,13 +199,13 @@ const workflowEfficiencyMeasurement = ({ run, verifications = [], verificationHi
     executeMs: durationByStage.EXECUTE,
     proveMs: durationByStage.PROVE,
     closeMs: durationByStage.CLOSE,
-    // These values have no persisted start/lock/payload receipt in the
-    // current schema; zero is the explicit observed baseline, not an
-    // invented duration or byte count.
-    proofWallMs: 0,
-    reviewWallMs: 0,
-    lockWaitMs: 0,
-    nextPayloadBytes: 0,
+    proofWallMs: durationBetween(efficiency.focusedVerificationStartedAt, efficiency.focusedVerificationFinishedAt),
+    reviewWallMs: durationBetween(efficiency.reviewSpawnedAt, efficiency.reviewFinishedAt),
+    // next() intentionally remains a pure read. No write is added only to
+    // measure its payload or lock wait, so absent telemetry stays null.
+    lockWaitMs: null,
+    nextPayloadBytes: null,
+    promptFootprint: promptFootprintMeasurement(usageReceipts),
   });
 };
 

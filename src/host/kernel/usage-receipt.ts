@@ -150,6 +150,7 @@ export interface UsageReceiptInput {
   cacheContext?: UnknownRecord;
   envelope?: UnknownRecord | null;
   sessionLineage?: UnknownRecord | null;
+  promptMeasurement?: UnknownRecord | null;
 }
 
 export const buildUsageReceipt = ({
@@ -169,6 +170,7 @@ export const buildUsageReceipt = ({
   cacheContext = {},
   envelope = null,
   sessionLineage = null,
+  promptMeasurement = null,
 }: UsageReceiptInput) => {
   if (!decision) {
     throw new Error('a usage receipt requires the route decision it answers');
@@ -286,5 +288,6 @@ export const buildUsageReceipt = ({
       dispatch.reasoningTokens,
       tokensAllowed,
     ),
+    promptMeasurement,
   });
 };

@@ -581,6 +581,118 @@
     },
     "createdAt": {
       "type": "string"
+    },
+    "promptMeasurement": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "segments": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string"
+                  },
+                  "digest": {
+                    "type": "string"
+                  },
+                  "cacheable": {
+                    "type": "boolean"
+                  },
+                  "renderedBytes": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "tokenEstimate": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "loaded": {
+                    "type": "boolean"
+                  },
+                  "includedVerbatimInProviderMessage": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "digest",
+                  "cacheable",
+                  "renderedBytes",
+                  "tokenEstimate",
+                  "loaded",
+                  "includedVerbatimInProviderMessage"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "renderedPromptBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "renderedPromptTokenEstimate": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "cacheablePromptBytes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "cacheablePromptTokenEstimate": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "providerMessageBytes": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              ]
+            },
+            "providerMessageTokenEstimate": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              ]
+            },
+            "providerMessageDigest": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "required": [
+            "segments",
+            "renderedPromptBytes",
+            "renderedPromptTokenEstimate",
+            "cacheablePromptBytes",
+            "cacheablePromptTokenEstimate",
+            "providerMessageBytes",
+            "providerMessageTokenEstimate",
+            "providerMessageDigest"
+          ],
+          "additionalProperties": false
+        }
+      ]
     }
   },
   "required": [

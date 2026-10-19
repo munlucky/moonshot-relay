@@ -1562,6 +1562,7 @@ const dispatchKernelTurnAttempt = async ({
     finishedAt: now(),
     envelope,
     sessionLineage,
+    promptMeasurement,
     cacheContext: {
       // Recorded regardless of modelPolicyMode: the whole point of computing
       // the recommendation unconditionally is that shadow mode can measure
