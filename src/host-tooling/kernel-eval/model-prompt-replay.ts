@@ -5,12 +5,17 @@
 // only binds its receipt to evaluator observations and applies the fixed
 // adoption order: quality -> regression/rework -> efficiency.
 
+import { createHash } from 'node:crypto';
 import { dispatchKernelTurn } from '../../host/kernel/turn-dispatcher.js';
+import {
+  buildCompactModelVisiblePromptMessage,
+  buildModelVisiblePromptMessage,
+} from '../../host/kernel/model-capsule-view.js';
 
 type RecordLike = Record<string, unknown>;
 type ReplayArm = 'baseline' | 'candidate';
 type ReplayAttemptStatus = 'completed' | 'failed' | 'incomplete';
-type AllowedDifference = 'model' | 'effort' | 'promptPrefixDigest';
+type AllowedDifference = 'model' | 'effort' | 'promptPrefixDigest' | 'providerMessageDigest';
 type DispatchInput = Parameters<typeof dispatchKernelTurn>[0];
 
 export interface ModelPromptReplayEvaluation {
@@ -83,6 +88,34 @@ const positiveCount = (value: unknown, field: string): number => {
 const measure = (value: unknown): number | null => (
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
 );
+
+const sha256 = (value: string): string => (
+  `sha256:${createHash('sha256').update(value).digest('hex')}`
+);
+
+export const materializeModelPromptReplayArm = ({
+  arm,
+  prompt,
+  review = false,
+}: {
+  arm: ReplayArm;
+  prompt: unknown;
+  review?: boolean;
+}) => {
+  if (arm !== 'baseline' && arm !== 'candidate') {
+    throw new TypeError('arm must be baseline or candidate');
+  }
+  const message = arm === 'candidate'
+    ? buildCompactModelVisiblePromptMessage({ prompt, review })
+    : buildModelVisiblePromptMessage({ prompt, review });
+  return Object.freeze({
+    arm,
+    review,
+    message,
+    providerMessageBytes: Buffer.byteLength(message, 'utf8'),
+    providerMessageDigest: sha256(message),
+  });
+};
 
 const resolveAttemptStatus = (
   explicit: ReplayAttemptStatus | undefined,
@@ -201,11 +234,15 @@ const identity = (attempt: ModelPromptReplayAttempt) => {
     effort: [text(receipt.requestedEffort), text(receipt.resolvedEffort), text(receipt.observedEffort)],
     executionProfileRevision: text(receipt.executionProfileRevision),
     promptPrefixDigest: text(receipt.promptPrefixDigest),
+    providerMessageDigest: text(record(attempt.promptMeasurement).providerMessageDigest),
     enforcementStatus: text(receipt.enforcementStatus),
   };
 };
 
-const readinessIssue = (attempt: ModelPromptReplayAttempt): string | null => {
+const readinessIssue = (
+  attempt: ModelPromptReplayAttempt,
+  requiredDifferences: Set<AllowedDifference>,
+): string | null => {
   if (!attempt.receipt) return 'host-receipt-missing';
   const value = identity(attempt);
   if (value.enforcementStatus !== 'enforced') return 'host-model-enforcement-not-proven';
@@ -215,6 +252,9 @@ const readinessIssue = (attempt: ModelPromptReplayAttempt): string | null => {
   if (new Set(value.effort).size !== 1) return 'host-effort-identity-mismatch';
   if (!value.executionProfileRevision) return 'execution-profile-revision-missing';
   if (!value.promptPrefixDigest) return 'prompt-prefix-digest-missing';
+  if (requiredDifferences.has('providerMessageDigest') && !value.providerMessageDigest) {
+    return 'provider-message-digest-missing';
+  }
   return null;
 };
 
@@ -283,6 +323,7 @@ const sameIdentity = (left: ReturnType<typeof identity>, right: ReturnType<typeo
   && left.effort[2] === right.effort[2]
   && left.executionProfileRevision === right.executionProfileRevision
   && left.promptPrefixDigest === right.promptPrefixDigest
+  && left.providerMessageDigest === right.providerMessageDigest
 );
 
 const driftIssues = (
@@ -313,6 +354,9 @@ const driftIssues = (
     if (!allowed.has('effort') && a.effort[2] !== b.effort[2]) issues.push(`${caseId}:effort-drift`);
     if (!allowed.has('promptPrefixDigest') && a.promptPrefixDigest !== b.promptPrefixDigest) {
       issues.push(`${caseId}:prompt-prefix-drift`);
+    }
+    if (!allowed.has('providerMessageDigest') && a.providerMessageDigest !== b.providerMessageDigest) {
+      issues.push(`${caseId}:provider-message-drift`);
     }
     if (a.executionProfileRevision !== b.executionProfileRevision) {
       issues.push(`${caseId}:execution-profile-drift`);
@@ -383,17 +427,18 @@ export const compareModelPromptReplay = ({
   experiment?: { allowedDifferences?: AllowedDifference[] };
 }) => {
   const issues: string[] = [];
+  const allowedDifferences = new Set(experiment.allowedDifferences || []);
   if (protocol.execution.runsPerArmPerCase !== 2) issues.push('unsupported-runs-per-arm');
   issues.push(...coverageIssues(protocol, attempts));
   for (const attempt of attempts) {
-    const issue = readinessIssue(attempt);
+    const issue = readinessIssue(attempt, allowedDifferences);
     if (issue) {
       issues.push(
         `${attempt.caseId}:${attempt.arm}:${attempt.repetition}:${attempt.attempt}:${issue}`,
       );
     }
   }
-  issues.push(...driftIssues(attempts, new Set(experiment.allowedDifferences || [])));
+  issues.push(...driftIssues(attempts, allowedDifferences));
 
   const baseline = summarize(attempts.filter(attempt => attempt.arm === 'baseline'));
   const candidate = summarize(attempts.filter(attempt => attempt.arm === 'candidate'));

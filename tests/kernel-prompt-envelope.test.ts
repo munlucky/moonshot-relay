@@ -108,6 +108,7 @@ test('prompt measurement records rendered bytes, token estimates, load state, an
   assert.equal(measurement.cacheablePromptBytes, Buffer.byteLength(renderCacheablePrompt(envelope), 'utf8'));
   assert.equal(measurement.providerMessageBytes, Buffer.byteLength(providerMessage, 'utf8'));
   assert.ok(measurement.providerMessageTokenEstimate && measurement.providerMessageTokenEstimate > 0);
+  assert.match(String(measurement.providerMessageDigest), /^sha256:[a-f0-9]{64}$/);
 });
 
 test('the common request maps all nine meanings from existing Host and model context fields', () => {

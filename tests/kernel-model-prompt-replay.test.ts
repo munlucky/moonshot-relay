@@ -11,7 +11,9 @@ import {
   captureModelPromptReplayAttempt,
   compareModelPromptReplay,
   dispatchModelPromptReplayAttempt,
+  materializeModelPromptReplayArm,
 } from '../src/host-tooling/kernel-eval/model-prompt-replay.js';
+import { buildModelVisiblePromptView } from '../src/host/kernel/model-capsule-view.js';
 
 const corpus = JSON.parse(await readFile(new URL('./fixtures/kernel-eval/corpus.json', import.meta.url), 'utf8'));
 const protocol = corpus.promptComparison;
@@ -53,9 +55,13 @@ const receipt = (overrides: Record<string, unknown> = {}) => ({
 const attempts = ({
   candidateReceipt = {},
   candidateEvaluation = {},
+  baselinePromptMeasurement = {},
+  candidatePromptMeasurement = {},
 }: {
   candidateReceipt?: Record<string, unknown>;
   candidateEvaluation?: Record<string, unknown>;
+  baselinePromptMeasurement?: Record<string, unknown>;
+  candidatePromptMeasurement?: Record<string, unknown>;
 } = {}) => cases.flatMap((caseId: string) => {
   const repetitions = { baseline: 0, candidate: 0 };
   return protocol.execution.armOrder.map((arm: 'baseline' | 'candidate', order: number) => {
@@ -67,6 +73,9 @@ const attempts = ({
       repetition: repetitions[arm],
       hostResult: {
         receipt: receipt(arm === 'candidate' ? candidateReceipt : {}),
+        promptMeasurement: arm === 'candidate'
+          ? candidatePromptMeasurement
+          : baselinePromptMeasurement,
       },
       evaluation: evaluation(arm === 'candidate' ? candidateEvaluation : {}),
     });
@@ -125,6 +134,7 @@ test('one replay attempt uses the real Host dispatcher and captures its receipt'
       assert.match(String(result.receipt?.promptPrefixDigest), /^sha256:[a-f0-9]{64}$/);
       assert.ok(result.promptMeasurement);
       assert.ok(Number(result.promptMeasurement.providerMessageBytes) > 0);
+      assert.match(String(result.promptMeasurement.providerMessageDigest), /^sha256:[a-f0-9]{64}$/);
       assert.ok(Array.isArray(result.promptMeasurement.segments));
     } finally {
       await controlPlane.close();
@@ -133,6 +143,32 @@ test('one replay attempt uses the real Host dispatcher and captures its receipt'
     await rm(runtimeHome, { recursive: true, force: true });
     await rm(projectRoot, { recursive: true, force: true });
   }
+});
+
+test('prompt-only replay arms materialize distinct provider messages over the same six-field payload', () => {
+  const prompt = buildModelVisiblePromptView({
+    modelInput: {
+      objective: 'Change the bounded target.',
+      acceptance: ['target is correct'],
+      constraints: ['stay in scope'],
+      action: {
+        type: 'implement',
+        guidance: 'use the existing helper',
+        step: { objective: 'edit target', allowedPaths: ['src/target.ts'], forbiddenPaths: [] },
+        obligations: [{ obligationId: 'target-check' }],
+      },
+    },
+  });
+  const baseline = materializeModelPromptReplayArm({ arm: 'baseline', prompt });
+  const candidate = materializeModelPromptReplayArm({ arm: 'candidate', prompt });
+  const marker = 'MODEL VISIBLE CONTEXT\n';
+
+  assert.notEqual(candidate.providerMessageDigest, baseline.providerMessageDigest);
+  assert.ok(candidate.providerMessageBytes < baseline.providerMessageBytes);
+  assert.deepEqual(
+    JSON.parse(candidate.message.split(marker)[1]),
+    JSON.parse(baseline.message.split(marker)[1]),
+  );
 });
 
 test('missing or unobserved Host identity makes a comparison not ready', () => {
@@ -167,6 +203,37 @@ test('unexpected prompt or execution-profile drift is rejected before scoring', 
   });
   assert.equal(report.status, 'not-ready');
   assert.ok(report.issues.some((issue: string) => issue.includes('prompt-prefix-drift')));
+});
+
+test('prompt-only replay requires an explicit provider-message difference and measured digests', () => {
+  const baselineDigest = 'sha256:' + '1'.repeat(64);
+  const candidateDigest = 'sha256:' + '2'.repeat(64);
+  const replayAttempts = attempts({
+    baselinePromptMeasurement: { providerMessageDigest: baselineDigest },
+    candidatePromptMeasurement: { providerMessageDigest: candidateDigest },
+  });
+
+  const rejected = compareModelPromptReplay({ protocol, attempts: replayAttempts });
+  assert.equal(rejected.status, 'not-ready');
+  assert.ok(rejected.issues.some((issue: string) => issue.endsWith(':provider-message-drift')));
+
+  const allowed = compareModelPromptReplay({
+    protocol,
+    attempts: replayAttempts,
+    experiment: { allowedDifferences: ['providerMessageDigest'] },
+  });
+  assert.equal(allowed.issues.length, 0);
+  assert.notEqual(allowed.status, 'not-ready');
+});
+
+test('prompt-only replay fails closed when the declared provider-message digest is missing', () => {
+  const result = compareModelPromptReplay({
+    protocol,
+    attempts: attempts(),
+    experiment: { allowedDifferences: ['providerMessageDigest'] },
+  });
+  assert.equal(result.status, 'not-ready');
+  assert.ok(result.issues.some((issue: string) => issue.endsWith(':provider-message-digest-missing')));
 });
 
 test('quality regression stops evaluation before rework and efficiency', () => {

@@ -74,6 +74,7 @@ export interface PromptEnvelopeMeasurement {
   cacheablePromptTokenEstimate: number;
   providerMessageBytes: number | null;
   providerMessageTokenEstimate: number | null;
+  providerMessageDigest: string | null;
 }
 
 export interface PromptCacheIdentity {
@@ -544,6 +545,9 @@ export const measurePromptEnvelope = (
     providerMessageTokenEstimate: normalizedProviderMessage === null
       ? null
       : estimateTokens(normalizedProviderMessage),
+    providerMessageDigest: normalizedProviderMessage === null
+      ? null
+      : digest(normalizedProviderMessage),
   });
 };
 
