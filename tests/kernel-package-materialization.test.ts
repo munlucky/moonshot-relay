@@ -87,6 +87,9 @@ test('Kernel package materialization creates files on disk, validates mandatory 
     'scripts/lib/candidate-identity.js',
     'scripts/contracts/host-session.js',
     'scripts/host/kernel/host-session.js',
+    'scripts/host/kernel/model-capsule-view.js',
+    'scripts/host/kernel/prompt-envelope.js',
+    'scripts/kernel/eval/model-prompt-replay.js',
     'scripts/kernel/run/invocation-resolver.js',
     'scripts/kernel/run/successor-key.js',
     'scripts/switcher/app-resolver/common.mjs',
@@ -105,6 +108,20 @@ test('Kernel package materialization creates files on disk, validates mandatory 
     const dependencyPackage = path.join(out, 'node_modules', dependency, 'package.json');
     assert.ok((await stat(dependencyPackage)).isFile(), `Expected runtime dependency ${dependency} to be materialized`);
   }
+
+  const promptDietScript = [
+    "import { buildModelVisiblePromptView } from './scripts/host/kernel/model-capsule-view.js';",
+    "import { materializeModelPromptReplayArm } from './scripts/kernel/eval/model-prompt-replay.js';",
+    "const prompt = buildModelVisiblePromptView({ modelInput: { objective: 'package smoke', acceptance: ['works'], action: { type: 'implement', guidance: 'optional hint', step: { objective: 'edit target', allowedPaths: ['src/target.ts'], forbiddenPaths: [] }, obligations: [{ obligationId: 'check' }] } } });",
+    "const baseline = materializeModelPromptReplayArm({ arm: 'baseline', prompt });",
+    "const candidate = materializeModelPromptReplayArm({ arm: 'candidate', prompt, ablateGuidance: true });",
+    "if (!candidate.guidanceAblated || candidate.providerMessageBytes >= baseline.providerMessageBytes) process.exit(4);",
+  ].join(' ');
+  execFileSync(process.execPath, ['--input-type=module', '-e', promptDietScript], {
+    cwd: out,
+    encoding: 'utf8',
+    env: { ...process.env, NODE_PATH: '' },
+  });
 
   const sqliteScript = [
     "import { openSqliteDb } from './scripts/kernel/sqlite-adapter.js';",
