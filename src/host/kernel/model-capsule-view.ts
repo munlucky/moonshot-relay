@@ -596,6 +596,26 @@ export const buildModelVisiblePromptView = ({
   );
 };
 
+const renderModelVisiblePromptMessage = ({
+  prompt,
+  instructions,
+  compactJson,
+}: {
+  prompt: unknown;
+  instructions: readonly string[];
+  compactJson: boolean;
+}): string => {
+  const safePrompt = sanitizePromptView(prompt);
+  return [
+    ...instructions,
+    '',
+    'MODEL VISIBLE CONTEXT',
+    compactJson
+      ? JSON.stringify(safePrompt)
+      : JSON.stringify(safePrompt, null, 2),
+  ].join('\n');
+};
+
 // This is the only text projection sent to a provider. Sanitize again at the
 // message boundary so a custom launcher cannot bypass the six-field contract
 // by supplying a hand-built prompt object.
@@ -605,9 +625,9 @@ export const buildModelVisiblePromptMessage = ({
 }: {
   prompt?: unknown;
   review?: boolean;
-} = {}): string => {
-  const safePrompt = sanitizePromptView(prompt);
-  return [
+} = {}): string => renderModelVisiblePromptMessage({
+  prompt,
+  instructions: [
     review
       ? 'Perform the independent Kernel review described below.'
       : 'Perform the bounded Kernel worker action described below.',
@@ -617,11 +637,35 @@ export const buildModelVisiblePromptMessage = ({
       ? 'A pass verdict requires every reviewed acceptance claim to be supported by the current files and evidence.'
       : 'Use exact identifiers from requiredEvidence when reporting verification and do not invent replacements.',
     'Return only the JSON object required by the configured output schema.',
-    '',
-    'MODEL VISIBLE CONTEXT',
-    JSON.stringify(safePrompt, null, 2),
-  ].join('\n');
-};
+  ],
+  compactJson: false,
+});
+
+// Prompt-diet candidate used by replay evaluation before adoption. It keeps
+// the same sanitized six-field payload and execution boundaries, but removes
+// explanatory wording and JSON indentation. Production adapters continue to
+// call buildModelVisiblePromptMessage until the replay gate accepts it.
+export const buildCompactModelVisiblePromptMessage = ({
+  prompt = {},
+  review = false,
+}: {
+  prompt?: unknown;
+  review?: boolean;
+} = {}): string => renderModelVisiblePromptMessage({
+  prompt,
+  instructions: [
+    review
+      ? 'Perform the independent Kernel review below.'
+      : 'Perform the bounded Kernel worker action below.',
+    'Stay within the declared work context.',
+    'Do not call Kernel next/report, delegate, or claim completion authority.',
+    review
+      ? 'Pass only when current files and evidence support every reviewed acceptance claim.'
+      : 'Use requiredEvidence identifiers exactly; do not invent replacements.',
+    'Return only JSON required by the configured output schema.',
+  ],
+  compactJson: true,
+});
 
 export const MODEL_VISIBLE_CAPSULE_FIELDS = Object.freeze([
   'role',

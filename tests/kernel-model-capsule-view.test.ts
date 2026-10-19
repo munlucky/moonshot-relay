@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildModelCapsuleView,
+  buildCompactModelVisiblePromptMessage,
   buildModelVisiblePromptMessage,
   buildModelVisiblePromptView,
   findControlMetadataLeaks,
@@ -199,6 +200,63 @@ test('the six-field prompt projection recursively drops nested Host control data
   assert.deepEqual(Object.keys(messageView), [...MODEL_VISIBLE_PROMPT_FIELDS]);
   assert.deepEqual(messageView.requiredEvidence, [{ obligationId: 'proof-2' }]);
   assert.doesNotMatch(JSON.stringify(messageView), /nested-leak/u);
+});
+
+test('prompt-diet candidate preserves the provider-visible payload and authority semantics while reducing bytes', () => {
+  const prompt = buildModelVisiblePromptView({
+    modelInput: {
+      objective: 'Implement the bounded change.',
+      acceptance: [{ id: 'AC-1', statement: 'The result is correct.' }],
+      constraints: ['Stay in scope.'],
+      action: {
+        type: 'implement',
+        guidance: 'Use the existing helper.',
+        step: {
+          objective: 'Change one module.',
+          allowedPaths: ['src/target.ts'],
+          forbiddenPaths: ['src/other.ts'],
+          expectedOutputs: ['updated target'],
+        },
+        obligations: [{ obligationId: 'test-target', allowedCommandRefs: ['test:target'] }],
+      },
+      knowledge: [{ recordId: 'K-1', summary: 'Reuse the project helper.' }],
+    },
+  });
+  const marker = 'MODEL VISIBLE CONTEXT\n';
+  const baseline = buildModelVisiblePromptMessage({ prompt });
+  const candidate = buildCompactModelVisiblePromptMessage({ prompt });
+  const baselinePayload = JSON.parse(baseline.split(marker)[1]);
+  const candidatePayload = JSON.parse(candidate.split(marker)[1]);
+
+  assert.deepEqual(candidatePayload, baselinePayload);
+  assert.deepEqual(Object.keys(candidatePayload), [...MODEL_VISIBLE_PROMPT_FIELDS]);
+  assert.match(candidate, /bounded Kernel worker action/);
+  assert.match(candidate, /declared work context/);
+  assert.match(candidate, /Do not call Kernel next\/report, delegate, or claim completion authority/);
+  assert.match(candidate, /requiredEvidence identifiers exactly/);
+  assert.match(candidate, /configured output schema/);
+  assert.ok(Buffer.byteLength(candidate, 'utf8') < Buffer.byteLength(baseline, 'utf8'));
+});
+
+test('prompt-diet reviewer candidate preserves independent evidence-based review semantics', () => {
+  const prompt = buildModelVisiblePromptView({
+    modelInput: {
+      objective: 'Review the bounded change.',
+      acceptance: [{ id: 'AC-1', statement: 'The result is correct.' }],
+      changedPaths: ['src/target.ts'],
+      verificationEvidence: [{ obligationId: 'test-target', status: 'passed' }],
+      reviewScope: { stage: 'contract', obligationId: 'review-target' },
+    },
+  });
+  const marker = 'MODEL VISIBLE CONTEXT\n';
+  const baseline = buildModelVisiblePromptMessage({ prompt, review: true });
+  const candidate = buildCompactModelVisiblePromptMessage({ prompt, review: true });
+
+  assert.deepEqual(JSON.parse(candidate.split(marker)[1]), JSON.parse(baseline.split(marker)[1]));
+  assert.match(candidate, /independent Kernel review/);
+  assert.match(candidate, /current files and evidence support every reviewed acceptance claim/);
+  assert.match(candidate, /Do not call Kernel next\/report, delegate, or claim completion authority/);
+  assert.ok(Buffer.byteLength(candidate, 'utf8') < Buffer.byteLength(baseline, 'utf8'));
 });
 
 test('R-10: model-visible context never truncates required acceptance and fails closed when the bounded Work Unit is too large', () => {
