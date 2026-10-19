@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
+
+test('Codex profile source has one active .codex config boundary and no sibling TOML model profiles', async () => {
+  const entries = await readdir('package/profile-templates/codex', { withFileTypes: true });
+  const siblingToml = entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.toml'))
+    .map((entry) => entry.name)
+    .sort();
+  assert.deepEqual(siblingToml, []);
+});
 
 test('Codex profile template has exactly one context guard pair and no selected model', async () => {
   const text = await readFile('package/profile-templates/codex/.codex/config.toml', 'utf8');
