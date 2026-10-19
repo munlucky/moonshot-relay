@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -250,6 +251,75 @@ test('prompt comparison fixes the six required task shapes with deterministic sc
     reuse?.input.priorEvidence?.sourceDigest,
     reuse?.input.priorEvidence?.currentSourceDigest,
   );
+});
+
+test('runnable fixture changes preserve all six case semantics and the tool-selection/reuse seeds', () => {
+  assert.equal(sha256(JSON.stringify(corpus.promptComparison.cases.map(({ workspaceSeed, ...rest }) => rest))), 'sha256:24808705b77cbe8968a441de291c0ffa6747f276d3636eddb237a950d8bda949');
+  const preserved: Record<string, string> = {"PROMPT-EVAL-003":"sha256:06a38664a451edfcf4beae2aa53b9c35df0dfdd91ec854e428036adf0fb13cd5","PROMPT-EVAL-006":"sha256:0fc51133ee8f2a9c8da604836c523ddaad6d7272df9722857db687a9cbc4291c"};
+  for (const entry of corpus.promptComparison.cases) {
+    if (preserved[entry.id]) assert.equal(sha256(JSON.stringify(entry.workspaceSeed)), preserved[entry.id]);
+    if (entry.expected.reuseVerification) continue;
+    const manifest = JSON.parse(entry.workspaceSeed['package.json']);
+    assert.equal(Object.keys(manifest.dependencies || {}).length, 0, entry.id);
+    assert.equal(Object.keys(manifest.devDependencies || {}).length, 0, entry.id);
+    for (const command of entry.input.requiredVerification) {
+      assert.match(command, /^npm run [a-z:]+$/);
+      const name = command.slice('npm run '.length);
+      const script: string = manifest.scripts[name];
+      assert.equal(typeof script, 'string', command);
+      const referencedFiles = script.split(/\s+/).filter((part) => /\.mjs$/.test(part));
+      assert.ok(referencedFiles.length > 0, command);
+      for (const file of referencedFiles) assert.equal(typeof entry.workspaceSeed[file], 'string', file);
+    }
+  }
+});
+
+test('fixture commands reject unfixed source and pass minimal in-scope repairs in fresh workspaces', async () => {
+  const repairs: Record<string, Record<string, string>> = {
+    'PROMPT-EVAL-001': { 'src/label.ts': "export const formatLabel = (name: string) => name.trim() + ':ready';\n" },
+    'PROMPT-EVAL-002': {
+      'src/config.ts': 'export const REQUEST_LIMIT = 20;\n',
+      'src/consumer.ts': "import { REQUEST_LIMIT } from './config.js';\nexport const limit = REQUEST_LIMIT;\n",
+    },
+    'PROMPT-EVAL-004': { 'src/cache.ts': "export const cacheKey = (id: string) => 'cache-v2:' + id;\n" },
+    'PROMPT-EVAL-005': { 'src/parser.ts': 'export const parseCount = (value: string) => Number.isNaN(Number(value)) ? null : Number(value);\n' },
+  };
+  const executedCaseIds: string[] = [];
+  for (const entry of corpus.promptComparison.cases) {
+    if (entry.expected.reuseVerification) {
+      assert.equal(entry.expected.maxVerificationRuns, 0);
+      assert.equal(entry.input.priorEvidence?.sourceDigest, entry.input.priorEvidence?.currentSourceDigest);
+      assert.equal(executedCaseIds.includes(entry.id), false);
+      continue;
+    }
+    for (const repaired of repairs[entry.id] ? [false, true] : [false]) {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'prompt-fixture-contract-'));
+      try {
+        const files = { ...entry.workspaceSeed, ...(repaired ? repairs[entry.id] : {}) };
+        for (const [file, content] of Object.entries(files)) {
+          if (repaired && repairs[entry.id]?.[file]) assert.ok(entry.input.allowedPaths.includes(file), file);
+          const target = path.join(root, file);
+          await mkdir(path.dirname(target), { recursive: true });
+          await writeFile(target, content);
+        }
+        for (const command of entry.input.requiredVerification) {
+          executedCaseIds.push(entry.id);
+          const childEnv = { ...process.env };
+          delete childEnv.NODE_TEST_CONTEXT;
+          const result = spawnSync(command, { cwd: root, env: childEnv, shell: true, encoding: 'utf8', timeout: 20_000, windowsHide: true });
+          assert.equal(result.error, undefined, command);
+          const output = result.stdout + result.stderr;
+          assert.doesNotMatch(output, /ENOENT|MODULE_NOT_FOUND|Missing script/, entry.id + ': ' + output);
+          const expectedExit = repairs[entry.id] && !repaired ? 1 : 0;
+          assert.equal(result.status, expectedExit, entry.id + ': ' + output);
+          if (expectedExit === 1) assert.match(output, /ERR_ASSERTION|AssertionError/, output);
+        }
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    }
+  }
+  assert.equal(executedCaseIds.includes('PROMPT-EVAL-006'), false);
 });
 
 test('prompt comparison rubric preserves quality gates and only accepts real usage for token efficiency', () => {

@@ -103,7 +103,8 @@
         },
         "workspaceSeed": {
           "src/label.ts": "export const formatLabel = (name: string) => name + ':ready';\n",
-          "tests/label.test.ts": "formatLabel(' Ada ') must equal 'Ada:ready'.\n"
+          "package.json": "{\"private\":true,\"type\":\"module\",\"engines\":{\"node\":\">=22.18.0\"},\"scripts\":{\"test:label\":\"node --test tests/label.test.mjs\"}}\n",
+          "tests/label.test.mjs": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { formatLabel } from '../src/label.ts';\n\ntest('trims names and preserves the ready suffix', () => {\n  for (const name of [' Ada ', 'Bob', '\\tMoon\\n', '']) {\n    assert.equal(formatLabel(name), name.trim() + ':ready');\n  }\n});\n"
         },
         "expected": {
           "changedPaths": ["src/label.ts"],
@@ -125,7 +126,9 @@
         "workspaceSeed": {
           "src/config.ts": "export const DEFAULT_LIMIT = 20;\n",
           "src/consumer.ts": "import { DEFAULT_LIMIT } from './config.js';\nexport const limit = DEFAULT_LIMIT;\n",
-          "src/unrelated.ts": "export const untouched = true;\n"
+          "src/unrelated.ts": "export const untouched = true;\n",
+          "package.json": "{\"private\":true,\"type\":\"module\",\"engines\":{\"node\":\">=22.18.0\"},\"scripts\":{\"test:config\":\"node --test tests/config.test.mjs\"}}\n",
+          "tests/config.test.mjs": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { readFile } from 'node:fs/promises';\n\ntest('renames the export and its only consumer without changing the limit', async () => {\n  const configUrl = new URL('../src/config.ts', import.meta.url).href;\n  const config = await import(configUrl);\n  assert.equal(config.REQUEST_LIMIT, 20);\n  assert.equal('DEFAULT_LIMIT' in config, false);\n  const source = await readFile(new URL('../src/consumer.ts', import.meta.url), 'utf8');\n  assert.match(source, /import\\s*\\{\\s*REQUEST_LIMIT\\s*\\}\\s*from\\s*['\"]\\.\\/config\\.js['\"]/);\n  assert.doesNotMatch(source, /DEFAULT_LIMIT/);\n  // Keep the runtime .js specifier in the seed; load its TypeScript source for this check.\n  const consumer = await import('data:text/javascript;base64,' + Buffer.from(\n    source.replace(/['\"]\\.\\/config\\.js['\"]/, JSON.stringify(configUrl)),\n  ).toString('base64'));\n  assert.equal(consumer.limit, config.REQUEST_LIMIT);\n});\n"
         },
         "expected": {
           "changedPaths": ["src/config.ts", "src/consumer.ts"],
@@ -169,7 +172,9 @@
         },
         "workspaceSeed": {
           "docs/knowledge.md": "Cache keys must start with cache-v2: and then use the raw id.\n",
-          "src/cache.ts": "export const cacheKey = (id: string) => id;\n"
+          "src/cache.ts": "export const cacheKey = (id: string) => id;\n",
+          "package.json": "{\"private\":true,\"type\":\"module\",\"engines\":{\"node\":\">=22.18.0\"},\"scripts\":{\"test:cache\":\"node --test tests/cache.test.mjs\"}}\n",
+          "tests/cache.test.mjs": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { cacheKey } from '../src/cache.ts';\n\ntest('uses the documented prefix and preserves the raw id', () => {\n  for (const id of ['abc', 'other-id', '', ' raw:7 ']) {\n    assert.equal(cacheKey(id), 'cache-v2:' + id);\n  }\n});\n"
         },
         "expected": {
           "changedPaths": ["src/cache.ts"],
@@ -190,7 +195,9 @@
         },
         "workspaceSeed": {
           "src/parser.ts": "export const parseCount = (value: string) => Number(value);\n",
-          "src/legacy.ts": "export const legacy =   true;\n"
+          "src/legacy.ts": "export const legacy =   true;\n",
+          "package.json": "{\"private\":true,\"type\":\"module\",\"engines\":{\"node\":\">=22.18.0\"},\"scripts\":{\"test:parser\":\"node --test tests/parser.test.mjs\"}}\n",
+          "tests/parser.test.mjs": "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { parseCount } from '../src/parser.ts';\n\ntest('preserves valid numeric values and returns null for invalid numeric text', () => {\n  for (const value of ['42', '0', '17']) assert.equal(parseCount(value), Number(value));\n  for (const value of ['invalid', '12oops', 'NaN']) assert.equal(parseCount(value), null);\n});\n"
         },
         "expected": {
           "changedPaths": ["src/parser.ts"],
