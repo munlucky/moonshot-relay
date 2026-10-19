@@ -8,6 +8,29 @@ import { openSqliteDb } from '../src/kernel/sqlite-adapter.js';
 
 const validDigest = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 
+test('latest scoped Run discovery does not deserialize older incompatible history', async () => {
+  const h = await mkdtemp(path.join(os.tmpdir(), 'krn-latest-history-'));
+  const s = await openKernelStateStore({ runtimeHome: h });
+  const fixtureDb = await openSqliteDb(s.dbPath);
+  try {
+    s.createRun({ runId: 'old-history', objective: 'old', sourceIdentity: 'old', projectId: 'p', worktreeId: 'w' });
+    fixtureDb.prepare("UPDATE runs SET status='completed' WHERE run_id='old-history'").run();
+    s.createRun({ runId: 'latest-valid', objective: 'new', sourceIdentity: 'new', projectId: 'p', worktreeId: 'w' });
+    s.createRun({ runId: 'other-scope', objective: 'other', sourceIdentity: 'other', projectId: 'other', worktreeId: 'other' });
+    fixtureDb.prepare("UPDATE runs SET proof_tier='high', status='completed', updated_at='2000-01-01T00:00:00Z' WHERE run_id='old-history'").run();
+    fixtureDb.prepare("UPDATE runs SET updated_at='2100-01-01T00:00:00Z' WHERE run_id='other-scope'").run();
+    assert.equal(s.getLatestRunForWorktree({ projectId: 'p', worktreeId: 'w' })?.runId, 'latest-valid');
+    assert.equal(s.getLatestRunForWorktree({ projectId: 'missing', worktreeId: 'w' }), null);
+    assert.throws(() => s.getRun('old-history'), /Unknown persisted proof tier: high/);
+    assert.equal((fixtureDb.prepare("SELECT proof_tier FROM runs WHERE run_id='old-history'").get() as { proof_tier: string }).proof_tier, 'high');
+    fixtureDb.prepare("UPDATE runs SET proof_tier='high' WHERE run_id='latest-valid'").run();
+    assert.throws(() => s.getLatestRunForWorktree({ projectId: 'p', worktreeId: 'w' }), /Unknown persisted proof tier: high/);
+  } finally {
+    fixtureDb.close();
+    s.close();
+  }
+});
+
 test('natural PROVE -> verification -> CLOSE workflow results in accepted completion', async () => {
   const h = await mkdtemp(path.join(os.tmpdir(), 'krn-state-'));
   const s = await openKernelStateStore({ runtimeHome: h, relayHome: path.join(h, '..', 'relay') });

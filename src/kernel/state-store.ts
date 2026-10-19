@@ -2662,7 +2662,11 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
 
     getLatestRunForWorktree({ projectId, worktreeId, workspaceId = null }: { projectId?: string; worktreeId?: string | null; workspaceId?: string | null } = {}) {
       if (!projectId || (!worktreeId && !workspaceId)) return null;
-      return this.listRuns({ projectId, worktreeId, workspaceId })[0] || null;
+      // Discovery needs only the newest scoped record. Do not materialize
+      // unrelated historical Runs: their old schemas must not block a new task.
+      // The selected Run still passes the normal strict getRun validation.
+      const runId = workLifecyclePersistence.listRunIds({ projectId, worktreeId: worktreeId ?? null, workspaceId })[0];
+      return runId ? this.getRun(runId) : null;
     },
 
     acquireWorkspaceMutationLockV2({ workspaceId, projectId, runId, sessionToken, ttlMs = 60000 }: { workspaceId?: string; projectId?: (string) | undefined; runId?: string; sessionToken?: string; ttlMs?: number } = {}) {
