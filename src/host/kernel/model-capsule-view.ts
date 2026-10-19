@@ -667,6 +667,28 @@ export const buildCompactModelVisiblePromptMessage = ({
   compactJson: true,
 });
 
+// Evaluator-only ablation candidate. Guidance is removed only when currentWork
+// already has its own objective, so the candidate never substitutes guidance
+// for missing work identity. The replay quality gate decides whether losing the
+// extra hint is acceptable; production adapters never call this helper.
+export const buildGuidanceAblatedModelVisiblePromptView = (
+  prompt: unknown,
+): Readonly<UnknownRecord> => {
+  const safePrompt = sanitizePromptView(prompt);
+  const currentWork = projectCurrentWork(own(safePrompt, 'currentWork'));
+  if (!currentWork) return safePrompt;
+  const guidance = text(own(currentWork, 'guidance'));
+  const objective = text(own(currentWork, 'objective'));
+  if (!guidance || !objective) return safePrompt;
+  return Object.freeze({
+    ...safePrompt,
+    currentWork: Object.freeze({
+      ...currentWork,
+      guidance: '',
+    }),
+  });
+};
+
 export const MODEL_VISIBLE_CAPSULE_FIELDS = Object.freeze([
   'role',
   'objective',

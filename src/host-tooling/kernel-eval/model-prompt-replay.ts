@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { dispatchKernelTurn } from '../../host/kernel/turn-dispatcher.js';
 import {
   buildCompactModelVisiblePromptMessage,
+  buildGuidanceAblatedModelVisiblePromptView,
   buildModelVisiblePromptMessage,
 } from '../../host/kernel/model-capsule-view.js';
 
@@ -97,20 +98,34 @@ export const materializeModelPromptReplayArm = ({
   arm,
   prompt,
   review = false,
+  ablateGuidance = false,
 }: {
   arm: ReplayArm;
   prompt: unknown;
   review?: boolean;
+  ablateGuidance?: boolean;
 }) => {
   if (arm !== 'baseline' && arm !== 'candidate') {
     throw new TypeError('arm must be baseline or candidate');
   }
+  const selectedPrompt = arm === 'candidate' && ablateGuidance
+    ? buildGuidanceAblatedModelVisiblePromptView(prompt)
+    : prompt;
+  const originalGuidance = text(record(record(prompt).currentWork).guidance);
+  const selectedGuidance = text(record(record(selectedPrompt).currentWork).guidance);
+  const guidanceAblated = Boolean(
+    arm === 'candidate'
+    && ablateGuidance
+    && originalGuidance
+    && !selectedGuidance,
+  );
   const message = arm === 'candidate'
-    ? buildCompactModelVisiblePromptMessage({ prompt, review })
-    : buildModelVisiblePromptMessage({ prompt, review });
+    ? buildCompactModelVisiblePromptMessage({ prompt: selectedPrompt, review })
+    : buildModelVisiblePromptMessage({ prompt: selectedPrompt, review });
   return Object.freeze({
     arm,
     review,
+    guidanceAblated,
     message,
     providerMessageBytes: Buffer.byteLength(message, 'utf8'),
     providerMessageDigest: sha256(message),

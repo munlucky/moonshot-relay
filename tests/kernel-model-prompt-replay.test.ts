@@ -171,6 +171,66 @@ test('prompt-only replay arms materialize distinct provider messages over the sa
   );
 });
 
+test('prompt replay can ablate guidance only on the candidate arm without changing scope or objective', () => {
+  const prompt = buildModelVisiblePromptView({
+    modelInput: {
+      objective: 'Change the bounded target.',
+      acceptance: ['target is correct'],
+      constraints: ['stay in scope'],
+      action: {
+        type: 'implement',
+        guidance: 'Prefer the existing helper if it fits.',
+        step: {
+          objective: 'Edit target.',
+          allowedPaths: ['src/target.ts'],
+          forbiddenPaths: ['src/other.ts'],
+          expectedOutputs: ['updated target'],
+        },
+        obligations: [{ obligationId: 'target-check' }],
+      },
+    },
+  });
+  const candidate = materializeModelPromptReplayArm({
+    arm: 'candidate',
+    prompt,
+    ablateGuidance: true,
+  });
+  const baseline = materializeModelPromptReplayArm({ arm: 'baseline', prompt });
+  const marker = 'MODEL VISIBLE CONTEXT\n';
+  const candidatePayload = JSON.parse(candidate.message.split(marker)[1]);
+  const baselinePayload = JSON.parse(baseline.message.split(marker)[1]);
+
+  assert.equal(candidate.guidanceAblated, true);
+  assert.equal(candidatePayload.currentWork.guidance, '');
+  assert.equal(baselinePayload.currentWork.guidance, 'Prefer the existing helper if it fits.');
+  assert.equal(candidatePayload.currentWork.objective, baselinePayload.currentWork.objective);
+  assert.deepEqual(candidatePayload.currentWork.allowedPaths, baselinePayload.currentWork.allowedPaths);
+  assert.deepEqual(candidatePayload.currentWork.forbiddenPaths, baselinePayload.currentWork.forbiddenPaths);
+  assert.deepEqual(candidatePayload.acceptance, baselinePayload.acceptance);
+  assert.deepEqual(candidatePayload.requiredEvidence, baselinePayload.requiredEvidence);
+  assert.ok(candidate.providerMessageBytes < baseline.providerMessageBytes);
+});
+
+test('prompt replay reports guidance ablation only when the candidate actually removes guidance', () => {
+  const prompt = buildModelVisiblePromptView({
+    modelInput: {
+      objective: '',
+      action: {
+        type: 'implement',
+        guidance: 'Only guidance is available.',
+      },
+    },
+  });
+  const candidate = materializeModelPromptReplayArm({
+    arm: 'candidate',
+    prompt,
+    ablateGuidance: true,
+  });
+  assert.equal(candidate.guidanceAblated, false);
+  const payload = JSON.parse(candidate.message.split('MODEL VISIBLE CONTEXT\n')[1]);
+  assert.equal(payload.currentWork.guidance, 'Only guidance is available.');
+});
+
 test('missing or unobserved Host identity makes a comparison not ready', () => {
   const report = compareModelPromptReplay({
     protocol,

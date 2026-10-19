@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildModelCapsuleView,
   buildCompactModelVisiblePromptMessage,
+  buildGuidanceAblatedModelVisiblePromptView,
   buildModelVisiblePromptMessage,
   buildModelVisiblePromptView,
   findControlMetadataLeaks,
@@ -236,6 +237,59 @@ test('prompt-diet candidate preserves the provider-visible payload and authority
   assert.match(candidate, /requiredEvidence identifiers exactly/);
   assert.match(candidate, /configured output schema/);
   assert.ok(Buffer.byteLength(candidate, 'utf8') < Buffer.byteLength(baseline, 'utf8'));
+});
+
+test('guidance ablation removes only optional current-work guidance when an objective remains', () => {
+  const prompt = buildModelVisiblePromptView({
+    modelInput: {
+      objective: 'Implement the bounded change.',
+      acceptance: ['it works'],
+      constraints: ['stay in scope'],
+      action: {
+        type: 'implement',
+        guidance: 'Prefer the existing helper if it fits.',
+        step: {
+          objective: 'Change the target module.',
+          allowedPaths: ['src/target.ts'],
+          forbiddenPaths: ['src/other.ts'],
+          expectedOutputs: ['updated target'],
+        },
+        obligations: [{ obligationId: 'target-check' }],
+      },
+    },
+  });
+  const candidate = buildGuidanceAblatedModelVisiblePromptView(prompt);
+  assert.ok(candidate.currentWork && typeof candidate.currentWork === 'object');
+  const currentWork = candidate.currentWork as Record<string, unknown>;
+  assert.equal(currentWork.guidance, '');
+  assert.equal(currentWork.objective, 'Change the target module.');
+  assert.deepEqual(currentWork.allowedPaths, ['src/target.ts']);
+  assert.deepEqual(currentWork.forbiddenPaths, ['src/other.ts']);
+  assert.deepEqual(candidate.acceptance, prompt.acceptance);
+  assert.deepEqual(candidate.constraints, prompt.constraints);
+  assert.deepEqual(candidate.requiredEvidence, prompt.requiredEvidence);
+});
+
+test('guidance ablation is a no-op when guidance is the only current-work description', () => {
+  const prompt = {
+    objective: '',
+    acceptance: [],
+    constraints: [],
+    currentWork: {
+      type: 'implement',
+      guidance: 'This is the only work description.',
+      objective: '',
+      allowedPaths: [],
+      forbiddenPaths: [],
+      expectedOutputs: [],
+    },
+    relevantProjectKnowledge: null,
+    requiredEvidence: [],
+  };
+  const candidate = buildGuidanceAblatedModelVisiblePromptView(prompt);
+  assert.ok(candidate.currentWork && typeof candidate.currentWork === 'object');
+  const currentWork = candidate.currentWork as Record<string, unknown>;
+  assert.equal(currentWork.guidance, 'This is the only work description.');
 });
 
 test('prompt-diet reviewer candidate preserves independent evidence-based review semantics', () => {
