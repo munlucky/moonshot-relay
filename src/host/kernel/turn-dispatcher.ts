@@ -10,14 +10,18 @@ import { prepareHostTurn } from './host-turn.js';
 import { createModelRegistry, type ModelResolution, type ModelOverrideMap } from './model-registry.js';
 import { currentHostPolicies, revalidateBeforeDispatch } from './admission-revalidator.js';
 import { admitRoute } from './route-admission.js';
-import { buildPromptEnvelope } from './prompt-envelope.js';
+import { buildPromptEnvelope, measurePromptEnvelope } from './prompt-envelope.js';
 import { buildToolManifest } from './tool-manifest.js';
 import { resolveSessionLineage } from './session-affinity.js';
 import { buildKernelContextSegments } from './context-segments.js';
 import { resolveOptimizationModes } from './provider-prompt-policy.js';
 import { resolveCodexModelPolicy } from './codex-model-policy.js';
 import { resolveClaudeEffort } from './claude-effort-policy.js';
-import { buildModelCapsuleView, buildModelVisiblePromptView } from './model-capsule-view.js';
+import {
+  buildModelCapsuleView,
+  buildModelVisiblePromptMessage,
+  buildModelVisiblePromptView,
+} from './model-capsule-view.js';
 import { dispatchKernelRun } from './parallel-dispatcher.js';
 import { isMutationBearingAction, isNativeDelegationRequested, isWorkUnitBounded } from './codex-actor-router.js';
 import { resolveEnforcementStrategy } from '../../contracts/model-execution.js';
@@ -1368,6 +1372,11 @@ const dispatchKernelTurnAttempt = async ({
   // capsule for lineage/transport work and reprojects the six-field prompt
   // there; no broad capsule view is sent to a launcher.
   const modelVisiblePrompt = buildModelVisiblePromptView({ modelInput, capsule: executionCapsule });
+  const providerMessage = buildModelVisiblePromptMessage({
+    prompt: modelVisiblePrompt,
+    review: decision.role === 'reviewer',
+  });
+  const promptMeasurement = measurePromptEnvelope(envelope, { providerMessage });
   const executionContract = buildExecutionContract(modelInput, decision);
   const requestedTransport = actionContext.requestedTransport
     || actionContext.transport
@@ -1581,6 +1590,7 @@ const dispatchKernelTurnAttempt = async ({
     admission,
     receipt,
     envelope,
+    promptMeasurement,
     attemptId,
     report: dispatch.report
       ? {

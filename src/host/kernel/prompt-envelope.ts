@@ -56,6 +56,26 @@ export interface PromptSegment {
   tokenEstimate: number;
 }
 
+export interface PromptSegmentMeasurement {
+  kind: SegmentKind;
+  digest: string;
+  cacheable: boolean;
+  renderedBytes: number;
+  tokenEstimate: number;
+  loaded: boolean;
+  includedVerbatimInProviderMessage: boolean;
+}
+
+export interface PromptEnvelopeMeasurement {
+  segments: readonly Readonly<PromptSegmentMeasurement>[];
+  renderedPromptBytes: number;
+  renderedPromptTokenEstimate: number;
+  cacheablePromptBytes: number;
+  cacheablePromptTokenEstimate: number;
+  providerMessageBytes: number | null;
+  providerMessageTokenEstimate: number | null;
+}
+
 export interface PromptCacheIdentity {
   provider: string;
   surface: string;
@@ -489,6 +509,43 @@ export const renderFullPrompt = (
   .map((segment) => segment.content)
   .filter(Boolean)
   .join('\n\n');
+
+export const measurePromptEnvelope = (
+  envelope: PromptEnvelope,
+  { providerMessage = null }: { providerMessage?: string | null } = {},
+): Readonly<PromptEnvelopeMeasurement> => {
+  const fullPrompt = renderFullPrompt(envelope);
+  const cacheablePrompt = renderCacheablePrompt(envelope);
+  const normalizedProviderMessage = typeof providerMessage === 'string'
+    ? providerMessage
+    : null;
+
+  return Object.freeze({
+    segments: Object.freeze(envelope.segments.map((segment) => Object.freeze({
+      kind: segment.kind,
+      digest: segment.digest,
+      cacheable: segment.cacheable,
+      renderedBytes: Buffer.byteLength(segment.content, 'utf8'),
+      tokenEstimate: segment.tokenEstimate,
+      loaded: segment.content.length > 0,
+      includedVerbatimInProviderMessage: Boolean(
+        normalizedProviderMessage
+        && segment.content.length > 0
+        && normalizedProviderMessage.includes(segment.content),
+      ),
+    }))),
+    renderedPromptBytes: Buffer.byteLength(fullPrompt, 'utf8'),
+    renderedPromptTokenEstimate: estimateTokens(fullPrompt),
+    cacheablePromptBytes: Buffer.byteLength(cacheablePrompt, 'utf8'),
+    cacheablePromptTokenEstimate: estimateTokens(cacheablePrompt),
+    providerMessageBytes: normalizedProviderMessage === null
+      ? null
+      : Buffer.byteLength(normalizedProviderMessage, 'utf8'),
+    providerMessageTokenEstimate: normalizedProviderMessage === null
+      ? null
+      : estimateTokens(normalizedProviderMessage),
+  });
+};
 
 export const findControlLeaks = (
   envelope: PromptEnvelope,

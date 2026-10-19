@@ -5,6 +5,7 @@ import {
   buildPromptEnvelope,
   renderCacheablePrompt,
   renderFullPrompt,
+  measurePromptEnvelope,
   findControlLeaks,
   SEGMENT_KINDS,
 } from '../src/host/kernel/prompt-envelope.js';
@@ -83,6 +84,30 @@ test('an envelope emits every segment kind in cache order', () => {
   assert.equal(envelope.schemaVersion, 2);
   assert.deepEqual(envelope.segments.map((s) => s.kind), SEGMENT_KINDS);
   assert.deepEqual(envelope.segments.map((s) => s.cacheable), [true, true, true, true, true, false]);
+});
+
+test('prompt measurement records rendered bytes, token estimates, load state, and provider-message inclusion', () => {
+  const envelope = build();
+  const providerMessage = `provider-prefix\n${envelope.segments[1]?.content || ''}\nprovider-tail`;
+  const measurement = measurePromptEnvelope(envelope, { providerMessage });
+
+  assert.equal(measurement.segments.length, SEGMENT_KINDS.length);
+  for (const [index, segment] of envelope.segments.entries()) {
+    const observed = measurement.segments[index];
+    assert.ok(observed);
+    assert.equal(observed.kind, segment.kind);
+    assert.equal(observed.digest, segment.digest);
+    assert.equal(observed.cacheable, segment.cacheable);
+    assert.equal(observed.renderedBytes, Buffer.byteLength(segment.content, 'utf8'));
+    assert.equal(observed.tokenEstimate, segment.tokenEstimate);
+    assert.equal(observed.loaded, segment.content.length > 0);
+  }
+  assert.equal(measurement.segments[1]?.includedVerbatimInProviderMessage, true);
+  assert.equal(measurement.segments[0]?.includedVerbatimInProviderMessage, false);
+  assert.equal(measurement.renderedPromptBytes, Buffer.byteLength(renderFullPrompt(envelope), 'utf8'));
+  assert.equal(measurement.cacheablePromptBytes, Buffer.byteLength(renderCacheablePrompt(envelope), 'utf8'));
+  assert.equal(measurement.providerMessageBytes, Buffer.byteLength(providerMessage, 'utf8'));
+  assert.ok(measurement.providerMessageTokenEstimate && measurement.providerMessageTokenEstimate > 0);
 });
 
 test('the common request maps all nine meanings from existing Host and model context fields', () => {

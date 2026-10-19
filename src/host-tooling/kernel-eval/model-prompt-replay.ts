@@ -36,6 +36,7 @@ export interface ModelPromptReplayAttempt {
   attempt: number;
   status: ReplayAttemptStatus;
   receipt: RecordLike | null;
+  promptMeasurement: RecordLike | null;
   evaluation: ModelPromptReplayEvaluation;
 }
 
@@ -147,6 +148,7 @@ export const captureModelPromptReplayAttempt = ({
   positiveCount(repetition, 'repetition');
   positiveCount(attempt, 'attempt');
   const rawReceipt = record(record(hostResult).receipt);
+  const rawPromptMeasurement = record(record(hostResult).promptMeasurement);
   const resolvedStatus = resolveAttemptStatus(status, rawReceipt);
   return Object.freeze({
     caseId,
@@ -156,6 +158,9 @@ export const captureModelPromptReplayAttempt = ({
     attempt,
     status: resolvedStatus,
     receipt: Object.keys(rawReceipt).length ? Object.freeze({ ...rawReceipt }) : null,
+    promptMeasurement: Object.keys(rawPromptMeasurement).length
+      ? Object.freeze({ ...rawPromptMeasurement })
+      : null,
     evaluation: Object.freeze(normalizeEvaluation(evaluation, resolvedStatus)),
   });
 };

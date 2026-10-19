@@ -123,6 +123,9 @@ test('one replay attempt uses the real Host dispatcher and captures its receipt'
       assert.equal(result.receipt?.enforcementStatus, 'enforced');
       assert.match(String(result.receipt?.executionProfileRevision), /^host-execution-profile\.v1:sha256:[a-f0-9]{64}$/);
       assert.match(String(result.receipt?.promptPrefixDigest), /^sha256:[a-f0-9]{64}$/);
+      assert.ok(result.promptMeasurement);
+      assert.ok(Number(result.promptMeasurement.providerMessageBytes) > 0);
+      assert.ok(Array.isArray(result.promptMeasurement.segments));
     } finally {
       await controlPlane.close();
     }

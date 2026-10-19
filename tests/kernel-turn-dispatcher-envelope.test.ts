@@ -103,6 +103,18 @@ test('a real dispatch records a non-null prefix digest and cache mode on the rec
     // fields stayed null/undefined on every real dispatch.
     assert.ok(assertTestRecord(assertTestRecord(result.envelope).control).stepId, 'the live envelope must carry a real stepId, not the undefined a wrong modelInput.step read would produce');
     assert.ok(assertTestNumber(assertTestRecord(result.receipt).eligiblePrefixTokens) > 0);
+    const measurement = assertTestRecord(result.promptMeasurement);
+    assert.ok(assertTestNumber(measurement.renderedPromptBytes) > 0);
+    assert.ok(assertTestNumber(measurement.renderedPromptTokenEstimate) > 0);
+    assert.ok(assertTestNumber(measurement.providerMessageBytes) > 0);
+    assert.ok(assertTestNumber(measurement.providerMessageTokenEstimate) > 0);
+    const segmentMeasurements = measurement.segments;
+    assert.ok(Array.isArray(segmentMeasurements));
+    assert.equal(segmentMeasurements.length, 6);
+    assert.deepEqual(
+      segmentMeasurements.map((entry) => assertTestRecord(entry).kind),
+      ['tool-stable', 'common-host-stable', 'provider-stable', 'project-stable', 'run-stable', 'volatile'],
+    );
   });
 });
 
