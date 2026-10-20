@@ -201,3 +201,52 @@ test('C18: invalid validity metadata fails closed instead of applying the proced
     await rm(runtimeHome, { recursive: true, force: true });
   }
 });
+
+test('W1: procedure identity preserves different bodies and collapses exact duplicates', async () => {
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'procedure-dedupe-'));
+  try {
+    const context = await buildProjectKnowledgeContext({
+      projectId: 'procedure-context',
+      runId: 'run-procedure-dedupe',
+      stage: 'EXECUTE',
+      objective: 'authentication regression repair',
+      changedPaths: ['src/auth/service.ts'],
+      stateStore: stateStore([
+        procedure({
+          id: 'procedure-exact-a',
+          scope: ['src/auth/**'],
+          summary: 'Authentication regression repair',
+          bodyStep: 'inspect bounded authentication evidence',
+        }),
+        procedure({
+          id: 'procedure-exact-b',
+          scope: ['src/auth/**'],
+          summary: 'Authentication regression repair',
+          bodyStep: 'inspect bounded authentication evidence',
+        }),
+        procedure({
+          id: 'procedure-different-body',
+          scope: ['src/auth/**'],
+          summary: 'Authentication regression repair',
+          bodyStep: 'rebuild the authentication fixture before verification',
+        }),
+      ]),
+      env: { MOON_RELAY_KERNEL_HOME: runtimeHome },
+    });
+
+    assert.equal(context.semanticFacts.length, 2);
+    assert.ok(context.semanticFacts.some((entry) => entry.id === 'procedure-different-body'));
+    assert.equal(
+      context.semanticFacts.filter((entry) => String(entry.id).startsWith('procedure-exact-')).length,
+      1,
+    );
+    assert.equal(
+      context.omittedByPolicy.filter((entry) => entry.reason === 'canonical_duplicate').length,
+      1,
+    );
+    assert.match(context.promptBlock, /inspect bounded authentication evidence/);
+    assert.match(context.promptBlock, /rebuild the authentication fixture before verification/);
+  } finally {
+    await rm(runtimeHome, { recursive: true, force: true });
+  }
+});

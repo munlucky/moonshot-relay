@@ -3,7 +3,12 @@ import {
   buildCrossRunEvidenceCandidate,
   buildCrossRunEvidenceGroups,
 } from './cross-run-evidence.js';
+import {
+  canonicalKnowledgeIdentity,
+  canonicalKnowledgeType,
+} from './identity.js';
 export { buildCrossRunEvidenceGroups } from './cross-run-evidence.js';
+export { canonicalKnowledgeIdentity, canonicalKnowledgeType } from './identity.js';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -62,14 +67,6 @@ interface ExtractStructuredKnowledgeCandidatesInput {
   run?: RunLike | null;
   signals?: CaptureSignals;
   priorRunSignals?: CaptureSignals[];
-}
-
-interface KnowledgeIdentityInput {
-  recordType?: unknown;
-  proposedType?: unknown;
-  type?: unknown;
-  statement?: unknown;
-  scope?: unknown;
 }
 
 interface BuildStructuredRunSignalsInput {
@@ -155,35 +152,6 @@ export const normalizeFailureSignalText = (value: unknown): string => text(value
   .replace(/\b\d+(?:\.\d+)?\s*(?:fps|frames?\/s|ms|milliseconds?|seconds?|secs?|mb|gb|kb|%|percent)\b/g, '<metric>')
   .replace(/\s+/g, ' ')
   .trim();
-
-export const canonicalKnowledgeType = (type: unknown): string => {
-  const normalized = text(type).toLowerCase().replace(/[- ]/g, '_');
-  if (normalized === 'policy' || normalized === 'policy_anchor') return 'policy_anchor';
-  if (normalized === 'semantic' || normalized === 'semantic_fact') return 'semantic_fact';
-  if (normalized === 'architecture' || normalized === 'architecture_record') return 'architecture_record';
-  if (normalized === 'decision' || normalized === 'architecture_decision') return 'architecture_decision';
-  if (normalized === 'observation' || normalized === 'episodic_observation') return 'episodic_observation';
-  if (normalized === 'kg_relation' || normalized === 'relation') return 'kg_relation';
-  if (normalized === 'constraint' || normalized === 'ontology_constraint') return 'ontology_constraint';
-  return normalized || 'semantic_fact';
-};
-
-export const canonicalKnowledgeIdentity = ({
-  recordType,
-  proposedType,
-  type,
-  statement,
-  scope = [],
-}: KnowledgeIdentityInput = {}): string => {
-  const normType = canonicalKnowledgeType(recordType || proposedType || type);
-  const normStatement = text(statement).toLowerCase().replace(/\s+/g, ' ');
-  const normScope = [...list(scope)].map((entry) => entry.toLowerCase()).sort();
-  return digest({
-    type: normType,
-    statement: normStatement,
-    scope: normScope,
-  });
-};
 
 export const candidateKey = (candidate: KnowledgeCandidateLike): string => canonicalKnowledgeIdentity({
   type: candidate.proposedType || candidate.type || candidate.recordType || candidate.record_type,

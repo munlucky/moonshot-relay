@@ -200,3 +200,221 @@ test('context with only stale candidates is reported as stale', async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('W1: canonical context collapse serves one representative for duplicate semantic facts', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-context-dedupe-'));
+  try {
+    const duplicate = Array.from({ length: 10 }, (_, index) => ({
+      id: `duplicate-${String(index).padStart(2, '0')}`,
+      type: 'semantic_fact',
+      statement: 'Unsupported verification should not be repeated in PROVE context.',
+      scope: [],
+      status: 'committed',
+      trustTier: index === 9 ? 'authoritative' : 'verified',
+      confidence: index === 0 ? 1 : 0.8,
+      revision: index + 1,
+      lastVerifiedAt: `2026-10-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`,
+    }));
+    const context = await buildProjectKnowledgeContext({
+      projectId: 'context-dedupe',
+      runId: 'run-context-dedupe',
+      stage: 'PROVE',
+      stateStore: contextStateStore(duplicate),
+      env: { MOON_RELAY_KERNEL_HOME: root },
+    });
+
+    assert.equal(context.semanticFacts.length, 1);
+    assert.equal(context.semanticFacts[0]?.id, 'duplicate-09');
+    assert.equal(context.omittedByPolicy.filter((entry) => entry.reason === 'canonical_duplicate').length, 9);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('W1: same statement with different scope remains distinct', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-context-scope-dedupe-'));
+  try {
+    const context = await buildProjectKnowledgeContext({
+      projectId: 'context-scope-dedupe',
+      runId: 'run-context-scope-dedupe',
+      stage: 'PROVE',
+      stateStore: contextStateStore([
+        {
+          id: 'scope-auth',
+          type: 'semantic_fact',
+          statement: 'The bounded component must preserve its current contract.',
+          scope: ['src/auth/**'],
+          status: 'committed',
+          trustTier: 'verified',
+        },
+        {
+          id: 'scope-billing',
+          type: 'semantic_fact',
+          statement: 'The bounded component must preserve its current contract.',
+          scope: ['src/billing/**'],
+          status: 'committed',
+          trustTier: 'verified',
+        },
+      ]),
+      env: { MOON_RELAY_KERNEL_HOME: root },
+    });
+
+    assert.equal(context.semanticFacts.length, 2);
+    assert.equal(context.omittedByPolicy.filter((entry) => entry.reason === 'canonical_duplicate').length, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('W1: stale duplicate is filtered before canonical collapse selects a fresh record', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-context-fresh-dedupe-'));
+  try {
+    const context = await buildProjectKnowledgeContext({
+      projectId: 'context-fresh-dedupe',
+      runId: 'run-context-fresh-dedupe',
+      stage: 'PROVE',
+      stateStore: contextStateStore([
+        {
+          id: 'stale-duplicate',
+          type: 'semantic_fact',
+          statement: 'Verification evidence must remain current.',
+          scope: [],
+          status: 'superseded',
+          trustTier: 'authoritative',
+        },
+        {
+          id: 'fresh-duplicate',
+          type: 'semantic_fact',
+          statement: 'Verification evidence must remain current.',
+          scope: [],
+          status: 'committed',
+          trustTier: 'verified',
+        },
+      ]),
+      env: { MOON_RELAY_KERNEL_HOME: root },
+    });
+
+    assert.deepEqual(context.semanticFacts.map((entry) => entry.id), ['fresh-duplicate']);
+    assert.ok(context.staleOrUnavailable.some((entry) => (
+      entry.id === 'stale-duplicate' && entry.reason === 'status_superseded'
+    )));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('W1: required verification command and obligation semantics prevent unsafe collapse', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-context-verification-dedupe-'));
+  try {
+    const base = {
+      type: 'required_verification',
+      statement: 'Run the required verification before accepting the change.',
+      scope: ['src/auth/**'],
+      status: 'committed',
+      trustTier: 'verified',
+    };
+    const context = await buildProjectKnowledgeContext({
+      projectId: 'context-verification-dedupe',
+      runId: 'run-context-verification-dedupe',
+      stage: 'PROVE',
+      stateStore: contextStateStore([
+        {
+          ...base,
+          id: 'verify-base',
+          verification: {
+            commandRefs: ['test:auth'],
+            obligationId: 'auth-unit',
+            method: 'command',
+            evidenceLevel: 'work',
+          },
+        },
+        {
+          ...base,
+          id: 'verify-command',
+          verification: {
+            commandRefs: ['test:auth-other'],
+            obligationId: 'auth-unit',
+            method: 'command',
+            evidenceLevel: 'work',
+          },
+        },
+        {
+          ...base,
+          id: 'verify-obligation',
+          verification: {
+            commandRefs: ['test:auth'],
+            obligationId: 'auth-integration',
+            method: 'command',
+            evidenceLevel: 'work',
+          },
+        },
+        {
+          ...base,
+          id: 'verify-method',
+          verification: {
+            commandRefs: ['test:auth'],
+            obligationId: 'auth-unit',
+            method: 'review-receipt',
+            evidenceLevel: 'work',
+          },
+        },
+        {
+          ...base,
+          id: 'verify-evidence',
+          verification: {
+            commandRefs: ['test:auth'],
+            obligationId: 'auth-unit',
+            method: 'command',
+            evidenceLevel: 'integration',
+          },
+        },
+      ]),
+      env: { MOON_RELAY_KERNEL_HOME: root },
+    });
+
+    assert.deepEqual(
+      context.semanticFacts.map((entry) => entry.id).sort(),
+      ['verify-base', 'verify-command', 'verify-evidence', 'verify-method', 'verify-obligation'],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('W1: duplicate collapse happens before budget so the next valid record can enter', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-context-budget-dedupe-'));
+  try {
+    const repeatedStatement = `Repeated verification guidance ${'x'.repeat(1200)}`;
+    const records = [
+      ...Array.from({ length: 10 }, (_, index) => ({
+        id: `budget-duplicate-${index}`,
+        type: 'semantic_fact',
+        statement: repeatedStatement,
+        scope: [],
+        status: 'committed',
+        trustTier: 'verified',
+      })),
+      {
+        id: 'budget-next-valid',
+        type: 'semantic_fact',
+        statement: `NEXT_VALID_RECORD ${'y'.repeat(1200)}`,
+        scope: [],
+        status: 'committed',
+        trustTier: 'verified',
+      },
+    ];
+    const context = await buildProjectKnowledgeContext({
+      projectId: 'context-budget-dedupe',
+      runId: 'run-context-budget-dedupe',
+      stage: 'PROVE',
+      stateStore: contextStateStore(records),
+      env: { MOON_RELAY_KERNEL_HOME: root },
+    });
+
+    assert.equal(context.semanticFacts.filter((entry) => String(entry.id).startsWith('budget-duplicate-')).length, 1);
+    assert.ok(context.semanticFacts.some((entry) => entry.id === 'budget-next-valid'));
+    assert.match(context.promptBlock, /NEXT_VALID_RECORD/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

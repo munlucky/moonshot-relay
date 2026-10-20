@@ -15,6 +15,7 @@ import {
   scoreRelevance,
 } from './path-scope.js';
 import { cheapReVerify } from './freshness.js';
+import { canonicalKnowledgeIdentity } from './identity.js';
 
 type UnknownRecord = Record<string, unknown>;
 type Stage = 'FRAME' | 'EXECUTE' | 'PROVE' | 'CLOSE';
@@ -179,6 +180,65 @@ const procedureScopeMatches = (
   ));
 };
 
+
+const contextRecordIdentity = (record: KnowledgeRecordLike): string => (
+  canonicalKnowledgeIdentity({
+    type: record.type || record.recordType,
+    statement: record.statement,
+    scope: record.scope,
+    practiceJson: record.practiceJson,
+    verification: record.verification,
+    obligation: record.obligation,
+    obligationId: record.obligationId,
+    obligationIds: record.obligationIds,
+  })
+);
+
+const trustTierRank = (value: unknown): number => {
+  switch (String(value || '')) {
+    case 'authoritative': return 5;
+    case 'verified': return 4;
+    case 'derived': return 3;
+    case 'degraded': return 2;
+    case 'quarantined': return 1;
+    default: return 0;
+  }
+};
+
+const finiteNumber = (value: unknown): number => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : Number.NEGATIVE_INFINITY;
+};
+
+const timestampRank = (record: KnowledgeRecordLike): number => {
+  for (const field of ['lastVerifiedAt', 'verifiedAt', 'updatedAt', 'createdAt']) {
+    const parsed = Date.parse(String(record[field] || ''));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return Number.NEGATIVE_INFINITY;
+};
+
+const preferContextRepresentative = (
+  candidate: KnowledgeRecordLike,
+  current: KnowledgeRecordLike,
+): boolean => {
+  const trustDelta = trustTierRank(candidate.trustTier) - trustTierRank(current.trustTier);
+  if (trustDelta !== 0) return trustDelta > 0;
+
+  const confidenceDelta = finiteNumber(candidate.confidence) - finiteNumber(current.confidence);
+  if (confidenceDelta !== 0) return confidenceDelta > 0;
+
+  const verifiedDelta = timestampRank(candidate) - timestampRank(current);
+  if (verifiedDelta !== 0) return verifiedDelta > 0;
+
+  const revisionDelta = finiteNumber(candidate.revision) - finiteNumber(current.revision);
+  if (revisionDelta !== 0) return revisionDelta > 0;
+
+  const candidateId = String(candidate.id || '');
+  const currentId = String(current.id || '');
+  return candidateId.localeCompare(currentId) < 0;
+};
+
 const errorCodeOf = (error: unknown): string => {
   if (error instanceof Error && error.name) {
     const withCode = error as Error & { code?: unknown };
@@ -319,6 +379,33 @@ export async function buildProjectKnowledgeContext({
     return true;
   };
 
+  const collapseCanonicalRecords = (
+    records: KnowledgeRecordLike[],
+  ): KnowledgeRecordLike[] => {
+    const selected = new Map<string, KnowledgeRecordLike>();
+    for (const record of records) {
+      const identity = contextRecordIdentity(record);
+      const current = selected.get(identity);
+      if (!current) {
+        selected.set(identity, record);
+        continue;
+      }
+      if (preferContextRepresentative(record, current)) {
+        omittedByPolicy.push({
+          id: current.id || 'unknown',
+          reason: 'canonical_duplicate',
+        });
+        selected.set(identity, record);
+      } else {
+        omittedByPolicy.push({
+          id: record.id || 'unknown',
+          reason: 'canonical_duplicate',
+        });
+      }
+    }
+    return [...selected.values()];
+  };
+
   let selectedPolicy = rawPolicyAnchors.filter(isRecordActive);
   let selectedFacts = rawSemanticFacts.filter(isRecordActive);
   let selectedConstraints = rawOntologyConstraints.filter(isRecordActive);
@@ -382,9 +469,15 @@ export async function buildProjectKnowledgeContext({
     ));
   });
 
-  const selectedGraph: KnowledgePromptEntry[] = rawGraphRelations
-    .filter(isRecordActive)
-    .map((relation) => ({
+  // Collapse only after active/fresh, stage, scope, and relevance filtering so
+  // a stale or wrong-stage row can never replace a usable representative.
+  selectedPolicy = collapseCanonicalRecords(selectedPolicy);
+  selectedFacts = collapseCanonicalRecords(selectedFacts);
+  selectedConstraints = collapseCanonicalRecords(selectedConstraints);
+
+  const selectedGraph: KnowledgePromptEntry[] = collapseCanonicalRecords(
+    rawGraphRelations.filter(isRecordActive),
+  ).map((relation) => ({
       from: relation.from || null,
       to: relation.to || null,
       relation: relation.relation || null,

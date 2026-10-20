@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { SqliteDatabase } from '../sqlite-adapter.js';
 import { mapCandidateToCanonicalRecord } from '../knowledge/canonical-record-mapper.js';
-import { canonicalKnowledgeIdentity } from '../knowledge/capture.js';
+import { canonicalKnowledgeIdentity } from '../knowledge/identity.js';
 
 type UnknownRecord = Record<string, unknown>;
 
