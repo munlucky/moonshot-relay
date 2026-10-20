@@ -508,7 +508,7 @@ export const buildCrossRunEvidenceCandidate = (
       || `Cross-run evidence for correction ${group.correctionIdentity}`,
     scope: group.scope,
     relatedFiles: group.scope,
-    sourceRefs: group.scope,
+    sourceRefs: [],
     evidenceRefs: group.evidenceRefs,
     acceptanceIds: [],
     obligationIds: [],

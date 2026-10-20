@@ -105,7 +105,7 @@ export function mapCandidateToCanonicalRecord(
 
   const record = attachFreshness(baseRecord, {
     projectRoot,
-    sourceRefs: sourceRefs.length > 0 ? sourceRefs : scope,
+    sourceRefs,
     confidence: typeof candidate.confidence === 'number'
       ? candidate.confidence
       : 0.9,

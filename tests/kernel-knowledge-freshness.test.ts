@@ -77,3 +77,55 @@ test('topology projection is read-only and marks itself non-authoritative', asyn
     await rm(projectRoot, { recursive: true, force: true });
   }
 });
+
+test('W2: scope without sourceRefs stays fresh and does not become a filesystem freshness input', async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'krn-fresh-scope-only-'));
+  try {
+    const record = attachFreshness(
+      { id: 'scope-only', scope: ['src/kernel/**'] },
+      { projectRoot },
+    );
+
+    assert.deepEqual(record.scope, ['src/kernel/**']);
+    assert.deepEqual(record.sourceRefs, []);
+    assert.equal(
+      record.sourceDigest,
+      computeSourceDigest({ projectRoot, sourceRefs: [] }),
+    );
+    assert.deepEqual(cheapReVerify(record, { projectRoot }), {
+      status: 'fresh',
+      reason: 'no-source-refs',
+    });
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test('W2: canonical mapping preserves applicability scope and explicit freshness sources separately', async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'krn-fresh-mapped-boundary-'));
+  try {
+    await mkdir(path.join(projectRoot, 'src/kernel/knowledge'), { recursive: true });
+    await writeFile(
+      path.join(projectRoot, 'src/kernel/knowledge/context-load.ts'),
+      'export const contextLoad = true;\n',
+    );
+    const record = mapCandidateToCanonicalRecord({
+      proposedType: 'semantic_fact',
+      statement: 'Context Knowledge applies to the kernel boundary.',
+      scope: ['src/kernel/**'],
+      sourceRefs: ['src/kernel/knowledge/context-load.ts'],
+      confidence: 0.9,
+    }, {
+      runId: 'run-w2',
+      projectId: 'project-w2',
+      revision: 3,
+      projectRoot,
+    });
+
+    assert.deepEqual(record.scope, ['src/kernel/**']);
+    assert.deepEqual(record.sourceRefs, ['src/kernel/knowledge/context-load.ts']);
+    assert.equal(cheapReVerify(record, { projectRoot }).status, 'fresh');
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});

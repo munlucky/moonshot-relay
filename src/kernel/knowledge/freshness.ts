@@ -46,7 +46,7 @@ export const attachFreshness = <T extends KnowledgeFreshnessRecord>(
     freshnessPolicy = DEFAULT_FRESHNESS_POLICY,
   }: SourceDigestOptions & { confidence?: number; freshnessPolicy?: string } = {},
 ) => {
-  const refs = sourceRefs.length > 0 ? sourceRefs : (record.scope || []);
+  const refs = [...sourceRefs];
   return {
     ...record,
     sourceRefs: refs,

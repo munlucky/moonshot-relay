@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { extractKnowledgeCandidates } from '../src/kernel/knowledge/candidate-extract.js';
+import { extractStructuredKnowledgeCandidates } from '../src/kernel/knowledge/capture.js';
+import {
+  extractCodebaseCandidates,
+  extractSessionCandidates,
+} from '../src/kernel/knowledge-ingestion/candidate-extract.js';
+import { normalizeCandidate } from '../src/kernel/knowledge-ingestion/normalize.js';
 
 test('extractKnowledgeCandidates extracts candidates and filters secret leaks', () => {
   const candidates = extractKnowledgeCandidates({
@@ -16,4 +22,140 @@ test('extractKnowledgeCandidates extracts candidates and filters secret leaks', 
 
   assert.equal(candidates.length, 1);
   assert.equal(candidates[0].statement, 'SQLite WAL mode is enabled by default.');
+});
+
+test('W2: legacy observed candidates keep changed files as scope metadata only', () => {
+  const [candidate] = extractKnowledgeCandidates({
+    runId: 'run-w2-legacy',
+    projectId: 'w2-project',
+    changedFiles: ['src/kernel/knowledge/context-load.ts'],
+    evidencePack: { status: 'pass', digest: 'sha256:evidence' },
+    observedStatements: ['Context loading uses committed Knowledge.'],
+  });
+
+  assert.ok(candidate);
+  assert.deepEqual(candidate.scope, ['src/kernel/knowledge/context-load.ts']);
+  assert.deepEqual(candidate.relatedFiles, ['src/kernel/knowledge/context-load.ts']);
+  assert.deepEqual(candidate.sourceRefs, []);
+});
+
+test('W2: candidate normalization preserves scope, sourceRefs, and relatedFiles independently', () => {
+  const context = {
+    projectId: 'w2-project',
+    sourceType: 'manual',
+    sourceIdentity: 'manual:w2',
+    sourceDigest: 'sha256:source',
+  };
+  const first = normalizeCandidate({
+    proposedType: 'semantic_fact',
+    statement: 'Knowledge applies to the kernel but is verified from one source file.',
+    scope: ['src/kernel/**'],
+    sourceRefs: ['src/kernel/knowledge/context-load.ts'],
+    relatedFiles: ['docs/reference.md'],
+  }, context);
+  const second = normalizeCandidate({
+    proposedType: 'semantic_fact',
+    statement: 'Knowledge applies to the kernel but is verified from one source file.',
+    scope: ['src/kernel/**'],
+    sourceRefs: ['src/kernel/knowledge/freshness.ts'],
+    relatedFiles: ['docs/other.md'],
+  }, context);
+
+  assert.deepEqual(first.scope, ['src/kernel/**']);
+  assert.deepEqual(first.sourceRefs, ['src/kernel/knowledge/context-load.ts']);
+  assert.deepEqual(first.relatedFiles, ['docs/reference.md']);
+  assert.equal(first.candidateId, second.candidateId, 'candidate identity must depend on applicability scope, not freshness source');
+});
+
+test('W2: relatedFiles-only candidates do not invent scope or freshness sources', () => {
+  const candidate = normalizeCandidate({
+    proposedType: 'semantic_fact',
+    statement: 'Related metadata does not define applicability or freshness.',
+    relatedFiles: ['src/kernel/knowledge/context-load.ts'],
+  }, {
+    projectId: 'w2-project',
+    sourceType: 'manual',
+    sourceIdentity: 'manual:related-only',
+    sourceDigest: 'sha256:related-only',
+  });
+
+  assert.deepEqual(candidate.scope, []);
+  assert.deepEqual(candidate.sourceRefs, []);
+  assert.deepEqual(candidate.relatedFiles, ['src/kernel/knowledge/context-load.ts']);
+});
+
+test('W2: session changed files remain applicability and related metadata, not freshness sources', () => {
+  const [candidate] = extractSessionCandidates({
+    provider: 'codex',
+    nativeSessionId: 'session-w2',
+    sourceDigest: 'sha256:session',
+    changedFiles: ['src/auth/login.ts'],
+    decisions: ['Auth remains owned by the auth module.'],
+  }, { projectId: 'w2-project' });
+
+  assert.ok(candidate);
+  assert.deepEqual(candidate.scope, ['src/auth/login.ts']);
+  assert.deepEqual(candidate.relatedFiles, ['src/auth/login.ts']);
+  assert.deepEqual(candidate.sourceRefs, []);
+});
+
+test('W2: codebase candidates explicitly bind freshness to the observed source file', () => {
+  const [candidate] = extractCodebaseCandidates({
+    sourceTreeDigest: 'sha256:tree',
+    files: [{ path: 'src/auth/login.ts', symbols: ['login'], apiSurface: [] }],
+  }, { projectId: 'w2-project' });
+
+  assert.ok(candidate);
+  assert.deepEqual(candidate.scope, ['src/auth/login.ts']);
+  assert.deepEqual(candidate.sourceRefs, ['src/auth/login.ts']);
+  assert.deepEqual(candidate.relatedFiles, ['src/auth/login.ts']);
+});
+
+test('W2: structured auto capture uses only explicit source refs for freshness', () => {
+  const [candidate] = extractStructuredKnowledgeCandidates({
+    run: { runId: 'run-w2', projectId: 'w2-project' },
+    signals: {
+      invariantObservations: [{
+        statement: 'Kernel Knowledge selection stays within its declared boundary.',
+        scope: ['src/kernel/**'],
+        changedPaths: ['src/kernel/knowledge/context-load.ts'],
+        sourceRefs: ['src/kernel/knowledge/freshness.ts'],
+        evidenceRefs: ['receipt://w2/invariant'],
+      }],
+    },
+  });
+
+  assert.ok(candidate);
+  assert.deepEqual(candidate.scope, ['src/kernel/**']);
+  assert.deepEqual(candidate.relatedFiles, ['src/kernel/knowledge/context-load.ts']);
+  assert.deepEqual(candidate.sourceRefs, ['src/kernel/knowledge/freshness.ts']);
+});
+
+test('W2: cross-run evidence does not reinterpret applicability scope as freshness source', () => {
+  const [candidate] = extractStructuredKnowledgeCandidates({
+    run: { runId: 'run-b', projectId: 'w2-project' },
+    priorRunSignals: [{
+      runId: 'run-a',
+      failures: [{
+        fingerprint: 'w2-failure',
+        statement: 'Auth refresh fails after expiry.',
+        scope: ['src/auth/**'],
+        evidenceRefs: ['failure://run-a/auth'],
+      }],
+    }],
+    signals: {
+      runId: 'run-b',
+      failures: [{
+        fingerprint: 'w2-failure',
+        statement: 'Auth refresh fails after expiry.',
+        scope: ['src/auth/**'],
+        evidenceRefs: ['failure://run-b/auth'],
+      }],
+    },
+  });
+
+  assert.ok(candidate);
+  assert.deepEqual(candidate.scope, ['src/auth/**']);
+  assert.deepEqual(candidate.relatedFiles, ['src/auth/**']);
+  assert.deepEqual(candidate.sourceRefs, []);
 });

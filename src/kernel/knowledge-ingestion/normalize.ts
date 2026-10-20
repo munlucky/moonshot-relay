@@ -92,6 +92,7 @@ export interface NormalizedKnowledgeCandidate extends UnknownRecord {
   statement: string;
   scope: string[];
   sourceRefs: string[];
+  relatedFiles: string[];
   evidenceRefs: string[];
   confidence: number;
   status: string;
@@ -120,9 +121,9 @@ export function normalizeCandidate(
   const statement = redactText(
     candidate.statement || candidate.observation || candidate.text || '',
   ).trim();
-  const scope = list(
-    candidate.scope || candidate.sourceRefs || candidate.relatedFiles,
-  );
+  const scope = list(candidate.scope);
+  const sourceRefs = list(candidate.sourceRefs);
+  const relatedFiles = list(candidate.relatedFiles);
   const proposedType = String(
     candidate.proposedType || candidate.type || 'semantic_fact',
   );
@@ -144,7 +145,8 @@ export function normalizeCandidate(
     proposedType,
     statement,
     scope,
-    sourceRefs: scope,
+    sourceRefs,
+    relatedFiles,
     evidenceRefs: list(candidate.evidenceRefs || candidate.evidenceRef),
     confidence: Number.isFinite(candidate.confidence)
       ? Number(candidate.confidence)

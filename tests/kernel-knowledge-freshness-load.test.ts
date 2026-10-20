@@ -93,3 +93,72 @@ test('without projectRoot, freshness is skipped (backward compatible)', async ()
     await rm(runtimeHome, { recursive: true, force: true });
   }
 });
+
+test('W2: applicability glob is not treated as a freshness path when an explicit source exists', async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'krn-fresh-boundary-'));
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'krn-fresh-boundary-home-'));
+  try {
+    await writeFile(path.join(projectRoot, 'source.ts'), 'export const source = true;\n');
+    const record = attachFreshness({
+      id: 'kn-boundary',
+      type: 'semantic_fact',
+      statement: 'Kernel changes follow the bounded Knowledge rule.',
+      status: 'committed',
+      trustTier: 'verified',
+      scope: ['src/kernel/**'],
+    }, {
+      projectRoot,
+      sourceRefs: ['source.ts'],
+    });
+
+    const ctx = await buildProjectKnowledgeContext({
+      projectId: 'p-boundary',
+      stage: 'FRAME',
+      runId: 'r-boundary',
+      objective: 'change kernel knowledge',
+      changedPaths: ['src/kernel/knowledge/context-load.ts'],
+      projectRoot,
+      stateStore: makeStore([record]),
+      env: { MOON_RELAY_KERNEL_HOME: runtimeHome },
+    });
+
+    assert.ok(ctx.semanticFacts.some((fact) => fact.id === 'kn-boundary'));
+    assert.ok(!ctx.staleOrUnavailable.some((entry) => entry.id === 'kn-boundary'));
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+    await rm(runtimeHome, { recursive: true, force: true });
+  }
+});
+
+test('W2: scope-only records remain selectable with projectRoot freshness checks enabled', async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'krn-fresh-scope-context-'));
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'krn-fresh-scope-context-home-'));
+  try {
+    const record = attachFreshness({
+      id: 'kn-scope-only',
+      type: 'semantic_fact',
+      statement: 'Kernel Knowledge applies across the kernel scope.',
+      status: 'committed',
+      trustTier: 'verified',
+      scope: ['src/kernel/**'],
+    }, { projectRoot });
+
+    const ctx = await buildProjectKnowledgeContext({
+      projectId: 'p-scope-only',
+      stage: 'FRAME',
+      runId: 'r-scope-only',
+      objective: 'change kernel knowledge',
+      changedPaths: ['src/kernel/run-loop.ts'],
+      projectRoot,
+      stateStore: makeStore([record]),
+      env: { MOON_RELAY_KERNEL_HOME: runtimeHome },
+    });
+
+    assert.deepEqual(record.sourceRefs, []);
+    assert.ok(ctx.semanticFacts.some((fact) => fact.id === 'kn-scope-only'));
+    assert.ok(!ctx.staleOrUnavailable.some((entry) => entry.id === 'kn-scope-only'));
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+    await rm(runtimeHome, { recursive: true, force: true });
+  }
+});

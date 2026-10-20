@@ -500,7 +500,7 @@ export function extractKnowledgeCandidates({
       statement,
       scope: changedFiles,
       relatedFiles: changedFiles,
-      sourceRefs: changedFiles.slice(0, 5),
+      sourceRefs: [],
       evidenceRefs: evidencePack ? [evidencePack.digest] : [],
       confidence: evidencePack?.status === 'pass' ? 0.9 : 0.4,
       status: 'observed',

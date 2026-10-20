@@ -22,6 +22,8 @@ export interface KnowledgeCandidateLike extends UnknownRecord {
   record_type?: unknown;
   statement?: unknown;
   scope?: unknown;
+  sourceRefs?: unknown;
+  relatedFiles?: unknown;
   sourceKind?: unknown;
   evidenceRefs?: unknown;
   acceptanceIds?: unknown;
@@ -48,6 +50,8 @@ interface NormalizedSignal extends UnknownRecord {
   fingerprint: string;
   statement: string;
   scope: string[];
+  sourceRefs: string[];
+  relatedFiles: string[];
   evidenceRefs: string[];
   acceptanceIds: string[];
   obligationIds: string[];
@@ -175,6 +179,8 @@ const normalizeSignal = (signal: UnknownRecord, kind: string): NormalizedSignal 
   fingerprint: text(signal.fingerprint || signal.failureFingerprint || signal.blockerFingerprint),
   statement: text(signal.statement || signal.summary || signal.reason || signal.message),
   scope: list(signal.scope || signal.changedPaths || signal.changedFiles),
+  sourceRefs: list(signal.sourceRefs || signal.sourceFiles || signal.source),
+  relatedFiles: list(signal.relatedFiles || signal.changedPaths || signal.changedFiles),
   evidenceRefs: evidenceRefsFor(signal),
   acceptanceIds: list(signal.acceptanceIds || signal.acceptanceId),
   obligationIds: list(signal.obligationIds || signal.obligationId),
@@ -190,7 +196,6 @@ const autoCandidate = ({
   confidence = 0.75,
 }: AutoCandidateInput): KnowledgeCandidateLike | null => {
   const normalized = normalizeSignal(signal, kind);
-  const sourceRefs = normalized.scope;
   const refs = normalized.evidenceRefs;
   if (!statement || refs.length === 0) return null;
   return {
@@ -198,15 +203,15 @@ const autoCandidate = ({
       runId: run.runId,
       proposedType,
       statement,
-      scope: sourceRefs,
+      scope: normalized.scope,
     }).slice(-24)}`,
     runId: run.runId,
     projectId: run.projectId,
     proposedType,
     statement,
-    scope: sourceRefs,
-    relatedFiles: sourceRefs,
-    sourceRefs,
+    scope: normalized.scope,
+    relatedFiles: normalized.relatedFiles,
+    sourceRefs: normalized.sourceRefs,
     evidenceRefs: refs,
     acceptanceIds: normalized.acceptanceIds,
     obligationIds: normalized.obligationIds,

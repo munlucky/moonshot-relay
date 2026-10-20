@@ -55,6 +55,7 @@ export function extractSessionCandidates(
       proposedType: 'architecture_decision',
       statement: decision,
       scope: session.changedFiles,
+      relatedFiles: session.changedFiles,
       status: 'staged',
       trustTier: 'derived',
     });
@@ -64,6 +65,7 @@ export function extractSessionCandidates(
       proposedType: 'known_failure_pattern',
       statement: failure,
       scope: session.changedFiles,
+      relatedFiles: session.changedFiles,
       status: 'observed',
       trustTier: 'derived',
     });
@@ -73,6 +75,7 @@ export function extractSessionCandidates(
       proposedType: 'required_verification',
       statement: next,
       scope: session.changedFiles,
+      relatedFiles: session.changedFiles,
       status: 'staged',
       trustTier: 'derived',
     });
@@ -82,6 +85,7 @@ export function extractSessionCandidates(
       proposedType: 'episodic_observation',
       statement: `Session objective: ${session.objective}`,
       scope: session.changedFiles,
+      relatedFiles: session.changedFiles,
       status: 'observed',
       trustTier: 'derived',
     });
@@ -93,6 +97,7 @@ export function extractSessionCandidates(
         proposedType: 'architecture_decision',
         statement: matchCapture(match, 1),
         scope: session.changedFiles,
+        relatedFiles: session.changedFiles,
         status: 'staged',
         trustTier: 'derived',
       });
@@ -121,11 +126,14 @@ export function extractCodebaseCandidates(
   for (const file of index.files || []) {
     if (!file.path || file.path.startsWith('tests/')) continue;
     const scope = [file.path];
+    const sourceRefs = [file.path];
     const symbol = file.symbols?.[0];
     candidates.push(normalizeCandidate({
       proposedType: 'component_boundary',
       statement: `Module ${file.path} owns ${symbol ? `the ${symbol} symbols` : 'its implementation responsibility'}.`,
       scope,
+      sourceRefs,
+      relatedFiles: scope,
       status: 'verified',
       trustTier: 'verified',
       evidenceRefs: [sourceDigest],
@@ -142,6 +150,8 @@ export function extractCodebaseCandidates(
         proposedType: 'api_contract',
         statement: `${file.path} exposes ${api}.`,
         scope,
+        sourceRefs,
+        relatedFiles: scope,
         status: 'verified',
         trustTier: 'verified',
         evidenceRefs: [sourceDigest],
