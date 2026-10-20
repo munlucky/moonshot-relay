@@ -4,14 +4,16 @@
 조사일: 2026-10-20
 범위: 로컬 Codex / Kernel 실행 이력의 읽기 전용 조사와 첫 개선 후보 판정
 
+> **2026-10-20 리뷰 정정:** 이 문서의 초기 우선순위와 Codex session 4,558건 통계는 현재 MCP 환경에서 재현되지 않았다. 현재 열람 가능한 session JSONL은 71개다. 최종 실행 순서는 `W2_REVIEWED_EXECUTION_PLAN.md`를 따른다. Kernel runtime DB 통계와 현재 source에서 재현된 근거만 최종 계획의 확정 근거로 사용한다.
+
 ## 결론
 
 첫 production 개선 대상으로 Kernel workflow를 다시 수정하지 않는다.
 
 현재 로컬에는 개선 루프를 시작하기에 충분한 실제 이력이 이미 있다.
 
-- Codex active session files: 4,558
-- Codex archived session files: 2
+- Codex session JSONL currently readable from this MCP environment: 71
+- Earlier 4,558-session observation: not reproducible here; excluded from final evidence
 - Kernel runs: 391
 - attempts: 1,101
 - verifications: 3,298

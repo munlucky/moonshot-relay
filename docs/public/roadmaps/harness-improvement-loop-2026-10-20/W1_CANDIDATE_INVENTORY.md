@@ -4,11 +4,14 @@
 조사일: 2026-10-20
 범위: 로컬 Codex session, Kernel runtime-state, Git/source history를 이용한 read-only mining
 
+> **리뷰 후 우선순위 변경:** 이 문서는 후보 inventory로 보존한다. 최종 구현 순서는 `W2_REVIEWED_EXECUTION_PLAN.md`가 대체한다. 핵심 P0는 canonical dedupe 단독이 아니라 **검증한 지식을 현재 작업에 다시 공급하는 scope/sourceRefs/freshness/evidence 경계 복구**다. C1/C2/C4 전체 도구화는 선행 조건이 아니다.
+
 ## 1. 조사 근거
 
 현재 로컬에는 다음 실제 이력이 있다.
 
-- Codex session JSONL: 4,558
+- Codex session JSONL currently readable here: 71
+- Earlier 4,558-session observation: not reproducible here; excluded from final priority evidence
 - Kernel Run: 391
 - Attempt: 1,101
 - Verification: 3,298
