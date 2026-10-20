@@ -9,11 +9,11 @@
     "estimatedPromptTokens": 3093984
   },
   "allowedDelta": {
-    "files": 218,
-    "nonblankLines": 62000,
-    "utf8Bytes": 2400000,
-    "estimatedPromptTokens": 600000
+    "files": 229,
+    "nonblankLines": 67468,
+    "utf8Bytes": 2667033,
+    "estimatedPromptTokens": 666758
   },
-  "allowedDeltaRationale": "The immutable aca19ec baseline is retained. After Typed Authority Architecture, the reviewed C00-C32 roadmap, recovery continuity work, and the Model & Prompt Rebaseline waves, the measured canonical surface is 2222 files, 333652 nonblank lines, 14726425 UTF-8 bytes and 3681607 estimated prompt tokens. Since the previous reviewed surface of 2204 files, canonical file growth is +18: ten reviewed docs, four implementation source files, and four typed test sources; compiler-owned JS/MJS outputs remain excluded. The file allowance increases by the same +18 so the prior four-file headroom is preserved rather than auto-ratcheted. Line, byte, and token allowances are unchanged. The reviewed growth still adds zero public Kernel commands, workflow stages, Authorities, always-on agents, execution classes, memory services, vector DBs, Kernel model/project hardcoding, per-run reflection agents, automatic model fallbacks, or model-specific full prompt forks.",
+  "allowedDeltaRationale": "The immutable aca19ec baseline is retained. After the reviewed Historical Improvement Loop waves W0-W6, the measured canonical surface is 2233 files, 339120 nonblank lines, 14993458 UTF-8 bytes and 3748365 estimated prompt tokens. Relative to the previously reviewed surface of 2222 files, canonical file growth is +11; W6 itself adds one Host/offline read-only implementation source and one typed test source, while compiler-owned JS/MJS outputs remain excluded. The allowances preserve the previous reviewed headroom exactly: 4 files, 1158 nonblank lines, 49509 UTF-8 bytes and 12377 estimated prompt tokens. This is a bounded review update rather than an automatic ratchet. The reviewed growth adds zero public Kernel commands, workflow stages, Authorities, durable tables, always-on agents, execution classes, schedulers, caches, Kernel model/project hardcoding, automatic mutation or promotion paths, or model-specific full prompt forks.",
   "allowedUnregisteredTests": 0
 }

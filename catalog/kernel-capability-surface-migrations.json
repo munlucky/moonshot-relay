@@ -3197,6 +3197,42 @@
       "classification": "capability",
       "capability": "control-plane-state-authority"
     },
+    "src/host-tooling/kernel-eval/execution-evidence.ts": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "scripts/kernel/eval/execution-evidence.js": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "src/host-tooling/kernel-eval/historical-improvement.ts": {
+      "classification": "capability",
+      "capability": "retrospective-and-regression-learning"
+    },
+    "scripts/kernel/eval/historical-improvement.js": {
+      "classification": "capability",
+      "capability": "retrospective-and-regression-learning"
+    },
+    "src/kernel/knowledge/identity.ts": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "scripts/kernel/knowledge/identity.js": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
+    "tests/kernel-execution-evidence.test.mjs": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "tests/kernel-historical-improvement.test.mjs": {
+      "classification": "capability",
+      "capability": "retrospective-and-regression-learning"
+    },
+    "tests/kernel-knowledge-supply-e2e.test.mjs": {
+      "classification": "capability",
+      "capability": "project-identity-and-knowledge-lifecycle"
+    },
     "tests/kernel-task-contract-snapshot.test.mjs": {
       "classification": "capability",
       "capability": "task-contract-and-bounded-work"
