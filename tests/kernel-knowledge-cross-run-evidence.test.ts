@@ -244,3 +244,34 @@ test('C23: structured run signals preserve run identity for persisted deduplicat
 
   assert.equal(signals.runId, 'run-c23');
 });
+
+test('W3: repeated generic blockers remain episodic and never become a durable failure pattern', () => {
+  const candidates = extractStructuredKnowledgeCandidates({
+    run: { runId: 'run-b', projectId: 'project-a' },
+    priorRunSignals: [{
+      runId: 'run-a',
+      blockers: [{
+        fingerprint: 'generic-blocker',
+        reason: 'tool unavailable',
+        statement: 'Tool unavailable.',
+        evidenceRefs: ['blocker://run-a/tool'],
+        scope: ['src/tooling/**'],
+      }],
+    }],
+    signals: {
+      runId: 'run-b',
+      blockers: [{
+        fingerprint: 'generic-blocker',
+        reason: 'tool unavailable',
+        statement: 'Tool unavailable.',
+        evidenceRefs: ['blocker://run-b/tool'],
+        scope: ['src/tooling/**'],
+      }],
+    },
+  });
+
+  const blockerCandidates = candidates.filter((candidate) => candidate.signalKind === 'blocker');
+  assert.equal(blockerCandidates.length, 1);
+  assert.equal(blockerCandidates[0].proposedType, 'episodic_observation');
+  assert.equal(candidates.some((candidate) => candidate.proposedType === 'known_failure_pattern'), false);
+});

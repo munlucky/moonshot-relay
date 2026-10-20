@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import os from 'node:os';
 import path from 'node:path';
-import { CODEX_CAPABILITIES, buildCodexInvocation, createCodexAdapter, selectCodexMechanism } from '../src/host/kernel/adapters/codex.js';
+import { CODEX_CAPABILITIES, CODEX_WORKER_OUTPUT_SCHEMA, buildCodexInvocation, createCodexAdapter, selectCodexMechanism } from '../src/host/kernel/adapters/codex.js';
 import { resolveModelRoute } from '../src/kernel/run/model-routing.js';
 import { buildUsageReceipt } from '../src/host/kernel/usage-receipt.js';
 import { isWorkUnitBounded, resolveCodexActorRoute } from '../src/host/kernel/codex-actor-router.js';
@@ -906,3 +906,16 @@ test('Correction 4: pre-spawn failure with sessionId does not fall back to owner
 
 type TestControlPlane = Awaited<ReturnType<typeof import('../src/host/kernel/control-plane-runtime.js').createKernelControlPlane>>;
 type TestStateStore = Awaited<ReturnType<typeof import('../src/kernel/state-store.js').openKernelStateStore>>;
+
+test('W3: Codex knowledge observations expose verification binding identifiers', () => {
+  const properties = assertTestRecord(CODEX_WORKER_OUTPUT_SCHEMA.properties);
+  const knowledgeObservations = assertTestRecord(properties.knowledgeObservations);
+  const item = assertTestRecord(knowledgeObservations.items);
+  const itemProperties = assertTestRecord(item.properties);
+  const required = Array.isArray(item.required) ? item.required.map(String) : [];
+
+  assert.ok(itemProperties.acceptanceIds);
+  assert.ok(itemProperties.obligationIds);
+  assert.ok(required.includes('acceptanceIds'));
+  assert.ok(required.includes('obligationIds'));
+});

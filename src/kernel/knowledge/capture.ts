@@ -291,7 +291,7 @@ export const extractStructuredKnowledgeCandidates = ({
       run,
       kind: 'blocker',
       signal,
-      proposedType: 'known_failure_pattern',
+      proposedType: 'episodic_observation',
       statement: signal.statement
         || `Repeated blocker: ${text(signal.reason) || signal.fingerprint}`,
       confidence: 0.8,

@@ -28,7 +28,6 @@ export interface KnowledgeCandidateLike extends UnknownRecord {
   obligationIds?: string[];
   evidenceBinding?: EvidenceBindingLike;
   sourceKind?: (string) | undefined;
-  sourceDigest?: string;
   obligationId?: string;
   supersedes?: string[];
   feedbackClassification?: unknown;
@@ -381,6 +380,17 @@ export async function reviewKnowledgeCandidates({
     }
 
     const verifications = stateStore.getVerifications(runId);
+    const currentSourceIdentity = String(currentRun.sourceIdentity || '');
+    const currentMutationRevision = Number(currentRun.mutationRevision);
+    const authoritativeVerifications = verifications.filter((verification) => (
+      verification.status === 'passed'
+      && Number(verification.exitCode) === 0
+      && Boolean(verification.evidenceDigest)
+      && currentSourceIdentity.length > 0
+      && String(verification.sourceIdentity || '') === currentSourceIdentity
+      && Number.isInteger(currentMutationRevision)
+      && Number(verification.verifiedMutationRevision) === currentMutationRevision
+    ));
     let candidateEvidenceDigest: string | null = null;
     let improvementReplayVerificationId: unknown = null;
     let improvementReplayObligationId: string | null = null;
@@ -455,8 +465,11 @@ export async function reviewKnowledgeCandidates({
       }
     }
 
-    const candidateRefs = strings(candidate.evidenceRefs);
     const binding = evidenceBinding(candidate);
+    const candidateRefs = [...new Set([
+      ...strings(candidate.evidenceRefs),
+      ...strings(binding.evidenceRefs),
+    ])];
     const acceptanceIds = new Set([
       ...strings(candidate.acceptanceIds),
       ...strings(binding.acceptanceIds),
@@ -466,14 +479,7 @@ export async function reviewKnowledgeCandidates({
       ...strings(binding.obligationIds),
     ]);
 
-    const matchingVerification = verifications.filter((verification) => {
-      if (
-        verification.status !== 'passed'
-        || Number(verification.exitCode) !== 0
-        || !verification.evidenceDigest
-      ) {
-        return false;
-      }
+    const matchingVerification = authoritativeVerifications.filter((verification) => {
       if (
         candidateRefs.length > 0
         && !candidateRefs.some((reference) => (
@@ -499,19 +505,19 @@ export async function reviewKnowledgeCandidates({
       return true;
     });
 
-    // A single verification is a safe compatibility bridge for legacy
-    // explicit observations. It is deliberately not the "last verification"
-    // fallback: when several receipts exist, the observation must name its
-    // acceptance, obligation, or evidence ref.
+    // A single current authoritative verification is a compatibility bridge
+    // for legacy explicit observations. It is deliberately not the "last
+    // verification" fallback: when several current receipts exist, the
+    // observation must name its acceptance, obligation, or evidence ref.
     const selectedVerification = matchingVerification.length > 0
       ? matchingVerification[0]
       : (
           candidateRefs.length === 0
           && acceptanceIds.size === 0
           && obligationIds.size === 0
-          && verifications.length === 1
+          && authoritativeVerifications.length === 1
         )
-        ? verifications[0]
+        ? authoritativeVerifications[0]
         : null;
 
     const structuredReceipt = candidate.sourceKind === 'auto'
@@ -544,12 +550,6 @@ export async function reviewKnowledgeCandidates({
         mutationRevision: currentRun?.mutationRevision || 0,
         bindingType: 'structured-signal',
       });
-    } else if (
-      !candidateEvidenceDigest
-      && candidate.sourceDigest
-      && /^sha256:[a-f0-9]{64}$/i.test(candidate.sourceDigest)
-    ) {
-      candidateEvidenceDigest = candidate.sourceDigest;
     }
 
     if (!candidateEvidenceDigest) {
