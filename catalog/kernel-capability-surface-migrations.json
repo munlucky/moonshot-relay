@@ -3205,6 +3205,14 @@
       "classification": "capability",
       "capability": "control-plane-state-authority"
     },
+    "src/host-tooling/kernel-eval/historical-actions.ts": {
+      "classification": "capability",
+      "capability": "retrospective-and-regression-learning"
+    },
+    "scripts/kernel/eval/historical-actions.js": {
+      "classification": "capability",
+      "capability": "retrospective-and-regression-learning"
+    },
     "src/host-tooling/kernel-eval/historical-improvement.ts": {
       "classification": "capability",
       "capability": "retrospective-and-regression-learning"

@@ -3,9 +3,14 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import {
+  analyzeHistoricalActionHotspots,
+  classifyHistoricalActionCommand,
+  loadHistoricalActionSessions,
+} from '../src/host-tooling/kernel-eval/historical-actions.js';
 import {
   analyzeHistoricalKnowledgeSupply,
   classifyGenerationRelevance,
@@ -26,6 +31,15 @@ const commit = async (cwd: string, name: string): Promise<string> => {
 const createFixtureDb = (dbPath: string, revisions: { base: string; seam: string; head: string }) => {
   const db = new DatabaseSync(dbPath);
   db.exec(`
+    CREATE TABLE project_identities (
+      project_id TEXT PRIMARY KEY, canonical_root TEXT, identity_source TEXT,
+      identity_digest TEXT, aliases_json TEXT, created_at TEXT, updated_at TEXT
+    );
+    CREATE TABLE project_workspaces (
+      workspace_id TEXT PRIMARY KEY, project_id TEXT, canonical_root TEXT,
+      git_common_dir TEXT, git_worktree_dir TEXT, identity_json TEXT,
+      created_at TEXT, last_seen_at TEXT, worktree_id TEXT, mutation_epoch INTEGER
+    );
     CREATE TABLE runs (
       run_id TEXT PRIMARY KEY, objective TEXT, status TEXT, state TEXT,
       contract_revision INTEGER, plan_revision INTEGER, mutation_revision INTEGER,
@@ -60,6 +74,15 @@ const createFixtureDb = (dbPath: string, revisions: { base: string; seam: string
     CREATE TABLE completion_decisions (run_id TEXT PRIMARY KEY, decision TEXT);
     CREATE TABLE git_closeout_receipts (run_id TEXT PRIMARY KEY, commit_sha TEXT);
   `);
+
+  db.prepare(`INSERT INTO project_identities VALUES (?,?,?,?,?,?,?)`).run(
+    'project-a', 'c:/dev/project-a', 'fixture', 'sha256:project-a', '[]',
+    '2026-10-01T00:00:00Z', '2026-10-03T00:00:00Z',
+  );
+  db.prepare(`INSERT INTO project_workspaces VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
+    'ws-current', 'project-a', 'c:/dev/project-a', null, null, '{}',
+    '2026-10-01T00:00:00Z', '2026-10-03T00:00:00Z', null, 0,
+  );
 
   const insertRun = db.prepare(`INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
   insertRun.run('run-old-a', 'same objective text', 'completed', 'CLOSE', 1, 1, 0, 'cand-old-a', 'workspace-old-a', 'ws-old', 'project-a', '2026-10-01T00:00:00Z');
@@ -269,6 +292,161 @@ test('W6: current-generation recurrence becomes CANDIDATE while missing generati
     });
     assert.equal(insufficient.findings.find((item) => item.id === 'knowledge-duplicate-context')?.status, 'INSUFFICIENT');
     assert.equal(insufficient.promotionAuthority, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('C7: action classifier preserves read/mutation boundaries and reuses verification semantics', () => {
+  assert.equal(classifyHistoricalActionCommand('rg needle src'), 'search');
+  assert.equal(classifyHistoricalActionCommand('Get-Content src/a.ts'), 'read');
+  assert.equal(classifyHistoricalActionCommand('Set-Content src/a.ts value'), 'modify');
+  assert.equal(classifyHistoricalActionCommand('npm test'), 'full-verification');
+  assert.equal(classifyHistoricalActionCommand('node --test tests/a.test.mjs'), 'focused-verification');
+  assert.equal(classifyHistoricalActionCommand('git status --short'), 'git-read');
+  assert.equal(classifyHistoricalActionCommand('git branch --show-current'), 'git-read');
+  assert.equal(classifyHistoricalActionCommand('git worktree list'), 'git-read');
+  assert.equal(classifyHistoricalActionCommand('git commit -m test'), 'git-mutation');
+  assert.equal(classifyHistoricalActionCommand('npm install'), 'environment-setup');
+  assert.equal(classifyHistoricalActionCommand('docker run app'), 'unclassified');
+  assert.equal(classifyHistoricalActionCommand('kernel.ps1 report'), 'kernel-lifecycle');
+});
+
+test('C7: action hotspot mining is read-only, exact-linked, redacted to aggregates, and non-authoritative', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-historical-actions-'));
+  try {
+    git(root, 'init');
+    git(root, 'config', 'user.email', 'fixture@example.com');
+    git(root, 'config', 'user.name', 'Fixture');
+    const base = await commit(root, 'base');
+    const seam = await commit(root, 'seam');
+    const head = await commit(root, 'head');
+    const dbPath = path.join(root, 'runtime-state.sqlite');
+    createFixtureDb(dbPath, { base, seam, head });
+    const sessionsRoot = path.join(root, 'codex-sessions');
+    await mkdir(sessionsRoot, { recursive: true });
+
+    const itemCompleted = (item: Record<string, unknown>) => JSON.stringify({
+      type: 'event_msg',
+      payload: { type: 'item_completed', item },
+    });
+    const command = (cmd: string, exitCode = 0, cwd = 'C:/dev/project-a') => itemCompleted({
+      type: 'CommandExecution',
+      status: exitCode === 0 ? 'completed' : 'failed',
+      exit_code: exitCode,
+      cwd,
+      parsed_cmd: [{ type: 'unknown', cmd }],
+      command: ['pwsh.exe', '-Command', cmd],
+    });
+    const currentLines = [
+      JSON.stringify({
+        type: 'session_meta',
+        payload: {
+          session_id: 'session-current',
+          id: 'session-current',
+          cwd: 'file:///C:/dev/project-a',
+          git: { commit_hash: head },
+        },
+      }),
+      command('rg needle-do-not-return src'),
+      command('rg needle-do-not-return src'),
+      command('Get-Content src/a.ts'),
+      command('Set-Content src/a.ts value'),
+      command('npm test'),
+      command('node --test tests/a.test.mjs'),
+      command('git status --short'),
+      command('git branch --show-current'),
+      command('git worktree list'),
+      command('git commit -m fixture'),
+      command('npm install'),
+      command('kernel.ps1 report'),
+      command('unknown-tool needle-do-not-return', 1),
+      command('rg cross-project-do-not-count src', 0, 'C:/dev/other-project'),
+      itemCompleted({ type: 'FileChange', status: 'completed' }),
+      itemCompleted({ type: 'McpToolCall', status: 'completed', name: 'get_work_context', arguments: {} }),
+    ];
+    const unlinkedLines = [
+      JSON.stringify({
+        type: 'session_meta',
+        payload: { session_id: 'session-unlinked', cwd: 'C:/dev/project-a' },
+      }),
+      command('Get-Content src/b.ts'),
+    ];
+    const foreignLines = [
+      JSON.stringify({
+        type: 'session_meta',
+        payload: { session_id: 'session-foreign', cwd: 'C:/dev/other-project', git: { commit_hash: head } },
+      }),
+      command('rg foreign-do-not-count src', 0, 'C:/dev/other-project'),
+    ];
+    const currentPath = path.join(sessionsRoot, 'session-current.jsonl');
+    const unlinkedPath = path.join(sessionsRoot, 'session-unlinked.jsonl');
+    const foreignPath = path.join(sessionsRoot, 'session-foreign.jsonl');
+    await writeFile(currentPath, `${currentLines.join('\n')}\n`);
+    await writeFile(unlinkedPath, `${unlinkedLines.join('\n')}\n`);
+    await writeFile(foreignPath, `${foreignLines.join('\n')}\n`);
+
+    const beforeDb = digest(await readFile(dbPath));
+    const beforeSession = digest(await readFile(currentPath));
+    const cases = loadHistoricalWorkCases({
+      dbPath,
+      projectId: 'project-a',
+      currentGitRevision: head,
+      gitRoot: root,
+    });
+    const sessions = await loadHistoricalActionSessions({
+      dbPath,
+      projectId: 'project-a',
+      cases,
+      currentGitRevision: head,
+      gitRoot: root,
+      env: { ...process.env, CODEX_SESSION_ROOT: sessionsRoot },
+    });
+    const afterDb = digest(await readFile(dbPath));
+    const afterSession = digest(await readFile(currentPath));
+
+    assert.equal(beforeDb, afterDb, 'action mining must not mutate the runtime DB');
+    assert.equal(beforeSession, afterSession, 'action mining must not mutate Codex session history');
+    assert.equal(sessions.length, 2, 'foreign project sessions are excluded by persisted project roots');
+
+    const current = sessions.find((item) => item.sessionId === 'session-current')!;
+    const unlinked = sessions.find((item) => item.sessionId === 'session-unlinked')!;
+    assert.equal(current.caseLinkStatus, 'exact');
+    assert.equal(current.linkedCompletionStatus, 'complete');
+    assert.equal(current.generationRelevance, 'current');
+    assert.equal(unlinked.caseLinkStatus, 'unlinked');
+    assert.equal(unlinked.generationRelevance, 'insufficient');
+    assert.equal(current.actionCount, 15);
+    assert.equal(current.commandCount, 13);
+    assert.equal(current.exactDuplicateCommandCount, 1);
+    assert.equal(current.failedActionCount, 1);
+    assert.equal(current.classifiedActionCount, 14);
+    assert.deepEqual(current.categories, {
+      search: { count: 2, failedCount: 0 },
+      read: { count: 1, failedCount: 0 },
+      modify: { count: 2, failedCount: 0 },
+      'focused-verification': { count: 1, failedCount: 0 },
+      'full-verification': { count: 1, failedCount: 0 },
+      'kernel-lifecycle': { count: 2, failedCount: 0 },
+      'git-read': { count: 3, failedCount: 0 },
+      'git-mutation': { count: 1, failedCount: 0 },
+      'environment-setup': { count: 1, failedCount: 0 },
+      unclassified: { count: 1, failedCount: 1 },
+    });
+    assert.equal(JSON.stringify(sessions).includes('needle-do-not-return'), false, 'raw command text must not escape aggregate analysis');
+    assert.equal(JSON.stringify(sessions).includes('foreign-do-not-count'), false);
+    assert.equal(JSON.stringify(sessions).includes('cross-project-do-not-count'), false);
+
+    const analysis = analyzeHistoricalActionHotspots(sessions);
+    assert.equal(analysis.sessionCount, 2);
+    assert.equal(analysis.linkedSessionCount, 1);
+    assert.equal(analysis.currentLinkedSessionCount, 1);
+    assert.equal(analysis.actionCount, 16);
+    assert.equal(analysis.commandCount, 14);
+    assert.equal(analysis.exactDuplicateCommandCount, 1);
+    assert.equal(analysis.productionRecommendation, 'DEFER');
+    assert.equal(analysis.promotionAuthority, false);
+    assert.ok((analysis.classificationCoverage || 0) > 0.9);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
