@@ -95,3 +95,45 @@ Kernel authority의 본질은 아니지만 실행 환경 및 제공자(Provider)
 | :--- | :--- | :--- |
 | `legacy-phase-runner` | legacy-phase-runner-and-harness-adapters | phase/attempt/lease 상태 이원화로 인한 분열 결함. 단일 Step Ledger로 대체됨. |
 | `legacy-harness-adapters` | legacy-phase-runner-and-harness-adapters | 구 하네스 브릿지. 새 계약 및 격리 증거 없는 단순 복원 절대 금지. |
+
+---
+
+## 6. C9 Improvement/Eval Ownership Audit
+
+C10 single-variable replay bridge가 추가된 뒤 실제 import graph와 package/CLI consumer를 다시 확인했다. 이 표는 새로운 capability 분류를 만들지 않고, 기존 자산이 **어디에 속하는지**만 명시한다.
+
+| Asset / surface | Ownership classification | Current consumer / reason | C9 disposition |
+| :--- | :--- | :--- | :--- |
+| `src/host-tooling/kernel-eval/historical-improvement.ts` | active Host/offline eval tooling | current-generation HistoricalWorkCase 및 Knowledge finding 분석 | retain |
+| `historical-actions.ts`, `historical-replans.ts` | active Host/offline eval tooling | 실행 hotspot/replan 진단; production mutation authority 없음 | retain |
+| `historical-replay.ts` | active Host/offline eval tooling | current `CANDIDATE`를 기존 single-variable replay contract에 연결 | retain |
+| `model-prompt-replay.ts` | active Host/eval tooling | ABBA, identity drift, quality → rework → efficiency 판정의 기존 replay contract | retain |
+| follow-up / retrieval / model-routing / sentinel eval | active Host/eval tooling | focused regression/eval suite가 직접 소비 | retain |
+| `src/host-tooling/kernel-public/optimization-cycle.ts` | active optional Host/public validation | unification audit가 optional optimization-cycle 완료 상태를 검사 | retain |
+| `scripts/kernel/optimization-cycle.mjs` | compatibility projection | 위 typed source에서 build가 생성하는 package/runtime projection | retain; source로 취급 금지 |
+| `scripts/kernel/eval/*.js` | compatibility projection | `src/host-tooling/kernel-eval/*.ts`의 generated runtime/package output | retain; source로 취급 금지 |
+| `tools/retro/**` | active advisory production tooling | `moonshot-relay retro` CLI와 retro tests/package가 직접 소비 | retain |
+| `scripts/knowledge-improvement-lifecycle.mjs` | active advisory compatibility validator | harness-memory-promoter skill과 package contract가 직접 사용 | retain until consumer migration |
+| `scripts/awtl-memory-promotion.mjs` 및 `scripts/lib/awtl-*` | active explicit promotion/eval tooling | promotion audit, replay probe/scorecard, package contract가 직접 소비 | retain |
+| `tools/awtl/trace-to-testcase.mjs` | active eval tooling | eval-regression contract와 package materialization이 직접 소비 | retain |
+| `archive/scripts/legacy-phase-adapters/**`의 구 AWTL/phase 구현 | historical/dead asset | 현재 runtime consumer 없음; 비교·교훈 자산으로만 보존 | archive only; 재도입 금지 |
+
+### Authority boundary
+
+위 자산 중 어느 것도 Kernel의 completion, Knowledge persistence, verification 또는 automatic promotion Authority를 새로 소유하지 않는다. 해당 Authority는 기존 CORE capability에 남는다. 특히 retro/historical/replay 결과는 advisory/evidence이며 명시적 review/commit 없이 runtime policy나 canonical Knowledge로 승격되지 않는다.
+
+### 삭제 판정
+
+C9 시점의 실제 local corpus는 `HistoricalWorkCase=74`, `CANDIDATE=0`, `DEFERRED=2`, `INSUFFICIENT=3`이었다. 따라서 C10 consolidated path는 fixture와 fail-closed dogfood는 통과했지만 **실제 candidate replay 성공 사례는 아직 0건**이다.
+
+원 계획의 "새 경로가 실제로 사용된 뒤에만 dead/duplicate path를 제거한다" 조건을 적용하면 이번 C9에서 active/compatibility 자산을 삭제하는 것은 시기상조다. 첫 실제 current-generation `CANDIDATE`가 C10 replay를 통과한 뒤 consumer/import graph를 다시 측정하고, 그때 consumer가 0인 compatibility/advisory 경로만 삭제 후보로 재분류한다.
+
+이 결정은 다음을 추가하지 않는다.
+
+- public Kernel command
+- workflow stage
+- durable table
+- provider fallback
+- scheduler/cache/suppression layer
+- automatic mutation/promotion authority
+- project-specific production heuristic

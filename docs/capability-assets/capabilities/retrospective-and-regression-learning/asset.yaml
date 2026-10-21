@@ -52,11 +52,13 @@
   },
   "recommended_use": [
     "실패 symptom, evidence, root cause와 regression candidate를 수집한다.",
-    "proposal은 review와 명시적 commit 전까지 advisory로 유지한다."
+    "current-generation 반복 문제는 Host/offline historical analysis로 분류하고 지원되는 single-variable candidate만 기존 replay contract로 넘긴다.",
+    "proposal과 replay 판정은 review와 명시적 commit 전까지 advisory로 유지한다."
   ],
   "avoid_use": [
-    "자동 promotion을 completion이나 policy update로 해석하지 않는다.",
-    "민감한 raw trace를 redaction 없이 보존하지 않는다."
+    "retro, historical analysis, replay 결과를 completion이나 Knowledge/runtime promotion authority로 해석하지 않는다.",
+    "민감한 raw trace를 redaction 없이 보존하지 않는다.",
+    "실제 consumer가 남아 있는 legacy-named helper를 이름만 보고 dead asset으로 삭제하지 않는다."
   ],
   "authority": {
     "owns_state": [
@@ -200,16 +202,23 @@
     "external": []
   },
   "current_integration": {
-    "layer": "separate retrospective and improvement plane",
+    "layer": "advisory retro plus Host/offline historical analysis and replay",
     "active": true,
     "paths": [
+      "tools/retro/retro-cli.mjs",
       "scripts/knowledge-improvement-lifecycle.mjs",
-      "tests/retro-collect-contract.test.mjs"
+      "scripts/awtl-memory-promotion.mjs",
+      "src/host-tooling/kernel-eval/historical-improvement.ts",
+      "src/host-tooling/kernel-eval/historical-actions.ts",
+      "src/host-tooling/kernel-eval/historical-replans.ts",
+      "src/host-tooling/kernel-eval/historical-replay.ts",
+      "src/host-tooling/kernel-eval/model-prompt-replay.ts"
     ],
     "entrypoints": [
-      "bin/moon-relay-standalone.mjs"
+      "bin/moonshot-relay.mjs",
+      "tools/retro/retro-cli.mjs"
     ],
-    "notes": "OPTIONAL advisory capability. Explicit review and commit remain required."
+    "notes": "C9 ownership audit: retro/AWTL/knowledge-improvement helpers remain advisory or explicit tools; Historical analyzers and replay are active Host/offline eval tooling; generated scripts/kernel/eval outputs are compatibility projections. None of these owns Kernel completion, Knowledge persistence, or automatic promotion. Deletion is deferred until a real current CANDIDATE completes the consolidated replay path."
   },
   "reintroduction": {
     "recommended_layer": "advisory retrospective and regression proposal surface",
@@ -239,7 +248,9 @@
     "disposition": "retain",
     "rationale": "반복 실패를 잊지 않게 하는 OPTIONAL learning asset이지만 runtime 권위와 분리한다.",
     "follow_up": [
-      "새 candidate type은 promotion authority와 rejection path를 먼저 정의한다."
+      "새 candidate type은 promotion authority와 rejection path를 먼저 정의한다.",
+      "실제 current CANDIDATE replay dogfood 전에는 active/compatibility 자산 삭제를 진행하지 않는다.",
+      "첫 실제 candidate replay 후 consumer/import graph를 다시 측정해 compatibility projection 제거 여부를 판정한다."
     ]
   },
   "subcapabilities": [
@@ -254,15 +265,15 @@
       },
       "implementationRefs": [
         {
-          "path": "scripts/knowledge-improvement-lifecycle.mjs",
+          "path": "tools/retro/retro-cli.mjs",
+          "commit": null
+        },
+        {
+          "path": "tools/retro/daily-retro.mjs",
           "commit": null
         },
         {
           "path": "skills/moonshot-retro/SKILL.md",
-          "commit": null
-        },
-        {
-          "path": "skills/session-logger/SKILL.md",
           "commit": null
         }
       ],
@@ -281,6 +292,14 @@
         "project_knowledge_lifecycle": true
       },
       "implementationRefs": [
+        {
+          "path": "tools/retro/improvement-proposer.mjs",
+          "commit": null
+        },
+        {
+          "path": "scripts/knowledge-improvement-lifecycle.mjs",
+          "commit": null
+        },
         {
           "path": "scripts/awtl-memory-promotion.mjs",
           "commit": null

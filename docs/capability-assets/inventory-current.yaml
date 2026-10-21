@@ -195,10 +195,10 @@ candidateCapabilities:
   - id: retrospective-and-regression-learning
     meta: {domain: KNOWLEDGE, candidateStatus: OPTIONAL, classificationStatus: pending, relevance: {agent_workflow: true, project_knowledge_lifecycle: true}}
     problem: Collect failure and improvement signals without silently promoting them into runtime authority.
-    sourcePaths: [docs/public/roadmaps/daily-retro-harness-loop-2026-07-03/README.md, docs/public/roadmaps/daily-retro-harness-loop-2026-07-03/ADR/ADR-0002-advisory-only-authority.md, tests/retro-collect-contract.test.mjs, tests/retro-improvement-proposer-contract.test.mjs]
+    sourcePaths: [tools/retro/retro-cli.mjs, scripts/knowledge-improvement-lifecycle.mjs, scripts/awtl-memory-promotion.mjs, src/host-tooling/kernel-eval/historical-improvement.ts, src/host-tooling/kernel-eval/historical-actions.ts, src/host-tooling/kernel-eval/historical-replans.ts, src/host-tooling/kernel-eval/historical-replay.ts, src/host-tooling/kernel-eval/model-prompt-replay.ts]
     contractPaths: [schemas/kernel.knowledge-candidate.schema.json, schemas/kernel.knowledge-review-result.schema.json]
-    proofPaths: [tests/retro-cli-contract.test.mjs, tests/retro-collect-contract.test.mjs, tests/retro-no-promotion-authority-contract.test.mjs]
-    currentIntegration: {active: true, layer: separate retrospective and improvement plane, note: explicit review and commit required}
+    proofPaths: [tests/retro-cli-contract.test.mjs, tests/retro-collect-contract.test.mjs, tests/retro-no-promotion-authority-contract.test.mjs, tests/kernel-historical-improvement.test.mjs, tests/kernel-model-prompt-replay.test.mjs]
+    currentIntegration: {active: true, layer: "advisory retro + Host/offline historical analysis/replay", note: "explicit review/commit required; no completion, Knowledge persistence, or automatic promotion authority"}
 
   - id: legacy-phase-runner-and-harness-adapters
     meta: {domain: EXECUTION, candidateStatus: DEPRECATED, classificationStatus: pending, relevance: {agent_workflow: true, project_knowledge_lifecycle: false}}
