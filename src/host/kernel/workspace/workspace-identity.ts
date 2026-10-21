@@ -29,6 +29,22 @@ type ScopeNormalization =
 const sha256 = (value: string | Buffer): string =>
   `sha256:${createHash('sha256').update(value).digest('hex')}`;
 
+export const buildGitWorkspaceIdentity = ({
+  headCommit,
+  headTree,
+  changeEntries,
+}: {
+  headCommit: string;
+  headTree: string;
+  changeEntries: readonly Pick<WorkspaceChangeEntry, 'path' | 'digest'>[];
+}): string => {
+  const entries = changeEntries.map((entry) => JSON.stringify([
+    entry.path,
+    entry.digest,
+  ])).sort();
+  return sha256(JSON.stringify({ headCommit, headTree, entries }));
+};
+
 const runGit = (args: readonly string[], cwd: string): string | null => {
   const result = spawnSync('git', args, {
     cwd,
@@ -294,15 +310,10 @@ const observeGitWorkspace = (
     indexStateKnown: true,
     statusCode: statusByPath.get(relPath) || null,
   }));
-  const entries = changeEntries.map((entry) => JSON.stringify([
-    entry.path,
-    entry.digest,
-  ])).sort();
-
   return {
-    identity: sha256(JSON.stringify({ headCommit, headTree, entries })),
+    identity: buildGitWorkspaceIdentity({ headCommit, headTree, changeEntries }),
     method: 'git',
-    dirtyPathCount: entries.length,
+    dirtyPathCount: changeEntries.length,
     changedPaths,
     changeEntries,
   };

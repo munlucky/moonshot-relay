@@ -32,6 +32,7 @@ import {
   captureModelPromptReplayAttempt,
   type ModelPromptReplayProtocol,
 } from '../src/host-tooling/kernel-eval/model-prompt-replay.js';
+import { buildGitWorkspaceIdentity } from '../src/host/kernel/workspace/workspace-identity.js';
 
 const digest = (value: Buffer): string => createHash('sha256').update(value).digest('hex');
 
@@ -43,6 +44,14 @@ const commit = async (cwd: string, name: string): Promise<string> => {
   git(cwd, 'commit', '-m', name);
   return git(cwd, 'rev-parse', 'HEAD');
 };
+
+const cleanWorkspaceIdentity = (cwd: string, commitSha: string): string => (
+  buildGitWorkspaceIdentity({
+    headCommit: commitSha,
+    headTree: git(cwd, 'show', '-s', '--format=%T', commitSha),
+    changeEntries: [],
+  })
+);
 
 const createFixtureDb = (dbPath: string, revisions: { base: string; seam: string; head: string }) => {
   const db = new DatabaseSync(dbPath);
@@ -59,7 +68,8 @@ const createFixtureDb = (dbPath: string, revisions: { base: string; seam: string
     CREATE TABLE runs (
       run_id TEXT PRIMARY KEY, objective TEXT, status TEXT, state TEXT,
       contract_revision INTEGER, plan_revision INTEGER, mutation_revision INTEGER,
-      source_identity TEXT, current_workspace_identity TEXT, workspace_id TEXT,
+      source_identity TEXT, run_start_workspace_identity TEXT, current_workspace_identity TEXT,
+      baseline_workspace_entries TEXT, workspace_id TEXT,
       project_id TEXT, updated_at TEXT
     );
     CREATE TABLE session_bindings (
@@ -100,7 +110,10 @@ const createFixtureDb = (dbPath: string, revisions: { base: string; seam: string
     '2026-10-01T00:00:00Z', '2026-10-03T00:00:00Z', null, 0,
   );
 
-  const insertRun = db.prepare(`INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+  const insertRun = db.prepare(`INSERT INTO runs(
+    run_id,objective,status,state,contract_revision,plan_revision,mutation_revision,
+    source_identity,current_workspace_identity,workspace_id,project_id,updated_at
+  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
   insertRun.run('run-old-a', 'same objective text', 'completed', 'CLOSE', 1, 1, 0, 'cand-old-a', 'workspace-old-a', 'ws-old', 'project-a', '2026-10-01T00:00:00Z');
   insertRun.run('run-old-b', 'same objective text', 'completed', 'CLOSE', 2, 2, 1, 'cand-old-b', 'workspace-old-b', 'ws-old', 'project-a', '2026-10-02T00:00:00Z');
   insertRun.run('run-current', 'same objective text', 'completed', 'CLOSE', 3, 3, 1, 'cand-current', 'workspace-current', 'ws-current', 'project-a', '2026-10-03T00:00:00Z');
@@ -205,11 +218,51 @@ test('W6: HistoricalWorkCase loader is read-only, deterministic, lineage-safe, a
     assert.equal(current.attributableUsage, null);
     assert.equal(current.generationRelevance, 'current');
     assert.equal(historical.generationRelevance, 'stale');
+    assert.equal(historical.gitRevision, base, 'git closeout remains available when run-start source evidence is absent');
+    assert.equal(current.gitRevision, head);
+    assert.deepEqual(current.identityEvidence.gitRevisions, [head]);
     assert.equal(historical.objectiveDigest, current.objectiveDigest, 'weak objective identity is preserved only as evidence');
     assert.notEqual(historical.caseId, current.caseId, 'weak objective identity cannot merge cases');
 
     assert.equal(classifyGenerationRelevance({ gitRevision: base, currentGitRevision: head, fixingSeamRevision: seam, gitRoot: root }), 'resolved');
     assert.equal(classifyGenerationRelevance({ gitRevision: head, currentGitRevision: head, fixingSeamRevision: seam, gitRoot: root }), 'current');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('W6: run-start workspace identity recovers an exact historical Git revision without new persisted state', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-historical-workspace-'));
+  try {
+    git(root, 'init');
+    git(root, 'config', 'user.email', 'fixture@example.com');
+    git(root, 'config', 'user.name', 'Fixture');
+    const base = await commit(root, 'base');
+    const seam = await commit(root, 'seam');
+    const head = await commit(root, 'head');
+    const dbPath = path.join(root, 'runtime-state.sqlite');
+    createFixtureDb(dbPath, { base, seam, head });
+
+    const db = new DatabaseSync(dbPath);
+    db.prepare(`DELETE FROM git_closeout_receipts WHERE run_id=?`).run('run-current');
+    db.prepare(`UPDATE runs
+      SET run_start_workspace_identity=?, baseline_workspace_entries=?
+      WHERE run_id=?`).run(cleanWorkspaceIdentity(root, head), '[]', 'run-current');
+    db.close();
+
+    const cases = loadHistoricalWorkCases({ dbPath, projectId: 'project-a', currentGitRevision: head, gitRoot: root });
+    const current = cases.find((item) => item.runId === 'run-current')!;
+    assert.equal(current.gitRevision, head);
+    assert.equal(current.generationRelevance, 'current');
+    assert.deepEqual(current.identityEvidence.gitRevisions, [head]);
+
+    const corruptDb = new DatabaseSync(dbPath);
+    corruptDb.prepare(`UPDATE runs SET baseline_workspace_entries=? WHERE run_id=?`).run('{invalid-json', 'run-current');
+    corruptDb.close();
+    const corruptedCases = loadHistoricalWorkCases({ dbPath, projectId: 'project-a', currentGitRevision: head, gitRoot: root });
+    const corruptedCurrent = corruptedCases.find((item) => item.runId === 'run-current')!;
+    assert.equal(corruptedCurrent.gitRevision, null, 'corrupt baseline evidence must not be treated as an empty clean workspace');
+    assert.equal(corruptedCurrent.generationRelevance, 'insufficient');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

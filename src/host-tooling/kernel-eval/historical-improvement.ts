@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { canonicalKnowledgeIdentity } from '../../kernel/knowledge/identity.js';
+import { buildGitWorkspaceIdentity } from '../../host/kernel/workspace/workspace-identity.js';
 import {
   attributeExecutionUsage,
   projectExecutionEvidence,
@@ -113,7 +114,9 @@ interface RunRow extends UnknownRecord {
   plan_revision?: number | null;
   mutation_revision?: number | null;
   source_identity?: string | null;
+  run_start_workspace_identity?: string | null;
   current_workspace_identity?: string | null;
+  baseline_workspace_entries?: string | null;
   workspace_id?: string | null;
   project_id?: string | null;
   updated_at?: string | null;
@@ -179,6 +182,77 @@ const gitAncestor = (gitRoot: string, ancestor: string, descendant: string): boo
     if (status === 1) return false;
     return null;
   }
+};
+
+interface GitCommitTree {
+  commit: string;
+  tree: string;
+}
+
+const gitCommitTrees = (gitRoot: string | null): GitCommitTree[] => {
+  if (!gitRoot) return [];
+  try {
+    const output = execFileSync('git', ['log', '--all', '--format=%H %T'], {
+      cwd: gitRoot,
+      encoding: 'utf8',
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    return String(output)
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const [commit, tree] = line.split(/\s+/u);
+        return commit && tree ? { commit, tree } : null;
+      })
+      .filter((entry): entry is GitCommitTree => entry !== null);
+  } catch {
+    return [];
+  }
+};
+
+const workspaceIdentityChangeEntries = (
+  value: unknown,
+): Array<{ path: string; digest: string }> | null => {
+  if (typeof value !== 'string' || value.length === 0) return null;
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return null;
+    const entries: Array<{ path: string; digest: string }> = [];
+    for (const item of parsed) {
+      const entry = record(item);
+      if (typeof entry.path !== 'string' || typeof entry.digest !== 'string') return null;
+      entries.push({ path: entry.path, digest: entry.digest });
+    }
+    return entries;
+  } catch {
+    return null;
+  }
+};
+
+const recoverGitRevisionFromWorkspaceIdentity = ({
+  run,
+  commits,
+}: {
+  run: RunRow;
+  commits: GitCommitTree[];
+}): string | null => {
+  const workspaceIdentity = text(run.run_start_workspace_identity);
+  if (!workspaceIdentity || commits.length === 0) return null;
+  const changeEntries = workspaceIdentityChangeEntries(run.baseline_workspace_entries);
+  if (!changeEntries) return null;
+  const matches: string[] = [];
+  for (const { commit, tree } of commits) {
+    const candidate = buildGitWorkspaceIdentity({
+      headCommit: commit,
+      headTree: tree,
+      changeEntries,
+    });
+    if (candidate !== workspaceIdentity) continue;
+    matches.push(commit);
+    if (matches.length > 1) return null;
+  }
+  return matches.length === 1 ? matches[0]! : null;
 };
 
 export const classifyGenerationRelevance = ({
@@ -341,12 +415,12 @@ export const loadHistoricalWorkCases = ({
   try {
     const where = projectId ? 'WHERE project_id=?' : '';
     const params = projectId ? [projectId] : [];
-    const runs = select<RunRow>(db, `SELECT run_id,objective,status,state,contract_revision,plan_revision,mutation_revision,source_identity,current_workspace_identity,workspace_id,project_id,updated_at FROM runs ${where} ORDER BY updated_at,run_id`, params);
+    const runs = select<RunRow>(db, `SELECT run_id,objective,status,state,contract_revision,plan_revision,mutation_revision,source_identity,run_start_workspace_identity,current_workspace_identity,baseline_workspace_entries,workspace_id,project_id,updated_at FROM runs ${where} ORDER BY updated_at,run_id`, params);
     if (runs.length === 0) return [];
     const runIds = runs.map((run) => String(run.run_id));
     const inRuns = placeholders(runIds.length);
     const bindings = select(db, `SELECT binding_id,session_id,provider,surface,run_id,project_id,workspace_id,access_mode,status,successor_run_id FROM session_bindings WHERE run_id IN (${inRuns})`, runIds);
-    const attempts = select(db, `SELECT attempt_id,run_id,parent_attempt_id,provenance_kind,actor_session_id,usage_receipt_id,plan_revision,mutation_revision,status,workspace_id,workspace_identity_start,workspace_identity_end,result_commit_sha FROM run_step_attempts WHERE run_id IN (${inRuns}) ORDER BY run_id,started_at,id`, runIds);
+    const attempts = select(db, `SELECT attempt_id,run_id,parent_attempt_id,provenance_kind,actor_session_id,usage_receipt_id,plan_revision,mutation_revision,status,workspace_id,workspace_identity_start,workspace_identity_end FROM run_step_attempts WHERE run_id IN (${inRuns}) ORDER BY run_id,started_at,id`, runIds);
     const verifications = select(db, `SELECT run_id,status,exit_code,evidence_digest,source_identity,verified_source_identity,verified_mutation_revision FROM verifications WHERE run_id IN (${inRuns})`, runIds);
     const contexts = select(db, `SELECT run_id,stage,receipt_json FROM knowledge_context_receipts WHERE run_id IN (${inRuns})`, runIds);
     const candidates = select(db, `SELECT candidate_id,run_id,project_id,proposed_type,status,candidate_json FROM knowledge_candidates WHERE run_id IN (${inRuns})`, runIds);
@@ -358,6 +432,14 @@ export const loadHistoricalWorkCases = ({
     const groups = lineageGroups({ runs, bindings, attempts, gitRows });
     const attemptRunById = new Map(attempts.map((row) => [text(row.attempt_id), text(row.run_id)]));
     const gitByRun = new Map(gitRows.map((row) => [String(row.run_id), text(row.commit_sha)]));
+    const gitCommits = gitCommitTrees(gitRoot);
+    const gitRevisionForRun = (runId: string): string | null => {
+      const run = runMap.get(runId);
+      const workspaceRevision = run
+        ? recoverGitRevisionFromWorkspaceIdentity({ run, commits: gitCommits })
+        : null;
+      return workspaceRevision || gitByRun.get(runId) || null;
+    };
     const completionByRun = new Map(completions.map((row) => [String(row.run_id), text(row.decision)]));
 
     return [...groups.values()].map((lineageRunIds) => {
@@ -418,8 +500,8 @@ export const loadHistoricalWorkCases = ({
       }
       const genericBlockers = candidateRecords.filter(({ body }) => body.signalKind === 'blocker');
       const durableGenericBlockers = genericBlockers.filter(({ row }) => row.proposed_type === 'known_failure_pattern');
-      const gitRevisions = unique(lineageRunIds.map((runId) => gitByRun.get(runId)));
-      const primaryGitRevision = gitByRun.get(String(primary.run_id)) || (gitRevisions.length === 1 ? gitRevisions[0]! : null);
+      const gitRevisions = unique(lineageRunIds.map((runId) => gitRevisionForRun(runId)));
+      const primaryGitRevision = gitRevisionForRun(String(primary.run_id)) || (gitRevisions.length === 1 ? gitRevisions[0]! : null);
       const parentRunIds = unique(groupAttempts.map((attempt) => attemptRunById.get(text(attempt.parent_attempt_id)) || null).filter((runId) => Boolean(runId) && !runSet.has(runId!)));
       const primarySource = text(primary.source_identity);
       const primaryMutation = revision(primary.mutation_revision);
