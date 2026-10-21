@@ -9,11 +9,11 @@
     "estimatedPromptTokens": 3093984
   },
   "allowedDelta": {
-    "files": 230,
-    "nonblankLines": 68077,
-    "utf8Bytes": 2693589,
-    "estimatedPromptTokens": 673397
+    "files": 231,
+    "nonblankLines": 68574,
+    "utf8Bytes": 2717412,
+    "estimatedPromptTokens": 679353
   },
-  "allowedDeltaRationale": "The immutable aca19ec baseline is retained. After the reviewed C7 historical action hotspot mining increment, the measured canonical surface is 2234 files, 339729 nonblank lines, 15020014 UTF-8 bytes and 3755004 estimated prompt tokens. Relative to the reviewed W6 surface of 2233 files, C7 adds one Host/offline read-only implementation source and extends the existing typed historical test and capability mapping; compiler-owned JS/MJS outputs remain excluded. The allowances preserve the previous reviewed headroom exactly: 4 files, 1158 nonblank lines, 49509 UTF-8 bytes and 12377 estimated prompt tokens. This is a bounded review update rather than an automatic ratchet. C7 adds zero public Kernel commands, workflow stages, Authorities, durable tables, schedulers, caches, command suppression, automatic mutation or promotion paths, or Kernel model/project hardcoding. Production optimization remains DEFER because no current-generation linked action session evidence exists.",
+  "allowedDeltaRationale": "The immutable aca19ec baseline is retained. After the reviewed C8 replan cause mining increment, the measured canonical surface is 2235 files, 340226 nonblank lines, 15043837 UTF-8 bytes and 3760960 estimated prompt tokens. Relative to the reviewed C7 surface of 2234 files, C8 adds one Host/offline read-only implementation source and extends the existing typed historical test and capability mapping; compiler-owned JS/MJS outputs remain excluded. The allowances preserve the previous reviewed headroom exactly: 4 files, 1158 nonblank lines, 49509 UTF-8 bytes and 12377 estimated prompt tokens. This is a bounded review update rather than an automatic ratchet. C8 adds zero public Kernel commands, workflow stages, Authorities, durable tables, schedulers, caches, suppression rules, automatic mutation or promotion paths, or Kernel model/project hardcoding. Replan production changes remain DEFER because current-generation classified replan evidence is absent and ambiguous historical evidence remains insufficient.",
   "allowedUnregisteredTests": 0
 }

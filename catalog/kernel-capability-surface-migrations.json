@@ -3213,6 +3213,14 @@
       "classification": "capability",
       "capability": "retrospective-and-regression-learning"
     },
+    "src/host-tooling/kernel-eval/historical-replans.ts": {
+      "classification": "capability",
+      "capability": "retrospective-and-regression-learning"
+    },
+    "scripts/kernel/eval/historical-replans.js": {
+      "classification": "capability",
+      "capability": "retrospective-and-regression-learning"
+    },
     "src/host-tooling/kernel-eval/historical-improvement.ts": {
       "classification": "capability",
       "capability": "retrospective-and-regression-learning"

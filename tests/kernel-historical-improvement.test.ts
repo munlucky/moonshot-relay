@@ -16,6 +16,12 @@ import {
   classifyGenerationRelevance,
   loadHistoricalWorkCases,
 } from '../src/host-tooling/kernel-eval/historical-improvement.js';
+import {
+  analyzeHistoricalReplanCauses,
+  classifyHistoricalReplanEvidence,
+  loadHistoricalReplanEvents,
+  type HistoricalReplanEvent,
+} from '../src/host-tooling/kernel-eval/historical-replans.js';
 
 const digest = (value: Buffer): string => createHash('sha256').update(value).digest('hex');
 
@@ -450,4 +456,145 @@ test('C7: action hotspot mining is read-only, exact-linked, redacted to aggregat
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('C8: replan cause classifier uses only explicit structured evidence and preserves ambiguity', () => {
+  assert.deepEqual(classifyHistoricalReplanEvidence({ contractRevised: true }), {
+    cause: 'requirement-correction',
+    candidateCauses: ['requirement-correction'],
+    evidenceKinds: ['contract-revised'],
+    evidenceStatus: 'classified',
+  });
+  assert.equal(classifyHistoricalReplanEvidence({ failureCategories: ['provider/infrastructure'] }).cause, 'environment-failure');
+  assert.equal(classifyHistoricalReplanEvidence({ failureCategories: ['proof'] }).cause, 'verification-failure');
+  assert.equal(classifyHistoricalReplanEvidence({ failureCategories: ['delivery_workspace_drift'] }).cause, 'workspace/source-drift');
+  assert.equal(classifyHistoricalReplanEvidence({ routeReasonCodes: ['PLAN_INVALID_REPLAN'] }).cause, 'contract-repair');
+  assert.equal(classifyHistoricalReplanEvidence({
+    reviewFindings: [{ category: 'architecture', requiredAction: 'replan', summary: 'raw summary must not drive classification' }],
+  }).cause, 'contract-repair');
+  assert.equal(classifyHistoricalReplanEvidence({ operatorScopeChange: true }).cause, 'operator-scope-change');
+
+  const conflict = classifyHistoricalReplanEvidence({
+    failureCategories: ['provider/infrastructure'],
+    verificationFailed: true,
+  });
+  assert.equal(conflict.cause, 'insufficient');
+  assert.equal(conflict.evidenceStatus, 'conflicting');
+  assert.deepEqual(conflict.candidateCauses, ['environment-failure', 'verification-failure']);
+  assert.ok(conflict.evidenceKinds.includes('conflicting-evidence'));
+
+  const missing = classifyHistoricalReplanEvidence({});
+  assert.equal(missing.cause, 'insufficient');
+  assert.equal(missing.evidenceStatus, 'missing');
+  assert.deepEqual(missing.evidenceKinds, ['no-causal-evidence']);
+
+  const missingBoundary = classifyHistoricalReplanEvidence({ contractRevised: true, boundaryAvailable: false });
+  assert.equal(missingBoundary.cause, 'insufficient');
+  assert.deepEqual(missingBoundary.evidenceKinds, ['missing-plan-boundary']);
+});
+
+test('C8: replan mining reconstructs revision boundaries read-only and emits only causal labels', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-historical-replans-'));
+  try {
+    const dbPath = path.join(root, 'runtime-state.sqlite');
+    const db = new DatabaseSync(dbPath);
+    db.exec(`
+      CREATE TABLE runs (
+        run_id TEXT PRIMARY KEY, project_id TEXT, replan_count INTEGER,
+        plan_revision INTEGER, updated_at TEXT
+      );
+      CREATE TABLE run_steps (
+        run_id TEXT, plan_revision INTEGER, created_at TEXT
+      );
+      CREATE TABLE run_step_attempts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, plan_revision INTEGER,
+        failure_category TEXT, started_at TEXT
+      );
+      CREATE TABLE model_route_decisions (
+        run_id TEXT, plan_revision INTEGER, reason_codes_json TEXT, created_at TEXT
+      );
+      CREATE TABLE review_receipts (
+        run_id TEXT, plan_revision INTEGER, findings_json TEXT, created_at TEXT
+      );
+      CREATE TABLE verifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, status TEXT,
+        exit_code INTEGER, observed_at TEXT
+      );
+      CREATE TABLE run_journal (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT, kind TEXT, created_at TEXT
+      );
+    `);
+    db.prepare('INSERT INTO runs VALUES (?,?,?,?,?)').run(
+      'run-sensitive-id', 'project-a', 3, 4, '2026-10-01T04:00:00Z',
+    );
+    const step = db.prepare('INSERT INTO run_steps VALUES (?,?,?)');
+    step.run('run-sensitive-id', 1, '2026-10-01T00:00:00Z');
+    step.run('run-sensitive-id', 2, '2026-10-01T01:00:00Z');
+    step.run('run-sensitive-id', 3, '2026-10-01T02:00:00Z');
+    step.run('run-sensitive-id', 4, '2026-10-01T03:00:00Z');
+    db.prepare('INSERT INTO run_step_attempts(run_id,plan_revision,failure_category,started_at) VALUES (?,?,?,?)').run(
+      'run-sensitive-id', 1, 'proof', '2026-10-01T00:30:00Z',
+    );
+    db.prepare('INSERT INTO verifications(run_id,status,exit_code,observed_at) VALUES (?,?,?,?)').run(
+      'run-sensitive-id', 'failed', 1, '2026-10-01T01:00:00Z',
+    );
+    db.prepare('INSERT INTO run_journal(run_id,kind,created_at) VALUES (?,?,?)').run(
+      'run-sensitive-id', 'contract-revised', '2026-10-01T01:30:00Z',
+    );
+    db.prepare('INSERT INTO run_step_attempts(run_id,plan_revision,failure_category,started_at) VALUES (?,?,?,?)').run(
+      'run-sensitive-id', 3, 'provider/infrastructure', '2026-10-01T02:30:00Z',
+    );
+    db.prepare('INSERT INTO verifications(run_id,status,exit_code,observed_at) VALUES (?,?,?,?)').run(
+      'run-sensitive-id', 'failed', 1, '2026-10-01T02:45:00Z',
+    );
+    db.close();
+
+    const beforeDb = digest(await readFile(dbPath));
+    const events = loadHistoricalReplanEvents({ dbPath, projectId: 'project-a' });
+    const afterDb = digest(await readFile(dbPath));
+
+    assert.equal(beforeDb, afterDb, 'replan mining must not mutate the runtime DB');
+    assert.equal(events.length, 3);
+    assert.equal(events.find((event) => event.targetPlanRevision === 2)?.cause, 'verification-failure');
+    assert.equal(events.find((event) => event.targetPlanRevision === 3)?.cause, 'requirement-correction');
+    const conflicting = events.find((event) => event.targetPlanRevision === 4)!;
+    assert.equal(conflicting.cause, 'insufficient');
+    assert.equal(conflicting.evidenceStatus, 'conflicting');
+    assert.ok(conflicting.evidenceKinds.includes('attempt-environment'));
+    assert.ok(conflicting.evidenceKinds.includes('verification-failed'));
+    assert.equal(events.every((event) => event.promotionAuthority === false), true);
+    assert.equal(JSON.stringify(events).includes('run-sensitive-id'), false, 'raw run identity must not escape replan analysis');
+    assert.equal(JSON.stringify(events).includes('provider/infrastructure'), false, 'raw failure categories must not escape replan analysis');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('C8: repeated current-generation causes stay diagnostic and never auto-promote', () => {
+  const event = (eventId: string, cause: HistoricalReplanEvent['cause'], generationRelevance: HistoricalReplanEvent['generationRelevance']): HistoricalReplanEvent => ({
+    schemaVersion: 'kernel-historical-replan-event.v1',
+    eventId,
+    caseId: 'history-current',
+    targetPlanRevision: Number(eventId.replace(/\D/gu, '')) + 1,
+    cause,
+    evidenceStatus: cause === 'insufficient' ? 'missing' : 'classified',
+    evidenceKinds: cause === 'insufficient' ? ['no-causal-evidence'] : ['fixture-evidence'],
+    generationRelevance,
+    completionStatus: 'complete',
+    promotionAuthority: false,
+  });
+  const analysis = analyzeHistoricalReplanCauses([
+    event('e1', 'verification-failure', 'current'),
+    event('e2', 'verification-failure', 'current'),
+    event('e3', 'requirement-correction', 'current'),
+    event('e4', 'verification-failure', 'stale'),
+    event('e5', 'insufficient', 'current'),
+  ]);
+
+  assert.equal(analysis.eventCount, 5);
+  assert.equal(analysis.classifiedEventCount, 4);
+  assert.equal(analysis.currentGenerationEventCount, 4);
+  assert.deepEqual(analysis.repeatedCurrentCauses, ['verification-failure']);
+  assert.equal(analysis.productionRecommendation, 'DEFER');
+  assert.equal(analysis.promotionAuthority, false);
 });
