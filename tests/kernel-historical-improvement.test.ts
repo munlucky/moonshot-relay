@@ -15,6 +15,8 @@ import {
   analyzeHistoricalKnowledgeSupply,
   classifyGenerationRelevance,
   loadHistoricalWorkCases,
+  type HistoricalKnowledgeAnalysis,
+  type HistoricalWorkCase,
 } from '../src/host-tooling/kernel-eval/historical-improvement.js';
 import {
   analyzeHistoricalReplanCauses,
@@ -22,6 +24,14 @@ import {
   loadHistoricalReplanEvents,
   type HistoricalReplanEvent,
 } from '../src/host-tooling/kernel-eval/historical-replans.js';
+import {
+  buildHistoricalReplayQueue,
+  compareHistoricalReplayCandidate,
+} from '../src/host-tooling/kernel-eval/historical-replay.js';
+import {
+  captureModelPromptReplayAttempt,
+  type ModelPromptReplayProtocol,
+} from '../src/host-tooling/kernel-eval/model-prompt-replay.js';
 
 const digest = (value: Buffer): string => createHash('sha256').update(value).digest('hex');
 
@@ -597,4 +607,244 @@ test('C8: repeated current-generation causes stay diagnostic and never auto-prom
   assert.deepEqual(analysis.repeatedCurrentCauses, ['verification-failure']);
   assert.equal(analysis.productionRecommendation, 'DEFER');
   assert.equal(analysis.promotionAuthority, false);
+});
+
+test('C10: only current supported historical candidates enter the single-variable replay queue', () => {
+  const head = git(process.cwd(), 'rev-parse', 'HEAD');
+  const currentCase: HistoricalWorkCase = {
+    schemaVersion: 'kernel-historical-work-case.v1',
+    caseId: 'history-current',
+    runId: 'run-current',
+    lineageRunIds: ['run-current'],
+    projectId: 'project-a',
+    explicitSessionBinding: 'session-current',
+    sessionBindingStatus: 'explicit',
+    provenanceKind: 'owner-session',
+    contractRevision: 1,
+    planRevision: 1,
+    mutationRevision: 1,
+    observedSourceIdentity: 'source-current',
+    currentSourceIdentity: 'source-current',
+    workspaceIdentity: 'workspace-current',
+    verificationSummary: { total: 1, passed: 1, failed: 0, currentPassed: 1 },
+    knowledgeContextSummary: {
+      receiptCount: 1,
+      selectedCount: 2,
+      emptySelectionCount: 0,
+      duplicateSelectedCount: 1,
+      staleCount: 0,
+      deepVerifyCount: 0,
+    },
+    knowledgeObservationPromotionSummary: {
+      candidateCount: 1,
+      verifiedCount: 1,
+      rejectedCount: 0,
+      explicitRejectedCount: 0,
+      explicitRejectionReasons: {},
+      genericBlockerCount: 0,
+      durableGenericBlockerCount: 0,
+    },
+    usageReceiptPresence: true,
+    attributableUsage: { inputTokens: 10, cachedInputTokens: 8, outputTokens: 2 },
+    completionStatus: 'complete',
+    gitRevision: head,
+    objectiveDigest: 'sha256:' + 'a'.repeat(64),
+    generationRelevance: 'current',
+    identityEvidence: {
+      successorRunIds: [],
+      attemptParentRunIds: [],
+      workspaceIds: ['workspace-current'],
+      sourceIdentities: ['source-current'],
+      gitRevisions: [head],
+    },
+    promotionAuthority: false,
+  };
+  const analysis: HistoricalKnowledgeAnalysis = {
+    schemaVersion: 'kernel-historical-knowledge-analysis.v1',
+    projectId: 'project-a',
+    caseCount: 1,
+    metrics: {
+      duplicateSelectedCount: 1,
+      selectedCount: 2,
+      stageEmptyCount: 1,
+      contextReceiptCount: 1,
+      staleCount: 0,
+      deepVerifyCount: 0,
+      explicitRejectedCount: 1,
+      genericBlockerCount: 0,
+      durableGenericBlockerCount: 0,
+    },
+    findings: [
+      {
+        id: 'knowledge-duplicate-context',
+        status: 'CANDIDATE',
+        count: 1,
+        denominator: 2,
+        ratio: 0.5,
+        fixingSeamRevision: null,
+        currentComparableEvidenceCount: 1,
+        evidenceRunIds: ['run-current'],
+        reason: 'fixture current duplicate',
+        promotionAuthority: false,
+      },
+      {
+        id: 'knowledge-explicit-rejection',
+        status: 'CANDIDATE',
+        count: 1,
+        denominator: 1,
+        ratio: 1,
+        fixingSeamRevision: null,
+        currentComparableEvidenceCount: 1,
+        evidenceRunIds: ['run-current'],
+        reason: 'fixture unsupported seam',
+        promotionAuthority: false,
+      },
+      {
+        id: 'knowledge-stage-empty',
+        status: 'DEFERRED',
+        count: 1,
+        denominator: 1,
+        ratio: 1,
+        fixingSeamRevision: null,
+        currentComparableEvidenceCount: 0,
+        evidenceRunIds: ['run-current'],
+        reason: 'fixture deferred',
+        promotionAuthority: false,
+      },
+    ],
+    promotionAuthority: false,
+  };
+
+  const queue = buildHistoricalReplayQueue({
+    analysis,
+    cases: [currentCase],
+    currentGitRevision: head,
+    gitRoot: process.cwd(),
+  });
+
+  assert.equal(queue.candidates.length, 1);
+  assert.equal(queue.blocked.length, 2);
+  const candidate = queue.candidates[0]!;
+  assert.equal(candidate.findingId, 'knowledge-duplicate-context');
+  assert.equal(candidate.seam, 'knowledge-dedupe');
+  assert.deepEqual(candidate.caseIds, ['history-current']);
+  assert.deepEqual(candidate.allowedDifferences, ['providerMessageDigest']);
+  assert.equal(candidate.singleVariable, true);
+  assert.deepEqual(candidate.decisionOrder, ['quality', 'rework', 'efficiency']);
+  assert.equal(candidate.productionMutationAllowed, false);
+  assert.equal(candidate.promotionAuthority, false);
+  assert.equal(queue.productionMutationAllowed, false);
+  assert.equal(queue.promotionAuthority, false);
+  assert.deepEqual(
+    queue.blocked.map((item) => [item.findingId, item.reason]),
+    [
+      ['knowledge-explicit-rejection', 'unsupported-replay-seam'],
+      ['knowledge-stage-empty', 'finding-not-candidate'],
+    ],
+  );
+  assert.equal(JSON.stringify(candidate).includes('run-current'), false, 'raw historical run ids must not escape the replay candidate');
+});
+
+test('C10: historical replay delegates quality-rework-efficiency scoring to the existing replay contract', () => {
+  const candidate = {
+    schemaVersion: 'kernel-historical-replay-candidate.v1' as const,
+    candidateId: 'historical-replay-fixture',
+    findingId: 'knowledge-duplicate-context' as const,
+    seam: 'knowledge-dedupe' as const,
+    caseIds: ['history-current'],
+    allowedDifferences: ['providerMessageDigest'] as const,
+    currentComparableEvidenceCount: 1,
+    singleVariable: true as const,
+    decisionOrder: ['quality', 'rework', 'efficiency'] as const,
+    productionMutationAllowed: false as const,
+    promotionAuthority: false as const,
+  };
+  const protocol: ModelPromptReplayProtocol = {
+    execution: {
+      runsPerArmPerCase: 2,
+      armOrder: ['baseline', 'candidate', 'candidate', 'baseline'],
+      maxRetriesPerRun: 1,
+      includeIncompleteRuns: true,
+      maxProviderCallsPerCase: 8,
+    },
+    gates: {
+      criticalAuthorityViolationMax: 0,
+      efficiencyImprovement: {
+        anyOf: [{ metric: 'unnecessaryActionCount', absoluteDecreaseAtLeast: 1 }],
+      },
+    },
+    cases: [{ id: 'history-current' }],
+  };
+  const evaluation = (candidateArm: boolean, quality = true) => ({
+    taskSuccess: quality,
+    acceptanceSatisfied: quality,
+    criticalAuthorityViolationCount: 0,
+    scopeViolationCount: 0,
+    hardcodedSolutionCount: 0,
+    fallbackAbstractionGrowthCount: 0,
+    regressionCount: 0,
+    reworkCount: 0,
+    unnecessaryToolCalls: candidateArm ? 0 : 1,
+    unnecessarySubagentCalls: 0,
+    unnecessaryClarificationBeforeAction: 0,
+    verificationDuplicationCount: 0,
+  });
+  const receipt = () => ({
+    hostSurface: 'codex',
+    requestedModel: 'gpt-5.6-luna',
+    resolvedModel: 'gpt-5.6-luna',
+    observedModel: 'gpt-5.6-luna',
+    requestedEffort: 'high',
+    resolvedEffort: 'high',
+    observedEffort: 'high',
+    executionProfileRevision: 'host-execution-profile.v1:sha256:' + 'a'.repeat(64),
+    promptPrefixDigest: 'sha256:' + 'b'.repeat(64),
+    enforcementStatus: 'enforced',
+    inputTokens: 100,
+    outputTokens: 20,
+    wallClockMs: 1000,
+  });
+  const attempts = ({ missingCandidateDigest = false, quality = true } = {}) => {
+    const repetitions = { baseline: 0, candidate: 0 };
+    return protocol.execution.armOrder.map((arm, order) => {
+      repetitions[arm] += 1;
+      const candidateArm = arm === 'candidate';
+      return captureModelPromptReplayAttempt({
+        caseId: 'history-current',
+        arm,
+        order,
+        repetition: repetitions[arm],
+        hostResult: {
+          receipt: receipt(),
+          promptMeasurement: candidateArm && missingCandidateDigest
+            ? {}
+            : { providerMessageDigest: 'sha256:' + (candidateArm ? '2' : '1').repeat(64) },
+        },
+        evaluation: evaluation(candidateArm, candidateArm ? quality : true),
+      });
+    });
+  };
+
+  const promoted = compareHistoricalReplayCandidate({ candidate: { ...candidate, allowedDifferences: [...candidate.allowedDifferences] }, protocol, attempts: attempts() });
+  assert.equal(promoted.decision, 'PROMOTE');
+  assert.equal(promoted.replay.status, 'eligible');
+  assert.equal(promoted.productionMutationAllowed, false);
+  assert.equal(promoted.promotionAuthority, false);
+
+  const insufficient = compareHistoricalReplayCandidate({ candidate: { ...candidate, allowedDifferences: [...candidate.allowedDifferences] }, protocol, attempts: attempts({ missingCandidateDigest: true }) });
+  assert.equal(insufficient.decision, 'INSUFFICIENT_EVIDENCE');
+  assert.equal(insufficient.replay.status, 'not-ready');
+
+  const keepBaseline = compareHistoricalReplayCandidate({ candidate: { ...candidate, allowedDifferences: [...candidate.allowedDifferences] }, protocol, attempts: attempts({ quality: false }) });
+  assert.equal(keepBaseline.decision, 'KEEP_BASELINE');
+  assert.equal(keepBaseline.replay.status, 'rejected-quality');
+
+  assert.throws(
+    () => compareHistoricalReplayCandidate({
+      candidate: { ...candidate, allowedDifferences: [...candidate.allowedDifferences] },
+      protocol: { ...protocol, cases: [{ id: 'unrelated-case' }] },
+      attempts: attempts(),
+    }),
+    /protocol cases must exactly match the candidate cases/,
+  );
 });

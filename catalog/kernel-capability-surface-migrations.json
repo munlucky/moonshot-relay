@@ -3229,6 +3229,14 @@
       "classification": "capability",
       "capability": "retrospective-and-regression-learning"
     },
+    "src/host-tooling/kernel-eval/historical-replay.ts": {
+      "classification": "capability",
+      "capability": "retrospective-and-regression-learning"
+    },
+    "scripts/kernel/eval/historical-replay.js": {
+      "classification": "capability",
+      "capability": "retrospective-and-regression-learning"
+    },
     "src/kernel/knowledge/identity.ts": {
       "classification": "capability",
       "capability": "project-identity-and-knowledge-lifecycle"

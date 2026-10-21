@@ -9,11 +9,11 @@
     "estimatedPromptTokens": 3093984
   },
   "allowedDelta": {
-    "files": 231,
-    "nonblankLines": 68574,
-    "utf8Bytes": 2717412,
-    "estimatedPromptTokens": 679353
+    "files": 232,
+    "nonblankLines": 68998,
+    "utf8Bytes": 2733724,
+    "estimatedPromptTokens": 683431
   },
-  "allowedDeltaRationale": "The immutable aca19ec baseline is retained. After the reviewed C8 replan cause mining increment, the measured canonical surface is 2235 files, 340226 nonblank lines, 15043837 UTF-8 bytes and 3760960 estimated prompt tokens. Relative to the reviewed C7 surface of 2234 files, C8 adds one Host/offline read-only implementation source and extends the existing typed historical test and capability mapping; compiler-owned JS/MJS outputs remain excluded. The allowances preserve the previous reviewed headroom exactly: 4 files, 1158 nonblank lines, 49509 UTF-8 bytes and 12377 estimated prompt tokens. This is a bounded review update rather than an automatic ratchet. C8 adds zero public Kernel commands, workflow stages, Authorities, durable tables, schedulers, caches, suppression rules, automatic mutation or promotion paths, or Kernel model/project hardcoding. Replan production changes remain DEFER because current-generation classified replan evidence is absent and ambiguous historical evidence remains insufficient.",
+  "allowedDeltaRationale": "The immutable aca19ec baseline is retained. After the reviewed C10 historical replay bridge increment, the measured canonical surface is 2236 files, 340650 nonblank lines, 15060149 UTF-8 bytes and 3765038 estimated prompt tokens. Relative to the reviewed C8 surface of 2235 files, C10 adds one Host/offline bridge source, exposes the existing replay protocol types without changing replay semantics, and extends the existing typed historical test and capability mapping; compiler-owned JS/MJS outputs remain excluded. The allowances preserve the previous reviewed headroom exactly: 4 files, 1158 nonblank lines, 49509 UTF-8 bytes and 12377 estimated prompt tokens. This is a bounded review update rather than an automatic ratchet. C10 adds zero public Kernel commands, workflow stages, Authorities, durable tables, schedulers, caches, suppression rules, provider fallbacks, automatic mutation or automatic promotion paths, or Kernel model/project hardcoding. Only Historical findings classified as current CANDIDATE and mapped to a supported single-variable seam can enter the existing replay contract; the current corpus produces an empty replay queue and therefore performs no provider replay or production mutation.",
   "allowedUnregisteredTests": 0
 }

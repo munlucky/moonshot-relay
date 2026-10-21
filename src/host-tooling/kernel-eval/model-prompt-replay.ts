@@ -16,7 +16,7 @@ import {
 type RecordLike = Record<string, unknown>;
 type ReplayArm = 'baseline' | 'candidate';
 type ReplayAttemptStatus = 'completed' | 'failed' | 'incomplete';
-type AllowedDifference = 'model' | 'effort' | 'promptPrefixDigest' | 'providerMessageDigest';
+export type ModelPromptReplayAllowedDifference = 'model' | 'effort' | 'promptPrefixDigest' | 'providerMessageDigest';
 type DispatchInput = Parameters<typeof dispatchKernelTurn>[0];
 
 export interface ModelPromptReplayEvaluation {
@@ -46,7 +46,7 @@ export interface ModelPromptReplayAttempt {
   evaluation: ModelPromptReplayEvaluation;
 }
 
-interface ReplayProtocol {
+export interface ModelPromptReplayProtocol {
   execution: {
     runsPerArmPerCase: number;
     armOrder: ReplayArm[];
@@ -256,7 +256,7 @@ const identity = (attempt: ModelPromptReplayAttempt) => {
 
 const readinessIssue = (
   attempt: ModelPromptReplayAttempt,
-  requiredDifferences: Set<AllowedDifference>,
+  requiredDifferences: Set<ModelPromptReplayAllowedDifference>,
 ): string | null => {
   if (!attempt.receipt) return 'host-receipt-missing';
   const value = identity(attempt);
@@ -278,7 +278,7 @@ const scheduledKey = (attempt: Pick<
   'caseId' | 'order' | 'arm' | 'repetition'
 >): string => `${attempt.caseId}:${attempt.order}:${attempt.arm}:${attempt.repetition}`;
 
-const expectedKeys = (protocol: ReplayProtocol): string[] => protocol.cases.flatMap(testCase => {
+const expectedKeys = (protocol: ModelPromptReplayProtocol): string[] => protocol.cases.flatMap(testCase => {
   const repetition: Record<ReplayArm, number> = { baseline: 0, candidate: 0 };
   return protocol.execution.armOrder.map((arm, order) => {
     repetition[arm] += 1;
@@ -287,7 +287,7 @@ const expectedKeys = (protocol: ReplayProtocol): string[] => protocol.cases.flat
 });
 
 const coverageIssues = (
-  protocol: ReplayProtocol,
+  protocol: ModelPromptReplayProtocol,
   attempts: ModelPromptReplayAttempt[],
 ): string[] => {
   const issues: string[] = [];
@@ -343,7 +343,7 @@ const sameIdentity = (left: ReturnType<typeof identity>, right: ReturnType<typeo
 
 const driftIssues = (
   attempts: ModelPromptReplayAttempt[],
-  allowed: Set<AllowedDifference>,
+  allowed: Set<ModelPromptReplayAllowedDifference>,
 ): string[] => {
   const issues: string[] = [];
   for (const caseId of new Set(attempts.map(attempt => attempt.caseId))) {
@@ -437,9 +437,9 @@ export const compareModelPromptReplay = ({
   attempts,
   experiment = {},
 }: {
-  protocol: ReplayProtocol;
+  protocol: ModelPromptReplayProtocol;
   attempts: ModelPromptReplayAttempt[];
-  experiment?: { allowedDifferences?: AllowedDifference[] };
+  experiment?: { allowedDifferences?: ModelPromptReplayAllowedDifference[] };
 }) => {
   const issues: string[] = [];
   const allowedDifferences = new Set(experiment.allowedDifferences || []);
