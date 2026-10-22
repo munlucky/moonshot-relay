@@ -231,6 +231,51 @@ test('W6: HistoricalWorkCase loader is read-only, deterministic, lineage-safe, a
   }
 });
 
+test('W6: stage-empty diagnostics count all usable context categories', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-historical-context-categories-'));
+  try {
+    git(root, 'init');
+    git(root, 'config', 'user.email', 'fixture@example.com');
+    git(root, 'config', 'user.name', 'Fixture');
+    const base = await commit(root, 'base');
+    const seam = await commit(root, 'seam');
+    const head = await commit(root, 'head');
+    const dbPath = path.join(root, 'runtime-state.sqlite');
+    createFixtureDb(dbPath, { base, seam, head });
+
+    const db = new DatabaseSync(dbPath);
+    db.prepare(`INSERT INTO knowledge_context_receipts VALUES (?,?,?)`).run(
+      'run-current',
+      'FRAME',
+      JSON.stringify({
+        status: 'ready',
+        policyAnchors: [],
+        semanticFacts: [],
+        graphSynopsis: [],
+        ontologyConstraints: [{ id: 'constraint-current', type: 'ontology_constraint' }],
+        staleOrUnavailable: [],
+      }),
+    );
+    db.close();
+
+    const cases = loadHistoricalWorkCases({
+      dbPath,
+      projectId: 'project-a',
+      currentGitRevision: head,
+      gitRoot: root,
+    });
+    const current = cases.find((item) => item.runId === 'run-current')!;
+    assert.equal(current.knowledgeContextSummary.receiptCount, 2);
+    assert.equal(
+      current.knowledgeContextSummary.emptySelectionCount,
+      0,
+      'ontology-only context remains populated even when semanticFacts is empty',
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('W6: run-start workspace identity recovers an exact historical Git revision without new persisted state', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-historical-workspace-'));
   try {

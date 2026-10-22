@@ -396,6 +396,13 @@ const summedUsage = (rows: ReturnType<typeof attributeExecutionUsage>) => {
   })) as { inputTokens: number | null; cachedInputTokens: number | null; outputTokens: number | null };
 };
 
+const usableContextRecordCount = (receiptJson: UnknownRecord): number => (
+  array(receiptJson.policyAnchors).length
+  + array(receiptJson.semanticFacts).length
+  + array(receiptJson.graphSynopsis).length
+  + array(receiptJson.ontologyConstraints).length
+);
+
 const selectedDuplicateCount = (receiptJson: UnknownRecord): number => {
   const selected = array(receiptJson.semanticFacts).map(record);
   const identities = selected.map((entry) => canonicalKnowledgeIdentity({
@@ -545,7 +552,7 @@ export const loadHistoricalWorkCases = ({
         knowledgeContextSummary: {
           receiptCount: groupContexts.length,
           selectedCount: contextRecords.reduce((sum, body) => sum + array(body.semanticFacts).length, 0),
-          emptySelectionCount: contextRecords.filter((body) => array(body.semanticFacts).length === 0).length,
+          emptySelectionCount: contextRecords.filter((body) => usableContextRecordCount(body) === 0).length,
           duplicateSelectedCount: contextRecords.reduce((sum, body) => sum + selectedDuplicateCount(body), 0),
           staleCount: contextRecords.reduce((sum, body) => sum + array(body.staleOrUnavailable).filter((entry) => record(entry).reason === 'freshness_stale').length, 0),
           deepVerifyCount: contextRecords.reduce((sum, body) => sum + array(body.staleOrUnavailable).filter((entry) => record(entry).reason === 'freshness_needs_deep_verify').length, 0),
