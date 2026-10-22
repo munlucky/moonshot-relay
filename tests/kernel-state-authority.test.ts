@@ -31,6 +31,32 @@ test('latest scoped Run discovery does not deserialize older incompatible histor
   }
 });
 
+test('Run start Git commit provenance validates and persists independently from workspace identity', async () => {
+  const h = await mkdtemp(path.join(os.tmpdir(), 'krn-run-start-git-'));
+  const s = await openKernelStateStore({ runtimeHome: h });
+  try {
+    const runStartGitCommitSha = '0123456789abcdef0123456789abcdef01234567';
+    const run = s.createRun({
+      runId: 'run-start-git',
+      objective: 'preserve exact Git source provenance',
+      sourceIdentity: 'source-run-start-git',
+      runStartGitCommitSha,
+    });
+    assert.equal(run.runStartGitCommitSha, runStartGitCommitSha);
+    assert.throws(
+      () => s.createRun({
+        runId: 'run-start-git-invalid',
+        objective: 'reject invalid Git provenance',
+        sourceIdentity: 'source-run-start-git-invalid',
+        runStartGitCommitSha: 'HEAD',
+      }),
+      /runStartGitCommitSha must be a full Git commit SHA/,
+    );
+  } finally {
+    s.close();
+  }
+});
+
 test('natural PROVE -> verification -> CLOSE workflow results in accepted completion', async () => {
   const h = await mkdtemp(path.join(os.tmpdir(), 'krn-state-'));
   const s = await openKernelStateStore({ runtimeHome: h, relayHome: path.join(h, '..', 'relay') });

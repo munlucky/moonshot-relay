@@ -68,7 +68,7 @@ const createFixtureDb = (dbPath: string, revisions: { base: string; seam: string
     CREATE TABLE runs (
       run_id TEXT PRIMARY KEY, objective TEXT, status TEXT, state TEXT,
       contract_revision INTEGER, plan_revision INTEGER, mutation_revision INTEGER,
-      source_identity TEXT, run_start_workspace_identity TEXT, current_workspace_identity TEXT,
+      source_identity TEXT, run_start_git_commit_sha TEXT, run_start_workspace_identity TEXT, current_workspace_identity TEXT,
       baseline_workspace_entries TEXT, workspace_id TEXT,
       project_id TEXT, updated_at TEXT
     );
@@ -263,6 +263,34 @@ test('W6: run-start workspace identity recovers an exact historical Git revision
     const corruptedCurrent = corruptedCases.find((item) => item.runId === 'run-current')!;
     assert.equal(corruptedCurrent.gitRevision, null, 'corrupt baseline evidence must not be treated as an empty clean workspace');
     assert.equal(corruptedCurrent.generationRelevance, 'insufficient');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('W6: explicit run-start Git commit provenance takes precedence over inferred and closeout revisions', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-historical-run-start-git-'));
+  try {
+    git(root, 'init');
+    git(root, 'config', 'user.email', 'fixture@example.com');
+    git(root, 'config', 'user.name', 'Fixture');
+    const base = await commit(root, 'base');
+    const seam = await commit(root, 'seam');
+    const head = await commit(root, 'head');
+    const dbPath = path.join(root, 'runtime-state.sqlite');
+    createFixtureDb(dbPath, { base, seam, head });
+
+    const db = new DatabaseSync(dbPath);
+    db.prepare(`UPDATE runs
+      SET run_start_git_commit_sha=?, run_start_workspace_identity=?, baseline_workspace_entries=?
+      WHERE run_id=?`).run(seam, cleanWorkspaceIdentity(root, head), '[]', 'run-current');
+    db.close();
+
+    const cases = loadHistoricalWorkCases({ dbPath, projectId: 'project-a', currentGitRevision: head, gitRoot: root });
+    const current = cases.find((item) => item.runId === 'run-current')!;
+    assert.equal(current.gitRevision, seam);
+    assert.equal(current.generationRelevance, 'stale');
+    assert.deepEqual(current.identityEvidence.gitRevisions, [seam]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

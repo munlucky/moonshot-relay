@@ -59,6 +59,7 @@ export interface KernelRun extends UnknownRecord {
     revision: number;
     mutationRevision: number;
     sourceIdentity: string;
+    runStartGitCommitSha: string | null;
     runStartWorkspaceIdentity: string | null;
     currentWorkspaceIdentity: string | null;
     blockedReason: string | null;
@@ -162,6 +163,7 @@ export type CreateRunInput = {
     projectId?: string | null;
     knowledgeRevisionStart?: string | null;
     workspaceIdentity?: string | null;
+    runStartGitCommitSha?: string | null;
     projectMode?: string | null;
     taskContract?: StoredTaskContract | null;
     contractRevision?: number;

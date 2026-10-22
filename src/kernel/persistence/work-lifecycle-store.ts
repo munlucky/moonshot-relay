@@ -60,6 +60,7 @@ export interface PersistedRunRecord {
   revision: number;
   mutationRevision: number;
   sourceIdentity: string;
+  runStartGitCommitSha: string | null;
   runStartWorkspaceIdentity: string | null;
   currentWorkspaceIdentity: string | null;
   blockedReason: string | null;
@@ -102,6 +103,7 @@ export interface PersistRunInput {
   runId: string;
   objective: string;
   sourceIdentity: string;
+  runStartGitCommitSha: string | null;
   workspaceIdentity: string | null;
   projectMode: string | null;
   proofTier: string;
@@ -485,6 +487,7 @@ export const createWorkLifecyclePersistence = ({
   const runRecordSelect = `
     SELECT run_id as runId, objective, state, status, revision,
       mutation_revision as mutationRevision, source_identity as sourceIdentity,
+      run_start_git_commit_sha as runStartGitCommitSha,
       run_start_workspace_identity as runStartWorkspaceIdentity,
       current_workspace_identity as currentWorkspaceIdentity,
       blocked_reason as blockedReason, blocking_class as blockingClass,
@@ -797,7 +800,7 @@ export const createWorkLifecyclePersistence = ({
       db.prepare(`
         INSERT INTO runs(
           run_id, objective, state, status, revision, mutation_revision,
-          source_identity, run_start_workspace_identity, current_workspace_identity,
+          source_identity, run_start_git_commit_sha, run_start_workspace_identity, current_workspace_identity,
           project_mode, proof_tier, evidence_tier, required_obligations,
           acceptance_criteria, release_evidence_required, project_id,
           knowledge_revision_start, knowledge_status, task_contract_json,
@@ -808,13 +811,14 @@ export const createWorkLifecyclePersistence = ({
           workspace_baseline_status, owner_binding_id, successor_key, updated_at
         )
         VALUES(
-          ?, ?, 'FRAME', 'active', 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, 'FRAME', 'active', 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
           'active', ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
       `).run(
         input.runId,
         input.objective,
         input.sourceIdentity,
+        input.runStartGitCommitSha,
         input.workspaceIdentity,
         input.workspaceIdentity,
         input.projectMode,

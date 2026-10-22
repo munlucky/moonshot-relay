@@ -295,6 +295,7 @@ export const migrateKernelSchema = (db: SqliteDatabase): void => {
 
   try { db.exec(`ALTER TABLE runs ADD COLUMN source_identity TEXT;`); } catch {}
   try { db.exec(`ALTER TABLE runs ADD COLUMN mutation_revision INTEGER DEFAULT 0;`); } catch {}
+  try { db.exec(`ALTER TABLE runs ADD COLUMN run_start_git_commit_sha TEXT;`); } catch {}
   try { db.exec(`ALTER TABLE runs ADD COLUMN run_start_workspace_identity TEXT;`); } catch {}
   try { db.exec(`ALTER TABLE runs ADD COLUMN current_workspace_identity TEXT;`); } catch {}
   try { db.exec(`ALTER TABLE runs ADD COLUMN blocked_reason TEXT;`); } catch {}
