@@ -97,6 +97,7 @@ const canonicalRuntimeHome = (value: string) => {
 };
 
 const sourceIdentityRegex = /^(?:[a-f0-9]{40}|sha256:[a-f0-9]{64}|[a-zA-Z0-9_.:/-]{1,128})$/i;
+const gitCommitShaRegex = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
 const sha256Regex = /^sha256:[a-f0-9]{64}$/i;
 
 const reviewSubjectKey = (receipt: ReviewReceiptInput = {}) => `review-subject-${createHash('sha256').update(JSON.stringify({
@@ -566,6 +567,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       projectId = null,
       knowledgeRevisionStart = null,
       workspaceIdentity = null,
+      runStartGitCommitSha = null,
       projectMode = null,
       taskContract = null,
       contractRevision = 1,
@@ -588,6 +590,9 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       if (workspaceIdentity !== null && !sha256Regex.test(workspaceIdentity)) {
         throw new Error('workspaceIdentity must be a sha256:<hex> digest when provided');
       }
+      if (runStartGitCommitSha !== null && !gitCommitShaRegex.test(runStartGitCommitSha)) {
+        throw new Error('runStartGitCommitSha must be a full Git commit SHA when provided');
+      }
       const registeredWorkspace = workspaceId ? this.getProjectWorkspace(workspaceId) : null;
       if (registeredWorkspace && projectId && registeredWorkspace.projectId !== projectId) {
         throw Object.assign(new Error('run_project_mismatch'), { code: 'run_project_mismatch' });
@@ -601,6 +606,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
           runId,
           objective,
           sourceIdentity,
+          runStartGitCommitSha,
           workspaceIdentity,
           projectMode: projectMode || null,
           proofTier,
@@ -1184,6 +1190,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         revision: row.revision,
         mutationRevision: row.mutationRevision,
         sourceIdentity: row.sourceIdentity,
+        runStartGitCommitSha: row.runStartGitCommitSha || null,
         runStartWorkspaceIdentity: row.runStartWorkspaceIdentity || null,
         currentWorkspaceIdentity: row.currentWorkspaceIdentity || null,
         blockedReason: row.blockedReason || null,

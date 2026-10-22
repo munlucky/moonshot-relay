@@ -15,6 +15,7 @@ export const initializeKernelSchema = (db: SqliteDatabase) => {
       revision INTEGER NOT NULL DEFAULT 0,
       mutation_revision INTEGER NOT NULL DEFAULT 0,
       source_identity TEXT NOT NULL,
+      run_start_git_commit_sha TEXT,
       proof_tier TEXT NOT NULL DEFAULT 'T0',
       evidence_tier TEXT NOT NULL DEFAULT 'E0',
       required_obligations TEXT NOT NULL DEFAULT '[]',

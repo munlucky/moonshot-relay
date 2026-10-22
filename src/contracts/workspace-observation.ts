@@ -34,6 +34,7 @@ export type WorkspaceChangeEntry = {
 
 export type WorkspaceObservation = {
   identity: string;
+  headCommitSha: string | null;
   method: 'git' | 'stat-walk';
   dirtyPathCount: number | null;
   changedPaths: string[] | null;

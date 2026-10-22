@@ -60,10 +60,13 @@ test('workspace identity changes when HEAD provenance changes but the tree does 
       assert.equal(result.status, 0, result.stderr || result.stdout);
     }
     const before = observeWorkspaceIdentity({ projectRoot });
+    assert.equal(before.headCommitSha, spawnSync('git', ['rev-parse', 'HEAD'], { cwd: projectRoot, encoding: 'utf8' }).stdout.trim());
     const emptyCommit = spawnSync('git', ['commit', '--allow-empty', '-m', 'provenance-only'], { cwd: projectRoot, encoding: 'utf8' });
     assert.equal(emptyCommit.status, 0, emptyCommit.stderr || emptyCommit.stdout);
     const after = observeWorkspaceIdentity({ projectRoot });
     assert.notEqual(after.identity, before.identity);
+    assert.notEqual(after.headCommitSha, before.headCommitSha);
+    assert.equal(after.headCommitSha, spawnSync('git', ['rev-parse', 'HEAD'], { cwd: projectRoot, encoding: 'utf8' }).stdout.trim());
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
   }
@@ -160,6 +163,42 @@ test('blocker report preserves the original blocker after the owner binding is c
     assert.equal(controlPlane.stateStore.getActiveOwnerBinding({ projectId: assertTestString(assertTestPresent(blockedRun).projectId), sessionId }), null);
   } finally {
     await controlPlane.close();
+    await rm(runtimeHome, { recursive: true, force: true });
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test('run creation persists the already-observed Git HEAD as explicit source provenance', async () => {
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'krn-run-start-git-home-'));
+  const projectRoot = await setupProject();
+  try {
+    for (const args of [
+      ['config', 'user.email', 'kernel@example.invalid'],
+      ['config', 'user.name', 'Kernel Test'],
+      ['add', '.'],
+      ['commit', '-m', 'baseline'],
+    ]) {
+      const result = spawnSync('git', args, { cwd: projectRoot, encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+    }
+    const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: projectRoot, encoding: 'utf8' }).stdout.trim();
+    const cp = await createKernelControlPlane({ runtimeHome, projectRoot });
+    try {
+      const run = await cp.startRun({
+        runId: 'run-start-git-provenance',
+        objective: 'preserve exact Git source provenance',
+        taskContract: {
+          acceptance: [{
+            acceptance: 'run start Git provenance is persisted',
+            evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test:focus'], obligationId: 'default' },
+          }],
+        },
+      });
+      assert.equal(run.runStartGitCommitSha, head);
+    } finally {
+      await cp.close();
+    }
+  } finally {
     await rm(runtimeHome, { recursive: true, force: true });
     await rm(projectRoot, { recursive: true, force: true });
   }

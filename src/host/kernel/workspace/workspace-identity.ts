@@ -312,6 +312,7 @@ const observeGitWorkspace = (
   }));
   return {
     identity: buildGitWorkspaceIdentity({ headCommit, headTree, changeEntries }),
+    headCommitSha: headCommit === 'no-head' ? null : headCommit,
     method: 'git',
     dirtyPathCount: changeEntries.length,
     changedPaths,
@@ -355,6 +356,7 @@ const observeStatWalkWorkspace = (
   entries.sort();
   return {
     identity: sha256(JSON.stringify({ entries })),
+    headCommitSha: null,
     method: 'stat-walk',
     dirtyPathCount: null,
     changedPaths: null,

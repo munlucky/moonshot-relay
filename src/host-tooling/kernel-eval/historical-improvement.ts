@@ -114,6 +114,7 @@ interface RunRow extends UnknownRecord {
   plan_revision?: number | null;
   mutation_revision?: number | null;
   source_identity?: string | null;
+  run_start_git_commit_sha?: string | null;
   run_start_workspace_identity?: string | null;
   current_workspace_identity?: string | null;
   baseline_workspace_entries?: string | null;
@@ -146,6 +147,12 @@ const strings = (value: unknown): string[] => array(value).map(String).map((entr
 const text = (value: unknown): string | null => (
   typeof value === 'string' && value.trim().length > 0 ? value.trim() : null
 );
+const gitCommitSha = (value: unknown): string | null => {
+  const normalized = text(value);
+  return normalized && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/iu.test(normalized)
+    ? normalized.toLowerCase()
+    : null;
+};
 const revision = (value: unknown): number | null => (
   Number.isInteger(value) && Number(value) >= 0 ? Number(value) : null
 );
@@ -415,7 +422,7 @@ export const loadHistoricalWorkCases = ({
   try {
     const where = projectId ? 'WHERE project_id=?' : '';
     const params = projectId ? [projectId] : [];
-    const runs = select<RunRow>(db, `SELECT run_id,objective,status,state,contract_revision,plan_revision,mutation_revision,source_identity,run_start_workspace_identity,current_workspace_identity,baseline_workspace_entries,workspace_id,project_id,updated_at FROM runs ${where} ORDER BY updated_at,run_id`, params);
+    const runs = select<RunRow>(db, `SELECT run_id,objective,status,state,contract_revision,plan_revision,mutation_revision,source_identity,run_start_git_commit_sha,run_start_workspace_identity,current_workspace_identity,baseline_workspace_entries,workspace_id,project_id,updated_at FROM runs ${where} ORDER BY updated_at,run_id`, params);
     if (runs.length === 0) return [];
     const runIds = runs.map((run) => String(run.run_id));
     const inRuns = placeholders(runIds.length);
@@ -435,6 +442,8 @@ export const loadHistoricalWorkCases = ({
     const gitCommits = gitCommitTrees(gitRoot);
     const gitRevisionForRun = (runId: string): string | null => {
       const run = runMap.get(runId);
+      const explicitRunStartRevision = gitCommitSha(run?.run_start_git_commit_sha);
+      if (explicitRunStartRevision) return explicitRunStartRevision;
       const workspaceRevision = run
         ? recoverGitRevisionFromWorkspaceIdentity({ run, commits: gitCommits })
         : null;
