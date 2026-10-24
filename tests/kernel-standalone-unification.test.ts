@@ -244,6 +244,43 @@ test('matchesCurrentMutationCandidate and resolveKernelCloseoutRun canonicalize 
   return error.code === 'RUN_PROVENANCE_REQUIRED'; });
 });
 
+test('accepted retry retains admitted failed-attempt paths and rejects unrelated deltas', () => {
+  const run = { runId: 'retry-run', projectId: 'project', workspaceId: 'workspace',
+    worktreeId: 'worktree', status: 'completed', currentState: 'CLOSE',
+    finalizationStatus: 'completed', mutationRevision: 3, sourceIdentity: 'source',
+    currentWorkspaceIdentity: 'accepted-workspace' };
+  const failed = { stepId: 'step-1', planRevision: 1, attemptNumber: 1,
+    mutationRevision: 1, status: 'failed', changedPaths: ['retained.txt'] };
+  const passed = { ...failed, attemptNumber: 2, mutationRevision: 3,
+    status: 'passed', changedPaths: ['fixed.txt'] };
+  const resolve = (attempts = [failed, passed], currentPaths = ['retained.txt', 'fixed.txt']) =>
+    resolveKernelCloseoutRun({
+      stateStore: {
+        getRun: () => run, listRuns: () => [run], getStepAttempts: () => attempts,
+        getLatestImplementationAttempt: () => null,
+        registerProjectWorkspace: () => { throw new Error('Unexpected registration'); },
+        getCompletionDecision: () => ({ decision: 'accepted' }),
+        getMutationProvenance: () => ({ projectId: run.projectId,
+          workspaceId: run.workspaceId, sourceIdentity: run.sourceIdentity,
+          mutationRevision: run.mutationRevision, workspaceIdentity: run.currentWorkspaceIdentity,
+          changedPaths: ['fixed.txt'] }),
+      }, projectId: run.projectId, workspaceId: run.workspaceId,
+      currentWorkspaceIdentity: run.currentWorkspaceIdentity,
+      currentPaths, selectedPaths: currentPaths,
+    });
+  assert.deepEqual(resolve().approvedPaths.sort(), ['fixed.txt', 'retained.txt']);
+  const denied = (action: () => unknown) => assert.throws(action,
+    (error: unknown) => error instanceof Error && 'code' in error
+      && error.code === 'RUN_PROVENANCE_REQUIRED');
+  denied(() => resolve([failed]));
+  denied(() => resolve([failed, { ...passed, stepId: 'another-step' }]));
+  denied(() => resolve([failed, { ...passed, planRevision: 2 }]));
+  denied(() => resolve([failed, { ...passed, attemptNumber: 1 }]));
+  denied(() => resolve([{ ...failed, mutationRevision: 4 }, passed]));
+  denied(() => resolve([{ ...failed, planRevision: 0 }, { ...passed, planRevision: 0 }]));
+  denied(() => resolve([failed, passed], ['retained.txt', 'foreign.txt']));
+});
+
 test('replacement and authority audit passes current checkout', async () => {
   const result = await runUnificationAudit({ repoRoot: root });
   assert.equal(result.status, 'pass');

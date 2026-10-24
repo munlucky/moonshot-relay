@@ -97,18 +97,39 @@ interface ValidLineage {
   entries: ValidLineageEntry[];
 }
 
+interface CloseoutStepAttempt {
+  status: string;
+  stepId?: string | null;
+  planRevision?: number | null;
+  attemptNumber?: number | null;
+  mutationRevision?: number | null;
+  changedPaths?: string[] | null;
+}
+
 const lineageApprovedPaths = (stateStore: KernelCommitStateStore, entries: ValidLineageEntry[]): string[] =>
-  uniquePaths(entries.flatMap((entry) => [
-    ...(entry.provenance.changedPaths || []),
-    ...(stateStore.getStepAttempts?.(entry.run.runId) || [])
-      .filter((attempt) => attempt.status === 'passed'
-        && Number(attempt.mutationRevision) > 0
-        && Number(attempt.mutationRevision) <= entry.run.mutationRevision)
-      .flatMap((attempt) => attempt.changedPaths || []),
-  ]));
+  uniquePaths(entries.flatMap((entry) => {
+    const attempts = (stateStore.getStepAttempts?.(entry.run.runId) || [])
+      .filter((attempt) => Number(attempt.mutationRevision) > 0
+        && Number(attempt.mutationRevision) <= entry.run.mutationRevision);
+    // A failed proof does not roll back its admitted source delta. A later
+    // successful retry accepts that retained content. The completed lineage and
+    // exact live workspace identity are still mandatory admission checks.
+    const accepted = attempts.filter((attempt) => attempt.status === 'passed'
+      || (attempt.status === 'failed'
+        && Boolean(attempt.stepId)
+        && Number(attempt.planRevision) > 0
+        && Number(attempt.attemptNumber) > 0
+        && attempts.some((retry) => retry.status === 'passed'
+          && retry.stepId === attempt.stepId
+          && retry.planRevision === attempt.planRevision
+          && Number(retry.attemptNumber) > Number(attempt.attemptNumber)
+          && Number(retry.mutationRevision) >= Number(attempt.mutationRevision))));
+    return [...(entry.provenance.changedPaths || []),
+      ...accepted.flatMap((attempt) => attempt.changedPaths || [])];
+  }));
 
 interface KernelCommitStateStore {
-  getStepAttempts?(runId: string): Array<{ status: string; mutationRevision?: number | null; changedPaths?: string[] | null }>;
+  getStepAttempts?(runId: string): CloseoutStepAttempt[];
   getRun(runId: string): KernelCommitRun | null;
   listRuns(input: { projectId: string; statuses: string[] }): KernelCommitRun[];
   resolveSuccessorLineage?(runId: string): SuccessorLineage;

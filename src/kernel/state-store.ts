@@ -2564,20 +2564,45 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       }).map((runId) => this.getRun(runId)).filter((run): run is KernelRun => Boolean(run));
     },
 
-    // Read the existing successor edge stored on session_bindings. This is a
-    // derived view only: no Goal/lineage table is introduced. The walk is
-    // deliberately fail-closed when two predecessor edges or a cross-scope
-    // edge are present.
+    // Successor creation may follow finalization, which already closed its owner
+    // binding. Recover that missing edge only from the persisted deterministic
+    // successor key. This read never changes bindings, receipts or Run history.
     resolveSuccessorLineage(runId: string) {
       if (!runId) throw new Error('resolveSuccessorLineage requires runId');
       const seen = new Set();
       const runs = [];
       const edges = [];
       let cursor = String(runId);
+      const root = this.getRun(cursor);
+      if (!root) throw new Error('SUCCESSOR_LINEAGE_RUN_MISSING');
+      const scopedIds = workLifecyclePersistence.listRunIds({
+        projectId: root.projectId,
+        worktreeId: root.worktreeId,
+        workspaceId: root.workspaceId,
+      });
+      const expectedKey = (predecessorId: string, successor: KernelRun) => buildSuccessorKey({
+        projectId: successor.projectId,
+        predecessorRunId: predecessorId,
+        worktreeId: successor.worktreeId,
+        workspaceId: successor.workspaceId,
+        taskContractDigest: successor.taskContract?.digest,
+      });
+      // A key-only child also makes its predecessor nonterminal. Otherwise an
+      // older accepted Run could be selected while a successor still owns work.
+      const keySuccessors = scopedIds.filter((id) => {
+        const row = workLifecyclePersistence.getRunRecord(id);
+        if (!row?.successorKey) return false;
+        const contract = safeJsonParse<StoredTaskContract | null>(row.taskContractJson, null);
+        return row.successorKey === buildSuccessorKey({
+          projectId: row.projectId, predecessorRunId: cursor,
+          worktreeId: row.worktreeId, workspaceId: row.workspaceId,
+          taskContractDigest: contract?.digest,
+        });
+      });
       let terminalSuccessor = [...new Set(
-        workLifecyclePersistence.listSessionBindings({ runId: cursor })
+        [...workLifecyclePersistence.listSessionBindings({ runId: cursor })
           .map((binding) => binding.successorRunId)
-          .filter(Boolean),
+          .filter(Boolean), ...keySuccessors],
       )];
       if (terminalSuccessor.length > 1) {
         throw Object.assign(new Error('SUCCESSOR_LINEAGE_AMBIGUOUS'), {
@@ -2609,17 +2634,28 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         const predecessors = workLifecyclePersistence.listSessionBindings({
           successorRunId: cursor,
         });
-        if (predecessors.length === 0) break;
         const ownerPredecessors = predecessors.filter((binding) => binding.accessMode === 'owner');
-        if (ownerPredecessors.length !== 1) {
+        if (predecessors.length > 0 && ownerPredecessors.length !== 1) {
           throw Object.assign(new Error('SUCCESSOR_LINEAGE_AMBIGUOUS'), {
             code: 'SUCCESSOR_LINEAGE_AMBIGUOUS',
             errorCode: 'SUCCESSOR_LINEAGE_AMBIGUOUS',
             details: { runId: cursor, predecessorBindingIds: ownerPredecessors.map((binding) => binding.bindingId) },
           });
         }
-        const edge = requiredIndex(ownerPredecessors, 0);
-        const predecessor = this.getRun(edge.runId);
+        const edge = ownerPredecessors[0] || null;
+        if (!edge && !current.successorKey) break;
+        const keyPredecessors = current.successorKey
+          ? scopedIds.filter((id) => id !== cursor && expectedKey(id, current) === current.successorKey)
+          : [];
+        if (current.successorKey && (keyPredecessors.length !== 1
+          || (edge && edge.runId !== keyPredecessors[0]))) {
+          throw Object.assign(new Error('SUCCESSOR_LINEAGE_KEY_MISMATCH'), {
+            code: 'SUCCESSOR_LINEAGE_KEY_MISMATCH', errorCode: 'SUCCESSOR_LINEAGE_KEY_MISMATCH',
+            details: { runId: cursor },
+          });
+        }
+        const predecessorRunId = edge?.runId || requiredIndex(keyPredecessors, 0);
+        const predecessor = this.getRun(predecessorRunId);
         if (!predecessor
           || predecessor.projectId !== current.projectId
           || predecessor.workspaceId !== current.workspaceId
@@ -2629,7 +2665,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
           throw Object.assign(new Error('SUCCESSOR_LINEAGE_SCOPE_MISMATCH'), {
             code: 'SUCCESSOR_LINEAGE_SCOPE_MISMATCH',
             errorCode: 'SUCCESSOR_LINEAGE_SCOPE_MISMATCH',
-            details: { predecessorRunId: edge.runId, successorRunId: cursor },
+            details: { predecessorRunId, successorRunId: cursor },
           });
         }
         const predecessorFinalWorkspaceIdentity = predecessor.currentWorkspaceIdentity || null;
@@ -2641,7 +2677,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
             code: 'SUCCESSOR_WORKSPACE_CONTINUITY_MISMATCH',
             errorCode: 'SUCCESSOR_WORKSPACE_CONTINUITY_MISMATCH',
             details: {
-              predecessorRunId: edge.runId,
+              predecessorRunId,
               successorRunId: cursor,
               predecessorFinalWorkspaceIdentity,
               successorStartWorkspaceIdentity,
@@ -2649,13 +2685,13 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
           });
         }
         edges.unshift({
-          predecessorRunId: edge.runId,
+          predecessorRunId,
           successorRunId: cursor,
           binding: edge,
           predecessorFinalWorkspaceIdentity,
           successorStartWorkspaceIdentity,
         });
-        cursor = edge.runId;
+        cursor = predecessorRunId;
         terminalSuccessor = [];
       }
       return {
