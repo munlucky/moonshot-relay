@@ -305,16 +305,22 @@ const kernelEnv: NodeJS.ProcessEnv = sessionId || inferredRunId
     ? { ...env, MOON_RELAY_KERNEL_HOME: effectiveRuntimeHome }
     : env;
 
+let activeControlPlane: KernelControlPlane | null = null;
+const closeControlPlane = async (cp: KernelControlPlane): Promise<void> => {
+  if (activeControlPlane === cp) activeControlPlane = null;
+  await cp.close();
+};
 const openControlPlane = async (): Promise<KernelControlPlane> => {
   await assertKernelTrack();
   const moduleValue = await import('../../host/kernel/control-plane-runtime.js');
   const { createKernelControlPlane } = moduleValue;
-  return createKernelControlPlane({
+  activeControlPlane = await createKernelControlPlane({
     runtimeHome: effectiveRuntimeHome || undefined,
     projectRoot,
     env: kernelEnv,
     requireHostBinding: false,
   });
+  return activeControlPlane;
 };
 
 const output = (rawValue: unknown): void => {
@@ -712,7 +718,7 @@ try {
         res = (await cp.ensureRun({ runId: invocation.runId })).next;
       }
     }
-    await cp.close();
+    await closeControlPlane(cp);
     output(res);
   } else if (command === 'report') {
     // Model-visible runtime command 2 of 2.
@@ -728,7 +734,7 @@ try {
       payload = await readJsonObjectFile(reportFile, 'report-json');
     }
     const res = await cp.report(runId, payload);
-    await cp.close();
+    await closeControlPlane(cp);
     output(res);
   } else if (command === 'approve') {
     const cp = await openControlPlane();
@@ -753,7 +759,7 @@ try {
       allJudgments,
       autoFinalize: !noFinalize,
     });
-    await cp.close();
+    await closeControlPlane(cp);
     output(res);
   } else if (command === 'start-run') {
     // Commands below this point are internal/debug surface; models use only
@@ -763,14 +769,14 @@ try {
     const objective = getArgValue('--objective') || 'Kernel execution task';
     const sourceIdentity = computeKernelSourceIdentity({ projectRoot, objective });
     const run = await cp.startRun({ runId, objective, sourceIdentity });
-    await cp.close();
+    await closeControlPlane(cp);
     output(run);
   } else if (command === 'status') {
     const cp = await openControlPlane();
     const runId = getArgValue('--run-id');
     if (!runId) throw new Error('status command requires --run-id');
     const res = await cp.status(runId);
-    await cp.close();
+    await closeControlPlane(cp);
     output(res || { status: 'not_found' });
   } else if (command === 'context') {
     const cp = await openControlPlane();
@@ -779,7 +785,7 @@ try {
     if (runId) {
       const input = await readContextJson();
       const res = await cp.buildStageContext(runId, { ...input, stage: getArgValue('--stage') || (typeof input.stage === 'string' ? input.stage : null) || 'EXECUTE' });
-      await cp.close();
+      await closeControlPlane(cp);
       output(res);
     } else {
       const { buildProjectKnowledgeContext } = await import('../../kernel/knowledge/context-load.js');
@@ -798,7 +804,7 @@ try {
         stateStore: cp.stateStore,
         env: { MOON_RELAY_KERNEL_HOME: effectiveRuntimeHome || undefined },
       });
-      await cp.close();
+      await closeControlPlane(cp);
       output(res);
     }
   } else if (command === 'transition') {
@@ -807,7 +813,7 @@ try {
     const nextState = getArgValue('--state');
     if (!runId || !nextState) throw new Error('transition requires --run-id and --state');
     const res = await cp.transition(runId, readKernelState(nextState));
-    await cp.close();
+    await closeControlPlane(cp);
     output(res);
   } else if (command === 'prove') {
     const cp = await openControlPlane();
@@ -821,7 +827,7 @@ try {
       evidenceDigest: getArgValue('--evidence-digest') || '',
       exitCode: Number(getArgValue('--exit-code') || 0),
     });
-    await cp.close();
+    await closeControlPlane(cp);
     output(res);
   } else if (command === 'close') {
     throw new Error('DEPRECATED_COMMAND: close cannot finalize a Kernel run. Use finalize.');
@@ -831,14 +837,14 @@ try {
     const runId = getArgValue('--run-id') || positionalRunId || await cp.resolveRunId();
     const reason = getArgValue('--reason') || 'user_requested';
     const res = await cp.abandon(runId, { reason });
-    await cp.close();
+    await closeControlPlane(cp);
     output(res);
   } else if (command === 'resume') {
     const cp = await openControlPlane();
     const runId = getArgValue('--run-id') || args[1];
     if (!runId || runId.startsWith('--')) throw new Error('resume command requires a run id: kernel resume <run-id>');
     const res = await cp.resume(runId);
-    await cp.close();
+    await closeControlPlane(cp);
     output(res || { status: 'not_found' });
   } else if (command === 'finalize') {
     const cp = await openControlPlane();
@@ -852,22 +858,21 @@ try {
       knowledgeObservations: Array.isArray(input.knowledgeObservations) ? input.knowledgeObservations : [],
       approvals: Array.isArray(input.approvals) ? input.approvals : [],
     });
-    await cp.close();
+    await closeControlPlane(cp);
     output(res);
   } else if (command === 'finalization-status') {
     const cp = await openControlPlane();
     const runId = getArgValue('--run-id');
     if (!runId) throw new Error('finalization-status command requires --run-id');
-    const store = await (await import('../../kernel/state-store.js')).openKernelStateStore({ runtimeHome: effectiveRuntimeHome || undefined });
-    const res = store.getFinalizationReceipt(runId);
-    await cp.close();
+    const res = cp.stateStore.getFinalizationReceipt(runId);
+    await closeControlPlane(cp);
     output(res || { status: 'not_found' });
   } else if (command === 'git-closeout') {
     const cp = await openControlPlane();
     const runId = getArgValue('--run-id');
     if (!runId) throw new Error('git-closeout command requires --run-id');
     const res = await cp.retryGitCloseout(runId);
-    await cp.close();
+    await closeControlPlane(cp);
     output(res);
   } else {
     throw new Error(`Unknown command: ${command}`);
@@ -912,6 +917,11 @@ try {
     ...(recovery ? { recovery } : {}),
   }) : message);
   exitCode = 1;
+} finally {
+  if (activeControlPlane) {
+    try { await closeControlPlane(activeControlPlane); }
+    catch { /* Preserve the primary command rejection if cleanup also fails. */ }
+  }
 }
   return { exitCode };
 }

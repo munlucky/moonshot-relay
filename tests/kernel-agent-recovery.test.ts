@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -134,6 +134,10 @@ test('native CLI returns recovery for an unseen failure, agent repairs and resum
     await writeFile(contract, JSON.stringify(bad));
     const rejected = await cli(['next', '--contract-json', contract, '--json']);
     assert.equal(rejected.exitCode, 1); assert.ok(rejected.payload.recovery.commands.inspect);
+    // Windows refuses this rename while a failed CLI invocation owns a DB handle.
+    const database = path.join(f.runtimeHome, 'state/runtime-state.sqlite');
+    await rename(database, `${database}.released`);
+    await rename(`${database}.released`, database);
     await writeFile(contract, JSON.stringify({ ...bad, steps: [{ ...bad.steps[0], acceptanceIds: ['AC-1'] }] }));
     const resumed = await cli(['next', '--contract-json', contract, '--json']);
     assert.equal(resumed.payload.action.type, 'implement');

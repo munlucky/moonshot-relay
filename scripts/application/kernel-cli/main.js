@@ -244,16 +244,23 @@ export async function runKernelCliApplication(argv = [], options = {}) {
         : effectiveRuntimeHome
             ? { ...env, MOON_RELAY_KERNEL_HOME: effectiveRuntimeHome }
             : env;
+    let activeControlPlane = null;
+    const closeControlPlane = async (cp) => {
+        if (activeControlPlane === cp)
+            activeControlPlane = null;
+        await cp.close();
+    };
     const openControlPlane = async () => {
         await assertKernelTrack();
         const moduleValue = await import('../../host/kernel/control-plane-runtime.js');
         const { createKernelControlPlane } = moduleValue;
-        return createKernelControlPlane({
+        activeControlPlane = await createKernelControlPlane({
             runtimeHome: effectiveRuntimeHome || undefined,
             projectRoot,
             env: kernelEnv,
             requireHostBinding: false,
         });
+        return activeControlPlane;
     };
     const output = (rawValue) => {
         const payload = asRecord(rawValue);
@@ -684,7 +691,7 @@ export async function runKernelCliApplication(argv = [], options = {}) {
                     res = (await cp.ensureRun({ runId: invocation.runId })).next;
                 }
             }
-            await cp.close();
+            await closeControlPlane(cp);
             output(res);
         }
         else if (command === 'report') {
@@ -701,7 +708,7 @@ export async function runKernelCliApplication(argv = [], options = {}) {
                 payload = await readJsonObjectFile(reportFile, 'report-json');
             }
             const res = await cp.report(runId, payload);
-            await cp.close();
+            await closeControlPlane(cp);
             output(res);
         }
         else if (command === 'approve') {
@@ -726,7 +733,7 @@ export async function runKernelCliApplication(argv = [], options = {}) {
                 allJudgments,
                 autoFinalize: !noFinalize,
             });
-            await cp.close();
+            await closeControlPlane(cp);
             output(res);
         }
         else if (command === 'start-run') {
@@ -737,7 +744,7 @@ export async function runKernelCliApplication(argv = [], options = {}) {
             const objective = getArgValue('--objective') || 'Kernel execution task';
             const sourceIdentity = computeKernelSourceIdentity({ projectRoot, objective });
             const run = await cp.startRun({ runId, objective, sourceIdentity });
-            await cp.close();
+            await closeControlPlane(cp);
             output(run);
         }
         else if (command === 'status') {
@@ -746,7 +753,7 @@ export async function runKernelCliApplication(argv = [], options = {}) {
             if (!runId)
                 throw new Error('status command requires --run-id');
             const res = await cp.status(runId);
-            await cp.close();
+            await closeControlPlane(cp);
             output(res || { status: 'not_found' });
         }
         else if (command === 'context') {
@@ -756,7 +763,7 @@ export async function runKernelCliApplication(argv = [], options = {}) {
             if (runId) {
                 const input = await readContextJson();
                 const res = await cp.buildStageContext(runId, { ...input, stage: getArgValue('--stage') || (typeof input.stage === 'string' ? input.stage : null) || 'EXECUTE' });
-                await cp.close();
+                await closeControlPlane(cp);
                 output(res);
             }
             else {
@@ -776,7 +783,7 @@ export async function runKernelCliApplication(argv = [], options = {}) {
                     stateStore: cp.stateStore,
                     env: { MOON_RELAY_KERNEL_HOME: effectiveRuntimeHome || undefined },
                 });
-                await cp.close();
+                await closeControlPlane(cp);
                 output(res);
             }
         }
@@ -787,7 +794,7 @@ export async function runKernelCliApplication(argv = [], options = {}) {
             if (!runId || !nextState)
                 throw new Error('transition requires --run-id and --state');
             const res = await cp.transition(runId, readKernelState(nextState));
-            await cp.close();
+            await closeControlPlane(cp);
             output(res);
         }
         else if (command === 'prove') {
@@ -803,7 +810,7 @@ export async function runKernelCliApplication(argv = [], options = {}) {
                 evidenceDigest: getArgValue('--evidence-digest') || '',
                 exitCode: Number(getArgValue('--exit-code') || 0),
             });
-            await cp.close();
+            await closeControlPlane(cp);
             output(res);
         }
         else if (command === 'close') {
@@ -815,7 +822,7 @@ export async function runKernelCliApplication(argv = [], options = {}) {
             const runId = getArgValue('--run-id') || positionalRunId || await cp.resolveRunId();
             const reason = getArgValue('--reason') || 'user_requested';
             const res = await cp.abandon(runId, { reason });
-            await cp.close();
+            await closeControlPlane(cp);
             output(res);
         }
         else if (command === 'resume') {
@@ -824,7 +831,7 @@ export async function runKernelCliApplication(argv = [], options = {}) {
             if (!runId || runId.startsWith('--'))
                 throw new Error('resume command requires a run id: kernel resume <run-id>');
             const res = await cp.resume(runId);
-            await cp.close();
+            await closeControlPlane(cp);
             output(res || { status: 'not_found' });
         }
         else if (command === 'finalize') {
@@ -840,7 +847,7 @@ export async function runKernelCliApplication(argv = [], options = {}) {
                 knowledgeObservations: Array.isArray(input.knowledgeObservations) ? input.knowledgeObservations : [],
                 approvals: Array.isArray(input.approvals) ? input.approvals : [],
             });
-            await cp.close();
+            await closeControlPlane(cp);
             output(res);
         }
         else if (command === 'finalization-status') {
@@ -848,9 +855,8 @@ export async function runKernelCliApplication(argv = [], options = {}) {
             const runId = getArgValue('--run-id');
             if (!runId)
                 throw new Error('finalization-status command requires --run-id');
-            const store = await (await import('../../kernel/state-store.js')).openKernelStateStore({ runtimeHome: effectiveRuntimeHome || undefined });
-            const res = store.getFinalizationReceipt(runId);
-            await cp.close();
+            const res = cp.stateStore.getFinalizationReceipt(runId);
+            await closeControlPlane(cp);
             output(res || { status: 'not_found' });
         }
         else if (command === 'git-closeout') {
@@ -859,7 +865,7 @@ export async function runKernelCliApplication(argv = [], options = {}) {
             if (!runId)
                 throw new Error('git-closeout command requires --run-id');
             const res = await cp.retryGitCloseout(runId);
-            await cp.close();
+            await closeControlPlane(cp);
             output(res);
         }
         else {
@@ -905,6 +911,14 @@ export async function runKernelCliApplication(argv = [], options = {}) {
             ...(recovery ? { recovery } : {}),
         }) : message);
         exitCode = 1;
+    }
+    finally {
+        if (activeControlPlane) {
+            try {
+                await closeControlPlane(activeControlPlane);
+            }
+            catch { /* Preserve the primary command rejection if cleanup also fails. */ }
+        }
     }
     return { exitCode };
 }

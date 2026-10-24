@@ -3316,21 +3316,47 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       }).map((runId) => this.getRun(runId)).filter((run): run is KernelRun => Boolean(run));
     },
 
-    // Read the existing successor edge stored on session_bindings. This is a
-    // derived view only: no Goal/lineage table is introduced. The walk is
-    // deliberately fail-closed when two predecessor edges or a cross-scope
-    // edge are present.
+    // Completed owners may already be inactive when a successor is created.
+    // Derive missing edges from persisted deterministic keys without repairing
+    // historical records. Every selected edge still needs exact scope/content.
     resolveSuccessorLineage(runId: string) {
       if (!runId) throw new Error('resolveSuccessorLineage requires runId');
       const seen = new Set();
       const runs = [];
       const edges = [];
       let cursor = String(runId);
-      let terminalSuccessor = [...new Set(
-        workLifecyclePersistence.listSessionBindings({ runId: cursor })
-          .map((binding) => binding.successorRunId)
-          .filter(Boolean),
-      )];
+      const root = this.getRun(cursor);
+      if (!root) throw new Error('SUCCESSOR_LINEAGE_RUN_MISSING');
+      const scopedIds = workLifecyclePersistence.listRunIds({
+        projectId: root.projectId, worktreeId: root.worktreeId, workspaceId: root.workspaceId,
+      });
+      const diagnostics: Array<{ runId: string; code: string }> = [];
+      const keyedRows = scopedIds.flatMap((id) => {
+        const row = workLifecyclePersistence.getRunRecord(id);
+        if (!row?.successorKey) return [];
+        const contract = safeJsonParse<StoredTaskContract | null>(row.taskContractJson, null);
+        if (!contract || typeof contract.digest !== 'string' || !contract.digest
+          || !row.projectId || !(row.worktreeId || row.workspaceId)) {
+          diagnostics.push({ runId: id, code: 'invalid-successor-candidate' });
+          return [];
+        }
+        return [{ row, digest: contract.digest }];
+      });
+      const expectedKey = (predecessorRunId: string, successor: KernelRun) => buildSuccessorKey({
+        projectId: successor.projectId, predecessorRunId,
+        worktreeId: successor.worktreeId, workspaceId: successor.workspaceId,
+        taskContractDigest: successor.taskContract?.digest,
+      });
+      const successorsOf = (id: string) => [...new Set([
+        ...workLifecyclePersistence.listSessionBindings({ runId: id })
+          .map((binding) => binding.successorRunId).filter(Boolean),
+        ...keyedRows.filter(({ row, digest }) => row.successorKey === buildSuccessorKey({
+          projectId: row.projectId, predecessorRunId: id,
+          worktreeId: row.worktreeId, workspaceId: row.workspaceId,
+          taskContractDigest: digest,
+        })).map(({ row }) => row.runId),
+      ])];
+      const terminalSuccessor = successorsOf(cursor);
       if (terminalSuccessor.length > 1) {
         throw Object.assign(new Error('SUCCESSOR_LINEAGE_AMBIGUOUS'), {
           code: 'SUCCESSOR_LINEAGE_AMBIGUOUS',
@@ -3361,17 +3387,28 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         const predecessors = workLifecyclePersistence.listSessionBindings({
           successorRunId: cursor,
         });
-        if (predecessors.length === 0) break;
         const ownerPredecessors = predecessors.filter((binding) => binding.accessMode === 'owner');
-        if (ownerPredecessors.length !== 1) {
+        if (predecessors.length > 0 && ownerPredecessors.length !== 1) {
           throw Object.assign(new Error('SUCCESSOR_LINEAGE_AMBIGUOUS'), {
             code: 'SUCCESSOR_LINEAGE_AMBIGUOUS',
             errorCode: 'SUCCESSOR_LINEAGE_AMBIGUOUS',
             details: { runId: cursor, predecessorBindingIds: ownerPredecessors.map((binding) => binding.bindingId) },
           });
         }
-        const edge = requiredIndex(ownerPredecessors, 0);
-        const predecessor = this.getRun(edge.runId);
+        const edge = ownerPredecessors[0] || null;
+        if (!edge && !current.successorKey) break;
+        const keyPredecessors = current.successorKey
+          ? scopedIds.filter((id) => id !== cursor && expectedKey(id, current) === current.successorKey)
+          : [];
+        if (current.successorKey && (keyPredecessors.length !== 1
+          || (edge && edge.runId !== keyPredecessors[0]))) {
+          throw Object.assign(new Error('SUCCESSOR_LINEAGE_KEY_MISMATCH'), {
+            code: 'SUCCESSOR_LINEAGE_KEY_MISMATCH', errorCode: 'SUCCESSOR_LINEAGE_KEY_MISMATCH',
+            details: { runId: cursor },
+          });
+        }
+        const predecessorRunId = edge?.runId || requiredIndex(keyPredecessors, 0);
+        const predecessor = this.getRun(predecessorRunId);
         if (!predecessor
           || predecessor.projectId !== current.projectId
           || predecessor.workspaceId !== current.workspaceId
@@ -3381,7 +3418,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
           throw Object.assign(new Error('SUCCESSOR_LINEAGE_SCOPE_MISMATCH'), {
             code: 'SUCCESSOR_LINEAGE_SCOPE_MISMATCH',
             errorCode: 'SUCCESSOR_LINEAGE_SCOPE_MISMATCH',
-            details: { predecessorRunId: edge.runId, successorRunId: cursor },
+            details: { predecessorRunId, successorRunId: cursor },
           });
         }
         const predecessorFinalWorkspaceIdentity = predecessor.currentWorkspaceIdentity || null;
@@ -3393,22 +3430,30 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
             code: 'SUCCESSOR_WORKSPACE_CONTINUITY_MISMATCH',
             errorCode: 'SUCCESSOR_WORKSPACE_CONTINUITY_MISMATCH',
             details: {
-              predecessorRunId: edge.runId,
+              predecessorRunId,
               successorRunId: cursor,
               predecessorFinalWorkspaceIdentity,
               successorStartWorkspaceIdentity,
             },
           });
         }
+        // Reject a fork even when querying one of its children, not just when
+        // querying the parent. No branch may silently import the same proof.
+        const children = successorsOf(predecessorRunId);
+        if (children.length !== 1 || children[0] !== cursor) {
+          throw Object.assign(new Error('SUCCESSOR_LINEAGE_AMBIGUOUS'), {
+            code: 'SUCCESSOR_LINEAGE_AMBIGUOUS', errorCode: 'SUCCESSOR_LINEAGE_AMBIGUOUS',
+            details: { runId: predecessorRunId, successorRunIds: children },
+          });
+        }
         edges.unshift({
-          predecessorRunId: edge.runId,
+          predecessorRunId,
           successorRunId: cursor,
           binding: edge,
           predecessorFinalWorkspaceIdentity,
           successorStartWorkspaceIdentity,
         });
-        cursor = edge.runId;
-        terminalSuccessor = [];
+        cursor = predecessorRunId;
       }
       return {
         runIds: runs.map((run) => run.runId),
@@ -3416,6 +3461,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         edges,
         terminalRunId: String(runId),
         isTerminal,
+        diagnostics,
       };
     },
 

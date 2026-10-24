@@ -79,17 +79,22 @@ test('initial inventory rejects altered baseline, foreign additions, scope viola
   } finally { await rm(f.root, { recursive: true, force: true }); }
 });
 
-test('status inventory expands directories and preserves exact filenames', async () => {
+test('status inventory expands directories and preserves exact filenames', async (t) => {
   const root = await repo();
   try {
     await mkdir(path.join(root, 'src'));
-    const names = ['src/한국어.ts', 'src/quote".ts', 'src/a -> b.ts', 'src/line\nbreak.ts'];
+    const names = ['src/한국어.ts', 'src/file with spaces.ts', 'src/brackets[1].ts'];
     for (const name of names) await writeFile(path.join(root, name), 'source\n');
     assert.deepEqual(readGitStatusEntries(root).map(e => e.path).sort(), names.sort());
+    await t.test('preserves POSIX-only filenames', { skip: process.platform === 'win32' }, async () => {
+      const special = ['src/quote".ts', 'src/a -> b.ts', 'src/line\nbreak.ts'];
+      for (const name of special) await writeFile(path.join(root, name), 'source\n');
+      assert.deepEqual(readGitStatusEntries(root).map(e => e.path).sort(), [...names, ...special].sort());
+    });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('shared template staging accepts placeholders and rejects secrets and symlinks', async () => {
+test('shared template staging accepts placeholders and rejects secrets and symlinks', async (t) => {
   const root = await repo();
   try {
     assert.equal(isPathStagable('.env.example'), true);
@@ -104,8 +109,19 @@ test('shared template staging accepts placeholders and rejects secrets and symli
     assert.equal(git(root, ['diff', '--cached', '--name-only']), '');
     await rm(template);
     await writeFile(path.join(root, 'external.txt'), 'PORT=4310\n');
-    await symlink('external.txt', template);
-    assert.throws(() => assertStagingContentSafe(root, '.env.example'), /GIT_ENV_TEMPLATE_INVALID/);
+    await t.test('rejects symbolic links', async (linkTest) => {
+      try {
+        await symlink('external.txt', template);
+      } catch (error) {
+        if (process.platform === 'win32' && error instanceof Error && 'code' in error
+          && (error.code === 'EPERM' || error.code === 'EACCES')) {
+          linkTest.skip('This Windows account cannot create file symbolic links');
+          return;
+        }
+        throw error;
+      }
+      assert.throws(() => assertStagingContentSafe(root, '.env.example'), /GIT_ENV_TEMPLATE_INVALID/);
+    });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
