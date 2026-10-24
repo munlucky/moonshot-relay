@@ -135,6 +135,6 @@
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^26.6.5",
     "json-schema-to-typescript": "16.0.0",
-    "typescript": "6.0.3"
+    "typescript": "7.0.2"
   }
 }
