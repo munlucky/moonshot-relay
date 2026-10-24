@@ -51,6 +51,13 @@ interface IdentityStateStore extends WorkspaceRegistryStore<RegisteredWorkspace>
     legacyCandidates?: LegacyIdentityAlias[];
   }): IdentityInspection;
   registerProjectIdentity(identity: KernelProjectIdentity): PersistedIdentity | null;
+  mergeProjectIdentity(input: {
+    sourceProjectId: string;
+    targetProjectId: string;
+    canonicalRoot: string;
+    gitCommonDir?: string | null;
+    approvedTargetIdentity?: KernelProjectIdentity | null;
+  }): PersistedIdentity | null;
   close(): void;
 }
 
@@ -249,9 +256,13 @@ const approvalError = (code: string, nextAction: string, details: UnknownRecord 
   ...details,
 });
 
+const candidateHasPersistedState = (candidate: IdentityCandidate): boolean => (
+  candidate.hasData || candidate.hasPersistedIdentity
+);
+
 const findLegacyCandidate = (preflight: IdentityPreflight, legacyProjectId: unknown): IdentityCandidate => {
   const candidate = preflight.state.legacyCandidates.find((item) => item.projectId === String(legacyProjectId || ''));
-  if (!candidate || !candidate.hasData) {
+  if (!candidate || !candidateHasPersistedState(candidate)) {
     throw approvalError('project_identity_legacy_candidate_not_found', 'inspect-project-identity-candidates', { legacyProjectId });
   }
   return candidate;
@@ -333,7 +344,7 @@ const writeIdentityReceipt = async ({
     approvalDigest,
     signer: operatorSigner(),
     unresolvedLegacyCandidates: preflight.legacyCandidates
-      .filter((candidate) => candidate.hasData)
+      .filter(candidateHasPersistedState)
       .map((candidate) => ({
         projectId: candidate.projectId,
         source: candidate.source ?? null,
@@ -359,11 +370,14 @@ export const inspectKernelProjectIdentity = async ({ projectRoot = process.cwd()
       gitCommonDir: identity.gitCommonDir,
       legacyCandidates: uniqueCandidates(identity),
     });
-    const unresolved = state.legacyCandidates.filter((candidate) => candidate.hasData);
-    const status = state.currentIdentity
-      ? 'ready'
-      : unresolved.length > 0
-        ? 'repair_required'
+    const unresolved = state.legacyCandidates.filter((candidate) => (
+      candidateHasPersistedState(candidate)
+      && (!state.currentIdentity || candidate.sameRootEvidence)
+    ));
+    const status = unresolved.length > 0
+      ? 'repair_required'
+      : state.currentIdentity
+        ? 'ready'
         : 'bootstrap_required';
     return {
       schemaVersion: 1,
@@ -409,12 +423,15 @@ const loadRepairContext = async ({ projectRoot, runtimeHome, env }: { projectRoo
       gitCommonDir: identity.gitCommonDir,
       legacyCandidates: uniqueCandidates(identity),
     });
-    const unresolved = state.legacyCandidates.filter((candidate) => candidate.hasData);
+    const unresolved = state.legacyCandidates.filter((candidate) => (
+      candidateHasPersistedState(candidate)
+      && (!state.currentIdentity || candidate.sameRootEvidence)
+    ));
     return {
       identity,
       state,
       unresolved,
-      status: state.currentIdentity ? 'ready' : unresolved.length ? 'repair_required' : 'bootstrap_required',
+      status: unresolved.length ? 'repair_required' : state.currentIdentity ? 'ready' : 'bootstrap_required',
     };
   })();
   return { effectiveRuntimeHome, identity, store, preflight };
@@ -521,7 +538,17 @@ export const repairKernelProjectIdentity = async ({ projectRoot = process.cwd(),
       legacyProjectId: candidate.projectId,
     });
     const adopted = identityForProject(identity, candidate.projectId, 'operator_approved_legacy');
-    const persisted = store.registerProjectIdentity(adopted)!;
+    const currentProjectId = preflight.state.currentIdentity?.projectId || null;
+    const mergedCurrentIdentity = Boolean(currentProjectId && currentProjectId !== candidate.projectId);
+    const persisted = mergedCurrentIdentity
+      ? store.mergeProjectIdentity({
+          sourceProjectId: currentProjectId!,
+          targetProjectId: candidate.projectId,
+          canonicalRoot: identity.canonicalRoot,
+          gitCommonDir: identity.gitCommonDir,
+          approvedTargetIdentity: candidate.hasPersistedIdentity ? null : adopted,
+        })!
+      : store.registerProjectIdentity(adopted)!;
     const workspace = registerObservedWorkspace({
       stateStore: store,
       resolveStableWorkspaceIdentity,
@@ -544,7 +571,9 @@ export const repairKernelProjectIdentity = async ({ projectRoot = process.cwd(),
       status: 'ready',
       operation: 'repair',
       policy: 'operator_approved_legacy',
-      mutation: 'identity-adopted-without-data-rewrite',
+      mutation: mergedCurrentIdentity
+        ? 'identity-adopted-with-current-state-merge'
+        : 'identity-adopted-without-data-rewrite',
       projectId: persisted.projectId,
       canonicalRoot: persisted.canonicalRoot,
       workspaceId: workspace.workspaceId,

@@ -244,6 +244,7 @@ export interface WorkLifecyclePersistence {
     sourceWorkspaceId: string;
     targetWorkspaceId: string;
     canonicalRoot: string;
+    withinTransaction?: boolean;
   }): {
     updatedReferences: number;
     updatedBindings: number;
@@ -668,6 +669,7 @@ export const createWorkLifecyclePersistence = ({
           last_seen_at as lastSeenAt
         FROM project_workspaces
         WHERE project_id=?
+        ORDER BY created_at, workspace_id
       `).all(projectId) as PersistedProjectWorkspace[]
     );
 
@@ -984,8 +986,9 @@ export const createWorkLifecyclePersistence = ({
       sourceWorkspaceId,
       targetWorkspaceId,
       canonicalRoot,
+      withinTransaction = false,
     }) {
-      return db.transaction(() => {
+      const merge = () => {
         if (sourceWorkspaceId === targetWorkspaceId) {
           return {
             updatedReferences: 0,
@@ -999,6 +1002,58 @@ export const createWorkLifecyclePersistence = ({
           SET workspace_root=?, updated_at=?
           WHERE workspace_id=?
         `).run(canonicalRoot, now(), sourceWorkspaceId) as ChangeResult;
+
+        const sourceWorkspaceEpoch = Number((db.prepare(
+          'SELECT mutation_epoch AS epoch FROM project_workspaces WHERE workspace_id=?',
+        ).get(sourceWorkspaceId) as { epoch?: number | string | null } | undefined)?.epoch || 0);
+        const targetWorkspaceEpoch = Number((db.prepare(
+          'SELECT mutation_epoch AS epoch FROM project_workspaces WHERE workspace_id=?',
+        ).get(targetWorkspaceId) as { epoch?: number | string | null } | undefined)?.epoch || 0);
+        const sourceWorkspaceLock = getWorkspaceMutationLockV2(sourceWorkspaceId);
+        const targetWorkspaceLock = getWorkspaceMutationLockV2(targetWorkspaceId);
+        const mergedWorkspaceEpoch = Math.max(
+          sourceWorkspaceEpoch,
+          targetWorkspaceEpoch,
+          Number(sourceWorkspaceLock?.fencingToken || 0),
+          Number(targetWorkspaceLock?.fencingToken || 0),
+        );
+        if (mergedWorkspaceEpoch > targetWorkspaceEpoch) {
+          db.prepare(
+            'UPDATE project_workspaces SET mutation_epoch=? WHERE workspace_id=?',
+          ).run(mergedWorkspaceEpoch, targetWorkspaceId);
+        }
+
+        if (sourceWorkspaceLock) {
+          // A fencing token is scoped to the workspace history that issued it.
+          // Once two workspace histories collapse, source credentials could be
+          // indistinguishable from a retained target lock. Retire both active
+          // rows and preserve their maximum token in mutation_epoch; the next
+          // owner must reacquire with a strictly newer target token.
+          db.prepare(`
+            DELETE FROM workspace_mutation_locks_v2
+            WHERE workspace_id=? AND project_id=? AND holder_run_id=?
+              AND session_token=? AND fencing_token=?
+          `).run(
+            sourceWorkspaceLock.workspaceId,
+            sourceWorkspaceLock.projectId,
+            sourceWorkspaceLock.holderRunId,
+            sourceWorkspaceLock.sessionToken,
+            Number(sourceWorkspaceLock.fencingToken),
+          );
+          if (targetWorkspaceLock) {
+            db.prepare(`
+              DELETE FROM workspace_mutation_locks_v2
+              WHERE workspace_id=? AND project_id=? AND holder_run_id=?
+                AND session_token=? AND fencing_token=?
+            `).run(
+              targetWorkspaceLock.workspaceId,
+              targetWorkspaceLock.projectId,
+              targetWorkspaceLock.holderRunId,
+              targetWorkspaceLock.sessionToken,
+              Number(targetWorkspaceLock.fencingToken),
+            );
+          }
+        }
 
         const referenceColumns = new Set([
           'workspace_id',
@@ -1014,7 +1069,7 @@ export const createWorkLifecyclePersistence = ({
 
         let updatedReferences = 0;
         for (const { name } of tables) {
-          if (name === 'project_workspaces') continue;
+          if (name === 'project_workspaces' || name === 'workspace_mutation_locks_v2') continue;
           const quotedTable = quoteIdentifier(name);
           const columns = db.prepare(
             `PRAGMA table_info(${quotedTable})`,
@@ -1039,7 +1094,8 @@ export const createWorkLifecyclePersistence = ({
           updatedBindings: Number(bindingUpdate.changes || 0),
           deletedWorkspace: Number(deleted.changes || 0) === 1,
         };
-      })();
+      };
+      return withinTransaction ? merge() : db.transaction(merge)();
     },
 
     backfillRunWorktreeId({ projectId, workspaceId, worktreeId }) {

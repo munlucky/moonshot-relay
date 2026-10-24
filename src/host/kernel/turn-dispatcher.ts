@@ -1406,6 +1406,7 @@ const dispatchKernelTurnAttempt = async ({
           capsuleDigest: executionCapsule?.provenance?.capsuleDigest || null,
           workspaceIdentity: executionCapsule?.subject?.workspaceIdentity || executionCapsule?.provenance?.workspaceIdentity || null,
           mutationRevision: executionCapsule?.subject?.mutationRevision ?? executionCapsule?.mutationRevision ?? null,
+          skillName: actionContext.reviewSkill || actionContext.skillName || null,
         }
         : null,
       concurrencyGroup: actionContext.concurrencyGroup || runId,
@@ -1512,6 +1513,7 @@ const dispatchKernelTurnAttempt = async ({
       capsuleDigest: executionCapsule?.provenance?.capsuleDigest || null,
       workspaceIdentity: executionCapsule?.subject?.workspaceIdentity || executionCapsule?.provenance?.workspaceIdentity || null,
       mutationRevision: executionCapsule?.subject?.mutationRevision ?? executionCapsule?.mutationRevision ?? null,
+      skillName: actionContext.reviewSkill || actionContext.skillName || null,
     };
     const attestation = validateIndependentSubagentReviewAttestation({
       dispatch,

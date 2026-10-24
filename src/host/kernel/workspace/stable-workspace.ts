@@ -13,8 +13,11 @@ const gitPath = (cwd: string, arg: string): string | null => {
 };
 
 const normalizePath = (value: string, platform: NodeJS.Platform = process.platform): string => {
-  const normalized = path.normalize(value).replaceAll('\\', '/');
-  return platform === 'win32' ? normalized.toLowerCase() : normalized;
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  const normalized = pathApi.normalize(value);
+  return platform === 'win32'
+    ? normalized.replaceAll('\\', '/').toLowerCase()
+    : normalized;
 };
 
 export const resolveStableWorkspaceIdentity: ResolveStableWorkspaceIdentity = ({

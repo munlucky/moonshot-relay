@@ -1,4 +1,10 @@
 import { requiredIndex } from '../shared/required-index.js';
+import {
+  canonicalPathIdentity,
+  isValidWindowsAbsolutePathIdentity,
+  sameCrossSurfacePathIdentity,
+  samePathSurfaceIdentity,
+} from '../shared/path-identity.js';
 import type { PersistedWorktreeMutationLease, PersistedWorkspaceMutationLock } from './persistence/work-lifecycle-store.js';
 import type { WorkStepStore } from './persistence/work-store.js';
 import type { WorkAttemptStore } from './persistence/work-attempt-store.js';
@@ -13,7 +19,6 @@ import type {
   ModelUsageReceiptInput,
   UnknownRecord,
   SqliteTableRow,
-  RawWorkspaceRow,
   KnowledgeRevisionRow,
   StoredTaskContract,
   RunSignals,
@@ -176,15 +181,155 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
   const workStepPersistence: WorkStepStore = createWorkStepStore({ db, now, getRun: (runId): KernelRun | null => store.getRun(runId) });
   const workAttemptPersistence: WorkAttemptStore = createWorkAttemptStore({ db, now, getRun: (runId): KernelRun | null => store.getRun(runId), getRunStep: (runId, stepId): PersistedWorkStep | null => store.getRunStep(runId, stepId), hashActorSessionId: hashSessionId, serialize: persistentJson, finishAttemptForReport: (attemptId, input): WorkAttempt | null => store.finishStepAttempt(attemptId, input) });
   const canonicalIdentityRoot = (value: unknown) => {
-    const resolved = path.resolve(String(value || ''));
+    const input = String(value || '');
+    if (!input.trim()) return '';
+    const raw = input;
+    const trimmed = input.trim();
+    // Surrounding whitespace is part of a POSIX path. For a Windows-like
+    // spelling it is never valid ownership evidence, so preserve the input
+    // unchanged and let invalidWindowsOwnershipPath reject it at the boundary.
+    if (trimmed !== input && /^[a-z]:(?:[\\/]|$)/i.test(trimmed)) {
+      return input.replaceAll('\\', '/');
+    }
+    // Windows drive-relative paths (C: and C:repo) depend on per-drive current
+    // directories. They are not stable repository roots and must never be
+    // resolved into ownership evidence.
+    if (/^[a-z]:(?![\\/])/i.test(raw)) {
+      return input.replaceAll('\\', '/');
+    }
+    // Invalid Windows-like spellings must not normalize into a valid persisted
+    // root before ownership checks. Preserve the original spelling so direct
+    // DB lookup cannot collapse it onto an existing repository identity.
+    if (/^[a-z]:[\\/]/i.test(raw) && !isValidWindowsAbsolutePathIdentity(input)) {
+      return input.replaceAll('\\', '/');
+    }
+    // State can be shared by Windows and POSIX host surfaces. Preserve a
+    // foreign Windows drive path instead of resolving it as a relative POSIX
+    // path (for example, /cwd/c:/repo).
+    if (process.platform !== 'win32' && /^[a-z]:[\\/]/i.test(raw)) {
+      return canonicalPathIdentity(raw, { platform: 'win32' });
+    }
+    // A persisted POSIX absolute path can be inspected on a Windows Host.
+    // Keep its POSIX casing instead of resolving it onto the current Windows
+    // drive and lowercasing a path that may name a distinct repository.
+    if (process.platform === 'win32' && /^\/(?!\/)/.test(raw)) {
+      return path.posix.normalize(raw);
+    }
+    const resolved = path.resolve(raw);
     try {
-      const real = fs.realpathSync(resolved).replaceAll('\\', '/');
-      return process.platform === 'win32' ? real.toLowerCase() : real;
+      const real = fs.realpathSync(resolved);
+      return process.platform === 'win32'
+        ? real.replaceAll('\\', '/').toLowerCase()
+        : real;
     } catch {
-      const posix = resolved.replaceAll('\\', '/');
-      return process.platform === 'win32' ? posix.toLowerCase() : posix;
+      return process.platform === 'win32'
+        ? resolved.replaceAll('\\', '/').toLowerCase()
+        : resolved;
     }
   };
+  const invalidWindowsOwnershipPath = (value: unknown) => {
+    const raw = String(value || '').trim();
+    if (/^[a-z]:(?![\\/])/i.test(raw)) return true;
+    return /^[a-z]:[\\/]/i.test(raw) && !isValidWindowsAbsolutePathIdentity(value);
+  };
+  const sameIdentityPath = (left: unknown, right: unknown) => {
+    if (invalidWindowsOwnershipPath(left) || invalidWindowsOwnershipPath(right)) return false;
+    return sameCrossSurfacePathIdentity(left, right)
+      || sameCrossSurfacePathIdentity(canonicalIdentityRoot(left), canonicalIdentityRoot(right));
+  };
+  const sameOwnershipPath = (left: unknown, right: unknown) => {
+    if (invalidWindowsOwnershipPath(left) || invalidWindowsOwnershipPath(right)) return false;
+    return samePathSurfaceIdentity(left, right)
+      || samePathSurfaceIdentity(canonicalIdentityRoot(left), canonicalIdentityRoot(right));
+  };
+  const hasPairedCrossSurfaceRepositoryEvidence = ({
+    projectId,
+    persistedRoot,
+    observedRoot,
+    observedGitCommonDir,
+  }: {
+    projectId: string;
+    persistedRoot: unknown;
+    observedRoot: unknown;
+    observedGitCommonDir: unknown;
+  }) => Boolean(
+    observedGitCommonDir
+    && sameIdentityPath(persistedRoot, observedRoot)
+    && workLifecyclePersistence
+      .listProjectWorkspaceRecords(projectId)
+      .some((workspace) => sameIdentityPath(workspace.gitCommonDir, observedGitCommonDir))
+  );
+  type WorkspaceRepositoryEvidence = {
+    workspaceId?: string;
+    canonicalRoot: unknown;
+    gitCommonDir?: unknown;
+    gitWorktreeDir?: unknown;
+    createdAt?: unknown;
+  };
+  const sameWorkspaceRepositoryEvidence = (
+    left: WorkspaceRepositoryEvidence,
+    right: WorkspaceRepositoryEvidence,
+  ) => (
+    sameOwnershipPath(left.canonicalRoot, right.canonicalRoot)
+    || Boolean(
+      left.gitCommonDir
+      && right.gitCommonDir
+      && sameIdentityPath(left.canonicalRoot, right.canonicalRoot)
+      && sameIdentityPath(left.gitCommonDir, right.gitCommonDir)
+    )
+  );
+  const workspaceRepositoryComponent = <T extends WorkspaceRepositoryEvidence>(
+    seed: WorkspaceRepositoryEvidence,
+    candidates: readonly T[],
+  ): T[] => {
+    const connected = new Set<T>();
+    const frontier: WorkspaceRepositoryEvidence[] = [seed];
+    while (frontier.length > 0) {
+      const current = frontier.pop()!;
+      for (const candidate of candidates) {
+        if (connected.has(candidate)) continue;
+        if (!sameWorkspaceRepositoryEvidence(current, candidate)) continue;
+        connected.add(candidate);
+        frontier.push(candidate);
+      }
+    }
+    return candidates.filter((candidate) => connected.has(candidate));
+  };
+  const isWorkspaceRepositoryAnchor = (
+    candidate: WorkspaceRepositoryEvidence,
+    component: readonly WorkspaceRepositoryEvidence[],
+  ) => component.every((member) => sameWorkspaceRepositoryEvidence(candidate, member));
+  const preservesPersistedWorkspaceGitEvidence = (
+    candidate: WorkspaceRepositoryEvidence,
+    persistedMembers: readonly WorkspaceRepositoryEvidence[],
+  ) => {
+    const preservesPathEvidence = (
+      candidatePath: unknown,
+      persistedPaths: unknown[],
+    ) => (
+      persistedPaths.length === 0
+      || Boolean(
+        candidatePath
+        && persistedPaths.every((persistedPath) => (
+          sameIdentityPath(candidatePath, persistedPath)
+        )),
+      )
+    );
+    return preservesPathEvidence(
+      candidate.gitCommonDir,
+      persistedMembers.map((member) => member.gitCommonDir).filter(Boolean),
+    ) && preservesPathEvidence(
+      candidate.gitWorktreeDir,
+      persistedMembers.map((member) => member.gitWorktreeDir).filter(Boolean),
+    );
+  };
+  const compareWorkspaceRecords = (
+    left: { workspaceId: string; createdAt?: unknown },
+    right: { workspaceId: string; createdAt?: unknown },
+  ) => (
+    String(left.createdAt || '').localeCompare(String(right.createdAt || ''))
+    || left.workspaceId.localeCompare(right.workspaceId)
+  );
   const mapProjectIdentity = (row: IdentityRow | null | undefined, aliases: string[] | null = null) => row ? ({
     projectId: row.project_id || row.projectId!,
     canonicalRoot: row.canonical_root || row.canonicalRoot!,
@@ -195,13 +340,15 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
     updatedAt: row.updated_at || row.updatedAt,
   }) : null;
   const findProjectIdentityByRoot = (root: string) => {
+    if (invalidWindowsOwnershipPath(root)) return null;
     const exact = projectIdentityPersistence.getIdentityByCanonicalRoot(root);
     if (exact) return exact;
     return projectIdentityPersistence.listIdentities()
-      .find((candidate) => canonicalIdentityRoot(candidate.canonical_root) === root) || null;
+      .find((candidate) => sameOwnershipPath(candidate.canonical_root, root)) || null;
   };
   const projectIdentityAlias = (value: unknown, type: string | null = null) => {
-    const alias = String(value || '').trim();
+    const raw = String(value || '');
+    const alias = type === 'workspace-root' ? raw : raw.trim();
     if (!alias) return null;
     return {
       alias,
@@ -383,27 +530,169 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
     .map((row) => row.name)
     .filter((name) => name !== 'project_workspaces')
     .filter((name) => tableColumns(name).some((column) => workspaceReferenceColumns.includes(column.name)));
-  const migrateProjectWorkspaces = (fromProjectId: string, toProjectId: string) => {
-    const sourceRows = (db.prepare('SELECT * FROM project_workspaces WHERE project_id=?').all(fromProjectId) as Array<RawWorkspaceRow>);
-    for (const source of sourceRows) {
-      const target = (db.prepare(`
-        SELECT workspace_id FROM project_workspaces
-        WHERE project_id=? AND canonical_root=?
-      `).get(toProjectId, source.canonical_root) as { workspace_id: string } | undefined);
-      const sourceIdentity = safeJsonParse<UnknownRecord>(source.identity_json, {});
-      sourceIdentity.projectId = toProjectId;
-      if (target && target.workspace_id !== source.workspace_id) {
-        for (const table of workspaceScopedTables()) {
-          const quotedTable = quoteIdentifier(table);
-          for (const column of tableColumns(table).map((entry) => entry.name).filter((name) => workspaceReferenceColumns.includes(name))) {
-            db.prepare(`UPDATE ${quotedTable} SET ${quoteIdentifier(column)}=? WHERE ${quoteIdentifier(column)}=?`).run(target.workspace_id, source.workspace_id);
-          }
+  const rebindWorkspaceWorktreeAuthority = ({
+    fromProjectId,
+    toProjectId,
+    workspaceId,
+    sourceWorktreeId,
+    nextWorktreeId,
+  }: {
+    fromProjectId: string;
+    toProjectId: string;
+    workspaceId: string;
+    sourceWorktreeId: string | null;
+    nextWorktreeId: string;
+  }) => {
+    const priorRunWorktreeIds = (db.prepare(`
+      SELECT DISTINCT worktree_id AS worktreeId
+      FROM runs
+      WHERE project_id=? AND workspace_id=? AND worktree_id IS NOT NULL
+    `).all(fromProjectId, workspaceId) as Array<{ worktreeId: string }>)
+      .map((row) => row.worktreeId);
+    const priorWorktreeIds = [...new Set([
+      sourceWorktreeId,
+      ...priorRunWorktreeIds,
+    ].filter((value): value is string => Boolean(value)))];
+
+    // Worktree mutation authority follows the surviving workspace identity.
+    // Keep the existing target lease when one is already present; otherwise
+    // move the source lease to the surviving worktree id.
+    db.prepare(`
+      UPDATE runs
+      SET worktree_id=?
+      WHERE project_id=? AND workspace_id=?
+    `).run(nextWorktreeId, fromProjectId, workspaceId);
+    for (const priorWorktreeId of priorWorktreeIds) {
+      const sourceLease = workLifecyclePersistence.getWorktreeMutationLease(priorWorktreeId);
+      if (!sourceLease || sourceLease.projectId !== fromProjectId) continue;
+      if (priorWorktreeId === nextWorktreeId) {
+        if (fromProjectId !== toProjectId) {
+          db.prepare(`
+            UPDATE worktree_mutation_leases
+            SET project_id=?
+            WHERE worktree_id=? AND project_id=? AND holder_run_id=?
+          `).run(toProjectId, priorWorktreeId, fromProjectId, sourceLease.holderRunId);
         }
-        db.prepare('DELETE FROM project_workspaces WHERE workspace_id=?').run(source.workspace_id);
-      } else {
-        db.prepare(`UPDATE project_workspaces SET project_id=?, identity_json=?, last_seen_at=? WHERE workspace_id=?`)
-          .run(toProjectId, persistentJson(sourceIdentity), now(), source.workspace_id);
+        continue;
       }
+      const targetLease = workLifecyclePersistence.getWorktreeMutationLease(nextWorktreeId);
+      if (targetLease) {
+        if (targetLease.projectId !== toProjectId) {
+          throw Object.assign(new Error('project_worktree_lease_migration_conflict'), {
+            code: 'project_worktree_lease_migration_conflict',
+            worktreeId: nextWorktreeId,
+            projectIds: [targetLease.projectId, toProjectId],
+          });
+        }
+        workLifecyclePersistence.deleteWorktreeMutationLease({
+          worktreeId: priorWorktreeId,
+          projectId: fromProjectId,
+          runId: sourceLease.holderRunId,
+        });
+        continue;
+      }
+      db.prepare(`
+        UPDATE worktree_mutation_leases
+        SET worktree_id=?, project_id=?
+        WHERE worktree_id=? AND project_id=? AND holder_run_id=?
+      `).run(
+        nextWorktreeId,
+        toProjectId,
+        priorWorktreeId,
+        fromProjectId,
+        sourceLease.holderRunId,
+      );
+    }
+  };
+
+  const migrateProjectWorkspaces = (fromProjectId: string, toProjectId: string) => {
+    const sourceRows = [...workLifecyclePersistence.listProjectWorkspaceRecords(fromProjectId)]
+      .sort(compareWorkspaceRecords);
+    const targetRows = [...workLifecyclePersistence.listProjectWorkspaceRecords(toProjectId)]
+      .sort(compareWorkspaceRecords);
+    const observedRows = [...targetRows, ...sourceRows];
+    const sourceWorkspaceIds = new Set(sourceRows.map(({ workspaceId }) => workspaceId));
+    const targetWorkspaceIds = new Set(targetRows.map(({ workspaceId }) => workspaceId));
+    const processedWorkspaceIds = new Set<string>();
+
+    for (const source of sourceRows) {
+      if (processedWorkspaceIds.has(source.workspaceId)) continue;
+      const component = workspaceRepositoryComponent(source, observedRows)
+        .filter(({ workspaceId }) => !processedWorkspaceIds.has(workspaceId))
+        .sort(compareWorkspaceRecords);
+      const anchors = component
+        .filter((candidate) => (
+          isWorkspaceRepositoryAnchor(candidate, component)
+          && preservesPersistedWorkspaceGitEvidence(candidate, component)
+        ))
+        .sort((left, right) => {
+          const leftTarget = targetWorkspaceIds.has(left.workspaceId) ? 0 : 1;
+          const rightTarget = targetWorkspaceIds.has(right.workspaceId) ? 0 : 1;
+          return leftTarget - rightTarget || compareWorkspaceRecords(left, right);
+        });
+      const survivor = anchors[0] || null;
+      if (!survivor) {
+        throw Object.assign(new Error('project_workspace_repository_component_unanchored'), {
+          code: 'project_workspace_repository_component_unanchored',
+          sourceProjectId: fromProjectId,
+          targetProjectId: toProjectId,
+          workspaceIds: component.map(({ workspaceId }) => workspaceId),
+        });
+      }
+
+      // Keep a workspace whose persisted root + Git evidence directly proves
+      // every member of the component. This preserves the evidence that made
+      // the transitive collapse valid, so a later surface re-observation
+      // resolves back to the same authority instead of recreating a split.
+      const survivorFromProjectId = sourceWorkspaceIds.has(survivor.workspaceId)
+        ? fromProjectId
+        : toProjectId;
+      const nextWorktreeId = deriveKernelWorktreeId({
+        projectId: toProjectId,
+        canonicalWorktreeRoot: survivor.canonicalRoot,
+        canonicalGitDir: survivor.gitWorktreeDir || null,
+      });
+      rebindWorkspaceWorktreeAuthority({
+        fromProjectId: survivorFromProjectId,
+        toProjectId,
+        workspaceId: survivor.workspaceId,
+        sourceWorktreeId: survivor.worktreeId,
+        nextWorktreeId,
+      });
+
+      const survivorIdentity = safeJsonParse<UnknownRecord>(survivor.identityJson, {});
+      survivorIdentity.projectId = toProjectId;
+      survivorIdentity.canonicalRoot = survivor.canonicalRoot;
+      survivorIdentity.worktreeId = nextWorktreeId;
+      workLifecyclePersistence.upsertProjectWorkspaceRecord({
+        ...survivor,
+        projectId: toProjectId,
+        worktreeId: nextWorktreeId,
+        identityJson: persistentJson(survivorIdentity),
+        lastSeenAt: now(),
+      });
+
+      for (const member of component) {
+        if (member.workspaceId === survivor.workspaceId) continue;
+        const memberFromProjectId = sourceWorkspaceIds.has(member.workspaceId)
+          ? fromProjectId
+          : toProjectId;
+        rebindWorkspaceWorktreeAuthority({
+          fromProjectId: memberFromProjectId,
+          toProjectId,
+          workspaceId: member.workspaceId,
+          sourceWorktreeId: member.worktreeId,
+          nextWorktreeId,
+        });
+        workLifecyclePersistence.mergeProjectWorkspaceReferences({
+          sourceWorkspaceId: member.workspaceId,
+          targetWorkspaceId: survivor.workspaceId,
+          canonicalRoot: survivor.canonicalRoot,
+          withinTransaction: true,
+        });
+      }
+
+      for (const member of component) processedWorkspaceIds.add(member.workspaceId);
     }
   };
   const terminalRunStatuses = new Set(['completed', 'blocked', 'abandoned']);
@@ -2011,21 +2300,28 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
 
     registerProjectIdentity(identity: ProjectIdentityInput = {}) {
       const projectId = String(identity.projectId || '').trim();
-      const canonicalRoot = canonicalIdentityRoot(identity.canonicalRoot || identity.projectRoot);
+      const suppliedCanonicalRoot = identity.canonicalRoot || identity.projectRoot;
+      const canonicalRoot = canonicalIdentityRoot(suppliedCanonicalRoot);
       const identitySource = String(identity.identitySource || 'workspace_root');
       const identityDigest = String(identity.identityDigest || '').trim();
       // Physical Git observation is a Host/identity-resolver concern. The
       // persistence authority stores and compares the already-observed common
       // directory; it never executes Git to re-observe the workspace.
       const suppliedGitCommonDir = identity.gitCommonDir ? canonicalIdentityRoot(identity.gitCommonDir) : null;
-      if (!PROJECT_ID_PATTERN.test(projectId) || !canonicalRoot || !identityDigest) {
+      if (
+        !PROJECT_ID_PATTERN.test(projectId)
+        || !canonicalRoot
+        || !identityDigest
+        || invalidWindowsOwnershipPath(suppliedCanonicalRoot)
+      ) {
         throw Object.assign(new Error('project_identity_invalid'), { code: 'project_identity_invalid' });
       }
 
       const incomingAliases = [
-        ...(Array.isArray(identity.aliases) ? identity.aliases : []),
-        `workspace:${canonicalRoot}`,
-      ].map((value) => projectIdentityAlias(value)).filter((value): value is NonNullable<typeof value> => Boolean(value));
+        ...(Array.isArray(identity.aliases) ? identity.aliases : [])
+          .map((value) => projectIdentityAlias(value)),
+        projectIdentityAlias(`workspace:${canonicalRoot}`, 'workspace-root'),
+      ].filter((value): value is NonNullable<typeof value> => Boolean(value));
       const incomingGitCommonDir = suppliedGitCommonDir;
 
       const candidates = legacyIdentityCandidates(identity)
@@ -2033,17 +2329,41 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       const migration: { current: ReturnType<typeof prepareProjectKnowledgeNamespaceMigration> | null } = { current: null };
       const register = db.transaction(() => {
         let row = findProjectIdentityByRoot(canonicalRoot);
+        if (!row && incomingGitCommonDir) {
+          const crossSurfaceMatches = projectIdentityPersistence.listIdentities()
+            .filter((candidate) => hasPairedCrossSurfaceRepositoryEvidence({
+              projectId: candidate.project_id,
+              persistedRoot: candidate.canonical_root,
+              observedRoot: canonicalRoot,
+              observedGitCommonDir: incomingGitCommonDir,
+            }));
+          if (crossSurfaceMatches.length > 1) {
+            throw Object.assign(new Error('project_identity_alias_conflict'), {
+              code: 'project_identity_alias_conflict',
+              projectIds: crossSurfaceMatches.map((match) => match.project_id),
+              canonicalRoot,
+              gitCommonDir: incomingGitCommonDir,
+            });
+          }
+          row = crossSurfaceMatches[0] || null;
+        }
         if (!row) {
           const projectMatches = projectIdentityPersistence.listIdentityMatchesByAliases(
             incomingAliases.map(({ alias }) => alias),
           );
           const compatibleProjectMatches = projectMatches.filter((match) => {
             if (identitySource === 'account_alias_registry' && match.project_id === projectId) return true;
-            if (canonicalIdentityRoot(match.canonical_root) === canonicalRoot) return true;
+            if (sameOwnershipPath(match.canonical_root, canonicalRoot)) return true;
+            if (hasPairedCrossSurfaceRepositoryEvidence({
+              projectId: match.project_id,
+              persistedRoot: match.canonical_root,
+              observedRoot: canonicalRoot,
+              observedGitCommonDir: incomingGitCommonDir,
+            })) return true;
             if (!incomingGitCommonDir) return false;
             return workLifecyclePersistence
               .listProjectWorkspaceRecords(match.project_id)
-              .some((workspace) => workspace.gitCommonDir === incomingGitCommonDir);
+              .some((workspace) => sameOwnershipPath(workspace.gitCommonDir, incomingGitCommonDir));
           });
           if (compatibleProjectMatches.length !== projectMatches.length) {
             const code = incomingGitCommonDir
@@ -2076,10 +2396,18 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         if (!row) {
           const projectIdRow = projectIdentityPersistence.getIdentityByProjectId(projectId);
           if (projectIdRow) {
-            const sameRoot = canonicalIdentityRoot(projectIdRow.canonical_root) === canonicalRoot;
-            const commonDirProof = incomingGitCommonDir && workLifecyclePersistence
-              .listProjectWorkspaceRecords(projectIdRow.project_id)
-              .some((workspace) => workspace.gitCommonDir === incomingGitCommonDir);
+            const sameRoot = sameOwnershipPath(projectIdRow.canonical_root, canonicalRoot);
+            const commonDirProof = Boolean(incomingGitCommonDir && (
+              workLifecyclePersistence
+                .listProjectWorkspaceRecords(projectIdRow.project_id)
+                .some((workspace) => sameOwnershipPath(workspace.gitCommonDir, incomingGitCommonDir))
+              || hasPairedCrossSurfaceRepositoryEvidence({
+                projectId: projectIdRow.project_id,
+                persistedRoot: projectIdRow.canonical_root,
+                observedRoot: canonicalRoot,
+                observedGitCommonDir: incomingGitCommonDir,
+              })
+            ));
             if (!sameRoot && !commonDirProof && identitySource !== 'workspace_root') {
               const code = incomingGitCommonDir
                 ? 'project_identity_git_common_dir_unverified'
@@ -2109,11 +2437,36 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
             const ownerProjectId = projectIdentityPersistence.getAliasOwner(`project-id:${candidate.projectId}`);
             const sameRootWorkspace = workLifecyclePersistence
               .listProjectWorkspaceRecords(candidate.projectId)
-              .some((workspace) => canonicalIdentityRoot(workspace.canonicalRoot) === canonicalRoot);
+              .some((workspace) => sameOwnershipPath(workspace.canonicalRoot, canonicalRoot));
+            const hasData = hasProjectData(candidate.projectId);
+            if (
+              !legacyIdentity
+              && hasData
+              && sameRootWorkspace
+              && ownerProjectId
+              && ownerProjectId !== row!.project_id
+            ) {
+              throw Object.assign(new Error('project_identity_alias_conflict'), {
+                code: 'project_identity_alias_conflict',
+                alias: `project-id:${candidate.projectId}`,
+                projectIds: [ownerProjectId, row!.project_id],
+              });
+            }
             return !legacyIdentity
               && (ownerProjectId === row!.project_id || sameRootWorkspace)
-              && hasProjectData(candidate.projectId);
+              && hasData;
           }).map((candidate) => candidate.projectId);
+          const allowedIncomingAliasOwners = new Set([row.project_id, ...ownedLegacyIds]);
+          for (const { alias } of incomingAliases) {
+            const existingAliasProjectId = projectIdentityPersistence.getAliasOwner(alias);
+            if (existingAliasProjectId && !allowedIncomingAliasOwners.has(existingAliasProjectId)) {
+              throw Object.assign(new Error('project_identity_alias_conflict'), {
+                code: 'project_identity_alias_conflict',
+                alias,
+                projectIds: [existingAliasProjectId, row.project_id],
+              });
+            }
+          }
           migration.current = prepareProjectKnowledgeNamespaceMigration({
             runtimeHome,
             legacyProjectIds: ownedLegacyIds,
@@ -2148,10 +2501,10 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
             const hasData = hasProjectData(legacyId);
             if (!hasData) continue;
 
-            const sameRootIdentity = legacyIdentity && canonicalIdentityRoot(legacyIdentity.canonical_root) === canonicalRoot;
+            const sameRootIdentity = legacyIdentity && sameOwnershipPath(legacyIdentity.canonical_root, canonicalRoot);
             const sameRootWorkspace = workLifecyclePersistence
               .listProjectWorkspaceRecords(legacyId)
-              .some((workspace) => canonicalIdentityRoot(workspace.canonicalRoot) === canonicalRoot);
+              .some((workspace) => sameOwnershipPath(workspace.canonicalRoot, canonicalRoot));
             const sameRootRun = workLifecyclePersistence.hasRunForProjectCanonicalRoot({
               projectId: legacyId,
               canonicalRoot,
@@ -2184,6 +2537,28 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
             provenLegacyIds.push(legacyId);
           }
 
+          // Every alias that can enter the canonical identity must be owned by
+          // the destination or by a legacy namespace being migrated. Check
+          // this before preparing the filesystem namespace migration.
+          for (const legacyId of provenLegacyIds) {
+            const legacyIdentity = projectIdentityPersistence.getIdentityByProjectId(legacyId);
+            for (const alias of safeJsonParse(legacyIdentity?.aliases_json, [])) {
+              const normalized = projectIdentityAlias(alias);
+              if (normalized) incomingAliases.push(normalized);
+            }
+          }
+          const allowedIncomingAliasOwners = new Set([projectId, ...provenLegacyIds]);
+          for (const { alias } of incomingAliases) {
+            const existingAliasProjectId = projectIdentityPersistence.getAliasOwner(alias);
+            if (existingAliasProjectId && !allowedIncomingAliasOwners.has(existingAliasProjectId)) {
+              throw Object.assign(new Error('project_identity_alias_conflict'), {
+                code: 'project_identity_alias_conflict',
+                alias,
+                projectIds: [existingAliasProjectId, projectId],
+              });
+            }
+          }
+
           migration.current = prepareProjectKnowledgeNamespaceMigration({
             runtimeHome,
             legacyProjectIds: provenLegacyIds,
@@ -2193,10 +2568,6 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
           });
 
           for (const legacyId of provenLegacyIds) {
-            const legacyIdentity = projectIdentityPersistence.getIdentityByProjectId(legacyId);
-            for (const alias of safeJsonParse(legacyIdentity?.aliases_json, [])) {
-              incomingAliases.push(projectIdentityAlias(alias)!);
-            }
             migrateProjectId(legacyId, projectId);
             // project_identities is the one project_id table intentionally not
             // handled by the generic UPDATE because its primary key and unique
@@ -2285,12 +2656,181 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       return mapProjectIdentity(row, aliases);
     },
 
+    mergeProjectIdentity({
+      sourceProjectId = null,
+      targetProjectId = null,
+      canonicalRoot = null,
+      gitCommonDir = null,
+      approvedTargetIdentity = null,
+    }: {
+      sourceProjectId?: string | null;
+      targetProjectId?: string | null;
+      canonicalRoot?: string | null;
+      gitCommonDir?: string | null;
+      approvedTargetIdentity?: ProjectIdentityInput | null;
+    } = {}) {
+      const sourceId = String(sourceProjectId || '').trim();
+      const targetId = String(targetProjectId || '').trim();
+      const currentRoot = canonicalRoot ? canonicalIdentityRoot(canonicalRoot) : null;
+      const currentGitCommonDir = gitCommonDir ? canonicalIdentityRoot(gitCommonDir) : null;
+      if (!sourceId || !targetId || sourceId === targetId || !currentRoot) {
+        throw Object.assign(new Error('project_identity_merge_invalid'), { code: 'project_identity_merge_invalid' });
+      }
+      const source = projectIdentityPersistence.getIdentityByProjectId(sourceId);
+      const target = projectIdentityPersistence.getIdentityByProjectId(targetId);
+      const approvedTargetRoot = approvedTargetIdentity?.canonicalRoot
+        ? canonicalIdentityRoot(approvedTargetIdentity.canonicalRoot)
+        : null;
+      const approvedTargetDigest = String(approvedTargetIdentity?.identityDigest || '').trim();
+      const approvedTargetSource = String(approvedTargetIdentity?.identitySource || '').trim();
+      const approvedTargetMatches = Boolean(
+        approvedTargetIdentity
+        && String(approvedTargetIdentity.projectId || '').trim() === targetId
+        && approvedTargetRoot
+        && sameOwnershipPath(approvedTargetRoot, currentRoot)
+        && approvedTargetDigest,
+      );
+      if (!source || (!target && (!approvedTargetMatches || !hasProjectData(targetId)))) {
+        throw Object.assign(new Error('project_identity_merge_identity_missing'), {
+          code: 'project_identity_merge_identity_missing',
+          sourceProjectId: sourceId,
+          targetProjectId: targetId,
+        });
+      }
+      const repositoryProof = (projectId: string, identity: IdentityRow) => (
+        sameOwnershipPath(identity.canonical_root, currentRoot)
+        || hasPairedCrossSurfaceRepositoryEvidence({
+          projectId,
+          persistedRoot: identity.canonical_root,
+          observedRoot: currentRoot,
+          observedGitCommonDir: currentGitCommonDir,
+        })
+        || Boolean(currentGitCommonDir && workLifecyclePersistence
+          .listProjectWorkspaceRecords(projectId)
+          .some((workspace) => sameOwnershipPath(workspace.gitCommonDir, currentGitCommonDir)))
+      );
+      const targetOwnershipProven = target
+        ? repositoryProof(targetId, target)
+        : approvedTargetMatches;
+      if (!repositoryProof(sourceId, source) || !targetOwnershipProven) {
+        throw Object.assign(new Error('project_identity_merge_ownership_unproven'), {
+          code: 'project_identity_merge_ownership_unproven',
+          sourceProjectId: sourceId,
+          targetProjectId: targetId,
+          canonicalRoot: currentRoot,
+          gitCommonDir: currentGitCommonDir,
+        });
+      }
+
+      const sourceAliases = safeJsonParse<string[]>(source.aliases_json, []);
+      const targetAliases = target
+        ? safeJsonParse<string[]>(target.aliases_json, [])
+        : (Array.isArray(approvedTargetIdentity?.aliases) ? approvedTargetIdentity.aliases : []);
+      const targetCanonicalRoot = target?.canonical_root || approvedTargetRoot!;
+      const targetIdentitySource = target?.identity_source || approvedTargetSource || 'operator_approved_legacy';
+      const targetIdentityDigest = target?.identity_digest || approvedTargetDigest;
+      const mergeProjectAliases = [...new Set([
+        `project-id:${sourceId}`,
+        `project-id:${targetId}`,
+        ...sourceAliases,
+        ...targetAliases,
+      ].map((alias) => projectIdentityAlias(alias)?.alias).filter((alias): alias is string => Boolean(alias)))];
+      const assertMergeProjectAliasesAvailable = () => {
+        for (const alias of mergeProjectAliases) {
+          const existingAliasProjectId = projectIdentityPersistence.getAliasOwner(alias);
+          if (
+            existingAliasProjectId
+            && existingAliasProjectId !== sourceId
+            && existingAliasProjectId !== targetId
+          ) {
+            throw Object.assign(new Error('project_identity_alias_conflict'), {
+              code: 'project_identity_alias_conflict',
+              alias,
+              projectIds: [existingAliasProjectId, sourceId, targetId],
+            });
+          }
+        }
+      };
+      // Validate DB ownership before preparing the filesystem migration. The
+      // preparation stage can move/stage knowledge namespaces, so an alias
+      // conflict must fail before it is entered.
+      assertMergeProjectAliasesAvailable();
+      const migration = prepareProjectKnowledgeNamespaceMigration({
+        runtimeHome,
+        legacyProjectIds: [sourceId],
+        projectId: targetId,
+        canonicalRoot: targetCanonicalRoot,
+        identityDigest: targetIdentityDigest,
+      });
+      try {
+        const merge = db.transaction(() => {
+          // Re-check inside the DB transaction so a concurrent alias change
+          // cannot slip between the preflight and the committed migration.
+          assertMergeProjectAliasesAvailable();
+          migrateProjectId(sourceId, targetId);
+          projectIdentityPersistence.deleteIdentity(sourceId);
+          const timestamp = now();
+          const aliases = [...new Set([...targetAliases, ...sourceAliases])];
+          if (target) {
+            projectIdentityPersistence.updateIdentityAliases({
+              projectId: targetId,
+              aliasesJson: persistentJson(aliases),
+              updatedAt: timestamp,
+            });
+          } else {
+            projectIdentityPersistence.insertIdentity({
+              projectId: targetId,
+              canonicalRoot: targetCanonicalRoot,
+              identitySource: targetIdentitySource,
+              identityDigest: targetIdentityDigest,
+              aliasesJson: persistentJson(aliases),
+              createdAt: timestamp,
+              updatedAt: timestamp,
+            });
+          }
+          projectIdentityPersistence.upsertAlias({
+            alias: `project-id:${sourceId}`,
+            projectId: targetId,
+            aliasType: 'legacy-project-id',
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          });
+          for (const aliasValue of aliases) {
+            const aliasEntry = projectIdentityAlias(aliasValue);
+            if (!aliasEntry) continue;
+            projectIdentityPersistence.upsertAlias({
+              alias: aliasEntry.alias,
+              projectId: targetId,
+              aliasType: aliasEntry.aliasType,
+              createdAt: timestamp,
+              updatedAt: timestamp,
+            });
+          }
+          const row = projectIdentityPersistence.getIdentityByProjectId(targetId)!;
+          return mapProjectIdentity(row, projectIdentityPersistence.listAliases(targetId, 'remote'));
+        });
+        const result = merge();
+        try { migration.finalize(); } catch { /* committed state remains authoritative */ }
+        return result;
+      } catch (error) {
+        try { migration.rollback(); } catch (rollbackError) {
+          throw Object.assign(new Error(`${errorMessage(error)}; identity filesystem rollback failed: ${errorMessage(rollbackError)}`), {
+            code: 'project_identity_migration_rollback_failed',
+            cause: error,
+            rollbackError,
+          });
+        }
+        throw error;
+      }
+    },
+
     inspectProjectIdentity({ projectId = null, canonicalRoot = null, gitCommonDir = null, legacyCandidates = [] }: { projectId?: string | null; canonicalRoot?: string | null; gitCommonDir?: string | null; legacyCandidates?: LegacyIdentityCandidate[] } = {}) {
       const rootIdentity = canonicalRoot
         ? this.getProjectIdentity({ canonicalRoot })
         : null;
       const projectIdentity = projectId
         ? this.getProjectIdentity({ projectId })
+          || this.getProjectIdentity({ alias: `project-id:${projectId}` })
         : null;
       // A linked worktree has a distinct canonical root, but it is still the
       // same logical project when its project id and Git common directory both
@@ -2299,9 +2839,17 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       // evidence across unrelated repositories.
       const canonicalIncomingGitCommonDir = gitCommonDir ? canonicalIdentityRoot(gitCommonDir) : null;
       const persistedGitEvidence = projectIdentity && canonicalIncomingGitCommonDir
-        ? workLifecyclePersistence
-            .listProjectWorkspaceRecords(projectIdentity.projectId)
-            .some((workspace) => workspace.gitCommonDir === canonicalIncomingGitCommonDir)
+        ? (
+            workLifecyclePersistence
+              .listProjectWorkspaceRecords(projectIdentity.projectId)
+              .some((workspace) => sameOwnershipPath(workspace.gitCommonDir, canonicalIncomingGitCommonDir))
+            || Boolean(canonicalRoot && hasPairedCrossSurfaceRepositoryEvidence({
+              projectId: projectIdentity.projectId,
+              persistedRoot: projectIdentity.canonicalRoot,
+              observedRoot: canonicalRoot,
+              observedGitCommonDir: canonicalIncomingGitCommonDir,
+            }))
+          )
         : false;
       const linkedIdentity = !rootIdentity && projectIdentity && canonicalRoot && canonicalIncomingGitCommonDir
         && persistedGitEvidence
@@ -2310,8 +2858,49 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       const currentIdentity = rootIdentity || linkedIdentity || (
         !canonicalRoot ? projectIdentity : null
       );
-      const candidates = [...new Map((Array.isArray(legacyCandidates) ? legacyCandidates : [])
-        .filter((candidate) => candidate?.projectId)
+      // A second host surface can spell the same physical repository as
+      // C:\\repo, /c/repo, or /mnt/c/repo. Canonical-root equivalence is
+      // already repository ownership evidence; Git common-dir observations are
+      // the additional proof for linked roots. A shared remote URL alone remains
+      // insufficient ownership proof.
+      const crossSurfaceCandidates = projectIdentityPersistence.listIdentities()
+        .filter((candidate) => candidate.project_id !== currentIdentity?.projectId)
+        .filter((candidate) => (
+          Boolean(canonicalRoot && sameOwnershipPath(candidate.canonical_root, canonicalRoot))
+          || Boolean(canonicalRoot && canonicalIncomingGitCommonDir && hasPairedCrossSurfaceRepositoryEvidence({
+            projectId: candidate.project_id,
+            persistedRoot: candidate.canonical_root,
+            observedRoot: canonicalRoot,
+            observedGitCommonDir: canonicalIncomingGitCommonDir,
+          }))
+          || Boolean(canonicalIncomingGitCommonDir && workLifecyclePersistence
+            .listProjectWorkspaceRecords(candidate.project_id)
+            .some((workspace) => sameOwnershipPath(workspace.gitCommonDir, canonicalIncomingGitCommonDir)))
+        ))
+        .map((candidate) => {
+          const canonicalRootMatch = Boolean(
+            (canonicalRoot && sameOwnershipPath(candidate.canonical_root, canonicalRoot))
+            || (canonicalRoot
+              && canonicalIncomingGitCommonDir
+              && hasPairedCrossSurfaceRepositoryEvidence({
+                projectId: candidate.project_id,
+                persistedRoot: candidate.canonical_root,
+                observedRoot: canonicalRoot,
+                observedGitCommonDir: canonicalIncomingGitCommonDir,
+              }))
+          );
+          return {
+            projectId: candidate.project_id,
+            source: canonicalRootMatch ? 'canonical-root' : 'git-common-dir',
+            aliasType: 'cross-surface-repository',
+            canonicalRoot: candidate.canonical_root,
+          };
+        });
+      const candidates = [...new Map([
+        ...(Array.isArray(legacyCandidates) ? legacyCandidates : []),
+        ...crossSurfaceCandidates,
+      ]
+        .filter((candidate) => candidate?.projectId && candidate.projectId !== currentIdentity?.projectId)
         .map((candidate) => [String(candidate.projectId), candidate])).values()];
       return {
         currentIdentity,
@@ -2328,8 +2917,15 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
             .sort((left, right) => left.canonicalRoot.localeCompare(right.canonicalRoot));
           const data = projectDataSummary(candidateId);
           const sameRootEvidence = Boolean(
-            (identity && canonicalIdentityRoot(identity.canonicalRoot) === canonicalIdentityRoot(canonicalRoot))
-              || workspaces.some((workspace) => canonicalIdentityRoot(workspace.canonicalRoot) === canonicalIdentityRoot(canonicalRoot)),
+            (identity && sameOwnershipPath(identity.canonicalRoot, canonicalRoot))
+              || workspaces.some((workspace) => sameOwnershipPath(workspace.canonicalRoot, canonicalRoot))
+              || (identity && canonicalRoot && canonicalIncomingGitCommonDir && hasPairedCrossSurfaceRepositoryEvidence({
+                projectId: candidateId,
+                persistedRoot: identity.canonicalRoot,
+                observedRoot: canonicalRoot,
+                observedGitCommonDir: canonicalIncomingGitCommonDir,
+              }))
+              || (canonicalIncomingGitCommonDir && workspaces.some((workspace) => sameOwnershipPath(workspace.gitCommonDir, canonicalIncomingGitCommonDir))),
           );
           return {
             projectId: candidateId,
@@ -2349,7 +2945,12 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
     },
 
     registerProjectWorkspace(workspace: WorkspaceInput) {
-      const canonicalRoot = canonicalIdentityRoot(workspace.canonicalRoot || workspace.identity?.canonicalRoot);
+      // Workspace registration is one ownership decision. BEGIN IMMEDIATE is
+      // acquired before any persisted ownership read, so concurrent registrars
+      // cannot both decide from the same stale "unowned" state and then
+      // overwrite project/root/Git authority with a later upsert.
+      const register = db.transaction(() => {
+        const canonicalRoot = canonicalIdentityRoot(workspace.canonicalRoot || workspace.identity?.canonicalRoot);
       const gitCommonDir = workspace.gitCommonDir ? canonicalIdentityRoot(workspace.gitCommonDir) : null;
       const gitWorktreeDir = workspace.gitWorktreeDir ? canonicalIdentityRoot(workspace.gitWorktreeDir) : null;
       const identity = {
@@ -2357,18 +2958,57 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         projectId: workspace.identity?.projectId || workspace.projectId!,
         canonicalRoot,
       };
-      const derivedWorktreeId = deriveKernelWorktreeId({
+      const priorObservedRow = workLifecyclePersistence
+        .getProjectWorkspaceRecord(workspace.workspaceId);
+      if (priorObservedRow && priorObservedRow.projectId !== identity.projectId) {
+        throw Object.assign(
+          new Error('workspace_project_identity_mismatch'),
+          { code: 'workspace_project_identity_mismatch' },
+        );
+      }
+      const projectWorkspaceRows = workLifecyclePersistence
+        .listProjectWorkspaceRecords(identity.projectId);
+      // A persisted workspace ID is the durable ownership handle for one
+      // workspace root. Equivalent cross-surface spellings normalize back to
+      // the persisted root; reusing the same ID for a different root fails
+      // closed instead of silently moving Run/lease authority. Persisted Git
+      // evidence is monotonic and incoming observations only fill gaps.
+      if (
+        priorObservedRow
+        && !sameIdentityPath(priorObservedRow.canonicalRoot, canonicalRoot)
+      ) {
+        throw Object.assign(
+          new Error('project_worktree_identity_mismatch'),
+          { code: 'project_worktree_identity_mismatch' },
+        );
+      }
+      const observedCanonicalRoot = priorObservedRow?.canonicalRoot || canonicalRoot;
+      const observedGitCommonDir = priorObservedRow?.gitCommonDir || gitCommonDir;
+      const observedGitWorktreeDir = priorObservedRow?.gitWorktreeDir || gitWorktreeDir;
+      const observedWorktreeId = deriveKernelWorktreeId({
         projectId: identity.projectId,
-        canonicalWorktreeRoot: canonicalRoot,
-        canonicalGitDir: gitWorktreeDir,
+        canonicalWorktreeRoot: observedCanonicalRoot,
+        canonicalGitDir: observedGitWorktreeDir,
       });
-      if (workspace.worktreeId && String(workspace.worktreeId) !== derivedWorktreeId) {
+      if (workspace.worktreeId && String(workspace.worktreeId) !== observedWorktreeId) {
         throw Object.assign(new Error('project_worktree_identity_mismatch'), { code: 'project_worktree_identity_mismatch' });
       }
-      identity.worktreeId = derivedWorktreeId;
-      const equivalentRows = workLifecyclePersistence
-        .listProjectWorkspaceRecords(identity.projectId)
-        .filter((candidate) => canonicalIdentityRoot(candidate.canonicalRoot) === canonicalRoot);
+      identity.canonicalRoot = observedCanonicalRoot;
+      identity.worktreeId = observedWorktreeId;
+      const observedEvidence: WorkspaceRepositoryEvidence = {
+        workspaceId: workspace.workspaceId,
+        canonicalRoot: observedCanonicalRoot,
+        gitCommonDir: observedGitCommonDir,
+        gitWorktreeDir: observedGitWorktreeDir,
+      };
+      const equivalentRows = workspaceRepositoryComponent(
+        observedEvidence,
+        projectWorkspaceRows,
+      ).sort(compareWorkspaceRecords);
+      const anchorComponent: WorkspaceRepositoryEvidence[] = [
+        observedEvidence,
+        ...equivalentRows,
+      ];
       const referencedWorkspaceIds = new Set([
         ...workLifecyclePersistence.listRunWorkspaceIds(identity.projectId),
         ...workLifecyclePersistence.listSessionBindings({
@@ -2376,50 +3016,162 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         }).map(({ workspaceId }) => workspaceId).filter(Boolean),
         ...workLifecyclePersistence.listWorkspaceMutationLocksV2({ projectId: identity.projectId }).map(({ workspaceId }) => workspaceId),
       ]);
-      const existing = equivalentRows.find((candidate) => referencedWorkspaceIds.has(candidate.workspaceId))
-        || equivalentRows.find((candidate) => candidate.canonicalRoot === canonicalRoot)
-        || equivalentRows[0]
-        || null;
+      const existing = equivalentRows
+        .filter((candidate) => (
+          isWorkspaceRepositoryAnchor(candidate, anchorComponent)
+          && preservesPersistedWorkspaceGitEvidence(candidate, equivalentRows)
+        ))
+        .sort((left, right) => {
+          const leftReferenced = referencedWorkspaceIds.has(left.workspaceId) ? 0 : 1;
+          const rightReferenced = referencedWorkspaceIds.has(right.workspaceId) ? 0 : 1;
+          if (leftReferenced !== rightReferenced) return leftReferenced - rightReferenced;
+          const leftExact = left.canonicalRoot === observedCanonicalRoot ? 0 : 1;
+          const rightExact = right.canonicalRoot === observedCanonicalRoot ? 0 : 1;
+          if (leftExact !== rightExact) return leftExact - rightExact;
+          return compareWorkspaceRecords(left, right);
+        })[0] || null;
       if (existing) {
-        for (const duplicate of equivalentRows.filter((candidate) => candidate.workspaceId !== existing.workspaceId)) {
-          workLifecyclePersistence.mergeProjectWorkspaceReferences({
-            sourceWorkspaceId: duplicate.workspaceId,
-            targetWorkspaceId: existing.workspaceId,
-            canonicalRoot,
+          const preserveExistingSurface = existing.canonicalRoot !== observedCanonicalRoot
+            && sameIdentityPath(existing.canonicalRoot, observedCanonicalRoot);
+          const retainedCanonicalRoot = preserveExistingSurface ? existing.canonicalRoot : observedCanonicalRoot;
+          // Persisted Git paths are ownership evidence for this workspace
+          // authority. Once established, keep them monotonic across in-place
+          // re-observation; a different repository identity must go through
+          // the existing identity/repair path instead of rewriting proof that
+          // may be required by already-collapsed workspace surfaces.
+          const retainedGitCommonDir = existing.gitCommonDir || observedGitCommonDir;
+          const retainedGitWorktreeDir = existing.gitWorktreeDir || observedGitWorktreeDir;
+          const retainedWorktreeId = deriveKernelWorktreeId({
+            projectId: identity.projectId,
+            canonicalWorktreeRoot: retainedCanonicalRoot,
+            canonicalGitDir: retainedGitWorktreeDir || null,
           });
-        }
-        const observedAt = now();
-        workLifecyclePersistence.upsertProjectWorkspaceRecord({
-          workspaceId: existing.workspaceId,
+          const retainedIdentity = preserveExistingSurface
+            ? safeJsonParse<UnknownRecord>(existing.identityJson, {})
+            : { ...identity };
+          retainedIdentity.projectId = identity.projectId;
+          retainedIdentity.canonicalRoot = retainedCanonicalRoot;
+          retainedIdentity.worktreeId = retainedWorktreeId;
+
+          rebindWorkspaceWorktreeAuthority({
+            fromProjectId: identity.projectId,
+            toProjectId: identity.projectId,
+            workspaceId: existing.workspaceId,
+            sourceWorktreeId: existing.worktreeId,
+            nextWorktreeId: retainedWorktreeId,
+          });
+          for (const duplicate of equivalentRows.filter((candidate) => candidate.workspaceId !== existing.workspaceId)) {
+            rebindWorkspaceWorktreeAuthority({
+              fromProjectId: identity.projectId,
+              toProjectId: identity.projectId,
+              workspaceId: duplicate.workspaceId,
+              sourceWorktreeId: duplicate.worktreeId,
+              nextWorktreeId: retainedWorktreeId,
+            });
+            workLifecyclePersistence.mergeProjectWorkspaceReferences({
+              sourceWorkspaceId: duplicate.workspaceId,
+              targetWorkspaceId: existing.workspaceId,
+              canonicalRoot: retainedCanonicalRoot,
+              withinTransaction: true,
+            });
+          }
+
+          const observedAt = now();
+          workLifecyclePersistence.upsertProjectWorkspaceRecord({
+            workspaceId: existing.workspaceId,
+            projectId: identity.projectId,
+            canonicalRoot: retainedCanonicalRoot,
+            gitCommonDir: retainedGitCommonDir,
+            gitWorktreeDir: retainedGitWorktreeDir,
+            worktreeId: retainedWorktreeId,
+            identityJson: persistentJson(retainedIdentity),
+            createdAt: existing.createdAt || observedAt,
+            lastSeenAt: observedAt,
+          });
+          workLifecyclePersistence.backfillRunWorktreeId({
+            projectId: identity.projectId,
+            workspaceId: existing.workspaceId,
+            worktreeId: retainedWorktreeId,
+          });
+          return this.getProjectWorkspace(existing.workspaceId)!;
+      }
+
+      if (
+        equivalentRows.length > 0
+        && isWorkspaceRepositoryAnchor(observedEvidence, anchorComponent)
+        && preservesPersistedWorkspaceGitEvidence(observedEvidence, equivalentRows)
+      ) {
+          const observedAt = now();
+          if (priorObservedRow) {
+            rebindWorkspaceWorktreeAuthority({
+              fromProjectId: identity.projectId,
+              toProjectId: identity.projectId,
+              workspaceId: priorObservedRow.workspaceId,
+              sourceWorktreeId: priorObservedRow.worktreeId,
+              nextWorktreeId: observedWorktreeId,
+            });
+          }
+          workLifecyclePersistence.upsertProjectWorkspaceRecord({
+            workspaceId: workspace.workspaceId,
+            projectId: identity.projectId,
+            canonicalRoot: observedCanonicalRoot,
+            gitCommonDir: observedGitCommonDir,
+            gitWorktreeDir: observedGitWorktreeDir,
+            worktreeId: observedWorktreeId,
+            identityJson: persistentJson(identity),
+            createdAt: priorObservedRow?.createdAt || observedAt,
+            lastSeenAt: observedAt,
+          });
+          for (const duplicate of equivalentRows.filter(
+            (candidate) => candidate.workspaceId !== workspace.workspaceId,
+          )) {
+            rebindWorkspaceWorktreeAuthority({
+              fromProjectId: identity.projectId,
+              toProjectId: identity.projectId,
+              workspaceId: duplicate.workspaceId,
+              sourceWorktreeId: duplicate.worktreeId,
+              nextWorktreeId: observedWorktreeId,
+            });
+            workLifecyclePersistence.mergeProjectWorkspaceReferences({
+              sourceWorkspaceId: duplicate.workspaceId,
+              targetWorkspaceId: workspace.workspaceId,
+              canonicalRoot: observedCanonicalRoot,
+              withinTransaction: true,
+            });
+          }
+          workLifecyclePersistence.backfillRunWorktreeId({
+            projectId: identity.projectId,
+            workspaceId: workspace.workspaceId,
+            worktreeId: observedWorktreeId,
+          });
+          return this.getProjectWorkspace(workspace.workspaceId)!;
+      }
+
+      if (equivalentRows.length > 0) {
+        throw Object.assign(new Error('project_workspace_repository_component_unanchored'), {
+          code: 'project_workspace_repository_component_unanchored',
           projectId: identity.projectId,
-          canonicalRoot,
-          gitCommonDir,
-          gitWorktreeDir,
-          worktreeId: derivedWorktreeId,
-          identityJson: persistentJson(identity),
-          createdAt: existing.createdAt || observedAt,
-          lastSeenAt: observedAt,
+          workspaceIds: [
+            workspace.workspaceId,
+            ...equivalentRows.map(({ workspaceId }) => workspaceId),
+          ],
         });
-        workLifecyclePersistence.backfillRunWorktreeId({
-          projectId: identity.projectId,
-          workspaceId: existing.workspaceId,
-          worktreeId: derivedWorktreeId,
-        });
-        return this.getProjectWorkspace(existing.workspaceId)!;
       }
       const observedAt = now();
       workLifecyclePersistence.upsertProjectWorkspaceRecord({
         workspaceId: workspace.workspaceId,
         projectId: identity.projectId,
-        canonicalRoot,
-        gitCommonDir,
-        gitWorktreeDir,
-        worktreeId: derivedWorktreeId,
+        canonicalRoot: observedCanonicalRoot,
+        gitCommonDir: observedGitCommonDir,
+        gitWorktreeDir: observedGitWorktreeDir,
+        worktreeId: observedWorktreeId,
         identityJson: persistentJson(identity),
         createdAt: observedAt,
         lastSeenAt: observedAt,
       });
       return this.getProjectWorkspace(workspace.workspaceId)!;
+      });
+      return register();
     },
 
     getProjectWorkspace(workspaceId: string) {

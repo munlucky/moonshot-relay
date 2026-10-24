@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import {
   ensureKnowledgeStoreDirectories,
@@ -11,7 +12,7 @@ import {
   projectKnowledgeDirectory,
   recoverProjectKnowledgeNamespaceMigrations,
 } from '../src/kernel/knowledge/store.js';
-import { openKernelStateStore } from '../src/kernel/state-store.js';
+import { kernelDbPath, openKernelStateStore } from '../src/kernel/state-store.js';
 import { canonicalPath } from '../src/kernel/runtime-home.js';
 
 const digest = (letter: string) => `sha256:${letter.repeat(64)}`;
@@ -249,6 +250,20 @@ test('identity migration rolls back filesystem and SQLite state when project-sco
       runId: 'target-run',
       sessionToken: 'target-session',
     });
+
+    const collisionDb = new DatabaseSync(kernelDbPath(runtimeHome));
+    try {
+      collisionDb.exec(`
+        CREATE TABLE identity_migration_collision_fixture(
+          project_id TEXT PRIMARY KEY,
+          marker TEXT NOT NULL
+        );
+      `);
+      collisionDb.prepare('INSERT INTO identity_migration_collision_fixture(project_id, marker) VALUES(?, ?)').run(legacyId, 'source');
+      collisionDb.prepare('INSERT INTO identity_migration_collision_fixture(project_id, marker) VALUES(?, ?)').run(canonicalId, 'target');
+    } finally {
+      collisionDb.close();
+    }
 
     assert.throws(() => store.registerProjectIdentity({
       projectId: canonicalId,

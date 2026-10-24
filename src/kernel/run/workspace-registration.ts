@@ -65,18 +65,16 @@ export const registerWorktreeObservation = ({
   workspace: StableWorkspaceObservation;
   projectId?: string;
 }): RegisteredWorktreeBinding => {
-  const observedWorktree = worktreeIdentityFromWorkspace(workspace);
+  // The registry owns consolidation authority. A cross-surface observation may
+  // be proven equivalent to an existing survivor whose canonical worktree ID
+  // differs from the observation-derived locator. Let registration resolve that
+  // authority, then derive the binding only from the registered survivor.
   const registeredWorkspace = registerWorkspace({
     stateStore,
     workspace,
     projectId,
-    worktreeId: observedWorktree.worktreeId,
   });
   const registeredWorktree = worktreeIdentityFromWorkspace(registeredWorkspace);
-
-  if (registeredWorktree.worktreeId !== observedWorktree.worktreeId) {
-    throw new Error('worktree_registration_mismatch');
-  }
 
   return {
     ...registeredWorktree,

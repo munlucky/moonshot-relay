@@ -205,13 +205,19 @@ export const resolveReviewTransports = ({
     return self.findIndex((other) => other.adapter === candidateAdapter) === index;
   });
 
-  const sameProvider = unique.filter(
+  const independentFallbacks = unique.filter((candidate) => (
+    candidateParts(candidate).adapter?.capabilities?.supportsIndependentSubagentReview === true
+  ));
+  const nativeCandidates = unique.filter((candidate) => (
+    candidateParts(candidate).adapter?.capabilities?.supportsIndependentSubagentReview !== true
+  ));
+  const sameProvider = nativeCandidates.filter(
     (candidate) => surfaceOf(candidate) === primarySurface && primarySurface !== '',
   );
-  const alternateProvider = unique.filter((candidate) => {
+  const alternateProvider = nativeCandidates.filter((candidate) => {
     const surface = surfaceOf(candidate);
     return !surface || surface !== primarySurface;
   });
 
-  return [...sameProvider, ...alternateProvider];
+  return [...sameProvider, ...alternateProvider, ...independentFallbacks];
 };

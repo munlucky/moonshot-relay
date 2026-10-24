@@ -29,6 +29,11 @@ type ReviewerLauncher = (
   request: UnknownRecord & { signal?: AbortSignal },
 ) => unknown | Promise<unknown>;
 
+interface ReviewerLauncherResolution {
+  launcher: ReviewerLauncher;
+  kind: 'reviewer' | 'fork-skill';
+}
+
 interface ReviewResolution extends UnknownRecord {
   model?: unknown;
   effort?: unknown;
@@ -66,6 +71,7 @@ interface ReviewSubject extends UnknownRecord {
   workspaceIdentity?: unknown;
   mutationRevision?: unknown;
   capsuleDigest?: unknown;
+  skillName?: unknown;
 }
 
 interface WorkspaceObservationLike {
@@ -229,13 +235,15 @@ const methodFrom = (
 
 const resolveLauncher = ({
   spawnIndependentReviewer = null,
+  forkSkillLauncher = null,
   host = globalThis,
 }: {
   spawnIndependentReviewer?: ReviewerLauncher | null;
+  forkSkillLauncher?: ReviewerLauncher | null;
   host?: unknown;
-} = {}): ReviewerLauncher | null => {
+} = {}): ReviewerLauncherResolution | null => {
   if (typeof spawnIndependentReviewer === 'function') {
-    return spawnIndependentReviewer;
+    return { launcher: spawnIndependentReviewer, kind: 'reviewer' };
   }
   const hostRecord = recordOf(host);
   const codex = isObject(hostRecord.codex) ? hostRecord.codex : null;
@@ -256,10 +264,12 @@ const resolveLauncher = ({
     [multiAgent, 'spawnIndependentReviewer'],
   ];
   for (const [owner, key] of candidates) {
-    const resolved = methodFrom(owner, key);
-    if (resolved) return resolved;
+    const launcher = methodFrom(owner, key);
+    if (launcher) return { launcher, kind: 'reviewer' };
   }
-  return null;
+  return typeof forkSkillLauncher === 'function'
+    ? { launcher: forkSkillLauncher, kind: 'fork-skill' }
+    : null;
 };
 
 const cleanupHandle = async (
@@ -586,20 +596,30 @@ export const validateIndependentSubagentReviewAttestation = ({
 
 export const createIndependentSubagentReviewTransport = ({
   spawnIndependentReviewer = null,
+  forkSkillLauncher = null,
   host = globalThis,
   surface = 'codex',
+  reviewSkill = null,
   timeoutMs = null,
   env = process.env,
   capabilities = {},
 }: {
   spawnIndependentReviewer?: ReviewerLauncher | null;
+  forkSkillLauncher?: ReviewerLauncher | null;
   host?: unknown;
   surface?: string;
+  reviewSkill?: string | null;
   timeoutMs?: number | null;
   env?: NodeJS.ProcessEnv;
   capabilities?: ReviewCapabilities;
 } = {}) => {
-  const launcher = resolveLauncher({ spawnIndependentReviewer, host });
+  const launcherResolution = resolveLauncher({
+    spawnIndependentReviewer,
+    forkSkillLauncher,
+    host,
+  });
+  const launcher = launcherResolution?.launcher || null;
+  const launcherKind = launcherResolution?.kind || null;
   const configuredEnvTimeoutRaw = env.MOON_RELAY_KERNEL_REVIEW_TIMEOUT_MS;
   const configuredEnvTimeout = configuredEnvTimeoutRaw != null
     && configuredEnvTimeoutRaw.trim() !== ''
@@ -615,7 +635,15 @@ export const createIndependentSubagentReviewTransport = ({
         ? configuredEnvTimeout
         : INDEPENDENT_SUBAGENT_REVIEW_DEFAULT_TIMEOUT_MS
     );
-  const available = typeof launcher === 'function';
+  const launcherAvailable = typeof launcher === 'function';
+  const configuredReviewSkill = present(reviewSkill)
+    ? String(reviewSkill).trim()
+    : null;
+  // A generic fork-skill launcher is only a review capability when the Host
+  // explicitly selects the skill. Do not advertise a path that will fail only
+  // after readiness has already allowed the review turn.
+  const available = launcherAvailable
+    && (launcherKind !== 'fork-skill' || configuredReviewSkill !== null);
 
   const capabilityInput = recordOf(capabilities);
   const semanticInput = recordOf(capabilities.semantic);
@@ -699,7 +727,7 @@ export const createIndependentSubagentReviewTransport = ({
         };
       }
 
-      if (!available || !launcher) {
+      if (!launcherAvailable || !launcher) {
         return {
           ...failureResult({
             errorCode: 'launcher-unavailable',
@@ -726,10 +754,33 @@ export const createIndependentSubagentReviewTransport = ({
       }
 
       const before = observeWorkspace(workingDirectory);
+      const skillName = present(reviewSubject?.skillName)
+        ? String(reviewSubject?.skillName)
+        : configuredReviewSkill;
+      if (launcherKind === 'fork-skill' && !skillName) {
+        return {
+          ...failureResult({
+            errorCode: 'fork-review-skill-required',
+            errorSummary:
+              'A fork-skill reviewer launcher requires an explicit review skill',
+            failureStage: 'pre-spawn',
+            failureCategory: 'transport',
+          }),
+          invocation,
+        };
+      }
       const request: UnknownRecord = {
         schemaVersion: INDEPENDENT_SUBAGENT_REVIEW_SCHEMA_VERSION,
         taskName: 'kernel_reviewer',
         task_name: 'kernel_reviewer',
+        ...(skillName
+          ? {
+              skillName,
+              skill_name: skillName,
+              skillContext: 'fork',
+              skill_context: 'fork',
+            }
+          : {}),
         model: invocation.model,
         reasoningEffort: invocation.effort,
         reasoning_effort: invocation.effort,

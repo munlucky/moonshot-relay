@@ -149,6 +149,8 @@ test('independent subagent transport becomes the last fallback when native revie
     assert.match(assertTestString(result.reviewReceiptId), /^review-receipt-[a-f0-9]{24}$/);
     assert.equal(fixture.cp.listReviewReceipts('independent-subagent-chain').length, 1);
     assert.equal(assertTestRecord(request).task_name, 'kernel_reviewer');
+    assert.equal(Object.hasOwn(assertTestRecord(request), 'skillName'), false);
+    assert.equal(Object.hasOwn(assertTestRecord(request), 'skillContext'), false);
     assert.equal(assertTestRecord(assertTestRecord(request).child_session).freshSessionRequired, true);
     assert.equal(assertTestRecord(assertTestRecord(request).child_session).canCommit, false);
     assert.equal(assertTestRecord(assertTestRecord(request).child_session).canDelegate, false);
@@ -169,6 +171,274 @@ test('independent subagent transport becomes the last fallback when native revie
   } finally {
     await cleanupReviewRun(fixture);
   }
+});
+
+test('alternate-provider native reviewer runs before the independent subagent fallback', async () => {
+  const fixture = await prepareReviewRun('kernel-independent-after-native', 'independent-after-native-chain');
+  try {
+    let nativeCalls = 0;
+    let independentCalls = 0;
+    const independentTransport = createIndependentSubagentReviewTransport({
+      host: {
+        spawn_independent_reviewer: async (payload: Record<string, unknown>) => {
+          independentCalls += 1;
+          const reviewSubject = latestReviewSubject(fixture.cp, 'independent-after-native-chain');
+          assert.ok(reviewSubject);
+          return {
+            outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://independent-should-not-run'] },
+            reviewTransportAttestation: attestationFor(payload, reviewSubject),
+          };
+        },
+      },
+    });
+    const alternateNative = createClaudeAdapter({
+      launch: async ({ invocation }) => {
+        nativeCalls += 1;
+        return {
+          resolvedModel: assertTestRecord(invocation).model,
+          observedModel: assertTestRecord(invocation).model,
+          resolvedEffort: assertTestRecord(invocation).effort,
+          observedEffort: assertTestRecord(invocation).effort,
+          sessionId: 'alternate-native-reviewer',
+          outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://alternate-native'] },
+        };
+      },
+    });
+
+    const result = await dispatchKernelTurn({
+      controlPlane: fixture.cp,
+      runId: 'independent-after-native-chain',
+      adapter: createCodexAdapter({ nativeAgentHost: {} }),
+      registry: createModelRegistry({ surface: 'codex', env: {} }),
+      parentSessionId: 'owner-session',
+      actionContext: REVIEW_ACTION,
+      reviewFallbacks: [{
+        adapter: alternateNative,
+        registry: createModelRegistry({
+          surface: 'claude',
+          env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'claude-frontier' },
+        }),
+      }],
+      reviewTransports: [independentTransport],
+    });
+
+    assert.equal(nativeCalls, 1);
+    assert.equal(independentCalls, 0);
+    assert.equal(assertTestRecord(result.dispatch).actorSessionId, 'alternate-native-reviewer');
+    assert.equal(assertTestPresent(assertTestPresent(result.review).review).verdict, 'pass');
+    assert.equal(fixture.cp.listReviewReceipts('independent-after-native-chain').length, 1);
+  } finally {
+    await cleanupReviewRun(fixture);
+  }
+});
+
+test('forked skill host method can satisfy the existing independent review transport without a second review authority', async () => {
+  const fixture = await prepareReviewRun('kernel-forked-skill-review', 'forked-skill-review-chain');
+  try {
+    let request = null;
+    const bridge = createKernelHostReviewBridge({
+      nativeAgentHost: {
+        runForkedSkill: async (payload: Record<string, unknown>) => {
+          request = payload;
+          const reviewSubject = latestReviewSubject(fixture.cp, 'forked-skill-review-chain');
+          assert.ok(reviewSubject);
+          return {
+            outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://forked-skill'] },
+            reviewTransportAttestation: attestationFor(payload, reviewSubject, 'forked-skill-reviewer-session'),
+          };
+        },
+      },
+      reviewSkill: 'completion-verifier',
+      env: {},
+    });
+    const run = await fixture.cp.getRun('forked-skill-review-chain');
+    const result = await bridge.dispatchReview({
+      controlPlane: fixture.cp,
+      runId: 'forked-skill-review-chain',
+      modelInput: {
+        objective: assertTestPresent(run).objective,
+        action: {
+          type: 'review',
+          independentReviewRequired: true,
+          outstandingObligations: ['security-review'],
+        },
+        changedPaths: ['app.mjs'],
+      },
+    });
+
+    assert.equal(result.reviewReceiptId !== null, true, JSON.stringify(result));
+    assert.equal(assertTestRecord(result.hostReview).transport, 'independent-subagent');
+    assert.equal(assertTestRecord(request).skillName, 'completion-verifier');
+    assert.equal(assertTestRecord(request).skill_name, 'completion-verifier');
+    assert.equal(assertTestRecord(request).skillContext, 'fork');
+    assert.equal(assertTestRecord(request).skill_context, 'fork');
+    assert.equal(assertTestRecord(assertTestRecord(request).child_session).freshSessionRequired, true);
+    assert.equal(assertTestRecord(assertTestRecord(request).child_session).canCommit, false);
+    assert.equal(assertTestRecord(assertTestRecord(request).child_session).permissions, 'read_only');
+  } finally {
+    await cleanupReviewRun(fixture);
+  }
+});
+
+test('per-call review skill enables the existing fork-skill fallback for readiness and dispatch', async () => {
+  const fixture = await prepareReviewRun('kernel-forked-skill-per-call', 'forked-skill-per-call-chain');
+  try {
+    let request = null;
+    const bridge = createKernelHostReviewBridge({
+      nativeAgentHost: {
+        runForkedSkill: async (payload: Record<string, unknown>) => {
+          request = payload;
+          const reviewSubject = latestReviewSubject(fixture.cp, 'forked-skill-per-call-chain');
+          assert.ok(reviewSubject);
+          return {
+            outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://forked-skill-per-call'] },
+            reviewTransportAttestation: attestationFor(payload, reviewSubject, 'forked-skill-per-call-session'),
+          };
+        },
+      },
+      env: {},
+    });
+    const actionContext = {
+      ...REVIEW_ACTION,
+      reviewSkill: 'completion-verifier',
+    };
+    const run = await fixture.cp.getRun('forked-skill-per-call-chain');
+    const modelInput = {
+      objective: assertTestPresent(run).objective,
+      action: {
+        type: 'review',
+        independentReviewRequired: true,
+        outstandingObligations: ['security-review'],
+      },
+      changedPaths: ['app.mjs'],
+    };
+
+    const readiness = await bridge.assess({
+      controlPlane: fixture.cp,
+      runId: 'forked-skill-per-call-chain',
+      modelInput,
+      actionContext,
+    });
+    assert.equal(readiness.status, 'READY', JSON.stringify(readiness));
+    assert.equal(assertTestRecord(readiness.review).reviewExecutionAvailable, true);
+
+    const result = await bridge.dispatchReview({
+      controlPlane: fixture.cp,
+      runId: 'forked-skill-per-call-chain',
+      modelInput,
+      actionContext,
+    });
+    assert.equal(result.reviewReceiptId !== null, true, JSON.stringify(result));
+    assert.equal(assertTestRecord(result.hostReview).transport, 'independent-subagent');
+    assert.equal(assertTestRecord(request).skillName, 'completion-verifier');
+    assert.equal(assertTestRecord(request).skill_name, 'completion-verifier');
+  } finally {
+    await cleanupReviewRun(fixture);
+  }
+});
+
+test('fork-skill-only Host without an explicit review skill fails readiness before dispatch', async () => {
+  const fixture = await prepareReviewRun('kernel-forked-skill-unconfigured', 'forked-skill-unconfigured-chain');
+  try {
+    let launchCount = 0;
+    const bridge = createKernelHostReviewBridge({
+      nativeAgentHost: {
+        runForkedSkill: async () => {
+          launchCount += 1;
+          throw new Error('unconfigured fork skill must never launch');
+        },
+      },
+      env: {},
+    });
+    const readiness = await bridge.assess({
+      controlPlane: fixture.cp,
+      runId: 'forked-skill-unconfigured-chain',
+      modelInput: {
+        action: {
+          type: 'review',
+          independentReviewRequired: true,
+          outstandingObligations: ['security-review'],
+        },
+      },
+    });
+
+    assert.notEqual(readiness.status, 'READY', JSON.stringify(readiness));
+    assert.equal(assertTestRecord(readiness.review).reviewExecutionAvailable, false);
+    assert.equal(readiness.canComplete, false);
+    assert.equal(launchCount, 0);
+  } finally {
+    await cleanupReviewRun(fixture);
+  }
+});
+
+test('specific independent reviewer methods take priority over a generic forked skill host method', async () => {
+  const fixture = await prepareReviewRun('kernel-reviewer-priority', 'reviewer-priority-chain');
+  try {
+    let reviewerLaunchCount = 0;
+    let forkLaunchCount = 0;
+    const bridge = createKernelHostReviewBridge({
+      nativeAgentHost: {
+        runForkedSkill: async () => {
+          forkLaunchCount += 1;
+          throw new Error('generic forked skill should not preempt the reviewer');
+        },
+        codex: {
+          spawnIndependentReviewer: async (payload: Record<string, unknown>) => {
+            reviewerLaunchCount += 1;
+            const reviewSubject = latestReviewSubject(fixture.cp, 'reviewer-priority-chain');
+            assert.ok(reviewSubject);
+            return {
+              outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://specific-reviewer'] },
+              reviewTransportAttestation: attestationFor(payload, reviewSubject, 'specific-reviewer-session'),
+            };
+          },
+        },
+      },
+      env: {},
+    });
+    const run = await fixture.cp.getRun('reviewer-priority-chain');
+    const result = await bridge.dispatchReview({
+      controlPlane: fixture.cp,
+      runId: 'reviewer-priority-chain',
+      modelInput: {
+        objective: assertTestPresent(run).objective,
+        action: {
+          type: 'review',
+          independentReviewRequired: true,
+          outstandingObligations: ['security-review'],
+        },
+        changedPaths: ['app.mjs'],
+      },
+      actionContext: REVIEW_ACTION,
+    });
+
+    assert.equal(result.reviewReceiptId !== null, true, JSON.stringify(result));
+    assert.equal(reviewerLaunchCount, 1);
+    assert.equal(forkLaunchCount, 0);
+  } finally {
+    await cleanupReviewRun(fixture);
+  }
+});
+
+test('forked skill reviewer fails closed when the caller does not select a review skill', async () => {
+  let launchCount = 0;
+  const transport = createIndependentSubagentReviewTransport({
+    forkSkillLauncher: async () => {
+      launchCount += 1;
+      return {
+        outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: [] },
+      };
+    },
+  });
+
+  const result = await transport.dispatch({
+    decision: { role: 'reviewer' },
+    resolution: { model: 'gpt-6-astra', effort: 'high' },
+    modelInput: { objective: 'review change' },
+  });
+
+  assert.equal(assertTestRecord(result).errorCode, 'fork-review-skill-required');
+  assert.equal(launchCount, 0);
 });
 
 test('Kernel Host bridge auto-injects the independent subagent fallback and reports ready', async () => {

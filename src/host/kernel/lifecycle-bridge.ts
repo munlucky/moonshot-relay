@@ -89,6 +89,7 @@ interface AssessInput {
   controlPlane?: ControlPlaneLike | null;
   runId?: string | null;
   modelInput?: ModelInputLike | null;
+  actionContext?: UnknownRecord;
   implementationOnly?: boolean;
   workspaceBaseline?: UnknownRecord | null;
   verificationCommands?: UnknownRecord[] | null;
@@ -113,6 +114,7 @@ interface BridgeOptions {
   reviewFallbacks?: unknown[];
   hostAdapters?: unknown[];
   reviewTransports?: unknown[];
+  reviewSkill?: string | null;
   parentSessionId?: string | null;
   parentSessionConfig?: unknown;
   parentSessionObserver?: NonNullable<Parameters<typeof createCodexAdapter>[0]>['parentSessionObserver'];
@@ -258,6 +260,7 @@ export const createKernelHostReviewBridge = ({
   reviewFallbacks = [],
   hostAdapters = [],
   reviewTransports = [],
+  reviewSkill = null,
   parentSessionId = null,
   parentSessionConfig = null,
   parentSessionObserver = null,
@@ -305,20 +308,39 @@ export const createKernelHostReviewBridge = ({
         overrides,
       }));
 
-  const independentSubagentTransport = createIndependentSubagentReviewTransport({
-    host: nativeAgentHost,
-    surface: effectiveSurface,
-    env,
-  });
-  const independentAdapter = adapterOf(independentSubagentTransport);
-  const effectiveReviewTransports: CandidateEntry[] = [
-    ...reviewTransports.map(entryOf),
-    ...(independentSubagentTransport.nativeDelegationAvailable
-      ? [{ adapter: independentAdapter, registry: effectiveRegistry }]
-      : []),
-  ];
+  const selectedReviewSkill = (actionContext: UnknownRecord = {}): string | null => {
+    const selected = actionContext.reviewSkill || actionContext.skillName || reviewSkill;
+    return typeof selected === 'string' && selected.trim() ? selected.trim() : null;
+  };
+  const nativeHostRecord = recordOf(nativeAgentHost);
+  const nativeForkSkill = nativeHostRecord.runForkedSkill;
+  const forkSkillLauncher = typeof nativeForkSkill === 'function'
+    ? nativeForkSkill.bind(nativeAgentHost) as (
+        request: UnknownRecord & { signal?: AbortSignal },
+      ) => unknown | Promise<unknown>
+    : null;
+  const effectiveReviewTransportsFor = (
+    actionContext: UnknownRecord = {},
+  ): CandidateEntry[] => {
+    const independentSubagentTransport = createIndependentSubagentReviewTransport({
+      host: nativeAgentHost,
+      forkSkillLauncher,
+      surface: effectiveSurface,
+      reviewSkill: selectedReviewSkill(actionContext),
+      env,
+    });
+    const independentAdapter = adapterOf(independentSubagentTransport);
+    return [
+      ...reviewTransports.map(entryOf),
+      ...(independentSubagentTransport.nativeDelegationAvailable
+        ? [{ adapter: independentAdapter, registry: effectiveRegistry }]
+        : []),
+    ];
+  };
 
-  const reviewCandidateForReadiness = (): CandidateEntry & {
+  const reviewCandidateForReadiness = (
+    actionContext: UnknownRecord = {},
+  ): CandidateEntry & {
     adapter: AdapterLike;
     registry: UnknownRecord;
     available?: false;
@@ -327,7 +349,7 @@ export const createKernelHostReviewBridge = ({
       { adapter: effectiveAdapter, registry: effectiveRegistry },
       ...reviewFallbacks.map(entryOf),
       ...hostAdapters.map(entryOf),
-      ...effectiveReviewTransports,
+      ...effectiveReviewTransportsFor(actionContext),
     ];
 
     for (const entry of entries) {
@@ -380,6 +402,7 @@ export const createKernelHostReviewBridge = ({
     controlPlane = null,
     runId = null,
     modelInput = null,
+    actionContext = {},
     implementationOnly = false,
     workspaceBaseline = null,
     verificationCommands = null,
@@ -390,7 +413,7 @@ export const createKernelHostReviewBridge = ({
     const verifications = typeof controlPlane?.getRunVerifications === 'function'
       ? controlPlane.getRunVerifications(activeRunId)
       : [];
-    const reviewCandidate = reviewCandidateForReadiness();
+    const reviewCandidate = reviewCandidateForReadiness(actionContext);
     const reviewAvailable = reviewCandidate.available !== false;
     const capabilities = adapterOf(reviewCandidate.adapter.capabilities);
 
@@ -429,13 +452,18 @@ export const createKernelHostReviewBridge = ({
     controlPlane = null,
     runId = null,
     modelInput = null,
-  }: Pick<DispatchReviewInput, 'controlPlane' | 'runId' | 'modelInput'> = {}): Promise<string> => {
+    actionContext = {},
+  }: Pick<DispatchReviewInput, 'controlPlane' | 'runId' | 'modelInput' | 'actionContext'> = {}): Promise<string> => {
     const activeRunId = String(runId || '');
     const run = await runFor(controlPlane, activeRunId);
     const currentWorkUnit = recordOf(modelInput?.workAuthority?.currentWorkUnit);
     return JSON.stringify({
       runId: activeRunId,
       mutationRevision: run?.mutationRevision ?? null,
+      reviewSkill:
+        actionContext.reviewSkill
+        || actionContext.skillName
+        || null,
       stepId:
         modelInput?.action?.step?.stepId
         || currentWorkUnit.stepId
@@ -479,6 +507,7 @@ export const createKernelHostReviewBridge = ({
       controlPlane,
       runId,
       modelInput,
+      actionContext,
     });
     const inFlight = inFlightReviews.get(key);
     if (inFlight) return inFlight;
@@ -488,6 +517,7 @@ export const createKernelHostReviewBridge = ({
         controlPlane,
         runId,
         modelInput,
+        actionContext,
         implementationOnly,
       });
       const blockers = Array.isArray(readiness.blockers)
@@ -542,7 +572,7 @@ export const createKernelHostReviewBridge = ({
           economics,
           reviewFallbacks,
           hostAdapters,
-          reviewTransports: effectiveReviewTransports,
+          reviewTransports: effectiveReviewTransportsFor(actionContext),
         });
         result = recordOf(dispatched) as DispatchResultLike;
         return {

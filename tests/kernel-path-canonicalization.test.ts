@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { canonicalMutationPath, canonicalPathIdentity } from '../src/kernel/run/mutation-guard.js';
+import { sameCrossSurfacePathIdentity } from '../src/shared/path-identity.js';
 import { resolveMutationPath } from '../src/host/kernel/workspace/mutation-observation.js';
 import { normalizeProviderMutationRequest } from '../src/host/kernel/provider-mutation-adapter.js';
 
@@ -24,6 +25,35 @@ test('path identity is deterministic for explicit Windows and POSIX semantics', 
   assert.equal(canonicalPathIdentity(value, { platform: 'linux' }), 'Src/App.mjs');
   assert.equal(canonicalPathIdentity('SRC\\App.mjs', { platform: 'win32' }), 'src/app.mjs');
   assert.equal(canonicalPathIdentity('SRC\\App.mjs', { platform: 'linux' }), 'SRC/App.mjs');
+});
+
+test('cross-surface path identity equates Windows drive paths with mounted drive forms only', () => {
+  assert.equal(sameCrossSurfacePathIdentity('C:\\Dev\\Repo\\.git', '/c/dev/repo/.git'), true);
+  assert.equal(sameCrossSurfacePathIdentity('c:/dev/repo/.git', '/mnt/c/DEV/REPO/.git'), true);
+  assert.equal(sameCrossSurfacePathIdentity('/c/Dev/Repo/.git', '/mnt/c/Dev/Repo/.git'), false);
+  assert.equal(sameCrossSurfacePathIdentity('/c/Dev/Repo/.git', '/mnt/c/dev/repo/.git'), false);
+  assert.equal(sameCrossSurfacePathIdentity('/c/Repo/.git', '/c/repo/.git'), false);
+  assert.equal(sameCrossSurfacePathIdentity('/mnt/C/Repo/.git', '/mnt/c/Repo/.git'), false);
+  assert.equal(sameCrossSurfacePathIdentity('/C/Repo/.git', '/c/Repo/.git'), false);
+  assert.equal(sameCrossSurfacePathIdentity('C:/repo/.git', '/mnt/C/REPO/.git'), false);
+  assert.equal(sameCrossSurfacePathIdentity('C:', '/c'), false);
+  assert.equal(sameCrossSurfacePathIdentity('C:', 'C:/'), false);
+  assert.equal(sameCrossSurfacePathIdentity('C:/', '/c'), true);
+  assert.equal(sameCrossSurfacePathIdentity('C:/dev/repo', '/c\\dev\\repo'), false);
+  assert.equal(sameCrossSurfacePathIdentity('C:/dev/repo', '/mnt/c\\dev\\repo'), false);
+  assert.equal(canonicalPathIdentity('/c\\dev\\repo', { platform: 'linux' }), '/c/dev/repo');
+  assert.equal(sameCrossSurfacePathIdentity('C:/repo?/child', '/c/repo?/child'), false);
+  assert.equal(sameCrossSurfacePathIdentity('C:/CON', '/c/CON'), false);
+  assert.equal(sameCrossSurfacePathIdentity('C:/repo.', '/c/repo.'), false);
+  assert.equal(sameCrossSurfacePathIdentity('C:/repo', '/c/repo '), false);
+  assert.equal(sameCrossSurfacePathIdentity('C:/repo', ' /c/repo'), false);
+  assert.equal(sameCrossSurfacePathIdentity('/c/repo ', '/c/repo'), false);
+  assert.equal(sameCrossSurfacePathIdentity('/c/repo ', '/c/repo '), true);
+  assert.equal(sameCrossSurfacePathIdentity('C:/foo:bar', '/c/foo:bar'), false);
+  assert.equal(sameCrossSurfacePathIdentity('d:/dev/repo/.git', '/c/dev/repo/.git'), false);
+  assert.equal(sameCrossSurfacePathIdentity('/srv/Repo/.git', '/srv/repo/.git'), false);
+  assert.equal(sameCrossSurfacePathIdentity('dir\\file', 'dir/file'), false);
+  assert.equal(sameCrossSurfacePathIdentity('dir/./file', 'dir/file'), true);
 });
 
 test('provider adapters only normalize mutation payloads', () => {
