@@ -11,10 +11,20 @@ import path from 'node:path';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
 import { openKernelStateStore } from '../src/kernel/state-store.js';
 import { hashSessionId } from '../src/contracts/model-execution.js';
-import { digestOfPaths, reviewEvidenceRef } from '../src/kernel/proof/review-receipt.js';
+import { digestOfPaths, reviewEvidenceRef, reviewSubjectAdoptionEligible, reviewSubjectKey, type ReviewReceiptInput } from '../src/kernel/proof/review-receipt.js';
 
 const IMPLEMENTER = hashSessionId('completion-implementer');
 const REVIEWER = hashSessionId('completion-reviewer');
+
+const persistReviewReceipt = (
+  store: Awaited<ReturnType<typeof openKernelStateStore>>,
+  runId: string,
+  receipt: ReviewReceiptInput,
+) => store.recordReviewReceipt(
+  runId,
+  receipt,
+  { subjectKey: reviewSubjectAdoptionEligible(receipt) ? reviewSubjectKey(receipt) : null },
+);
 
 const setup = async () => {
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'krn-rrc-home-'));
@@ -44,7 +54,8 @@ const provenT3Run = async (fixture: Awaited<ReturnType<typeof setup>>, cp: Kerne
       surfaces: ['security_boundary'],
       acceptance: [{ acceptance: 'works', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test:ok'], obligationId: 'unit-test' } }],
     },
-  });  await mutate(fixture.projectRoot, 1);
+  });
+  await mutate(fixture.projectRoot, 1);
   await cp.report(runId, {
     summary: 'implemented',
     changedPaths: ['app.mjs'],
@@ -107,7 +118,7 @@ test('K0: a judgment whose digest does not match its receipt is refused', async 
       const run = store.getRun('r-digest');
       assert.ok(run && typeof run === 'object' && 'currentWorkspaceIdentity' in run);
       assert.ok(run && typeof run === 'object' && 'mutationRevision' in run);
-      receipt = store.recordReviewReceipt('r-digest', {
+      receipt = persistReviewReceipt(store, 'r-digest', {
         runId: 'r-digest',
         obligationId: 'security-review',
         reviewStage: 'engineering',
@@ -170,7 +181,7 @@ test('K0: a receipt for a different obligation cannot be re-pointed at a protect
       const run = store.getRun('r-swap');
       assert.ok(run && typeof run === 'object' && 'currentWorkspaceIdentity' in run);
       assert.ok(run && typeof run === 'object' && 'mutationRevision' in run);
-      receipt = store.recordReviewReceipt('r-swap', {
+      receipt = persistReviewReceipt(store, 'r-swap', {
         runId: 'r-swap',
         obligationId: 'review-contract',
         reviewStage: 'contract',
@@ -243,7 +254,8 @@ test('K0: an unprotected judgment obligation below T3 still accepts a direct ver
     assert.equal(run.proofTier, 'T1');
     assert.ok(run && typeof run === 'object' && 'requiredObligations' in run);
     const judgmentObligation = run.requiredObligations.find((id) => id.startsWith('judgment-'));
-    assert.ok(judgmentObligation, 'a judgment evidence plan compiles into its own obligation');    await mutate(fixture.projectRoot, 1);
+    assert.ok(judgmentObligation, 'a judgment evidence plan compiles into its own obligation');
+    await mutate(fixture.projectRoot, 1);
     const reported = await cp.report('r-t1-judgment', {
       summary: 'implemented',
       verifications: [{ obligationId: 'unit-test', commandRef: 'test:ok' }],

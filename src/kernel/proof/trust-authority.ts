@@ -1,11 +1,24 @@
+import { createHash } from 'node:crypto';
 import { computeCompletionView } from './completion-view.js';
 import {
   digestOfEvidence,
   evaluateReviewReceipt,
+  parseReviewEvidenceRef,
   type ReviewReceipt,
 } from './review-receipt.js';
 import { isProtectedObligation } from './protected-obligations.js';
 import { admissionAllowsDispatch } from '../routing/route-admission.js';
+import { deriveEvidenceLevel } from '../../contracts/verification-settlement.js';
+import { assertCommandBinding } from '../run/obligation-compiler.js';
+import { normalizeAcceptanceCoverage } from '../task/task-contract.js';
+import { assessMutationProvenance, type MutationProvenanceAuthority } from './completion-provenance.js';
+import type { KernelRun as PersistedKernelRun } from '../persistence/state-store-contracts.js';
+import type {
+  PersistedEvidencePack,
+  PersistedRunObligation,
+  PersistedVerification,
+  PersistedWaiver,
+} from '../persistence/trust-store.js';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -195,6 +208,330 @@ export interface BuildTrustAuthorityViewInput {
 
 export const TRUST_AUTHORITY_SCHEMA_VERSION = 1;
 
+export interface EvaluateTrustCompletionInput {
+  run: PersistedKernelRun;
+  verifications?: PersistedVerification[];
+  obligations?: PersistedRunObligation[];
+  waivers?: PersistedWaiver[];
+  reviewReceipts?: ReviewReceipt[];
+  releaseEvidence?: PersistedEvidencePack | null;
+  mutationProvenance?: MutationProvenanceAuthority | null;
+  expectedSourceIdentity?: string | null;
+  verificationScopeIdentities?: Record<string, string | { status?: string; identity?: string | null; reason?: string | null } | null | undefined> | null;
+}
+
+export const evaluateTrustCompletion = ({
+  run,
+  verifications = [],
+  obligations = [],
+  waivers = [],
+  reviewReceipts = [],
+  releaseEvidence = null,
+  mutationProvenance = null,
+  expectedSourceIdentity = null,
+  verificationScopeIdentities = null,
+}: EvaluateTrustCompletionInput) => {
+  const runId = run.runId;
+
+  const isClosed = Boolean(run.state === 'CLOSE');
+  const mutationProvenanceAssessment = assessMutationProvenance({
+    run,
+    mutationProvenance,
+  });
+
+  const declaredById = new Map(obligations.map((obligation) => [obligation.obligationId, obligation]));
+
+  const normalizedCoverageFor = (v: PersistedVerification | null | undefined) => {
+    try {
+      return normalizeAcceptanceCoverage({
+        contract: run.taskContract || {},
+        acceptanceCriteria: run.acceptanceCriteria || [],
+        obligation: v?.obligationId ? (declaredById.get(v.obligationId) || null) : null,
+        coverage: v?.acceptanceCoverage || [],
+      });
+    } catch {
+      return null;
+    }
+  };
+
+  const isVerificationValid = (v: PersistedVerification | null | undefined) => {
+    if (!v) return false;
+    if (v.status !== 'passed') return false;
+    if (Number(v.exitCode) !== 0) return false;
+    if (!v.command) return false;
+    if (!v.evidenceRef) return false;
+    // Historical builds briefly allowed operator approval to mint synthetic
+    // executable proof. Preserve those rows for audit, but never let them
+    // satisfy a hard-evidence gate during inspection or reevaluation.
+    if (v.command === 'operator-override' || String(v.evidenceRef).startsWith('operator-override://')) return false;
+    if (!v.evidenceDigest || !sha256Regex.test(v.evidenceDigest)) return false;
+
+    if (!v.sourceIdentity || v.sourceIdentity !== run.sourceIdentity) return false;
+    if (expectedSourceIdentity && v.sourceIdentity !== expectedSourceIdentity) return false;
+
+    // A scoped proof is fresh only when the authoritative verification
+    // scope still hashes to the same file contents. The full workspace
+    // identity may change for an unrelated Step, so it is deliberately not
+    // used for this case. Missing scope observations fail closed.
+    const scopedDigest = asRecord(v.evidenceIdentity?.values).verificationScopeDigest || null;
+    if (scopedDigest) {
+      const currentScope = verificationScopeIdentities?.[v.obligationId];
+      const currentScopeDigest = typeof currentScope === 'string' ? currentScope : currentScope?.identity;
+      if (!currentScopeDigest || currentScopeDigest !== scopedDigest) return false;
+    } else {
+      const verifiedMutation = v.verifiedMutationRevision ?? v.verifiedRuntimeRevision;
+      if (verifiedMutation !== run.mutationRevision) return false;
+    }
+    if (!scopedDigest && v.verifiedSourceIdentity && run.currentWorkspaceIdentity && v.verifiedSourceIdentity !== run.currentWorkspaceIdentity) {
+      // Evidence proven against a different full workspace state is stale.
+      return false;
+    }
+
+    // A contract revision changes the evidence authority. Proof recorded
+    // before a plan/binding revision must be rerun, even when its other
+    // receipt fields still look fresh.
+    if (Number(v.contractRevision || 1) !== Number(run.contractRevision || 1)) return false;
+
+    // Revalidate the persisted command against the CURRENT obligation. A
+    // plan may have narrowed or changed its command after an older proof
+    // was written; that older row cannot be reused at finalization. Legacy
+    // rows without commandRef are accepted only for broad, non-explicit
+    // obligations where the old contract did not specify a command.
+    const declared = declaredById.get(v.obligationId);
+    const explicitCommandBinding = declared?.metadata?.evidencePlanCommandBinding === true;
+    if (declared && declared.evidenceClass !== 'judgment') {
+      if (explicitCommandBinding && !v.commandRef) return false;
+      if (v.commandRef) {
+        try {
+          assertCommandBinding(declared, v.commandRef);
+        } catch {
+          return false;
+        }
+      }
+    }
+
+    // Re-derive coverage at completion as well as at write time. This keeps
+    // legacy or directly-mutated rows from turning an unrelated passing
+    // command into proof for a different acceptance criterion.
+    if (normalizedCoverageFor(v) === null) return false;
+
+    return true;
+  };
+
+  const requiredObligations = run.requiredObligations.length > 0 ? run.requiredObligations : ['default'];
+  const dynamicObligationRows = obligations.filter((obligation) => obligation.status === 'required' && obligation.sourceType !== 'ad-hoc');
+
+  const waivedObligations = new Set(waivers.filter((w) => w.approvalReceipt).map((w) => w.obligationId));
+  const latestByObligation = new Map(verifications.map((v) => [v.obligationId, v]));
+
+  // Evidence class is not substitutable (P0-3): a `hard` obligation needs
+  // executable evidence, a `judgment` obligation needs a structured
+  // verdict, and neither can stand in for the other. A run that actually
+  // mutated the workspace tightens `hard` further — only the Kernel
+  // executing the bound command counts. A protected obligation can never
+  // be waived.
+  const runMutatedWorkspace = run.mutationRevision > 0;
+
+  // K0: a judgment that stands in for a protected obligation, or any
+  // judgment in a T3 run, must be backed by a Review Receipt whose reviewer
+  // lineage and reviewed subject still hold. Two different reviewer strings
+  // are not evidence that an independent review happened.
+  const reviewLineageFor = (obligationId: string, verification: PersistedVerification, declared: PersistedRunObligation | null | undefined) => {
+    const protectedObligation = Boolean(declared?.protected || isProtectedObligation(obligationId));
+    const independenceRequired = run.proofTier === 'T3';
+    if (!protectedObligation && !independenceRequired) {
+      return { required: false, usable: true, receiptId: null, reasons: [] };
+    }
+    const parsed = parseReviewEvidenceRef(verification?.evidenceRef);
+    if (!parsed || parsed.runId !== runId) {
+      return { required: true, usable: false, receiptId: null, reasons: ['review-receipt-not-referenced'] };
+    }
+    const receipt = reviewReceipts.find((candidate) => candidate.receiptId === parsed.receiptId && candidate.runId === runId) || null;
+    const reasons = [];
+    if (receipt) {
+      if (receipt.obligationId !== obligationId) reasons.push('review-receipt-obligation-mismatch');
+      if (verification.evidenceDigest !== receipt.digest) reasons.push('review-receipt-digest-mismatch');
+    }
+    const evaluation = evaluateReviewReceipt({
+      receipt,
+      run,
+      requireIndependentSession: independenceRequired,
+      requireFrontierClass: independenceRequired,
+      requireTrustedEnforcement: true,
+      // The verdict must describe the evidence set the run has NOW; a check
+      // rerun after the review changes nothing about the workspace.
+      currentEvidenceDigest: digestOfEvidence(verifications, { excludeObligationId: obligationId }),
+    });
+    const allReasons = [...reasons, ...evaluation.reasons];
+    return { required: true, usable: allReasons.length === 0, receiptId: parsed.receiptId, reasons: allReasons };
+  };
+
+  const obligationSatisfied = (obligationId: string) => {
+    const declared = declaredById.get(obligationId);
+    const expectedClass = declared?.evidenceClass || 'hard';
+    const verification = latestByObligation.get(obligationId);
+    if (verification && isVerificationValid(verification)) {
+      if (expectedClass === 'judgment') {
+        if (verification.evidenceClass === 'judgment') return reviewLineageFor(obligationId, verification, declared).usable;
+      } else if (verification.executor === 'kernel-runtime' && verification.evidenceClass === 'hard') {
+        return true;
+      } else if (!runMutatedWorkspace && verification.evidenceClass !== 'judgment') {
+        // Nothing changed, so attested evidence is still an honest record;
+        // a judgment verdict is never accepted for an executable obligation.
+        return true;
+      }
+    }
+    if (waivedObligations.has(obligationId) && !(declared?.protected || isProtectedObligation(obligationId))) return true;
+    return false;
+  };
+
+  const obligationStatuses = [...new Set([...requiredObligations, ...dynamicObligationRows.map((row) => row.obligationId)])]
+    .map((obligationId) => {
+      const declared = declaredById.get(obligationId);
+      const verification = latestByObligation.get(obligationId);
+      const requiredEvidenceClass = declared?.evidenceClass || 'hard';
+      const reviewLineage = requiredEvidenceClass === 'judgment' && verification
+        ? reviewLineageFor(obligationId, verification, declared)
+        : null;
+      return {
+        obligationId,
+        evidenceLevel: deriveEvidenceLevel(declared),
+        requiredEvidenceClass,
+        observedEvidenceClass: verification?.evidenceClass || null,
+        executor: verification?.executor || null,
+        reviewLineage,
+        satisfied: obligationSatisfied(obligationId),
+        waived: waivedObligations.has(obligationId),
+      };
+    });
+
+  const staticPassed = requiredObligations.every((ob) => obligationSatisfied(ob));
+  const dynamicPassed = dynamicObligationRows.every((row) => row.status === 'passed' || row.status === 'waived' || obligationSatisfied(row.obligationId));
+
+  // Work-level proof may settle one bounded Work Unit, but it cannot by
+  // itself close the Goal. Goal completion requires at least one current,
+  // non-waived Goal-level verification. Integration-level obligations stay
+  // mandatory when declared, but do not substitute for root Goal proof.
+  const integrationEvidenceObligations = obligationStatuses.filter((entry) => entry.evidenceLevel === 'integration');
+  const requiredIntegrationEvidence = integrationEvidenceObligations.filter((entry) => !entry.waived);
+  const integrationEvidenceCount = requiredIntegrationEvidence.filter((entry) => {
+    if (!entry.satisfied) return false;
+    const verification = latestByObligation.get(entry.obligationId);
+    return Boolean(verification && isVerificationValid(verification));
+  }).length;
+  const integrationEvidenceSatisfied = requiredIntegrationEvidence.length === 0
+    || integrationEvidenceCount === requiredIntegrationEvidence.length;
+  const goalEvidenceObligations = obligationStatuses.filter((entry) => entry.evidenceLevel === 'goal');
+  const requiredGoalEvidence = goalEvidenceObligations.filter((entry) => !entry.waived);
+  const goalEvidenceCount = requiredGoalEvidence.filter((entry) => {
+    if (!entry.satisfied) return false;
+    const verification = latestByObligation.get(entry.obligationId);
+    return Boolean(verification && isVerificationValid(verification));
+  }).length;
+  const goalEvidenceSatisfied = goalEvidenceObligations.length > 0
+    && (requiredGoalEvidence.length === 0 || goalEvidenceCount > 0);
+
+  const coveredAcceptance = new Set([
+    ...verifications.filter(isVerificationValid).flatMap((v) => normalizedCoverageFor(v) || []),
+    ...waivers.flatMap((w) => w.acceptanceCoverage || []),
+  ]);
+  // Coverage may be declared by acceptance id (AC-1) or by statement.
+  const contractAcceptance = Array.isArray(run.taskContract?.acceptance) ? run.taskContract.acceptance : [];
+  // Completion must not trust a legacy verification row merely because it
+  // contains coverage. The persisted acceptance statement still has to
+  // match the current contract, while an explicit evidence plan remains
+  // optional and unplanned criteria use the compiled policy obligation.
+  const persistedAcceptance = Array.isArray(run.acceptanceCriteria) ? run.acceptanceCriteria : [];
+  const evidencePlansComplete = persistedAcceptance.length === 0
+    ? true
+    : Boolean(run.taskContract)
+      && contractAcceptance.length === persistedAcceptance.length
+      && contractAcceptance.every((criterion, index) => (
+        Boolean(criterion?.statement)
+        && criterion.statement === persistedAcceptance[index]
+      ));
+  const acceptanceCovered = evidencePlansComplete && persistedAcceptance.every((criterion, index) => {
+    const declared = contractAcceptance[index];
+    return coveredAcceptance.has(criterion) || (declared?.id && coveredAcceptance.has(declared.id));
+  });
+  const releaseEvidencePresent = !run.releaseEvidenceRequired || (releaseEvidence?.tier === 'E2' && releaseEvidence.mutationRevision === run.mutationRevision && sha256Regex.test(releaseEvidence.digest));
+
+  // A run that actually mutated the workspace cannot complete on
+  // caller-attested proofs alone; at least one verification must have been
+  // executed by the Kernel runtime itself.
+  const hardEvidenceRequired = run.mutationRevision > 0;
+  const hardEvidenceCount = verifications.filter((v) => isVerificationValid(v) && v.executor === 'kernel-runtime').length;
+  const hardEvidenceSatisfied = !hardEvidenceRequired || hardEvidenceCount > 0;
+
+  const requiredLifecycleOutcomes = new Set(run.taskContract?.completionPredicate?.requiredOutcomes || []);
+  const outcomesFor = (obligation: PersistedRunObligation | null | undefined) => new Set([
+    ...(Array.isArray(obligation?.metadata?.outcomes) ? obligation.metadata.outcomes : []),
+    ...(obligation?.metadata?.outcome ? [obligation.metadata.outcome] : []),
+  ]);
+  const lifecycleOutcomes = [...requiredLifecycleOutcomes].map((outcome) => {
+    if (outcome === 'implemented') {
+      return { outcome, satisfied: run.mutationRevision > 0, obligationIds: [] };
+    }
+    const matching = dynamicObligationRows.filter((obligation) => outcomesFor(obligation).has(outcome));
+    return {
+      outcome,
+      satisfied: matching.length > 0 && matching.every((obligation) => obligationSatisfied(obligation.obligationId)),
+      obligationIds: matching.map((obligation) => obligation.obligationId),
+    };
+  });
+  const lifecycleOutcomesSatisfied = lifecycleOutcomes.every((outcome) => outcome.satisfied);
+
+  // All completion gates except the CLOSE-state requirement. Callers use
+  // this to decide whether it is SAFE to transition to CLOSE, so a run is
+  // never closed into an unrecoverable blocked state.
+  const mutationProvenanceCurrent = mutationProvenanceAssessment.current;
+  const readyExceptClose = staticPassed && dynamicPassed && integrationEvidenceSatisfied && goalEvidenceSatisfied && evidencePlansComplete && acceptanceCovered && releaseEvidencePresent && hardEvidenceSatisfied && lifecycleOutcomesSatisfied && mutationProvenanceCurrent;
+  const gates = { isClosed, staticPassed, dynamicPassed, integrationEvidenceSatisfied, goalEvidenceSatisfied, evidencePlansComplete, acceptanceCovered, releaseEvidencePresent, hardEvidenceSatisfied, lifecycleOutcomesSatisfied, mutationProvenanceCurrent };
+  const unsatisfiedObligations = obligationStatuses.filter((entry) => !entry.satisfied);
+
+  const accepted = isClosed && readyExceptClose;
+
+  const decision = accepted ? 'accepted' : 'blocked';
+  // A run that leaned on any waiver to pass is completed but degraded
+  // (§17.5), never silently clean.
+  const completionQuality = accepted && waivers.length > 0 ? 'degraded' : (accepted ? 'clean' : 'none');
+  const decisionPayload = {
+    runId,
+    decision,
+    completionQuality,
+    sourceIdentity: run.sourceIdentity,
+    currentWorkspaceIdentity: run.currentWorkspaceIdentity,
+    mutationRevision: run.mutationRevision,
+    hardEvidence: { required: hardEvidenceRequired, count: hardEvidenceCount },
+    integrationEvidence: { required: integrationEvidenceObligations.length > 0, count: integrationEvidenceCount },
+    goalEvidence: { required: goalEvidenceObligations.length > 0, count: goalEvidenceCount },
+    lifecycleOutcomes,
+    evidenceDigest: releaseEvidence?.digest || verifications[0]?.evidenceDigest || `sha256:${'0'.repeat(64)}`,
+    verifications,
+  };
+  const decisionDigest = `sha256:${createHash('sha256').update(JSON.stringify(decisionPayload)).digest('hex')}`;
+
+  return {
+    decision,
+    completionQuality,
+    digest: decisionDigest,
+    run,
+    verifications,
+    waivers,
+    releaseEvidence: releaseEvidence || null,
+    evidencePlansComplete,
+    acceptanceCovered: [...coveredAcceptance],
+    hardEvidence: { required: hardEvidenceRequired, count: hardEvidenceCount },
+    integrationEvidence: { required: integrationEvidenceObligations.length > 0, count: integrationEvidenceCount },
+    goalEvidence: { required: goalEvidenceObligations.length > 0, count: goalEvidenceCount },
+    lifecycleOutcomes,
+    obligationStatuses,
+    unsatisfiedObligations,
+    gates,
+    readyExceptClose,
+    decisionPayload,
+  };};
+
 // Trust Authority is the provider-free answer to one question: can the
 // current result be accepted as complete? Provider, model, session, and cache
 // lineage remains Host evidence; it must not become a second Kernel authority
@@ -210,6 +547,9 @@ const FORBIDDEN_TRUST_FIELDS = new Set([
 const isRecord = (value: unknown): value is UnknownRecord => (
   value !== null && typeof value === 'object' && !Array.isArray(value)
 );
+
+const asRecord = (value: unknown): UnknownRecord => isRecord(value) ? value : {};
+const sha256Regex = /^sha256:[a-f0-9]{64}$/i;
 
 const list = (value: unknown): string[] => (
   Array.isArray(value) ? value : []

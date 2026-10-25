@@ -207,7 +207,7 @@ test('legacy operator-override hard proof is preserved for audit but rejected by
       executor: 'kernel-runtime',
     });
 
-    const assessment = cp.stateStore.evaluateCompletion(runId);
+    const assessment = await cp.assessCompletion(runId);
     const unit = assertTestPresent(assessment.obligationStatuses).find((item) => item.obligationId === 'unit-test');
     assert.equal(assertTestPresent(unit).satisfied, false);
     assert.ok(assertTestPresent(assessment.unsatisfiedObligations).some((item) => item.obligationId === 'unit-test'));

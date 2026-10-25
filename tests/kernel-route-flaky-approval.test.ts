@@ -7,7 +7,9 @@ import path from 'node:path';
 import { openKernelStateStore } from '../src/kernel/state-store.js';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
 import { executeApprovedProof, executeWithFlakyRerun, CommandApprovalRequiredError, UntrustedCommandError } from '../src/host/kernel/proof/proof-executor.js';
-import { isProtectedObligation } from '../src/kernel/proof/protected-obligations.js';
+import { assertWaiverAllowed, isProtectedObligation } from '../src/kernel/proof/protected-obligations.js';
+import { resolveProofEscalation } from '../src/kernel/proof-route.js';
+import { evaluateTrustCompletion } from '../src/kernel/proof/trust-authority.js';
 
 const validDigest = 'sha256:' + 'a'.repeat(64);
 
@@ -16,13 +18,16 @@ test('route escalation only promotes tiers and refuses demotion', async () => {
   const store = await openKernelStateStore({ runtimeHome });
   try {
     store.createRun({ runId: 'r-esc', objective: 'x', sourceIdentity: 'src-esc', proofTier: 'T1', evidenceTier: 'E1', requiredObligations: ['unit-test'] });
-    const up = store.escalateRun('r-esc', { proofTier: 'T3', evidenceTier: 'E2', addObligations: ['security-review'] });
+    const current = store.getRun('r-esc');
+    assert.ok(current);
+    const policy = resolveProofEscalation(current, { proofTier: 'T3', evidenceTier: 'E2', addObligations: ['security-review'] });
+    const up = store.setRunProofPolicy('r-esc', policy);
     assert.equal(up.proofTier, 'T3');
     assert.equal(up.evidenceTier, 'E2');
     assert.ok(up.requiredObligations.includes('security-review'));
     assert.ok(up.requiredObligations.includes('unit-test'));
-    assert.throws(() => store.escalateRun('r-esc', { proofTier: 'T1' }), /ROUTE_DEMOTION_FORBIDDEN/);
-    assert.throws(() => store.escalateRun('r-esc', { evidenceTier: 'E0' }), /ROUTE_DEMOTION_FORBIDDEN/);
+    assert.throws(() => resolveProofEscalation(up, { proofTier: 'T1' }), /ROUTE_DEMOTION_FORBIDDEN/);
+    assert.throws(() => resolveProofEscalation(up, { evidenceTier: 'E0' }), /ROUTE_DEMOTION_FORBIDDEN/);
   } finally {
     store.close();
     await rm(runtimeHome, { recursive: true, force: true });
@@ -43,9 +48,10 @@ test('only policy-declared protected obligations reject waivers', async () => {
     store.transition('r-prot', 'EXECUTE');
     store.transition('r-prot', 'PROVE');
     assert.throws(
-      () => store.addWaiver('r-prot', { obligationId: 'data-migration-smoke', approvedBy: 'x', reason: 'skip', approvalReceipt: 'r://1' }),
+      () => assertWaiverAllowed('data-migration-smoke'),
       /PROTECTED_OBLIGATION_WAIVER_FORBIDDEN/,
     );
+    assert.doesNotThrow(() => assertWaiverAllowed('render-check'));
   } finally {
     store.close();
     await rm(runtimeHome, { recursive: true, force: true });
@@ -61,7 +67,9 @@ test('a run that passed on a waiver is completed but marked degraded', async () 
     store.transition('r-deg', 'PROVE');
     store.addWaiver('r-deg', { obligationId: 'render-check', approvedBy: 'reviewer', reason: 'flaky UI', approvalReceipt: 'r://ok' });
     store.transition('r-deg', 'CLOSE');
-    const evalRes = store.evaluateCompletion('r-deg');
+    const degradedRun = store.getRun('r-deg');
+    assert.ok(degradedRun);
+    const evalRes = evaluateTrustCompletion({ run: degradedRun, verifications: store.getVerifications('r-deg'), obligations: store.getRunObligations('r-deg'), waivers: store.getWaivers('r-deg'), reviewReceipts: store.listReviewReceipts('r-deg'), releaseEvidence: store.getLatestEvidencePack('r-deg'), mutationProvenance: store.getMutationProvenance('r-deg') });
     assert.equal(evalRes.decision, 'accepted');
     assert.equal(evalRes.completionQuality, 'degraded');
   } finally {

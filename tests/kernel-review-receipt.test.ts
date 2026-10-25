@@ -13,10 +13,20 @@ import path from 'node:path';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
 import { openKernelStateStore } from '../src/kernel/state-store.js';
 import { hashSessionId } from '../src/contracts/model-execution.js';
-import { digestOfPaths, evaluateReviewReceipt, normalizeReviewReceipt, parseReviewEvidenceRef } from '../src/kernel/proof/review-receipt.js';
+import { digestOfPaths, evaluateReviewReceipt, normalizeReviewReceipt, parseReviewEvidenceRef, reviewSubjectAdoptionEligible, reviewSubjectKey, type ReviewReceiptInput } from '../src/kernel/proof/review-receipt.js';
 
 const IMPLEMENTER = hashSessionId('implementer-session');
 const REVIEWER = hashSessionId('reviewer-session');
+
+const persistReviewReceipt = (
+  store: Awaited<ReturnType<typeof openKernelStateStore>>,
+  runId: string,
+  receipt: ReviewReceiptInput,
+) => store.recordReviewReceipt(
+  runId,
+  receipt,
+  { subjectKey: reviewSubjectAdoptionEligible(receipt) ? reviewSubjectKey(receipt) : null },
+);
 
 const SCRIPTS = {
   'test:ok': 'node -e "process.exit(0)"',
@@ -88,7 +98,7 @@ const forgeReceipt = async (fixture: { projectRoot: string; runtimeHome: string 
   const store = await openKernelStateStore({ runtimeHome: fixture.runtimeHome });
   try {
     const run = store.getRun(runId);
-    return store.recordReviewReceipt(runId, {
+    return persistReviewReceipt(store, runId, {
       runId,
       obligationId: 'security-review',
       reviewStage: 'engineering',

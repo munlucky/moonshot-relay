@@ -7,6 +7,7 @@ import {
 import { matchPathScope } from './path-scope.js';
 import { evaluateImprovementPairPromotion } from './improvement-pair.js';
 import { evaluateCrossRunPromotionCandidate } from './cross-run-evidence.js';
+import { isProtectedObligation } from '../proof/protected-obligations.js';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -345,6 +346,7 @@ export async function reviewKnowledgeCandidates({
           obligationId,
           sourceType: 'ontology_constraint',
           sourceRef: requirement.id,
+          protected: isProtectedObligation(obligationId),
         });
         const currentObligation = stateStore
           .getRunObligations(runId)

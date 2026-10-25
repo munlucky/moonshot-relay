@@ -36,7 +36,7 @@ type ReportProofExecution = Pick<ProofExecutionResult, 'status' | 'command' | 'a
 type UnknownRecord = Record<string, unknown>;
 type StoredKernelRun = NonNullable<ReturnType<KernelStateStore['getRun']>>;
 type KernelRun = StoredKernelRun & { taskContract: NormalizedTaskContract | null };
-type Completion = Extract<ReturnType<KernelStateStore['evaluateCompletion']>, { run: NonNullable<ReturnType<KernelStateStore['getRun']>> }>;
+type Completion = Extract<ReturnType<typeof evaluateTrustCompletion>, { run: NonNullable<ReturnType<KernelStateStore['getRun']>> }>;
 type NormalizedReport = ReturnType<typeof normalizeReport>;
 type NextOptions = Partial<Omit<Parameters<typeof buildNextPayload>[0], 'obligations' | 'verifications' | 'workAuthority'>> & AuthorityOptions & { runId?: string; completion?: Completion | null; context?: UnknownRecord | null; step?: PersistedWorkStep | null; knowledgeAuthority?: ReturnType<typeof buildKnowledgeAuthorityView> | null };
 const asRecord = (value: unknown): UnknownRecord => value && typeof value === 'object' && !Array.isArray(value) ? value as UnknownRecord : {};
@@ -106,7 +106,7 @@ interface KernelControlPlaneOptions {
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { buildContextReceipt } from './context-build.js';
-import { resolveProofRoute } from './proof-route.js';
+import { resolveProofEscalation, resolveProofRoute } from './proof-route.js';
 import { buildKernelMeasurement, EFFICIENCY_TIMESTAMP_FIELDS, EFFICIENCY_COUNTER_FIELDS, EFFICIENCY_KPI_FIELDS } from './run/measurement.js';
 import { summarizeModelRouting } from './run/model-route-metrics.js';
 export { buildKernelMeasurement } from './run/measurement.js';
@@ -149,7 +149,7 @@ import {
 } from '../contracts/verification-settlement.js';
 import { discoverProjectCommands } from '../contracts/command-catalog.js';
 import { REPORT_LEASE_TTL_MS, SESSION_LEASE_TTL_MS } from './run/lease-policy.js';
-import { digestOfEvidence, digestOfPaths, evaluateReviewReceipt, reviewEvidenceRef } from './proof/review-receipt.js';
+import { digestOfEvidence, digestOfPaths, evaluateReviewReceipt, reviewEvidenceRef, reviewSubjectAdoptionEligible, reviewSubjectKey } from './proof/review-receipt.js';
 import { hashSessionId } from '../contracts/model-execution.js';
 import { allStepsPassed, currentStep as selectCurrentStep } from './run/run-step-ledger.js';
 import { planRunSteps } from './run/step-planner.js';
@@ -177,8 +177,9 @@ import { preflightTaskContract } from './run/contract-preflight.js';
 import { buildReviewCapsule, capsuleStaleness } from './run/execution-capsule.js';
 import { buildHostExecutionContract } from '../contracts/host-execution-contract.js';
 import { buildReportOperationKey, compareReportOperation, reportPayloadDigest } from './run/report-identity.js';
-import { buildWorkAuthorityView } from './run/work-authority.js';
-import { buildTrustAuthorityView } from './proof/trust-authority.js';
+import { buildWorkAuthorityView, resolveWorkBlockingClass } from './run/work-authority.js';
+import { buildTrustAuthorityView, evaluateTrustCompletion } from './proof/trust-authority.js';
+import { assertWaiverAllowed } from './proof/protected-obligations.js';
 import { findScopeViolations } from './run/capsule-selection.js';
 import { assertOwnerWorkspaceMutationCAS } from './run/mutation-guard.js';
 import { buildCoordinatorSurface } from './bridge/coordinator-surface.js';
@@ -475,6 +476,28 @@ export const createKernelControlPlane = async ({
       // convenience cursor cannot be refreshed.
     }
   };
+  const persistReviewReceipt = (runId: string, receipt: ReviewReceiptInput) => store.recordReviewReceipt(
+    runId,
+    receipt,
+    { subjectKey: reviewSubjectAdoptionEligible(receipt) ? reviewSubjectKey(receipt) : null },
+  );
+
+  const persistProofEscalation = (runId: string, request: { proofTier?: unknown; evidenceTier?: unknown; addObligations?: string[] } = {}) => {
+    const run = requireRun(runId);
+    if (run.status === 'completed') throw new Error(`Cannot escalate completed run ${runId}`);
+    const policy = resolveProofEscalation({
+      proofTier: run.proofTier,
+      evidenceTier: run.evidenceTier,
+      requiredObligations: run.requiredObligations,
+      releaseEvidenceRequired: Boolean(run.releaseEvidenceRequired),
+    }, request);
+    return store.setRunProofPolicy(runId, policy);
+  };
+
+  const blockRun = (runId: string, reason: string, blockingClass: unknown = null) => (
+    store.markRunBlocked(runId, reason, resolveWorkBlockingClass(reason, blockingClass))
+  );
+
   const recordEfficiency = (runId: string, patch: Parameters<KernelStateStore['recordRunEfficiency']>[1] = {}) => {
     if (!runId || typeof store.recordRunEfficiency !== 'function') return;
     try { store.recordRunEfficiency(runId, patch); } catch { /* telemetry never changes lifecycle authority */ }
@@ -811,9 +834,19 @@ export const createKernelControlPlane = async ({
   };
 
   const evaluateRunCompletion = (runId: string, { obligations = null }: { obligations?: PersistedRunObligation[] | null } = {}): Completion => {
-    const result = store.evaluateCompletion(runId, { verificationScopeIdentities: verificationScopeIdentities(runId, obligations || store.getRunObligations(runId)) });
-    if (!result.run) throw new Error('run_not_found');
-    return result;
+    const run = store.getRun(runId);
+    if (!run) throw new Error('run_not_found');
+    const resolvedObligations = obligations || store.getRunObligations(runId);
+    return evaluateTrustCompletion({
+      run,
+      verifications: store.getVerifications(runId),
+      obligations: resolvedObligations,
+      waivers: store.getWaivers(runId),
+      reviewReceipts: store.listReviewReceipts(runId),
+      releaseEvidence: store.getLatestEvidencePack(runId),
+      mutationProvenance: store.getMutationProvenance(runId),
+      verificationScopeIdentities: verificationScopeIdentities(runId, resolvedObligations),
+    });
   };
 
   const buildTrustAuthorityForRun = (currentRun: KernelRun | null, {
@@ -1851,7 +1884,7 @@ export const createKernelControlPlane = async ({
       if (typeof store.reviseTaskContractAtomic !== 'function') {
         store.declareRunObligations(runId, obligations);
         const merged = [...new Set([...updated.requiredObligations, ...obligations.map((obligation) => obligation.obligationId)])];
-        const escalated = store.escalateRun(runId, { addObligations: merged });
+        const escalated = persistProofEscalation(runId, { addObligations: merged });
         await projectRunState(escalated, { runtimeHome });
         return escalated;
       }
@@ -1990,7 +2023,7 @@ export const createKernelControlPlane = async ({
         try {
           assertVerificationSupport(obligations, { completionPredicate: currentRun?.taskContract?.completionPredicate }, { projectMode: currentRun?.projectMode });
         } catch (error) {
-          store.markRunBlocked(runId, 'unsupported-verification');
+          blockRun(runId, 'unsupported-verification');
           await projectRunState(getRunSnapshot(runId), { runtimeHome });
           throw error;
         }
@@ -2045,14 +2078,14 @@ export const createKernelControlPlane = async ({
       const result = buildImpactAnalysis(impact);
 
       if (result.blockingFindings.length > 0) {
-        store.markRunBlocked(runId, 'external-dependency');
+        blockRun(runId, 'external-dependency');
         await projectRunState(getRunSnapshot(runId), { runtimeHome });
         return { ...result, status: 'blocked', blockedReason: 'external-dependency' };
       }
 
       let escalated: StoredKernelRun = run;
       if (result.analysis.migrationRequired) {
-        escalated = store.escalateRun(runId, {
+        escalated = persistProofEscalation(runId, {
           proofTier: result.requiredTier || 'T3',
           evidenceTier: 'E2',
           addObligations: result.requiredObligations,
@@ -2441,7 +2474,7 @@ export const createKernelControlPlane = async ({
     async blockDeliveryMaterialization(runId: string, { reason = 'delivery_materialization_recovery_required', detail = null }: { reason?: string; detail?: unknown } = {}) {
       const run = getRunSnapshot(runId);
       if (run?.status === 'active') {
-        store.markRunBlocked(runId, reason);
+        blockRun(runId, reason);
         if (typeof store.recordRunSignals === 'function') {
           store.recordRunSignals(runId, buildStructuredRunSignals({
             runId,
@@ -2744,7 +2777,7 @@ export const createKernelControlPlane = async ({
       // second check prevents that validation work from becoming a stale
       // review subject before the Kernel writes its receipt.
       run = assertLiveReviewWorkspace(runId, run, 'review-receipt').run;
-      const reviewReceipt = store.recordReviewReceipt(runId, {
+      const reviewReceipt = persistReviewReceipt(runId, {
         runId,
         obligationId: targetObligation,
         reviewStage: normalized.stage,
@@ -2917,7 +2950,7 @@ export const createKernelControlPlane = async ({
         const approvalRefDigest = `sha256:${createHash('sha256')
           .update(`${normalizedApprovalRef}|${runId}|${target.obligationId}`)
           .digest('hex')}`;
-        const reviewReceipt = store.recordReviewReceipt(runId, {
+        const reviewReceipt = persistReviewReceipt(runId, {
           runId,
           obligationId: target.obligationId,
           reviewStage: 'engineering',
@@ -3061,7 +3094,7 @@ export const createKernelControlPlane = async ({
 
     // Within-run route/tier promotion only (§13.5). Demotion throws.
     async escalateRoute(runId: string, { proofTier, evidenceTier, addObligations = [] }: { proofTier?: ProofTier; evidenceTier?: string; addObligations?: string[] } = {}) {
-      const updated = store.escalateRun(runId, { proofTier, evidenceTier, addObligations });
+      const updated = persistProofEscalation(runId, { proofTier, evidenceTier, addObligations });
       await projectRunState(updated, { runtimeHome });
       return updated;
     },
@@ -3489,7 +3522,7 @@ export const createKernelControlPlane = async ({
         try {
           assertVerificationSupport(obligations, { completionPredicate: run.taskContract?.completionPredicate }, { projectMode: run.projectMode });
         } catch (error) {
-          store.markRunBlocked(runId, 'unsupported-verification');
+          blockRun(runId, 'unsupported-verification');
           await projectRunState(getRunSnapshot(runId), { runtimeHome });
           run = requireRun(runId);
         }
@@ -4168,7 +4201,7 @@ export const createKernelControlPlane = async ({
         }).filter((obligation) => obligation.sourceType === 'knowledge');
         if (scopedObligations.length > 0) {
           store.declareRunObligations(runId, scopedObligations);
-          store.escalateRun(runId, { addObligations: scopedObligations.map((obligation) => obligation.obligationId) });
+          persistProofEscalation(runId, { addObligations: scopedObligations.map((obligation) => obligation.obligationId) });
         }
       }
 
@@ -4271,7 +4304,7 @@ export const createKernelControlPlane = async ({
             changedPaths: report.changedPaths,
           }));
         }
-        store.markRunBlocked(runId, String(report.blocker.reason || ''), report.blocker.blockingClass ? String(report.blocker.blockingClass) : null);
+        blockRun(runId, String(report.blocker.reason || ''), report.blocker.blockingClass ? String(report.blocker.blockingClass) : null);
         await syncRunLocator(getRunSnapshot(runId));
         await projectRunState(getRunSnapshot(runId), { runtimeHome });
         return buildBlockedResponse({ runId, reason: String(report.blocker.reason || ''), detail: report.blocker.detail || null });
@@ -4440,7 +4473,7 @@ export const createKernelControlPlane = async ({
         // different passing command.
         if (!request.obligationId && !declaredProjectCommandRefs.has(String(request.commandRef))) {
           const detail = `Verification command "${request.commandRef}" is not declared by the project command catalog`;
-          store.markRunBlocked(runId, 'unsafe-command');
+          blockRun(runId, 'unsafe-command');
           await projectRunState(getRunSnapshot(runId), { runtimeHome });
           return settleEarlyAttemptResult(buildBlockedResponse({ runId, reason: 'unsafe-command', detail }));
         }
@@ -4530,7 +4563,7 @@ export const createKernelControlPlane = async ({
         try {
           assertVerificationSupport(proofObligations, { completionPredicate: current.taskContract?.completionPredicate }, { projectMode: current.projectMode });
         } catch (error) {
-          store.markRunBlocked(runId, 'unsupported-verification');
+          blockRun(runId, 'unsupported-verification');
           await projectRunState(getRunSnapshot(runId), { runtimeHome });
           return settleEarlyAttemptResult(buildBlockedResponse({ runId, reason: 'unsupported-verification', detail: errorMessage(error) }));
         }
@@ -4661,14 +4694,14 @@ export const createKernelControlPlane = async ({
             }
           } catch (error) {
             if (isUntrustedCommandError(error)) {
-              store.markRunBlocked(runId, 'unsafe-command');
+              blockRun(runId, 'unsafe-command');
               await projectRunState(getRunSnapshot(runId), { runtimeHome });
               return buildBlockedResponse({ runId, reason: 'unsafe-command', detail: errorMessage(error) });
             }
             // A requested isolation that cannot be truly enforced blocks the run
             // rather than recording a false security boundary (§11.5).
             if (asRecord(error).code === 'NETWORK_POLICY_UNENFORCEABLE') {
-              store.markRunBlocked(runId, 'network-policy');
+              blockRun(runId, 'network-policy');
               await projectRunState(getRunSnapshot(runId), { runtimeHome });
               return buildBlockedResponse({ runId, reason: 'network-policy', detail: errorMessage(error) });
             }
@@ -5049,8 +5082,10 @@ export const createKernelControlPlane = async ({
     },
 
     async addWaiver(runId: string, options: Parameters<KernelStateStore['addWaiver']>[1]) {
-      const waiver = store.addWaiver(runId, options);
       const run = requireRun(runId);
+      const obligation = store.getRunObligation(runId, options.obligationId);
+      assertWaiverAllowed(options.obligationId, obligation?.protected);
+      const waiver = store.addWaiver(runId, options);
       if (run.evidenceTier === 'E2') {
         const pack = buildReleaseEvidencePack({
           objective: run.objective,

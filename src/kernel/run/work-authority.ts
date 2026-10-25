@@ -7,6 +7,24 @@ import { currentStep as selectCurrentStep } from './run-step-ledger.js';
 
 export const WORK_AUTHORITY_SCHEMA_VERSION = 1;
 
+export type WorkBlockingClass = 'completion' | 'safety';
+
+export const resolveWorkBlockingClass = (
+  reason: unknown,
+  explicit: unknown = null,
+): WorkBlockingClass => {
+  if (explicit === 'completion' || explicit === 'safety') return explicit;
+  const normalized = String(reason || 'question');
+  return (
+    normalized.includes('verification')
+    || normalized.includes('obligation')
+    || normalized.includes('dependency')
+    || normalized.includes('question')
+    || normalized.includes('permission')
+    || normalized.includes('scope')
+  ) ? 'completion' : 'safety';
+};
+
 const FORBIDDEN_WORK_FIELDS = new Set([
   'provider', 'providerModel', 'model', 'modelClass', 'resolvedModel',
   'requestedModel', 'effort', 'resolvedEffort', 'requestedEffort',

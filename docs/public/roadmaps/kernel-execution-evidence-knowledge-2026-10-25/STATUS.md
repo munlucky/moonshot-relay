@@ -12,8 +12,8 @@
 | 04 | A4 Knowledge Quality | COMPLETE | 78c05a9d | verified |
 | 05 | A5 Knowledge Reuse | COMPLETE | 5b5cd618 | verified |
 | 06 | A6+A7 Usage Receipt + Historical Replay | COMPLETE | fa7243c7 | verified |
-| 07 | B1+B2 Policy/Prompt Reduction | COMPLETE | current Preset 07 commit | verify after push |
-| 08 | B3 Control Plane / State Store Thinning | NOT_STARTED | - | - |
+| 07 | B1+B2 Policy/Prompt Reduction | COMPLETE | 94114497 | verified |
+| 08 | B3 Control Plane / State Store Thinning | COMPLETE | current Preset 08 commit | verified |
 | 09 | B4 Final Replay + Complexity Audit | NOT_STARTED | - | - |
 
 허용 상태:
@@ -141,3 +141,21 @@
 - Dynamic contract: Objective / Acceptance / Constraints / Current Work / Relevant Knowledge / Required Evidence 구조는 유지
 - Completion/protected safety: migration T3, protected waiver refusal, independent review receipt, stale review/evidence, completion authority 회귀 통과
 - Complexity: 새 Risk DSL/classifier/taxonomy, fallback chain, registry/table/state, provider/OS/project-specific Kernel branch를 추가하지 않음
+
+
+## Preset 08 evidence
+
+- Base / Preset 07 parity: `HEAD = origin/main = 9411449785130505c28ed54b64369c680299996d`에서 시작했다.
+- Authority 이동: route escalation은 `proof-route`, blocker classification은 `run/work-authority`, completion/evidence/review gate는 `proof/trust-authority`, protected waiver는 `proof/protected-obligations`, Review Receipt subject adoption은 `proof/review-receipt`가 소유한다.
+- State Store targeted policy ownership: route tier **9 → 0**, blocker class **1 → 0**, completion gate **5 → 0**, protected waiver **5 → 0**, review adoption **4 → 0**.
+- State Store 전체 branch proxy: **493 → 438**, semantic branch proxy: **27 → 16**, LOC: **4,612 → 4,243 (-369)**.
+- Control Plane 전체 branch proxy: **533 → 536**, semantic branch proxy: **20 → 21**, LOC: **5,074 → 5,109 (+35)**. 증가는 owner snapshot 조립과 lifecycle guard이며, completion/domain policy owner는 제거했다. LOC 자체는 성공 조건으로 사용하지 않았다.
+- Writable authority: State Store의 canonical authority table direct SQL write는 **0 → 0**이다. 기존 same-connection owner persistence를 유지했고 새 table/state/registry를 추가하지 않았다.
+- Focused authority/state/review/boundary regression: **80/80 pass**.
+- TypeScript typecheck: **pass**.
+- Runtime build freshness: **308 files / 840 edges**, 최종 `build:check` changed **0**.
+- Test build freshness: **289 tests / 8 helpers**, 최종 check pass.
+- Boundary check: **9 modules / 308 files / 840 edges**, pass.
+- Kernel reliability: **282/282 pass**.
+- State Store에 남긴 판단은 schema/command binding, referential integrity, transition/OCC, transaction 경계다. route/completion/domain policy를 persistence에 다시 복제하지 않았다.
+- Complexity: 새 facade/compatibility layer/fallback chain/provider·OS·프로젝트 전용 분기 없이 기존 Work/Trust owner를 재사용했다.

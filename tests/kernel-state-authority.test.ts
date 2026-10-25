@@ -4,9 +4,25 @@ import { mkdtemp } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { openKernelStateStore } from '../src/kernel/state-store.js';
+import { evaluateTrustCompletion } from '../src/kernel/proof/trust-authority.js';
 import { openSqliteDb } from '../src/kernel/sqlite-adapter.js';
 
 const validDigest = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+const assessCompletion = (store: Awaited<ReturnType<typeof openKernelStateStore>>, runId: string, options: { expectedSourceIdentity?: string | null } = {}) => {
+  const run = store.getRun(runId);
+  if (!run) throw new Error(`Run ${runId} not found`);
+  return evaluateTrustCompletion({
+    run,
+    verifications: store.getVerifications(runId),
+    obligations: store.getRunObligations(runId),
+    waivers: store.getWaivers(runId),
+    reviewReceipts: store.listReviewReceipts(runId),
+    releaseEvidence: store.getLatestEvidencePack(runId),
+    mutationProvenance: store.getMutationProvenance(runId),
+    ...options,
+  });
+};
 
 test('latest scoped Run discovery does not deserialize older incompatible history', async () => {
   const h = await mkdtemp(path.join(os.tmpdir(), 'krn-latest-history-'));
@@ -80,7 +96,7 @@ test('natural PROVE -> verification -> CLOSE workflow results in accepted comple
 
   s.transition('r1', 'CLOSE');
 
-  const comp = s.assessCompletion('r1', { expectedSourceIdentity: 'src-1' });
+  const comp = assessCompletion(s, 'r1', { expectedSourceIdentity: 'src-1' });
   assert.equal(comp.decision, 'accepted');
   const finalRun = s.persistCompletionDecision('r1', comp);
   assert.equal(finalRun.status, 'completed');
@@ -116,7 +132,7 @@ test('multi-obligation proof contract requires all declared obligations to pass'
   });
 
   // Should be blocked because 'unit-test' obligation is missing
-  assert.equal(s.assessCompletion('r-t3').decision, 'blocked');
+  assert.equal(assessCompletion(s, 'r-t3').decision, 'blocked');
 
   // Transition to EXECUTE then PROVE to complete missing obligation
   s.transition('r-t3', 'EXECUTE');
@@ -145,7 +161,7 @@ test('multi-obligation proof contract requires all declared obligations to pass'
 
   s.transition('r-t3', 'CLOSE');
 
-  const comp = s.assessCompletion('r-t3');
+  const comp = assessCompletion(s, 'r-t3');
   assert.equal(comp.decision, 'accepted');
   const finalRun = s.persistCompletionDecision('r-t3', comp);
   assert.equal(finalRun.status, 'completed');
@@ -183,7 +199,7 @@ test('latest verification row wins and stale passes cannot produce completion', 
   s.recordVerification('r-latest', { obligationId: 'unit-test', status: 'passed', evidenceRef: 'evidence://pass', command: 'npm test', evidenceDigest: validDigest, sourceIdentity: 'src-latest' });
   s.recordVerification('r-latest', { obligationId: 'unit-test', status: 'failed', evidenceRef: 'evidence://fail', command: 'npm test', exitCode: 1, evidenceDigest: validDigest, sourceIdentity: 'src-latest' });
   s.transition('r-latest', 'CLOSE');
-  assert.equal(s.assessCompletion('r-latest').decision, 'blocked');
+  assert.equal(assessCompletion(s, 'r-latest').decision, 'blocked');
   s.close();
 });
 
@@ -196,7 +212,7 @@ test('verification is restricted to PROVE and acceptance coverage is required', 
   s.transition('r-acceptance', 'PROVE');
   s.recordVerification('r-acceptance', { obligationId: 'unit-test', status: 'passed', evidenceRef: 'evidence://x', command: 'npm test', evidenceDigest: validDigest, sourceIdentity: 'src-acceptance' });
   s.transition('r-acceptance', 'CLOSE');
-  assert.equal(s.assessCompletion('r-acceptance').decision, 'blocked');
+  assert.equal(assessCompletion(s, 'r-acceptance').decision, 'blocked');
   s.close();
 });
 
@@ -215,7 +231,7 @@ test('completion transaction rolls back Trust decision when terminal Work update
     sourceIdentity: 'src-rollback',
   });
   s.transition('r-rollback', 'CLOSE');
-  const completion = s.assessCompletion('r-rollback');
+  const completion = assessCompletion(s, 'r-rollback');
   assert.equal(completion.decision, 'accepted');
 
   const faultDb = await openSqliteDb(s.dbPath);
@@ -250,6 +266,6 @@ test('approved waiver can satisfy an obligation and foreign keys are enabled', a
   s.transition('r-waiver', 'PROVE');
   s.addWaiver('r-waiver', { obligationId: 'lint-check', approvedBy: 'reviewer', reason: 'not applicable', approvalReceipt: 'approval://1' });
   s.transition('r-waiver', 'CLOSE');
-  assert.equal(s.assessCompletion('r-waiver').decision, 'accepted');
+  assert.equal(assessCompletion(s, 'r-waiver').decision, 'accepted');
   s.close();
 });

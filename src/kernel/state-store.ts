@@ -45,13 +45,12 @@ import { mkdir } from 'node:fs/promises';
 import { resolveKernelRuntimeHome, assertIsolatedRuntimeHomes } from './runtime-home.js';
 import { canTransition } from './transition.js';
 import { openSqliteDb } from './sqlite-adapter.js';
-import { isProtectedObligation } from './proof/protected-obligations.js';
 import { assertCommandBinding } from './run/obligation-compiler.js';
 import { deriveEvidenceLevel } from '../contracts/verification-settlement.js';
 import { normalizeModelRouteDecision } from '../contracts/model-route.js';
 import { hashSessionId, normalizeModelUsageReceipt } from '../contracts/model-execution.js';
 import { assertAttemptLineage } from './run/attempt-provenance.js';
-import { TRUSTED_ENFORCEMENT_STATUSES, digestOfEvidence, evaluateReviewReceipt, normalizeReviewReceipt, parseReviewEvidenceRef } from './proof/review-receipt.js';
+import { digestOfEvidence, evaluateReviewReceipt, normalizeReviewReceipt, parseReviewEvidenceRef } from './proof/review-receipt.js';
 import { sanitizePersistentPayload, sanitizePersistentText } from '../shared/persistent-sanitizer.js';
 import { buildSuccessorKey } from './run/successor-key.js';
 import { emptyKnowledgeDoctorFinding } from './knowledge/capture.js';
@@ -78,8 +77,6 @@ import { createFinalizationPersistence } from './persistence/finalization-store.
 import { createProjectIdentityPersistence } from './persistence/project-identity-store.js';
 import { canonicalReceiptPaths, receiptValueIsMissing, mergeImmutableReceiptFields } from './run/receipt-fields.js';
 
-const TIER_RANK: Record<ProofTier, number> = { T0: 0, T1: 1, T2: 2, T3: 3 };
-const EVIDENCE_RANK: Record<string, number> = { E0: 0, E1: 1, E2: 2 };
 const PROJECT_ID_PATTERN = /^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$)[a-z0-9][a-z0-9._-]{1,126}[a-z0-9]$/;
 
 export const kernelDbPath = (runtimeHome: string = resolveKernelRuntimeHome()) => path.join(runtimeHome, 'state', 'runtime-state.sqlite');
@@ -104,27 +101,6 @@ const canonicalRuntimeHome = (value: string) => {
 const sourceIdentityRegex = /^(?:[a-f0-9]{40}|sha256:[a-f0-9]{64}|[a-zA-Z0-9_.:/-]{1,128})$/i;
 const gitCommitShaRegex = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
 const sha256Regex = /^sha256:[a-f0-9]{64}$/i;
-
-const reviewSubjectKey = (receipt: ReviewReceiptInput = {}) => `review-subject-${createHash('sha256').update(JSON.stringify({
-  runId: receipt.runId || null,
-  obligationId: receipt.obligationId || null,
-  stepId: receipt.stepId || null,
-  planRevision: Number(receipt.planRevision || 1),
-  mutationRevision: Number(receipt.subject?.mutationRevision || 0),
-  workspaceIdentity: receipt.subject?.workspaceIdentity || null,
-  changedPathsDigest: receipt.subject?.changedPathsDigest || null,
-  evidenceDigest: receipt.subject?.evidenceDigest || null,
-})).digest('hex')}`;
-
-const reviewSubjectAdoptionEligible = (receipt: ReviewReceiptInput = {}) => {
-  const enforcement = receipt.reviewer?.enforcementStatus || null;
-  if (!(TRUSTED_ENFORCEMENT_STATUSES as readonly unknown[]).includes(enforcement)) return false;
-  if (enforcement === 'operator_approved') return true;
-  if (receipt.reviewer?.modelClass !== 'frontier_reasoning') return false;
-  const reviewerSession = receipt.reviewer?.actorSessionId || null;
-  const implementerSession = receipt.implementer?.actorSessionId || null;
-  return Boolean(reviewerSession && implementerSession && reviewerSession !== implementerSession);
-};
 
 /** @param {{ runtimeHome?: string | null, relayHome?: string | null }} [options] */
 export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = resolveKernelRuntimeHome(), relayHome }: { runtimeHome?: (string) | undefined; relayHome?: (string) | undefined } = {}) => {
@@ -1103,40 +1079,9 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       return trustPersistence.declareRunObligations(runId, obligations);
     },
 
-    // Within a run, route and tier may only be promoted, never demoted
-    // (§13.5). Demotion requires a new run.
-    escalateRun(runId: string, { proofTier, evidenceTier, addObligations = [] }: { proofTier?: (string) | undefined; evidenceTier?: (string) | undefined; addObligations?: string[] } = {}) {
-      const run = this.getRun(runId);
-      if (!run) throw new Error(`Run ${runId} not found`);
-      if (run.status === 'completed') throw new Error(`Cannot escalate completed run ${runId}`);
-
-      let nextTier = run.proofTier;
-      if (proofTier) {
-        if (!isProofTier(proofTier)) throw new Error(`Unknown proof tier: ${proofTier}`);
-        if (TIER_RANK[proofTier] < TIER_RANK[run.proofTier]) {
-          throw new Error(`ROUTE_DEMOTION_FORBIDDEN: cannot demote ${run.proofTier} -> ${proofTier}; start a new run instead`);
-        }
-        nextTier = proofTier;
-      }
-
-      let nextEvidence = run.evidenceTier;
-      if (evidenceTier) {
-        if (EVIDENCE_RANK[evidenceTier] === undefined) throw new Error(`Unknown evidence tier: ${evidenceTier}`);
-        const currentEvidenceRank = EVIDENCE_RANK[run.evidenceTier];
-        if (currentEvidenceRank === undefined) throw new Error(`Unknown persisted evidence tier: ${run.evidenceTier}`);
-        if (EVIDENCE_RANK[evidenceTier] < currentEvidenceRank) {
-          throw new Error(`ROUTE_DEMOTION_FORBIDDEN: cannot demote evidence ${run.evidenceTier} -> ${evidenceTier}`);
-        }
-        nextEvidence = evidenceTier;
-      }
-
-      const mergedObligations = [...new Set([...run.requiredObligations, ...addObligations])];
-      trustPersistence.setRunProofPolicy(runId, {
-        proofTier: nextTier,
-        evidenceTier: nextEvidence,
-        requiredObligations: mergedObligations,
-        releaseEvidenceRequired: nextEvidence === 'E2' ? true : Boolean(run.releaseEvidenceRequired),
-      });
+    setRunProofPolicy(runId: string, policy: { proofTier: string; evidenceTier: string; requiredObligations: string[]; releaseEvidenceRequired: boolean }) {
+      if (!this.getRun(runId)) throw new Error(`Run ${runId} not found`);
+      trustPersistence.setRunProofPolicy(runId, policy);
       return this.getRun(runId)!;
     },
 
@@ -1159,19 +1104,18 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
     },
 
     // A replan is a durable event; counting it keeps the measurement honest.
-    markRunBlocked(runId: string, reason: string, blockingClass: string | null = null) {
+    markRunBlocked(runId: string, reason: string, blockingClass: string) {
       const run = this.getRun(runId);
       if (!run) throw new Error(`Run ${runId} not found`);
       if (run.status === 'completed') throw new Error(`Cannot block completed run ${runId}`);
       const normReason = String(reason || 'question');
-      const resolvedClass = blockingClass
-        || (normReason.includes('verification') || normReason.includes('obligation') || normReason.includes('dependency') || normReason.includes('question') || normReason.includes('permission') || normReason.includes('scope') ? 'completion' : 'safety');
+      if (!blockingClass) throw new Error('blockingClass is required');
       db.transaction(() => {
         workLifecyclePersistence.updateRunLifecycle({
           runId,
           status: 'blocked',
           blockedReason: normReason,
-          blockingClass: String(resolvedClass),
+          blockingClass: String(blockingClass),
           incrementRevision: true,
         });
         reconcileTerminalLifecycleInTransaction({ projectId: run.projectId, runId });
@@ -3597,7 +3541,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       return release();
     },
 
-    ensureRunObligation(runId: string, { obligationId, sourceType = 'ontology_constraint', sourceRef = null, evidenceClass = 'hard', verificationMethod = null, allowedCommandRefs = [], acceptanceIds = [], status = 'required' }: { obligationId: string; sourceType?: string; sourceRef?: string | null; evidenceClass?: string; verificationMethod?: string | null; allowedCommandRefs?: string[]; acceptanceIds?: string[]; status?: string }) {
+    ensureRunObligation(runId: string, { obligationId, sourceType = 'ontology_constraint', sourceRef = null, evidenceClass = 'hard', verificationMethod = null, allowedCommandRefs = [], acceptanceIds = [], status = 'required', protected: protectedObligation = false }: { obligationId: string; sourceType?: string; sourceRef?: string | null; evidenceClass?: string; verificationMethod?: string | null; allowedCommandRefs?: string[]; acceptanceIds?: string[]; status?: string; protected?: boolean }) {
       const run = this.getRun(runId);
       trustPersistence.ensureRunObligation({
         runId,
@@ -3609,7 +3553,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         verificationMethod,
         allowedCommandRefs,
         acceptanceIds,
-        protected: isProtectedObligation(obligationId),
+        protected: protectedObligation,
         contractRevision: Number(run?.contractRevision || 1),
       });
     },
@@ -3903,7 +3847,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
     // Review receipts (K0). A judgment obligation is proven by a receipt whose
     // reviewer lineage and reviewed subject are both persisted, so a later
     // completion check can re-derive whether the review still holds.
-    recordReviewReceipt(runId: string, receipt: ReviewReceiptInput) {
+    recordReviewReceipt(runId: string, receipt: ReviewReceiptInput, { subjectKey = null }: { subjectKey?: string | null } = {}) {
       const normalized = normalizeReviewReceipt(asRecord(sanitizePersistentPayload({ ...receipt, runId: receipt?.runId || runId })));
       if (normalized.runId !== runId) throw new Error(`review receipt runId ${normalized.runId} does not match run ${runId}`);
       if (!this.getRun(runId)) throw new Error(`Run ${runId} not found`);
@@ -3925,7 +3869,6 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       if (reviewerUsage?.bindingId && normalized.reviewerBindingId && reviewerUsage.bindingId !== normalized.reviewerBindingId) {
         throw new Error(`review receipt reviewer binding ${normalized.reviewerBindingId} does not match reviewer usage binding ${reviewerUsage.bindingId || '<missing>'}`);
       }
-      const subjectKey = reviewSubjectAdoptionEligible(normalized) ? reviewSubjectKey(normalized) : null;
       return trustPersistence.settleReviewReceipt({
         runId,
         subjectKey,
@@ -4056,6 +3999,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
           sourceRef: 'reported-verification',
           evidenceClass: executor === 'kernel-runtime' ? 'hard' : 'attested',
           status: 'optional',
+          protected: false,
         });
       }
       // The class is a fact about how this evidence was produced, never a
@@ -4097,6 +4041,10 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       if (tier === 'E2' && !Array.isArray(asRecord(pack.qaReport).checks)) throw new Error('E2 release evidence must persist its QA checks');
       trustPersistence.recordEvidencePack({ runId, tier, digest, pack, mutationRevision });
       return { runId, tier, digest, mutationRevision };
+    },
+
+    getLatestEvidencePack(runId: string) {
+      return trustPersistence.getLatestEvidencePack(runId);
     },
 
     getVerifications(runId: string) {
@@ -4159,9 +4107,6 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
     addWaiver(runId: string, { obligationId, approvedBy, reason, approvalReceipt, acceptanceCoverage = [] }: { obligationId: string; approvedBy: string; reason: string; approvalReceipt: string; acceptanceCoverage?: string[] }) {
       if (!this.getRun(runId)) throw new Error(`Run ${runId} not found`);
       if (!obligationId || !approvedBy || !reason || !approvalReceipt) throw new Error('Waiver requires obligation, approver, reason, and approval receipt');
-      if (isProtectedObligation(obligationId)) {
-        throw new Error(`PROTECTED_OBLIGATION_WAIVER_FORBIDDEN: ${obligationId} (auth/payment/migration/data-loss/security/core-scenario) requires real evidence and cannot be waived`);
-      }
       return trustPersistence.addWaiver({
         runId,
         obligationId,
@@ -4256,317 +4201,6 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       return trustPersistence.getEvidenceLineage(runId);
     },
 
-    evaluateCompletion(runId: string, { expectedSourceIdentity = null, verificationScopeIdentities = null }: { expectedSourceIdentity?: string | null; verificationScopeIdentities?: Record<string, { status?: string; identity?: string | null; reason?: string | null }> | null } = {}) {
-      const run = this.getRun(runId);
-      if (!run) {
-        return { decision: 'blocked', run: null, verifications: [] };
-      }
-
-      const verifications = this.getVerifications(runId);
-
-      const isClosed = Boolean(run.state === 'CLOSE');
-      const mutationProvenanceAssessment = assessMutationProvenance({
-        run,
-        mutationProvenance: this.getMutationProvenance(runId),
-      });
-
-      const normalizedCoverageFor = (v: PersistedVerification | null | undefined) => {
-        try {
-          return normalizeAcceptanceCoverage({
-            contract: run.taskContract || {},
-            acceptanceCriteria: run.acceptanceCriteria || [],
-            obligation: this.getRunObligation(runId, v?.obligationId),
-            coverage: v?.acceptanceCoverage || [],
-          });
-        } catch {
-          return null;
-        }
-      };
-
-      const isVerificationValid = (v: PersistedVerification | null | undefined) => {
-        if (!v) return false;
-        if (v.status !== 'passed') return false;
-        if (Number(v.exitCode) !== 0) return false;
-        if (!v.command) return false;
-        if (!v.evidenceRef) return false;
-        // Historical builds briefly allowed operator approval to mint synthetic
-        // executable proof. Preserve those rows for audit, but never let them
-        // satisfy a hard-evidence gate during inspection or reevaluation.
-        if (v.command === 'operator-override' || String(v.evidenceRef).startsWith('operator-override://')) return false;
-        if (!v.evidenceDigest || !sha256Regex.test(v.evidenceDigest)) return false;
-
-        if (!v.sourceIdentity || v.sourceIdentity !== run.sourceIdentity) return false;
-        if (expectedSourceIdentity && v.sourceIdentity !== expectedSourceIdentity) return false;
-
-        // A scoped proof is fresh only when the authoritative verification
-        // scope still hashes to the same file contents. The full workspace
-        // identity may change for an unrelated Step, so it is deliberately not
-        // used for this case. Missing scope observations fail closed.
-        const scopedDigest = asRecord(v.evidenceIdentity?.values).verificationScopeDigest || null;
-        if (scopedDigest) {
-          const currentScope = verificationScopeIdentities?.[v.obligationId];
-          const currentScopeDigest = typeof currentScope === 'string' ? currentScope : currentScope?.identity;
-          if (!currentScopeDigest || currentScopeDigest !== scopedDigest) return false;
-        } else {
-          const verifiedMutation = v.verifiedMutationRevision ?? v.verifiedRuntimeRevision;
-          if (verifiedMutation !== run.mutationRevision) return false;
-        }
-        if (!scopedDigest && v.verifiedSourceIdentity && run.currentWorkspaceIdentity && v.verifiedSourceIdentity !== run.currentWorkspaceIdentity) {
-          // Evidence proven against a different full workspace state is stale.
-          return false;
-        }
-
-        // A contract revision changes the evidence authority. Proof recorded
-        // before a plan/binding revision must be rerun, even when its other
-        // receipt fields still look fresh.
-        if (Number(v.contractRevision || 1) !== Number(run.contractRevision || 1)) return false;
-
-        // Revalidate the persisted command against the CURRENT obligation. A
-        // plan may have narrowed or changed its command after an older proof
-        // was written; that older row cannot be reused at finalization. Legacy
-        // rows without commandRef are accepted only for broad, non-explicit
-        // obligations where the old contract did not specify a command.
-        const declared = this.getRunObligation(runId, v.obligationId);
-        const explicitCommandBinding = declared?.metadata?.evidencePlanCommandBinding === true;
-        if (declared && declared.evidenceClass !== 'judgment') {
-          if (explicitCommandBinding && !v.commandRef) return false;
-          if (v.commandRef) {
-            try {
-              assertCommandBinding(declared, v.commandRef);
-            } catch {
-              return false;
-            }
-          }
-        }
-
-        // Re-derive coverage at completion as well as at write time. This keeps
-        // legacy or directly-mutated rows from turning an unrelated passing
-        // command into proof for a different acceptance criterion.
-        if (normalizedCoverageFor(v) === null) return false;
-
-        return true;
-      };
-
-      const requiredObligations = run.requiredObligations.length > 0 ? run.requiredObligations : ['default'];
-      const declaredObligations = this.getRunObligations(runId);
-      const declaredById = new Map(declaredObligations.map((obligation) => [obligation.obligationId, obligation]));
-      const dynamicObligationRows = declaredObligations.filter((obligation) => obligation.status === 'required' && obligation.sourceType !== 'ad-hoc');
-
-      const waivers = this.getWaivers(runId);
-      const waivedObligations = new Set(waivers.filter((w) => w.approvalReceipt).map((w) => w.obligationId));
-      const latestByObligation = new Map(verifications.map((v) => [v.obligationId, v]));
-
-      // Evidence class is not substitutable (P0-3): a `hard` obligation needs
-      // executable evidence, a `judgment` obligation needs a structured
-      // verdict, and neither can stand in for the other. A run that actually
-      // mutated the workspace tightens `hard` further — only the Kernel
-      // executing the bound command counts. A protected obligation can never
-      // be waived.
-      const runMutatedWorkspace = run.mutationRevision > 0;
-
-      // K0: a judgment that stands in for a protected obligation, or any
-      // judgment in a T3 run, must be backed by a Review Receipt whose reviewer
-      // lineage and reviewed subject still hold. Two different reviewer strings
-      // are not evidence that an independent review happened.
-      const reviewLineageFor = (obligationId: string, verification: PersistedVerification, declared: PersistedRunObligation | null | undefined) => {
-        const protectedObligation = Boolean(declared?.protected || isProtectedObligation(obligationId));
-        const independenceRequired = run.proofTier === 'T3';
-        if (!protectedObligation && !independenceRequired) {
-          return { required: false, usable: true, receiptId: null, reasons: [] };
-        }
-        const parsed = parseReviewEvidenceRef(verification?.evidenceRef);
-        if (!parsed || parsed.runId !== runId) {
-          return { required: true, usable: false, receiptId: null, reasons: ['review-receipt-not-referenced'] };
-        }
-        const receipt = this.getReviewReceipt(parsed.receiptId, { runId });
-        const reasons = [];
-        if (receipt) {
-          if (receipt.obligationId !== obligationId) reasons.push('review-receipt-obligation-mismatch');
-          if (verification.evidenceDigest !== receipt.digest) reasons.push('review-receipt-digest-mismatch');
-        }
-        const evaluation = evaluateReviewReceipt({
-          receipt,
-          run,
-          requireIndependentSession: independenceRequired,
-          requireFrontierClass: independenceRequired,
-          requireTrustedEnforcement: true,
-          // The verdict must describe the evidence set the run has NOW; a check
-          // rerun after the review changes nothing about the workspace.
-          currentEvidenceDigest: digestOfEvidence(verifications, { excludeObligationId: obligationId }),
-        });
-        const allReasons = [...reasons, ...evaluation.reasons];
-        return { required: true, usable: allReasons.length === 0, receiptId: parsed.receiptId, reasons: allReasons };
-      };
-
-      const obligationSatisfied = (obligationId: string) => {
-        const declared = declaredById.get(obligationId);
-        const expectedClass = declared?.evidenceClass || 'hard';
-        const verification = latestByObligation.get(obligationId);
-        if (verification && isVerificationValid(verification)) {
-          if (expectedClass === 'judgment') {
-            if (verification.evidenceClass === 'judgment') return reviewLineageFor(obligationId, verification, declared).usable;
-          } else if (verification.executor === 'kernel-runtime' && verification.evidenceClass === 'hard') {
-            return true;
-          } else if (!runMutatedWorkspace && verification.evidenceClass !== 'judgment') {
-            // Nothing changed, so attested evidence is still an honest record;
-            // a judgment verdict is never accepted for an executable obligation.
-            return true;
-          }
-        }
-        if (waivedObligations.has(obligationId) && !(declared?.protected || isProtectedObligation(obligationId))) return true;
-        return false;
-      };
-
-      const obligationStatuses = [...new Set([...requiredObligations, ...dynamicObligationRows.map((row) => row.obligationId)])]
-        .map((obligationId) => {
-          const declared = declaredById.get(obligationId);
-          const verification = latestByObligation.get(obligationId);
-          const requiredEvidenceClass = declared?.evidenceClass || 'hard';
-          const reviewLineage = requiredEvidenceClass === 'judgment' && verification
-            ? reviewLineageFor(obligationId, verification, declared)
-            : null;
-          return {
-            obligationId,
-            evidenceLevel: deriveEvidenceLevel(declared),
-            requiredEvidenceClass,
-            observedEvidenceClass: verification?.evidenceClass || null,
-            executor: verification?.executor || null,
-            reviewLineage,
-            satisfied: obligationSatisfied(obligationId),
-            waived: waivedObligations.has(obligationId),
-          };
-        });
-
-      const staticPassed = requiredObligations.every((ob) => obligationSatisfied(ob));
-      const dynamicPassed = dynamicObligationRows.every((row) => row.status === 'passed' || row.status === 'waived' || obligationSatisfied(row.obligationId));
-
-      // Work-level proof may settle one bounded Work Unit, but it cannot by
-      // itself close the Goal. Goal completion requires at least one current,
-      // non-waived Goal-level verification. Integration-level obligations stay
-      // mandatory when declared, but do not substitute for root Goal proof.
-      const integrationEvidenceObligations = obligationStatuses.filter((entry) => entry.evidenceLevel === 'integration');
-      const requiredIntegrationEvidence = integrationEvidenceObligations.filter((entry) => !entry.waived);
-      const integrationEvidenceCount = requiredIntegrationEvidence.filter((entry) => {
-        if (!entry.satisfied) return false;
-        const verification = latestByObligation.get(entry.obligationId);
-        return Boolean(verification && isVerificationValid(verification));
-      }).length;
-      const integrationEvidenceSatisfied = requiredIntegrationEvidence.length === 0
-        || integrationEvidenceCount === requiredIntegrationEvidence.length;
-      const goalEvidenceObligations = obligationStatuses.filter((entry) => entry.evidenceLevel === 'goal');
-      const requiredGoalEvidence = goalEvidenceObligations.filter((entry) => !entry.waived);
-      const goalEvidenceCount = requiredGoalEvidence.filter((entry) => {
-        if (!entry.satisfied) return false;
-        const verification = latestByObligation.get(entry.obligationId);
-        return Boolean(verification && isVerificationValid(verification));
-      }).length;
-      const goalEvidenceSatisfied = goalEvidenceObligations.length > 0
-        && (requiredGoalEvidence.length === 0 || goalEvidenceCount > 0);
-
-      const coveredAcceptance = new Set([
-        ...verifications.filter(isVerificationValid).flatMap((v) => normalizedCoverageFor(v) || []),
-        ...waivers.flatMap((w) => w.acceptanceCoverage || []),
-      ]);
-      // Coverage may be declared by acceptance id (AC-1) or by statement.
-      const contractAcceptance = Array.isArray(run.taskContract?.acceptance) ? run.taskContract.acceptance : [];
-      // Completion must not trust a legacy verification row merely because it
-      // contains coverage. The persisted acceptance statement still has to
-      // match the current contract, while an explicit evidence plan remains
-      // optional and unplanned criteria use the compiled policy obligation.
-      const persistedAcceptance = Array.isArray(run.acceptanceCriteria) ? run.acceptanceCriteria : [];
-      const evidencePlansComplete = persistedAcceptance.length === 0
-        ? true
-        : Boolean(run.taskContract)
-          && contractAcceptance.length === persistedAcceptance.length
-          && contractAcceptance.every((criterion, index) => (
-            Boolean(criterion?.statement)
-            && criterion.statement === persistedAcceptance[index]
-          ));
-      const acceptanceCovered = evidencePlansComplete && persistedAcceptance.every((criterion, index) => {
-        const declared = contractAcceptance[index];
-        return coveredAcceptance.has(criterion) || (declared?.id && coveredAcceptance.has(declared.id));
-      });
-      const releaseEvidence = trustPersistence.getLatestEvidencePack(runId);
-
-      const releaseEvidencePresent = !run.releaseEvidenceRequired || (releaseEvidence?.tier === 'E2' && releaseEvidence.mutationRevision === run.mutationRevision && sha256Regex.test(releaseEvidence.digest));
-
-      // A run that actually mutated the workspace cannot complete on
-      // caller-attested proofs alone; at least one verification must have been
-      // executed by the Kernel runtime itself.
-      const hardEvidenceRequired = run.mutationRevision > 0;
-      const hardEvidenceCount = verifications.filter((v) => isVerificationValid(v) && v.executor === 'kernel-runtime').length;
-      const hardEvidenceSatisfied = !hardEvidenceRequired || hardEvidenceCount > 0;
-
-      const requiredLifecycleOutcomes = new Set(run.taskContract?.completionPredicate?.requiredOutcomes || []);
-      const outcomesFor = (obligation: PersistedRunObligation | null | undefined) => new Set([
-        ...(Array.isArray(obligation?.metadata?.outcomes) ? obligation.metadata.outcomes : []),
-        ...(obligation?.metadata?.outcome ? [obligation.metadata.outcome] : []),
-      ]);
-      const lifecycleOutcomes = [...requiredLifecycleOutcomes].map((outcome) => {
-        if (outcome === 'implemented') {
-          return { outcome, satisfied: run.mutationRevision > 0, obligationIds: [] };
-        }
-        const matching = dynamicObligationRows.filter((obligation) => outcomesFor(obligation).has(outcome));
-        return {
-          outcome,
-          satisfied: matching.length > 0 && matching.every((obligation) => obligationSatisfied(obligation.obligationId)),
-          obligationIds: matching.map((obligation) => obligation.obligationId),
-        };
-      });
-      const lifecycleOutcomesSatisfied = lifecycleOutcomes.every((outcome) => outcome.satisfied);
-
-      // All completion gates except the CLOSE-state requirement. Callers use
-      // this to decide whether it is SAFE to transition to CLOSE, so a run is
-      // never closed into an unrecoverable blocked state.
-      const mutationProvenanceCurrent = mutationProvenanceAssessment.current;
-      const readyExceptClose = staticPassed && dynamicPassed && integrationEvidenceSatisfied && goalEvidenceSatisfied && evidencePlansComplete && acceptanceCovered && releaseEvidencePresent && hardEvidenceSatisfied && lifecycleOutcomesSatisfied && mutationProvenanceCurrent;
-      const gates = { isClosed, staticPassed, dynamicPassed, integrationEvidenceSatisfied, goalEvidenceSatisfied, evidencePlansComplete, acceptanceCovered, releaseEvidencePresent, hardEvidenceSatisfied, lifecycleOutcomesSatisfied, mutationProvenanceCurrent };
-      const unsatisfiedObligations = obligationStatuses.filter((entry) => !entry.satisfied);
-
-      const accepted = isClosed && readyExceptClose;
-
-      const decision = accepted ? 'accepted' : 'blocked';
-      // A run that leaned on any waiver to pass is completed but degraded
-      // (§17.5), never silently clean.
-      const completionQuality = accepted && waivers.length > 0 ? 'degraded' : (accepted ? 'clean' : 'none');
-      const decisionPayload = {
-        runId,
-        decision,
-        completionQuality,
-        sourceIdentity: run.sourceIdentity,
-        currentWorkspaceIdentity: run.currentWorkspaceIdentity,
-        mutationRevision: run.mutationRevision,
-        hardEvidence: { required: hardEvidenceRequired, count: hardEvidenceCount },
-        integrationEvidence: { required: integrationEvidenceObligations.length > 0, count: integrationEvidenceCount },
-        goalEvidence: { required: goalEvidenceObligations.length > 0, count: goalEvidenceCount },
-        lifecycleOutcomes,
-        evidenceDigest: releaseEvidence?.digest || verifications[0]?.evidenceDigest || `sha256:${'0'.repeat(64)}`,
-        verifications,
-      };
-      const decisionDigest = `sha256:${createHash('sha256').update(JSON.stringify(decisionPayload)).digest('hex')}`;
-
-      return {
-        decision,
-        completionQuality,
-        digest: decisionDigest,
-        run,
-        verifications,
-        waivers,
-        releaseEvidence: releaseEvidence || null,
-        evidencePlansComplete,
-        acceptanceCovered: [...coveredAcceptance],
-        hardEvidence: { required: hardEvidenceRequired, count: hardEvidenceCount },
-        integrationEvidence: { required: integrationEvidenceObligations.length > 0, count: integrationEvidenceCount },
-        goalEvidence: { required: goalEvidenceObligations.length > 0, count: goalEvidenceCount },
-        lifecycleOutcomes,
-        obligationStatuses,
-        unsatisfiedObligations,
-        gates,
-        readyExceptClose,
-        decisionPayload,
-      };
-    },
-
     persistCompletionDecision(runId: string, evaluation: CompletionEvaluation) {
       if (!evaluation || !evaluation.run) {
         throw new Error(`Cannot persist completion decision for missing evaluation/run: ${runId}`);
@@ -4594,9 +4228,6 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       })();
     },
 
-    assessCompletion(runId: string, options: UnknownRecord = {}) {
-      return this.evaluateCompletion(runId, options);
-    },
 
 
     close() {

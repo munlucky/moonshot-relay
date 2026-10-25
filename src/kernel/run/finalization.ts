@@ -15,6 +15,7 @@ import { resolveRecordType } from '../knowledge/records.js';
 import { projectRunState } from '../state-projector.js';
 import { authoritativeVerificationScope } from '../../contracts/verification-settlement.js';
 import { assertCompletionProvenance } from '../proof/completion-provenance.js';
+import { evaluateTrustCompletion, type EvaluateTrustCompletionInput } from '../proof/trust-authority.js';
 import { resolveRunArtifactPaths } from '../artifact-paths.js';
 import { deduplicateKnowledgeCandidates, deriveKnowledgeStatus, extractStructuredKnowledgeCandidates } from '../knowledge/capture.js';
 import { mkdir } from 'node:fs/promises';
@@ -108,7 +109,7 @@ interface PersistableCandidate extends ReviewKnowledgeCandidate {
   status?: (string) | undefined;
 }
 
-type FinalizationStore = Pick<Awaited<ReturnType<typeof import('../state-store.js').openKernelStateStore>>, "getRun" | "listKnowledgeRecords" | "getKnowledgeApproval" | "ensureRunObligation" | "getRunObligations" | "getVerifications" | "recordCandidateEvidenceBinding" | "getProjectKnowledgeRevision" | "commitKnowledgeTransaction" | "getCompletionDecision" | "getMutationProvenance" | "observeWorkspaceIdentity" | "recordGitCloseoutReceipt" | "getGitCloseoutReceipt" | "recordKnowledgeReviewReceipt" | "recordKnowledgeCandidate" | "setKnowledgeStatus" | "recordFinalizationReceipt" | "setFinalizationStatus" | "getFinalizationReceipt" | "evaluateCompletion" | "recordKnowledgeApproval" | "transition" | "persistCompletionDecision" | "getProjectRunSignals" | "getKnowledgeCandidates" | "recordKnowledgeCommitReceipt" | "getKnowledgeCommitReceipt" | "getDeferredKnowledgeRuns">;
+type FinalizationStore = Pick<Awaited<ReturnType<typeof import('../state-store.js').openKernelStateStore>>, "getRun" | "listKnowledgeRecords" | "getKnowledgeApproval" | "ensureRunObligation" | "getRunObligations" | "getVerifications" | "recordCandidateEvidenceBinding" | "getProjectKnowledgeRevision" | "commitKnowledgeTransaction" | "getCompletionDecision" | "getMutationProvenance" | "observeWorkspaceIdentity" | "recordGitCloseoutReceipt" | "getGitCloseoutReceipt" | "recordKnowledgeReviewReceipt" | "recordKnowledgeCandidate" | "setKnowledgeStatus" | "recordFinalizationReceipt" | "setFinalizationStatus" | "getFinalizationReceipt" | "getWaivers" | "listReviewReceipts" | "getLatestEvidencePack" | "recordKnowledgeApproval" | "transition" | "persistCompletionDecision" | "getProjectRunSignals" | "getKnowledgeCandidates" | "recordKnowledgeCommitReceipt" | "getKnowledgeCommitReceipt" | "getDeferredKnowledgeRuns">;
 
 type ObserveWorkspaceIdentity = (input: { projectRoot: string }) => { identity: string };
 type ObserveScopedWorkspaceIdentity = (input: {
@@ -134,7 +135,7 @@ interface FinalizeRunInput {
   knowledgeObservations?: unknown[];
   structuredSignals?: UnknownRecord;
   approvals?: unknown[];
-  verificationScopeIdentities?: NonNullable<Parameters<FinalizationStore['evaluateCompletion']>[1]>['verificationScopeIdentities'];
+  verificationScopeIdentities?: EvaluateTrustCompletionInput['verificationScopeIdentities'];
   observeWorkspaceIdentity?: ObserveWorkspaceIdentity | null;
   observeScopedWorkspaceIdentity?: ObserveScopedWorkspaceIdentity | null;
   gitCloseoutHost?: GitCloseoutHost | null;
@@ -347,11 +348,11 @@ const refreshFinalizationWorkspaceIdentity = ({ store, runId, projectRoot, prior
   return requireRun(store, runId);
 };
 
-const buildVerificationScopeIdentities = ({ store, runId, projectRoot, observeScopedWorkspaceIdentity }: { store: FinalizationStore; runId: string; projectRoot: string; observeScopedWorkspaceIdentity: ObserveScopedWorkspaceIdentity | null; }): NonNullable<NonNullable<Parameters<FinalizationStore['evaluateCompletion']>[1]>['verificationScopeIdentities']> => {
+const buildVerificationScopeIdentities = ({ store, runId, projectRoot, observeScopedWorkspaceIdentity }: { store: FinalizationStore; runId: string; projectRoot: string; observeScopedWorkspaceIdentity: ObserveScopedWorkspaceIdentity | null; }): NonNullable<EvaluateTrustCompletionInput['verificationScopeIdentities']> => {
   if (typeof observeScopedWorkspaceIdentity !== 'function') {
     throw new Error('scoped_workspace_identity_observer_required');
   }
-  const identities: NonNullable<NonNullable<Parameters<FinalizationStore['evaluateCompletion']>[1]>['verificationScopeIdentities']> = {};
+  const identities: NonNullable<EvaluateTrustCompletionInput['verificationScopeIdentities']> = {};
   for (const obligation of store.getRunObligations(runId)) {
     const authority = authoritativeVerificationScope(obligation);
     if (!authority) continue;
@@ -393,7 +394,14 @@ export const finalizeRun = async ({
   // Both are recovered here so a retry resumes where the failure happened.
   const priorReceipt = asRecord(store.getFinalizationReceipt(runId)?.receiptJson);
   const priorGitReceipt = store.getGitCloseoutReceipt(runId);
-  const evaluateCompletion = () => store.evaluateCompletion(runId, {
+  const evaluateCompletion = () => evaluateTrustCompletion({
+    run: requireRun(store, runId),
+    verifications: store.getVerifications(runId),
+    obligations: store.getRunObligations(runId),
+    waivers: store.getWaivers(runId),
+    reviewReceipts: store.listReviewReceipts(runId),
+    releaseEvidence: store.getLatestEvidencePack(runId),
+    mutationProvenance: store.getMutationProvenance(runId),
     verificationScopeIdentities: verificationScopeIdentities || buildVerificationScopeIdentities({ store, runId, projectRoot, observeScopedWorkspaceIdentity }),
   });
   run = refreshFinalizationWorkspaceIdentity({ store, runId, projectRoot, priorGitReceipt, observeWorkspaceIdentity, gitCloseoutHost });

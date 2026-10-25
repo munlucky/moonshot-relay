@@ -15,6 +15,7 @@ import { planReplacementSteps, planRunSteps } from './step-planner.js';
 import { canonicalDigest } from '../../shared/canonical-digest.js';
 import { authoritativeVerificationScope } from '../../contracts/verification-settlement.js';
 import { projectRunState } from '../state-projector.js';
+import { evaluateTrustCompletion } from '../proof/trust-authority.js';
 import { assertAttemptLineage } from './attempt-provenance.js';
 import { assertImplementationWorkUnitScope, resolveWorkUnitAllowedPaths } from '../../contracts/work-unit-scope.js';
 import { assertRunWorktreeMutationAuthority } from '../../contracts/worktree-authority.js';
@@ -158,7 +159,7 @@ interface RepositoryInspection {
   aggregateDigest: string;
 }
 
-type WorkCursorStore = Pick<Awaited<ReturnType<typeof openKernelStateStore>>, 'getRun' | 'getRunStep' | 'getRunSteps' | 'createRunSteps' | 'updateRunStep' | 'recordStepAttempt' | 'updateStepAttempt' | 'getActiveStepAttempt' | 'getStepAttempts' | 'getStepAttemptByAttemptId' | 'attachAttemptLineage' | 'recordStepResult' | 'finishStepAttempt' | 'getRunOwnerBinding' | 'getRunObligations' | 'replaceRunPlanAtomic' | 'getProjectWorkspace' | 'registerProjectWorkspace' | 'getWorktreeMutationLease' | 'evaluateCompletion' | 'getVerifications' | 'recordExecutionCapsule' | 'getExecutionCapsule' | 'latestExecutionCapsule' | 'getImplementationPrincipal'>;
+type WorkCursorStore = Pick<Awaited<ReturnType<typeof openKernelStateStore>>, 'getRun' | 'getRunStep' | 'getRunSteps' | 'createRunSteps' | 'updateRunStep' | 'recordStepAttempt' | 'updateStepAttempt' | 'getActiveStepAttempt' | 'getStepAttempts' | 'getStepAttemptByAttemptId' | 'attachAttemptLineage' | 'recordStepResult' | 'finishStepAttempt' | 'getRunOwnerBinding' | 'getRunObligations' | 'replaceRunPlanAtomic' | 'getProjectWorkspace' | 'registerProjectWorkspace' | 'getWorktreeMutationLease' | 'getVerifications' | 'getWaivers' | 'listReviewReceipts' | 'getLatestEvidencePack' | 'getMutationProvenance' | 'recordExecutionCapsule' | 'getExecutionCapsule' | 'latestExecutionCapsule' | 'getImplementationPrincipal'>;
 
 interface StepBinding extends UnknownRecord {
   workspaceId?: string | null;
@@ -835,7 +836,16 @@ export const createWorkCursorApi = ({
         scopes: authority.scope,
       });
     }
-    const completion = store.evaluateCompletion(runId, { verificationScopeIdentities });
+    const completion = evaluateTrustCompletion({
+      run: persistedRun,
+      verifications: store.getVerifications(runId),
+      obligations,
+      waivers: store.getWaivers(runId),
+      reviewReceipts: store.listReviewReceipts(runId),
+      releaseEvidence: store.getLatestEvidencePack(runId),
+      mutationProvenance: store.getMutationProvenance(runId),
+      verificationScopeIdentities,
+    });
     const outstanding = (completion.unsatisfiedObligations || []).map((entry) => entry.obligationId);
     const knowledgeContext = await this.refreshStageKnowledge(runId);
     const contract = run.taskContract;

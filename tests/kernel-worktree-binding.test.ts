@@ -280,7 +280,7 @@ test('a worktree mutation lease survives reopen, rejects a second mutable Run at
     );
     assert.equal(store.getRun('run-lease-b'), null);
 
-    store.markRunBlocked('run-lease-a', 'question');
+    store.markRunBlocked('run-lease-a', 'question', 'completion');
     assert.equal(assertTestPresent(store.getWorktreeMutationLease(worktree.worktreeId)).holderRunId, 'run-lease-a');
     assert.throws(
       () => createBoundRun(store, 'run-lease-b', worktree),
@@ -330,7 +330,7 @@ test('unleased historical blocked Runs do not conflict with the current active w
   try {
     const worktree = registerKernelWorktreeBinding({ stateStore: store, cwd: fixture.repository, env: kernelEnv(fixture.runtimeHome) });
     createBoundRun(store, 'run-historical-blocked', worktree);
-    store.markRunBlocked('run-historical-blocked', 'question');
+    store.markRunBlocked('run-historical-blocked', 'question', 'completion');
 
     const raw = await openSqliteDb(kernelDbPath(fixture.runtimeHome));
     raw.prepare('DELETE FROM worktree_mutation_leases WHERE worktree_id=?').run(worktree.worktreeId);

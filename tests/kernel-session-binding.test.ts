@@ -216,7 +216,7 @@ test('terminal lifecycle cleanup deactivates owners and releases stale locks wit
       ttlMs: 60000,
     });
     assert.equal(blockedLock.acquired, true);
-    store.markRunBlocked('run-blocked', 'unsupported-verification');
+    store.markRunBlocked('run-blocked', 'unsupported-verification', 'completion');
     assert.equal(store.getActiveOwnerBinding({ projectId, sessionId: 'codex:old-blocked' }), null);
     assert.equal(store.getWorkspaceMutationLockV2('workspace-blocked'), null);
 
@@ -272,7 +272,7 @@ test('blocked owner binding resumes only through the same-session lifecycle tran
       projectId,
       workspaceId: 'workspace-blocked-resume',
     }));
-    store.markRunBlocked('run-blocked-resume', 'unsupported-verification');
+    store.markRunBlocked('run-blocked-resume', 'unsupported-verification', 'completion');
     assert.equal(store.getActiveOwnerBinding({ projectId, sessionId: 'codex:resume-session' }), null);
 
     const resumed = store.reactivateBlockedRunBinding(owner({
@@ -286,7 +286,7 @@ test('blocked owner binding resumes only through the same-session lifecycle tran
     assert.equal(assertTestPresent(store.getRun('run-blocked-resume')).status, 'active');
     assert.equal(assertTestPresent(store.getRun('run-blocked-resume')).interventionCount, 1);
 
-    store.markRunBlocked('run-blocked-resume', 'unsupported-verification');
+    store.markRunBlocked('run-blocked-resume', 'unsupported-verification', 'completion');
     assert.equal(
       store.reactivateBlockedRunBinding(owner({
         bindingId: 'binding-blocked-resume',
