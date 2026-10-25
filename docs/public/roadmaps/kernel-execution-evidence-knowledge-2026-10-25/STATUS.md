@@ -7,8 +7,8 @@
 | # | 프리셋 | 상태 | Commit | origin/main parity |
 |---|---|---|---|---|
 | 01 | A0 Characterization | COMPLETE | 66cabf23 | verified |
-| 02 | A1 Identity + Evidence | COMPLETE | current Preset 02 commit | verified after push |
-| 03 | A2+A3 Proof Delta + Failure Ownership | NOT_STARTED | - | - |
+| 02 | A1 Identity + Evidence | COMPLETE | d08a887b | verified |
+| 03 | A2+A3 Proof Delta + Failure Ownership | COMPLETE | current Preset 03 commit | verify after push |
 | 04 | A4 Knowledge Quality | NOT_STARTED | - | - |
 | 05 | A5 Knowledge Reuse | NOT_STARTED | - | - |
 | 06 | A6+A7 Usage Receipt + Historical Replay | NOT_STARTED | - | - |
@@ -48,3 +48,21 @@
 - Source/workspace identity drift: 과거 verification history는 보존하고 Trust Authority freshness만 stale로 판정한다.
 - Workspace/Runtime identity: 기존 linked-worktree authority와 runtime-home canonicalization을 재사용했다. 새 identity subsystem, alias registry, writable state, fallback chain은 추가하지 않았다.
 - Knowledge observation commit: canonical knowledge type 불일치로 0건 commit. knowledgeRequired=false였고 Kernel completion은 accepted / done이었다. 이 프리셋에서는 knowledge schema를 확장하거나 fallback을 추가하지 않았다.
+
+## Preset 03 evidence
+
+- Kernel Run: `run-6e8c45dd-93b7-43db-9e43-73b6cea723f4`
+- Production source changes: **3 files** — `src/kernel/control-plane.ts`, `src/kernel/persistence/trust-store.ts`, `src/kernel/state-store.ts`
+- New regression: persisted failed proof + identical Evidence Identity는 **failed 상태를 유지하면서 executor 재호출 0회**
+- Meaningful delta: source / fixture / verifier / relevant environment 변화는 Evidence Identity를 변경해 executor를 다시 호출
+- Focused A2+A3 regression: **147/147 pass**
+- TypeScript typecheck: **pass**
+- Runtime build freshness: **308 files / 829 edges, changed 0**
+- Test build freshness: **289 tests / 8 helpers**
+- Boundary check: **9 modules / 308 files / 829 edges**
+- Product/Verification ownership: compile/test failure는 기존 Work Unit evidence failure와 구현 수정 경로를 유지
+- Kernel ownership: workspace/identity authority mismatch는 기존 binding/recovery authority에서 fail-closed
+- Host ownership: launcher/tool/provider infrastructure failure는 기존 Host dispatch result/failureCategory에서 유지
+- Knowledge guard: same-run retry와 반복 generic blocker는 durable `known_failure_pattern`으로 자동 승격되지 않음
+- Complexity: 새 retry engine, failure registry, recovery stage, writable state, error-string correctness rule, provider/OS/project-specific production branch를 추가하지 않음
+- Kernel authoritative proof는 위 Run의 최종 receipt를 authority로 사용한다.

@@ -12,6 +12,7 @@ import { createClaudeAdapter } from '../src/host/kernel/adapters/claude.js';
 import { createModelRegistry } from '../src/host/kernel/model-registry.js';
 import { resolveReviewTransports } from '../src/host/kernel/review-transport-resolver.js';
 import { resolveCodexModelPolicy } from '../src/host/kernel/codex-model-policy.js';
+import { buildEvidenceIdentity } from '../src/kernel/proof/evidence-reuse.js';
 
 const REVIEW_ACTION = {
   actionKind: 'review_engineering',
@@ -1260,6 +1261,93 @@ test('one trusted proof execution is shared across identical hard obligations in
     );
     assert.equal(new Set(verifications.map((verification) => verification.evidenceDigest)).size, 1);
     assert.equal(assertTestArray(assertTestRecord(assertTestPresent(result)).executed).filter((execution) => assertTestRecord(execution).shared).length, 2);
+  } finally {
+    await cp.close();
+    await rm(runtimeHome, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('persisted failed proof skips identical execution and reruns on meaningful Evidence Identity delta', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-failed-proof-delta-'));
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-failed-proof-delta-state-'));
+  const marker = path.join(runtimeHome, 'proof-execution-count.log');
+  const probe = path.join(runtimeHome, 'record-failed-proof.mjs');
+  await mkdir(path.join(root, '.moon-relay'), { recursive: true });
+  await writeFile(path.join(root, '.moon-relay', 'track.yaml'), 'track: kernel\n');
+  await writeFile(probe, `import { appendFileSync } from 'node:fs';\nappendFileSync(${JSON.stringify(marker)}, 'x');\nprocess.exit(1);\n`);
+  await writeFile(path.join(root, 'package.json'), JSON.stringify({
+    scripts: { 'test:fail': `node ${JSON.stringify(probe)}` },
+  }));
+  await writeFile(path.join(root, 'app.mjs'), 'export const value = 0;\n');
+  const cp = await createKernelControlPlane({ runtimeHome, projectRoot: root });
+  const identity = ({
+    sourceInputDigest = 'sha256:source-a',
+    fixtureDigest = 'sha256:fixture-a',
+    verifierVersion = 'proof-v1',
+    nodeVersion = 'node-a',
+  } = {}) => buildEvidenceIdentity({
+    commandRef: 'test:fail',
+    sourceInputDigest,
+    fixtureDigest,
+    verifierVersion,
+    environment: { platform: 'test', arch: 'test', nodeVersion },
+    networkPolicy: 'inherited',
+  });
+  const executionCount = async () => {
+    try {
+      return (await readFile(marker, 'utf8')).length;
+    } catch {
+      return 0;
+    }
+  };
+  try {
+    await cp.startRun({
+      runId: 'failed-proof-delta',
+      objective: 'avoid identical failed proof reruns',
+      taskContract: {
+        allowedPaths: ['app.mjs'],
+        acceptance: ['failed proof reruns only after meaningful evidence delta'],
+        requiredVerifications: [{ obligationId: 'default', method: 'unit-test', commandRefs: ['test:fail'] }],
+      },
+    });
+    await cp.transition('failed-proof-delta', 'EXECUTE');
+    await cp.transition('failed-proof-delta', 'PROVE');
+
+    const first = await cp.executeProof('failed-proof-delta', {
+      obligationId: 'default',
+      commandRef: 'test:fail',
+      evidenceIdentity: identity(),
+    });
+    assert.equal(first.execution.recordedStatus, 'failed');
+    assert.equal(first.execution.actualCommandExecution, true);
+    assert.equal(await executionCount(), 1);
+
+    const identical = await cp.executeProof('failed-proof-delta', {
+      obligationId: 'default',
+      commandRef: 'test:fail',
+      evidenceIdentity: identity(),
+    });
+    assert.equal(identical.execution.recordedStatus, 'failed');
+    assert.equal(identical.execution.reused, true);
+    assert.equal(identical.execution.actualCommandExecution, false);
+    assert.equal(await executionCount(), 1, 'identical failed evidence must not execute again');
+
+    for (const changedIdentity of [
+      identity({ sourceInputDigest: 'sha256:source-b' }),
+      identity({ fixtureDigest: 'sha256:fixture-b' }),
+      identity({ verifierVersion: 'proof-v2' }),
+      identity({ nodeVersion: 'node-b' }),
+    ]) {
+      const rerun = await cp.executeProof('failed-proof-delta', {
+        obligationId: 'default',
+        commandRef: 'test:fail',
+        evidenceIdentity: changedIdentity,
+      });
+      assert.equal(rerun.execution.recordedStatus, 'failed');
+      assert.equal(rerun.execution.actualCommandExecution, true);
+    }
+    assert.equal(await executionCount(), 5, 'each meaningful evidence delta must re-enable execution');
   } finally {
     await cp.close();
     await rm(runtimeHome, { recursive: true, force: true });

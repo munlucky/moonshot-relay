@@ -4111,6 +4111,27 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       return trustPersistence.getVerificationHistory(runId);
     },
 
+    findExactVerification({
+      projectId,
+      obligationId,
+      evidenceIdentity,
+      contractRevision = null,
+    }: { projectId?: string | null; obligationId?: string; evidenceIdentity?: UnknownRecord; contractRevision?: number | null } = {}) {
+      if (!projectId || !obligationId || !evidenceIdentity) return null;
+      const candidates = trustPersistence.listVerificationCandidates({
+        projectId,
+        obligationId,
+        contractRevision,
+      });
+      for (const candidate of candidates) {
+        if (candidate.executor === 'kernel-runtime'
+          && exactEvidenceIdentityMatch(candidate.evidenceIdentity, evidenceIdentity)) {
+          return candidate;
+        }
+      }
+      return null;
+    },
+
     findExactReusableVerification({
       projectId,
       obligationId,
@@ -4118,15 +4139,19 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       contractRevision = null,
     }: { projectId?: string | null; obligationId?: string; evidenceIdentity?: UnknownRecord; contractRevision?: number | null } = {}) {
       if (!projectId || !obligationId || !evidenceIdentity) return null;
-      const candidates = trustPersistence.listReusableVerificationCandidates({
+      const candidates = trustPersistence.listVerificationCandidates({
         projectId,
         obligationId,
         contractRevision,
       });
       for (const candidate of candidates) {
-        if (exactEvidenceIdentityMatch(candidate.evidenceIdentity, evidenceIdentity)) {
-          return candidate;
-        }
+        if (candidate.executor !== 'kernel-runtime'
+          || !exactEvidenceIdentityMatch(candidate.evidenceIdentity, evidenceIdentity)) continue;
+        return candidate.status === 'passed'
+          && candidate.exitCode === 0
+          && Boolean(candidate.evidenceDigest)
+          ? candidate
+          : null;
       }
       return null;
     },

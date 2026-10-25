@@ -1,4 +1,4 @@
-export type ReusableVerification = Pick<PersistedVerification, 'id' | 'runId' | 'obligationId' | 'status' | 'evidenceRef' | 'verifiedMutationRevision' | 'sourceIdentity' | 'verifiedSourceIdentity' | 'executor' | 'command' | 'exitCode' | 'evidenceDigest' | 'contractRevision' | 'observedAt'> & { projectId: string; evidenceIdentity: UnknownRecord };
+export type VerificationCandidate = Pick<PersistedVerification, 'id' | 'runId' | 'obligationId' | 'status' | 'evidenceRef' | 'verifiedMutationRevision' | 'sourceIdentity' | 'verifiedSourceIdentity' | 'executor' | 'command' | 'exitCode' | 'evidenceDigest' | 'contractRevision' | 'observedAt'> & { projectId: string; evidenceIdentity: UnknownRecord };
 import type { ReviewReceipt } from '../proof/review-receipt.js';
 import type { SqliteDatabase } from '../sqlite-adapter.js';
 
@@ -137,11 +137,11 @@ export interface TrustPersistence {
   getWaivers(runId: string): PersistedWaiver[];
   getVerifications(runId: string): PersistedVerification[];
   getVerificationHistory(runId: string): PersistedVerification[];
-  listReusableVerificationCandidates(input: {
+  listVerificationCandidates(input: {
     projectId: string;
     obligationId: string;
     contractRevision?: number | null;
-  }): ReusableVerification[];
+  }): VerificationCandidate[];
   getEvidenceLineage(runId: string): UnknownRecord[];
   getLatestEvidencePack(runId: string): PersistedEvidencePack | null;
 }
@@ -362,8 +362,8 @@ export const createTrustPersistence = ({
       .map((row) => verificationProjection(row as VerificationRow))
   );
 
-  const listReusableVerificationCandidates:
-    TrustPersistence['listReusableVerificationCandidates'] = ({
+  const listVerificationCandidates:
+    TrustPersistence['listVerificationCandidates'] = ({
       projectId,
       obligationId,
       contractRevision = null,
@@ -391,18 +391,14 @@ export const createTrustPersistence = ({
         WHERE r.project_id=? AND v.obligation_id=?
           ${contractClause}
         ORDER BY v.id ASC
-      `).all(...params) as Array<Omit<ReusableVerification, 'evidenceIdentity'> & {
+      `).all(...params) as Array<Omit<VerificationCandidate, 'evidenceIdentity'> & {
         evidenceIdentityJson?: string | null;
       }>;
       return selectCurrentVerifications(rows.map((row) => ({
         ...row,
         evidenceIdentity: parseJson<UnknownRecord>(row.evidenceIdentityJson, {}),
       })))
-        .filter((row) => (
-          row.status === 'passed'
-          && row.exitCode === 0
-          && Boolean(row.evidenceDigest)
-        ))
+        .filter((row) => Boolean(row.evidenceDigest))
         .sort((left, right) => right.id - left.id);
     };
 
@@ -816,7 +812,7 @@ export const createTrustPersistence = ({
 
     getVerifications,
     getVerificationHistory,
-    listReusableVerificationCandidates,
+    listVerificationCandidates,
 
     getEvidenceLineage(runId) {
       return db.prepare(`

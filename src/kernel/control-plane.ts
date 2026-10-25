@@ -3219,57 +3219,63 @@ export const createKernelControlPlane = async ({
         };
       }
 
-      const reusable = allowEvidenceReuse
+      const exactPrior = allowEvidenceReuse
         && !flakyRerun
         && !discovered
-        && typeof store.findExactReusableVerification === 'function'
-        ? store.findExactReusableVerification({
+        && typeof store.findExactVerification === 'function'
+        ? store.findExactVerification({
           projectId: run.projectId,
           obligationId,
           evidenceIdentity,
           contractRevision: run.contractRevision,
         })
         : null;
-      if (reusable && reusable.evidenceDigest) {
+      if (exactPrior?.evidenceDigest) {
+        const priorStatus = exactPrior.status === 'passed' && exactPrior.exitCode === 0
+          ? 'passed'
+          : 'failed';
+        const priorExitCode = priorStatus === 'passed'
+          ? 0
+          : (Number.isInteger(exactPrior.exitCode) ? exactPrior.exitCode : 1);
         const reuseReceipt = buildEvidenceReuseReceipt({
           runId,
           obligationId,
-          priorRunId: reusable.runId,
-          priorVerificationId: reusable.id,
+          priorRunId: exactPrior.runId,
+          priorVerificationId: exactPrior.id,
           mutationRevision: run.mutationRevision,
           identity: evidenceIdentity,
-          evidenceDigest: reusable.evidenceDigest,
+          evidenceDigest: exactPrior.evidenceDigest,
         });
         const updated = store.recordVerification(runId, {
           obligationId,
-          status: 'passed',
+          status: priorStatus,
           evidenceRef: `evidence://reuse/${reuseReceipt.receiptId}`,
           commandRef,
-          command: reusable.command || commandRef || '',
-          exitCode: 0,
-          evidenceDigest: reusable.evidenceDigest,
+          command: exactPrior.command || commandRef || '',
+          exitCode: priorExitCode,
+          evidenceDigest: exactPrior.evidenceDigest,
           acceptanceCoverage,
           verifiedSourceIdentity: observation.identity,
           executor: 'kernel-runtime',
           networkIsolation: String(networkPolicy),
           evidenceIdentity,
-          reuseOfVerificationId: reusable.id,
+          reuseOfVerificationId: exactPrior.id,
           reuseReceipt,
         });
         persistReleaseEvidenceIfNeeded(runId, updated);
         await projectRunState(updated, { runtimeHome });
         const cacheExecution: ReportProofExecution = {
-          status: 'passed',
-          recordedStatus: 'passed',
+          status: priorStatus,
+          recordedStatus: priorStatus,
           reused: true,
           reuseReceipt,
-          outputDigest: reusable.evidenceDigest,
+          outputDigest: exactPrior.evidenceDigest,
           evidenceIdentity,
           evidenceRef: `evidence://reuse/${reuseReceipt.receiptId}`,
-          command: String(reusable.command || commandRef),
+          command: String(exactPrior.command || commandRef),
           commandRef,
           args: [],
-          exitCode: 0,
+          exitCode: priorExitCode,
           flaky: false,
           workspaceMutatedByProof: false,
           actualCommandExecution: false,
@@ -3277,8 +3283,8 @@ export const createKernelControlPlane = async ({
           workspaceIdentity: observation.identity,
           verifiedSourceIdentity: observation.identity,
           mutationRevision: updated.mutationRevision,
-          recordedExitCode: 0,
-          reuseOfVerificationId: reusable.id,
+          recordedExitCode: priorExitCode,
+          reuseOfVerificationId: exactPrior.id,
         };
         rememberProofExecutionCacheEntry(cacheExecution, proofExecutionCacheContext);
         finishVerificationTelemetry(cacheExecution);
