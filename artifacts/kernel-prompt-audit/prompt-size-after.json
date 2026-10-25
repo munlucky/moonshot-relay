@@ -1,14 +1,16 @@
 {
   "schemaVersion": 1,
-  "note": "Common rules defined once and shared; provider prompts carry only provider-specific policy. Byte-stable across provider, model, effort, run, step, project, and time.",
+  "note": "Preset 07 current stable instruction surface. Common prompt keeps only stable invariants; dynamic scope/evidence/capability data remains in the task/work contract and volatile context.",
   "surfaces": {
-    "skills/moon-relay-kernel/SKILL.md": 1932,
+    "skills/moon-relay-kernel/SKILL.md": 3232,
+    "package/profile-templates/codex/.codex/AGENTS.md": 1483,
     "kernel-planner.md": 1270,
     "kernel-implementer.md": 1618,
     "kernel-reviewer.md": 1548
   },
-  "commonExecutionPromptBytes": 1162,
+  "commonExecutionPromptBytes": 514,
   "claudeProviderPromptBytes": 352,
   "codexProviderPromptBytes": 455,
-  "duplicatedCommonRulesInProviderPrompts": 0
+  "duplicatedCommonRulesInProviderPrompts": 0,
+  "operationalMicroGuidanceRemoved": true
 }

@@ -306,7 +306,7 @@ test('public Kernel skill is provider-neutral while ADE-only isolation remains i
   const skill = await readFile(path.join(process.cwd(), 'skills', 'moon-relay-kernel', 'SKILL.md'), 'utf8');
   const ade = await readFile(path.join(process.cwd(), 'package', 'kernel', 'profiles', 'ade', 'QWEN.md'), 'utf8');
   assert.doesNotMatch(skill, /Default Codex command-skill/);
-  assert.match(skill, /active provider Host policy/);
+  assert.match(skill, /Provider model selection.*Host-owned/i);
   assert.doesNotMatch(skill, /exactly one fresh native child/i);
   assert.match(ade, /exactly one \*\*named\*\* fresh child/i);
 });

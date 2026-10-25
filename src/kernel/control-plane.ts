@@ -150,7 +150,6 @@ import {
 import { discoverProjectCommands } from '../contracts/command-catalog.js';
 import { REPORT_LEASE_TTL_MS, SESSION_LEASE_TTL_MS } from './run/lease-policy.js';
 import { digestOfEvidence, digestOfPaths, evaluateReviewReceipt, reviewEvidenceRef } from './proof/review-receipt.js';
-import { isProtectedObligation } from './proof/protected-obligations.js';
 import { hashSessionId } from '../contracts/model-execution.js';
 import { allStepsPassed, currentStep as selectCurrentStep } from './run/run-step-ledger.js';
 import { planRunSteps } from './run/step-planner.js';

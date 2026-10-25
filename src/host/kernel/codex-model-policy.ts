@@ -6,6 +6,8 @@
 // This module lives on the Host side. The Kernel decides a logical model class;
 // only here does that become a provider model id.
 
+import { isHighRiskShape } from './common-model-policy.js';
+
 export const CODEX_MODELS = Object.freeze({
   astra: 'gpt-6-astra',
   sol: 'gpt-6.1-sol',
@@ -47,7 +49,6 @@ export const resolveCodexModelAlias = (model: unknown): string => (
 const PLANNING_ACTIONS = new Set(['understand', 'design', 'plan', 'replan']);
 import { REVIEW_ACTIONS as REVIEW_ACTION_LIST } from '../../contracts/review.js';
 const REVIEW_ACTIONS = new Set<string>(REVIEW_ACTION_LIST);
-const HIGH_RISK_SHAPES = Object.freeze(['security', 'migration', 'authentication', 'authorization', 'payment', 'data-loss', 'irreversible']);
 
 // The Codex "launch-profile" dispatch mechanism selects one of the standard
 // profiles (default/plan/review/batch), not a model class name. The profile is
@@ -184,7 +185,7 @@ export const resolveCodexFastModePolicy = ({ workContext = 'batch', authMode = n
 // Plan mode is for work that is genuinely multi-step or contested. A simple
 // edit goes straight to execution.
 export const resolveCodexPlanPolicy = ({ actionKind = 'implement', complexity = 'simple', shapes = [] }: { actionKind?: string; complexity?: string; shapes?: readonly string[] } = {}) => {
-  const risky = shapes.some((shape) => HIGH_RISK_SHAPES.includes(String(shape)));
+  const risky = isHighRiskShape(shapes);
   const needsPlan = actionKind === 'plan' || ['complex', 'ambiguous', 'multi-step', 'approach-comparison'].includes(String(complexity)) || risky;
   return Object.freeze({ usePlanProfile: needsPlan, profile: needsPlan ? 'plan' : 'default' });
 };

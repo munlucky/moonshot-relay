@@ -41,7 +41,6 @@ const FRONTEND_EXTENSIONS = /\.(?:css|scss|sass|less|html?|jsx?|tsx?|vue|svelte)
 const FRONTEND_PATHS = /(?:^|\/)(?:src|app|components?|pages?|views?|frontend|web|ui)(?:\/|$)/i;
 const BROWSER_SIGNALS = /\b(?:browser|web|ui|screen|page|click|tap|form|route|navigation|render|interaction|persist|persistence|recover|recovery|localStorage|sessionStorage|playwright|cypress|selenium|webdriver)\b/i;
 const PERSISTENCE_SIGNALS = /\b(?:persist|persistence|save|stored?|reload|refresh|recover|recovery|restore|database|localStorage|sessionStorage|offline)\b/i;
-const SECURITY_SIGNALS = /\b(?:auth(?:entication|orization)?|credential|secret|token|password|cookie|session|permission|privilege|untrusted|user input|injection|xss|csrf|dependency|security|sensitive data|high[- ]risk data)\b/i;
 
 const asRecord = (value: unknown): UnknownRecord => (
   value && typeof value === 'object' && !Array.isArray(value)
@@ -224,26 +223,12 @@ export const browserEvidenceSatisfiesPolicy = ({
 };
 
 export const resolveSecurityReviewPolicy = ({
-  objective = '',
-  acceptance = [],
-  requiredVerifications = [],
-  changedPaths = [],
   flags = {},
   surfaces = [],
-  risks = [],
 }: DomainPolicyInput = {}) => {
-  const text = [
-    String(objective || ''),
-    valuesToText(acceptance),
-    valuesToText(requiredVerifications),
-    valuesToText(risks),
-    valuesToText(changedPaths),
-  ].join(' ');
-
   const required = flags.securityBoundary === true
     || flags.authBoundary === true
-    || surfaces.includes('security_boundary')
-    || SECURITY_SIGNALS.test(text);
+    || surfaces.includes('security_boundary');
 
   return {
     required,
@@ -252,9 +237,6 @@ export const resolveSecurityReviewPolicy = ({
       flags.securityBoundary === true ? 'security-boundary-flag' : null,
       flags.authBoundary === true ? 'auth-boundary-flag' : null,
       surfaces.includes('security_boundary') ? 'security-surface' : null,
-      SECURITY_SIGNALS.test(text)
-        ? 'security-sensitive-language-or-path'
-        : null,
     ].filter((value): value is string => Boolean(value)),
     requiredVerificationKinds: required ? ['security'] : [],
     authority: 'kernel-review-policy' as const,

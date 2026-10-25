@@ -29,9 +29,9 @@ test('route escalation only promotes tiers and refuses demotion', async () => {
   }
 });
 
-test('protected obligations cannot be waived and force real evidence', async () => {
-  assert.equal(isProtectedObligation('auth-regression'), true);
-  assert.equal(isProtectedObligation('payment-checkout'), true);
+test('only policy-declared protected obligations reject waivers', async () => {
+  assert.equal(isProtectedObligation('auth-regression'), false);
+  assert.equal(isProtectedObligation('payment-checkout'), false);
   assert.equal(isProtectedObligation('data-migration-smoke'), true);
   assert.equal(isProtectedObligation('security-review'), true);
   assert.equal(isProtectedObligation('render-button'), false);
@@ -39,11 +39,11 @@ test('protected obligations cannot be waived and force real evidence', async () 
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'krn-protected-'));
   const store = await openKernelStateStore({ runtimeHome });
   try {
-    store.createRun({ runId: 'r-prot', objective: 'x', sourceIdentity: 'src-prot', requiredObligations: ['auth-regression'] });
+    store.createRun({ runId: 'r-prot', objective: 'x', sourceIdentity: 'src-prot', requiredObligations: ['data-migration-smoke'] });
     store.transition('r-prot', 'EXECUTE');
     store.transition('r-prot', 'PROVE');
     assert.throws(
-      () => store.addWaiver('r-prot', { obligationId: 'auth-regression', approvedBy: 'x', reason: 'skip', approvalReceipt: 'r://1' }),
+      () => store.addWaiver('r-prot', { obligationId: 'data-migration-smoke', approvedBy: 'x', reason: 'skip', approvalReceipt: 'r://1' }),
       /PROTECTED_OBLIGATION_WAIVER_FORBIDDEN/,
     );
   } finally {

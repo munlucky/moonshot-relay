@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { normalizeTaskContract, readTaskContractSnapshot } from '../src/kernel/task/task-contract.js';
+import { normalizeTaskContract, readTaskContractSnapshot, riskSummaryFromContract } from '../src/kernel/task/task-contract.js';
 
 test('canonical persisted contract preserves its original digest and seed provenance', () => {
   const contract = normalizeTaskContract({
@@ -31,4 +31,21 @@ test('malformed canonical snapshots fail closed before Control Plane composition
 test('legacy snapshots use the existing normalizer at the read boundary', () => {
   const legacy = { acceptance: ['Keep legacy acceptance'], allowedPaths: ['src/**'] };
   assert.deepEqual(readTaskContractSnapshot(legacy, 'Legacy task'), normalizeTaskContract(legacy, { objective: 'Legacy task' }));
+});
+
+
+test('free-text risks do not create a second risk-surface authority', () => {
+  const descriptive = normalizeTaskContract({
+    objective: 'describe security payment migration and irreversible behavior',
+    risks: ['security payment migration irreversible'],
+  });
+  assert.deepEqual(riskSummaryFromContract(descriptive).surfaces, []);
+
+  const structured = normalizeTaskContract({
+    objective: 'declare the actual risk surfaces',
+    risks: ['descriptive context only'],
+    surfaces: ['security_boundary'],
+    flags: { dataMigration: true },
+  });
+  assert.deepEqual(riskSummaryFromContract(structured).surfaces.sort(), ['data_migration', 'security_boundary']);
 });

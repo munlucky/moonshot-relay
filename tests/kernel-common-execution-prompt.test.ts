@@ -26,22 +26,13 @@ test('compiling for a provider preserves the meaning byte for byte', () => {
   assert.equal(claude.revision, COMMON_PROMPT_REVISION);
 });
 
-test('the contract states scope, autonomy, restraint, reporting, and authority', () => {
-  assert.match(COMMON_EXECUTION_PROMPT, /Complete the current work unit at its declared scope/);
-  assert.match(COMMON_EXECUTION_PROMPT, /routine implementation decisions without asking/);
-  assert.match(COMMON_EXECUTION_PROMPT, /Do not add extra planning, verification passes, reviewers, or subagents/);
-  assert.match(COMMON_EXECUTION_PROMPT, /Report concrete changes, executed checks, and remaining\s+risks/);
+test('the common contract keeps only stable scope, autonomy, architecture, and authority invariants', () => {
+  assert.equal(COMMON_PROMPT_REVISION, 'kernel-common-execution.v3');
+  assert.match(COMMON_EXECUTION_PROMPT, /within its declared scope and acceptance/);
+  assert.match(COMMON_EXECUTION_PROMPT, /routine decisions autonomously/);
+  assert.match(COMMON_EXECUTION_PROMPT, /existing project structure/);
   assert.match(COMMON_EXECUTION_PROMPT, /completion decisions remain authoritative/);
-});
-
-test('the common contract enforces minimal sustainable implementation', () => {
-  assert.equal(COMMON_PROMPT_REVISION, 'kernel-common-execution.v2');
-  assert.match(COMMON_EXECUTION_PROMPT, /simplest complete implementation/i);
-  assert.match(COMMON_EXECUTION_PROMPT, /working end-to-end increments/i);
-  assert.match(COMMON_EXECUTION_PROMPT, /real change boundaries/i);
-  assert.match(COMMON_EXECUTION_PROMPT, /existing project capabilities, dependencies, and internal utilities/i);
-  assert.match(COMMON_EXECUTION_PROMPT, /declared compatibility windows, supported runtimes, user data/i);
-  assert.match(COMMON_EXECUTION_PROMPT, /define its removal condition/i);
+  assert.doesNotMatch(COMMON_EXECUTION_PROMPT, /tool|wait|poll|full suite|subagent|retry count/i);
 });
 
 test('the four required request fields are declared', () => {

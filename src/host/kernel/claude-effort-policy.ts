@@ -6,7 +6,7 @@
 // turn at `xhigh` are different lineages and must not share a warm prefix.
 
 import { REVIEW_ACTIONS as REVIEW_ACTION_LIST } from '../../contracts/review.js';
-import { resolveVerificationPolicy } from './common-model-policy.js';
+import { isHighRiskShape, resolveVerificationPolicy } from './common-model-policy.js';
 import { normalizeProviderCacheCapabilities } from './provider-prompt-policy.js';
 
 export const CLAUDE_EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh'] as const);
@@ -25,11 +25,6 @@ export const CLAUDE_ACTION_EFFORT: Readonly<Record<string, ClaudeEffort>> = Obje
   review_engineering: 'medium',
   replan: 'high',
 });
-
-export const REVIEW_ESCALATION_SHAPES = Object.freeze([
-  'security', 'authentication', 'authorization', 'payment', 'migration',
-  'data-loss', 'irreversible', 'protected-obligation',
-] as const);
 
 export const XHIGH_TRIGGERS = Object.freeze([
   'large-multi-file-implementation', 'broad-refactor', 'repeated-failure',
@@ -56,9 +51,8 @@ export const resolveClaudeEffort = ({
 
   if (REVIEW_ACTIONS.has(actionKind)) {
     const escalating = riskTier === 'T3'
-      || shapes.some((shape) => REVIEW_ESCALATION_SHAPES.includes(
-        shape as (typeof REVIEW_ESCALATION_SHAPES)[number],
-      ));
+      || isHighRiskShape(shapes)
+      || shapes.includes('protected-obligation');
     if (escalating) {
       effort = 'high';
       reasons.push('protected-review');

@@ -73,13 +73,13 @@ test('classification keeps Kernel authority and records where common rules now l
   }
 });
 
-test('the audit records that nothing was removed on suspicion', async () => {
+test('the audit records confirmed operational removals with remaining authority', async () => {
   const classification = await readClassification();
   const report = await readFile(`${AUDIT}/removed-instructions.md`, 'utf8');
-  // The investigation found no legacy instruction on a Kernel-loaded surface.
-  // A future removal must be listed here with its replacement authority.
-  assert.equal(classification.classes.C_duplicate_legacy_removed.length, 0);
-  assert.match(report, /nothing was removed/i);
+  assert.ok(classification.classes.C_duplicate_legacy_removed.length >= 4);
+  assert.match(report, /Preset 07 result/i);
+  assert.match(report, /remaining authority is structural/i);
+  assert.match(report, /C01 remains frozen historical evidence/i);
 });
 
 
@@ -102,6 +102,6 @@ test('the prompt audit pins evaluation gates and material re-audit triggers', as
     assert.ok(classification.reAuditTriggers.includes(trigger), trigger);
   }
   const report = await readFile(`${AUDIT}/removed-instructions.md`, 'utf8');
-  assert.match(report, /C01 is the frozen\s+comparison baseline/i);
-  assert.match(report, /scope,\s+security,\s+compatibility,\s+evidence,\s+review,\s+and completion authority/i);
+  assert.match(report, /C01 remains frozen historical evidence/i);
+  assert.match(report, /scope, evidence, review, completion, or Host model authority/i);
 });

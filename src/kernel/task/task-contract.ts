@@ -498,15 +498,6 @@ export const surfacesFromFlags = (flags: Record<string, unknown> = {}): string[]
   Object.entries(FLAG_SURFACES).filter(([flag]) => flags[flag] === true).map(([, surface]) => surface),
 )];
 
-const surfacesFromDeclaredRisks = (risks: unknown = []): string[] => [...new Set((Array.isArray(risks) ? risks : []).flatMap((risk: unknown) => {
-  const value = String(risk).toLowerCase();
-  if (/(security|auth(?:entication|orization)?)/.test(value)) return ['security_boundary'];
-  if (/migration/.test(value)) return ['data_migration'];
-  if (/(data.?loss|data.?deletion|irreversible)/.test(value)) return ['destructive_schema_change'];
-  if (/payment/.test(value)) return ['payment_boundary'];
-  return [];
-}))];
-
 // The risk summary the proof-route and task-route resolvers consume. Behavior
 // change is carried through so an ordinary behavior-changing task is not left
 // at T0 (P1-1).
@@ -517,7 +508,7 @@ export const riskSummaryFromContract = (contract: NormalizedTaskContract) => ({
   changedPaths: contract.changedPaths || [],
   requestedTier: contract.requestedTier || undefined,
   filesChanged: contract.filesChanged,
-  surfaces: [...new Set([...contract.surfaces, ...surfacesFromFlags(contract.flags), ...surfacesFromDeclaredRisks(contract.risks)])],
+  surfaces: [...new Set([...contract.surfaces, ...surfacesFromFlags(contract.flags)])],
   taskClass: contract.taskClass,
   crossLayer: contract.flags.crossLayer === true,
   // Declared behaviour change reaches the tier resolver (P1-1); it is never

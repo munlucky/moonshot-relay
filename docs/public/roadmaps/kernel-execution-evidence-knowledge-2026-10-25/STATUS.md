@@ -11,8 +11,8 @@
 | 03 | A2+A3 Proof Delta + Failure Ownership | COMPLETE | 3c66d01d | verified |
 | 04 | A4 Knowledge Quality | COMPLETE | 78c05a9d | verified |
 | 05 | A5 Knowledge Reuse | COMPLETE | 5b5cd618 | verified |
-| 06 | A6+A7 Usage Receipt + Historical Replay | COMPLETE | current Preset 06 commit | verify after push |
-| 07 | B1+B2 Policy/Prompt Reduction | NOT_STARTED | - | - |
+| 06 | A6+A7 Usage Receipt + Historical Replay | COMPLETE | fa7243c7 | verified |
+| 07 | B1+B2 Policy/Prompt Reduction | COMPLETE | current Preset 07 commit | verify after push |
 | 08 | B3 Control Plane / State Store Thinning | NOT_STARTED | - | - |
 | 09 | B4 Final Replay + Complexity Audit | NOT_STARTED | - | - |
 
@@ -118,3 +118,26 @@
 - B-stage entry: **PASS**
 - 상세 결과: `A_STAGE_HISTORICAL_REPLAY_RESULT.md`
 - Complexity: 새 telemetry table/exporter/provider-specific Kernel cost policy/workflow stage/fallback/failure registry를 추가하지 않음
+
+## Preset 07 evidence
+
+- Focused authority/prompt/profile/review regression: **187/187 pass**
+- TypeScript typecheck: **pass**
+- Runtime build freshness: **308 files / 831 edges, changed 0**
+- Test build freshness: **289 tests / 8 helpers**
+- Boundary check: **9 modules / 308 files / 831 edges**
+- Duplicate authority 측정: targeted independent authority sites **6 → 0**
+- Unstructured domain-policy branch proxy: **6 → 0**
+- Kernel domain special-case regex: **9 → 0**
+- Risk/model taxonomy: Host 위험 shape 분류는 `common-model-policy` 한 곳으로 수렴하고 Kernel core에는 provider-specific branch를 추가하지 않음
+- Risk authority: free-text `risks`와 security keyword/path가 risk surface 또는 security review를 독립 생성하지 않으며, Task Contract의 structured surfaces/flags를 사용
+- Protected obligation authority: obligation 이름 regex를 제거하고 `kernel/proof-policy.yaml`의 explicit `protected` metadata를 사용
+- Migration policy: 실제 obligation ID `data-migration-smoke`와 proof policy를 정합화하고 protected hard evidence를 유지
+- Always-visible source footprint: common prompt + Kernel skill + Codex profile **14,065 → 7,386 bytes (-47.5%)**
+- Always-visible word-like 근사: **1,819 → 864 (-52.5%)**
+- Common execution prompt: `kernel-common-execution.v3`; stable scope/autonomy/architecture/authority invariant만 유지
+- Historical C01: current prompt와 동등성을 강제하지 않고 recorded `sourceHead`의 historical prompt/revision/digest를 검증해 frozen baseline을 보존
+- Removed operational micro-guidance: 고정 search/file-read 순서, wait/poll 시간, two-turn plan reading, fixed context budget, Codex profile의 중복 workflow authority
+- Dynamic contract: Objective / Acceptance / Constraints / Current Work / Relevant Knowledge / Required Evidence 구조는 유지
+- Completion/protected safety: migration T3, protected waiver refusal, independent review receipt, stale review/evidence, completion authority 회귀 통과
+- Complexity: 새 Risk DSL/classifier/taxonomy, fallback chain, registry/table/state, provider/OS/project-specific Kernel branch를 추가하지 않음

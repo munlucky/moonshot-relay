@@ -115,7 +115,6 @@ const obligationNeedsIndependentReview = (
 ): boolean => Boolean(
   obligation.evidenceClass === 'judgment'
   || obligation.protected === true
-  || obligation.obligationId === 'security-review'
   || obligation.independentReviewRequired === true
 );
 

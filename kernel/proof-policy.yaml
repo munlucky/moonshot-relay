@@ -37,9 +37,11 @@ obligations:
   build:
     evidenceClass: hard
     commandClasses: [build]
-  migration-smoke:
+  data-migration-smoke:
     evidenceClass: hard
     commandClasses: [integration-test, e2e, unit-test]
+    protected: true
   security-review:
     evidenceClass: judgment
     commandClasses: []
+    protected: true

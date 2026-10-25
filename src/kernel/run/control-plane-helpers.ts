@@ -46,7 +46,6 @@ export const findingClassOf = (findings: unknown[] = []): string => {
 export const reviewReceiptRequired = ({ obligationId, declared, proofTier, independentReviewRequired = false }: { obligationId: string; declared?: { protected?: unknown; evidenceClass?: unknown } | null; proofTier?: (string) | undefined; independentReviewRequired?: boolean }) =>
   Boolean(declared?.protected)
   || isProtectedObligation(obligationId)
-  || obligationId === 'security-review'
   || independentReviewRequired === true
   || (proofTier === 'T3' && (declared?.evidenceClass || 'hard') === 'judgment');
 

@@ -175,16 +175,6 @@ const resolveCachePolicy = ({
   };
 };
 
-const HIGH_RISK_SHAPES = Object.freeze([
-  'security',
-  'authentication',
-  'authorization',
-  'payment',
-  'migration',
-  'data-loss',
-  'irreversible',
-] as const);
-
 export const resolveProviderPromptPolicy = ({
   provider = 'generic',
   role = 'implementer',
@@ -231,6 +221,5 @@ export const resolveProviderPromptPolicy = ({
       allowProseAroundStructuredOutput: false,
     }),
     capabilities: caps,
-    highRiskShapes: HIGH_RISK_SHAPES,
   });
 };

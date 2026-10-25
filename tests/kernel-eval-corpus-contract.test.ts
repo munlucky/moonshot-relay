@@ -9,19 +9,6 @@ import { test } from 'node:test';
 import { resolveProofRoute } from '../src/kernel/proof-route.js';
 import { routeTask } from '../src/kernel/route.js';
 import { buildEvidencePack } from '../src/kernel/evidence-pack.js';
-import {
-  COMMON_EXECUTION_PROMPT,
-  COMMON_PROMPT_REVISION,
-} from '../src/host/kernel/prompts/common-execution.js';
-import {
-  CODEX_PROVIDER_PROMPT,
-  CODEX_PROMPT_REVISION,
-} from '../src/host/kernel/prompts/codex-gpt-5p6.js';
-import {
-  CLAUDE_PROVIDER_PROMPT,
-  CLAUDE_PROMPT_REVISION,
-} from '../src/host/kernel/prompts/claude-opus-5.js';
-import { resolveClaudeEffort } from '../src/host/kernel/claude-effort-policy.js';
 
 type RiskTier = 'T0' | 'T1' | 'T2' | 'T3';
 
@@ -123,6 +110,28 @@ const sha256 = (value: string): string => (
   `sha256:${createHash('sha256').update(value).digest('hex')}`
 );
 
+const historicalSource = (revision: string, sourcePath: string): string => {
+  const result = spawnSync('git', ['show', `${revision}:${sourcePath}`], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  assert.equal(result.status, 0, result.stderr || sourcePath);
+  return result.stdout;
+};
+
+const sourceStringConstant = (source: string, name: string): string => {
+  const singleQuoted = source.match(new RegExp(`export const ${name} = '([^']+)';`));
+  if (singleQuoted) return singleQuoted[1]!;
+  const quote = String.fromCharCode(96);
+  const marker = `export const ${name} = ${quote}`;
+  const start = source.indexOf(marker);
+  assert.notEqual(start, -1, name);
+  const valueStart = start + marker.length;
+  const end = source.indexOf(`${quote};`, valueStart);
+  assert.notEqual(end, -1, name);
+  return source.slice(valueStart, end);
+};
+
 const evalProjects: Record<string, string> = {};
 for (const track of ['kernel', 'relay']) {
   evalProjects[track] = await mkdtemp(path.join(os.tmpdir(), `krn-eval-${track}-`));
@@ -149,8 +158,14 @@ test('prompt comparison baseline is digest-bound to its historical prompts and h
   assert.equal(comparison.schemaVersion, 1);
   assert.match(comparison.baseline.sourceHead, /^[0-9a-f]{40}$/);
 
-  assert.equal(comparison.baseline.commonPrompt.revision, COMMON_PROMPT_REVISION);
-  assert.equal(comparison.baseline.commonPrompt.digest, sha256(COMMON_EXECUTION_PROMPT));
+  const commonSource = historicalSource(
+    comparison.baseline.sourceHead,
+    'src/host/kernel/prompts/common-execution.ts',
+  );
+  const commonRevision = sourceStringConstant(commonSource, 'COMMON_PROMPT_REVISION');
+  const commonPrompt = sourceStringConstant(commonSource, 'COMMON_EXECUTION_PROMPT');
+  assert.equal(comparison.baseline.commonPrompt.revision, commonRevision);
+  assert.equal(comparison.baseline.commonPrompt.digest, sha256(commonPrompt));
 
   const bySurface = Object.fromEntries(
     comparison.baseline.surfaces.map((entry) => [entry.surface, entry]),
@@ -160,31 +175,32 @@ test('prompt comparison baseline is digest-bound to its historical prompts and h
   assert.ok(codex);
   assert.ok(claude);
 
-  assert.equal(codex.providerPromptRevision, CODEX_PROMPT_REVISION);
-  assert.equal(codex.providerPromptDigest, sha256(CODEX_PROVIDER_PROMPT));
-  assert.equal(
-    codex.combinedPromptDigest,
-    sha256(`${COMMON_EXECUTION_PROMPT}\n${CODEX_PROVIDER_PROMPT}`),
+  const codexSource = historicalSource(
+    comparison.baseline.sourceHead,
+    'src/host/kernel/prompts/codex-gpt-5p6.ts',
   );
-  // C01 is a historical replay baseline. Production policy changes must not
-  // silently rewrite the model/effort conditions that the old prompt was
-  // measured against.
+  const codexPrompt = sourceStringConstant(codexSource, 'CODEX_PROVIDER_PROMPT');
+  assert.equal(codex.providerPromptRevision, sourceStringConstant(codexSource, 'CODEX_PROMPT_REVISION'));
+  assert.equal(codex.providerPromptDigest, sha256(codexPrompt));
+  assert.equal(codex.combinedPromptDigest, sha256(`${commonPrompt}\n${codexPrompt}`));
+
+  // C01 is frozen historical evidence. Current prompt/model policy changes must
+  // not rewrite the conditions that produced the baseline.
   assert.equal(codex.model, 'gpt-5.6-luna');
   assert.equal(codex.effort, 'max');
   assert.equal(codex.modelSource, 'model-policy');
 
-  assert.equal(claude.providerPromptRevision, CLAUDE_PROMPT_REVISION);
-  assert.equal(claude.providerPromptDigest, sha256(CLAUDE_PROVIDER_PROMPT));
-  assert.equal(
-    claude.combinedPromptDigest,
-    sha256(`${COMMON_EXECUTION_PROMPT}\n${CLAUDE_PROVIDER_PROMPT}`),
-  );
+  const claudeSource = historicalSource(
+    comparison.baseline.sourceHead,
+    'src/host/kernel/prompts/claude-opus-5.ts',
+   );
+  const claudePrompt = sourceStringConstant(claudeSource, 'CLAUDE_PROVIDER_PROMPT');
+  assert.equal(claude.providerPromptRevision, sourceStringConstant(claudeSource, 'CLAUDE_PROMPT_REVISION'));
+  assert.equal(claude.providerPromptDigest, sha256(claudePrompt));
+  assert.equal(claude.combinedPromptDigest, sha256(`${commonPrompt}\n${claudePrompt}`));
   assert.equal(claude.model, null);
   assert.equal(claude.modelSource, 'host-default');
-  assert.equal(
-    claude.effort,
-    resolveClaudeEffort({ actionKind: 'implement' }).effort,
-  );
+  assert.equal(claude.effort, 'high');
 
   assert.deepEqual(codex.toolSet, ['read', 'search', 'edit', 'execute']);
   assert.deepEqual(claude.toolSet, codex.toolSet);

@@ -64,6 +64,23 @@ test('domain guidance activates frontend/browser/security conditions without cre
   assert.equal(policies.security.authority, 'kernel-review-policy');
 });
 
+test('security review authority ignores descriptive text unless the contract declares the boundary', () => {
+  const descriptive = resolveDomainPolicies({
+    objective: 'Discuss auth credentials and security without changing a security boundary',
+    changedPaths: ['docs/security-notes.md'],
+    acceptance: ['document the current token flow'],
+    risks: ['security-sensitive wording only'],
+  });
+  assert.equal(descriptive.security.independentReviewRequired, false);
+
+  const declared = resolveDomainPolicies({
+    objective: 'Change the authentication boundary',
+    surfaces: ['security_boundary'],
+  });
+  assert.equal(declared.security.independentReviewRequired, true);
+  assert.deepEqual(declared.security.reasons, ['security-surface']);
+});
+
 test('kernel commit admission rejects unknown, foreign, and drifted provenance', async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'moon-relay-kernel-admission-'));
   try {

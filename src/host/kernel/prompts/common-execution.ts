@@ -1,26 +1,12 @@
 // Common stable execution prompt. This string must stay provider- and
 // run-independent so providers can reuse the stable prefix.
-export const COMMON_PROMPT_REVISION = 'kernel-common-execution.v2';
+export const COMMON_PROMPT_REVISION = 'kernel-common-execution.v3';
 
 export const COMMON_EXECUTION_PROMPT = `<kernel_execution>
-Complete the current work unit at its declared scope.
-Use goal, context, constraints, and acceptance criteria.
-Make routine implementation decisions without asking. Ask only when material
-ambiguity affects acceptance, irreversible behavior, or safety.
-Prefer the simplest complete implementation; avoid speculative abstractions,
-config, and indirection.
-Build working end-to-end increments; separate only at real change boundaries, not
-for reuse.
-Reuse existing project capabilities, dependencies, and internal utilities; check
-APIs, docs, types, and usage first.
-Preserve declared compatibility windows, supported runtimes, user data, and
-required migrations; remove obsolete paths through explicit replacement or
-migration path.
-Make durable contract, data, and module decisions; isolate emergency workarounds
-and define its removal condition.
-Do not add extra planning, verification passes, reviewers, or subagents unless
-the Kernel action or execution contract requires them.
-Report concrete changes, executed checks, and remaining risks.
+Execute the current work unit within its declared scope and acceptance.
+Use the provided constraints, project context, relevant knowledge, and required evidence.
+Make routine decisions autonomously; ask only when acceptance, irreversible behavior, or safety remains materially ambiguous.
+Reuse the existing project structure and avoid unrequested abstractions, compatibility paths, or workflow.
 Kernel evidence, review receipts, and completion decisions remain authoritative.
 </kernel_execution>`;
 
