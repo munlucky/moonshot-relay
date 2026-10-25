@@ -8,8 +8,8 @@
 |---|---|---|---|---|
 | 01 | A0 Characterization | COMPLETE | 66cabf23 | verified |
 | 02 | A1 Identity + Evidence | COMPLETE | d08a887b | verified |
-| 03 | A2+A3 Proof Delta + Failure Ownership | COMPLETE | current Preset 03 commit | verify after push |
-| 04 | A4 Knowledge Quality | NOT_STARTED | - | - |
+| 03 | A2+A3 Proof Delta + Failure Ownership | COMPLETE | 3c66d01d | verified |
+| 04 | A4 Knowledge Quality | COMPLETE | current Preset 04 closeout | verify after push |
 | 05 | A5 Knowledge Reuse | NOT_STARTED | - | - |
 | 06 | A6+A7 Usage Receipt + Historical Replay | NOT_STARTED | - | - |
 | 07 | B1+B2 Policy/Prompt Reduction | NOT_STARTED | - | - |
@@ -65,4 +65,22 @@
 - Host ownership: launcher/tool/provider infrastructure failure는 기존 Host dispatch result/failureCategory에서 유지
 - Knowledge guard: same-run retry와 반복 generic blocker는 durable `known_failure_pattern`으로 자동 승격되지 않음
 - Complexity: 새 retry engine, failure registry, recovery stage, writable state, error-string correctness rule, provider/OS/project-specific production branch를 추가하지 않음
+- Kernel authoritative proof는 위 Run의 최종 receipt를 authority로 사용한다.
+
+## Preset 04 evidence
+
+- Kernel Run: `run-ffb7177a-d929-41e5-b59c-1b650ce1d102`
+- Production source changes: **3 files** — `src/kernel/knowledge-ingestion/candidate-extract.ts`, `src/kernel/knowledge/capture.ts`, `src/kernel/knowledge/cross-run-evidence.ts`
+- Generic session failure: standalone session의 compile/test/temporary Host 실패 문장은 durable `known_failure_pattern`이 아니라 `episodic_observation`으로 유지
+- Durable failure quality gate: cross-run promotion은 단일 reproducible failure fingerprint, identified cause, non-empty scope, current verified resolution/replay, existing promotion basis가 모두 있어야 함
+- Repeat count: 기존 C23/C24 경계대로 같은 Run retry와 횟수 자체는 durable promotion 근거가 아님
+- Semantic dedupe: 기존 canonical Knowledge identity에 procedure body와 required-verification command semantics를 실제 전달하고, durable failure는 provenance / resolution / fingerprint / cause / correction provenance 차이를 보존
+- A1 identity boundary: `scope`와 `sourceRefs` 책임 분리는 유지하며, source freshness metadata를 applicability scope로 재해석하지 않음
+- Existing authority: project boundary, persisted evidence binding, Improvement Pair approval/replay, commit/revision transaction을 그대로 재사용
+- Focused Knowledge regression: **54/54 pass**
+- TypeScript typecheck: **pass**
+- Runtime build freshness: **308 files / 829 edges, changed 0**
+- Test build freshness: **289 tests / 8 helpers**
+- Boundary check: **9 modules / 308 files / 829 edges**
+- Complexity: 새 Knowledge subsystem/table/lifecycle, failure registry, repeat threshold, provider/OS/project-specific production branch를 추가하지 않음
 - Kernel authoritative proof는 위 Run의 최종 receipt를 authority로 사용한다.

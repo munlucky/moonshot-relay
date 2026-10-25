@@ -62,7 +62,7 @@ export function extractSessionCandidates(
   }
   for (const failure of session.failures || []) {
     raw.push({
-      proposedType: 'known_failure_pattern',
+      proposedType: 'episodic_observation',
       statement: failure,
       scope: session.changedFiles,
       relatedFiles: session.changedFiles,

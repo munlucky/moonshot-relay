@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { extractKnowledgeCandidates } from '../src/kernel/knowledge/candidate-extract.js';
-import { extractStructuredKnowledgeCandidates } from '../src/kernel/knowledge/capture.js';
+import {
+  deduplicateKnowledgeCandidates,
+  extractStructuredKnowledgeCandidates,
+} from '../src/kernel/knowledge/capture.js';
 import {
   extractCodebaseCandidates,
   extractSessionCandidates,
@@ -22,6 +25,127 @@ test('extractKnowledgeCandidates extracts candidates and filters secret leaks', 
 
   assert.equal(candidates.length, 1);
   assert.equal(candidates[0].statement, 'SQLite WAL mode is enabled by default.');
+});
+
+test('A4: generic session failures remain episodic instead of becoming durable failure patterns', () => {
+  const candidates = extractSessionCandidates({
+    provider: 'codex',
+    nativeSessionId: 'session-a4-generic-failures',
+    sourceDigest: 'sha256:a4-session',
+    changedFiles: ['src/tooling/build.ts'],
+    failures: [
+      'TypeScript compile failed with exit code 2.',
+      'Temporary provider timeout while starting a worker.',
+    ],
+  }, { projectId: 'a4-project' });
+
+  assert.equal(candidates.length, 2);
+  assert.equal(
+    candidates.some((candidate) => candidate.proposedType === 'known_failure_pattern'),
+    false,
+  );
+  assert.ok(candidates.every(
+    (candidate) => candidate.proposedType === 'episodic_observation',
+  ));
+});
+
+test('A4: candidate dedupe preserves failure provenance and resolution while suppressing exact duplicates', () => {
+  const base = {
+    proposedType: 'known_failure_pattern',
+    statement: 'Auth refresh fails after expiry.',
+    scope: ['src/auth/**'],
+    signalFingerprint: 'auth-refresh-after-expiry',
+    cause: 'expired refresh tokens bypass the rotation guard',
+  };
+  const distinct = deduplicateKnowledgeCandidates([
+    {
+      ...base,
+      candidateId: 'failure-source-a',
+      sourceRefs: ['src/auth/refresh.ts'],
+      resolution: 'refresh token rotation is enforced before retry',
+    },
+    {
+      ...base,
+      candidateId: 'failure-source-b',
+      sourceRefs: ['src/auth/session.ts'],
+      resolution: 'refresh token rotation is enforced before retry',
+    },
+    {
+      ...base,
+      candidateId: 'failure-resolution-b',
+      sourceRefs: ['src/auth/refresh.ts'],
+      resolution: 'expired sessions are rejected before refresh',
+    },
+  ]);
+  assert.equal(distinct.length, 3);
+
+  const exactAndScoped = deduplicateKnowledgeCandidates([
+    {
+      ...base,
+      candidateId: 'failure-exact-a',
+      sourceRefs: ['src/auth/refresh.ts'],
+      resolution: 'refresh token rotation is enforced before retry',
+    },
+    {
+      ...base,
+      candidateId: 'failure-exact-b',
+      sourceRefs: ['src/auth/refresh.ts'],
+      resolution: 'refresh token rotation is enforced before retry',
+    },
+    {
+      ...base,
+      candidateId: 'failure-billing-scope',
+      scope: ['src/billing/**'],
+      sourceRefs: ['src/auth/refresh.ts'],
+      resolution: 'refresh token rotation is enforced before retry',
+    },
+  ]);
+  assert.equal(exactAndScoped.length, 2);
+});
+
+test('A4: candidate dedupe preserves verification commands and procedure steps', () => {
+  const verificationBase = {
+    proposedType: 'required_verification',
+    statement: 'Run the focused check before accepting the change.',
+    scope: ['src/auth/**'],
+  };
+  const procedureBase = {
+    proposedType: 'episodic_observation',
+    statement: 'Use the bounded auth recovery procedure.',
+    scope: ['src/auth/**'],
+  };
+  const candidates = deduplicateKnowledgeCandidates([
+    {
+      ...verificationBase,
+      candidateId: 'verify-auth',
+      verification: { commandRefs: ['test:auth'], method: 'command' },
+    },
+    {
+      ...verificationBase,
+      candidateId: 'verify-auth-integration',
+      verification: { commandRefs: ['test:auth:integration'], method: 'command' },
+    },
+    {
+      ...procedureBase,
+      candidateId: 'procedure-a',
+      practiceJson: {
+        kind: 'procedure',
+        metadata: { title: 'auth recovery' },
+        body: { steps: ['reproduce', 'repair'], verification: ['test:auth'] },
+      },
+    },
+    {
+      ...procedureBase,
+      candidateId: 'procedure-b',
+      practiceJson: {
+        kind: 'procedure',
+        metadata: { title: 'auth recovery' },
+        body: { steps: ['reproduce', 'repair', 'rotate session'], verification: ['test:auth'] },
+      },
+    },
+  ]);
+
+  assert.equal(candidates.length, 4);
 });
 
 test('W2: legacy observed candidates keep changed files as scope metadata only', () => {

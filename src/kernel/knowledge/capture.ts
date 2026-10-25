@@ -157,11 +157,68 @@ export const normalizeFailureSignalText = (value: unknown): string => text(value
   .replace(/\s+/g, ' ')
   .trim();
 
-export const candidateKey = (candidate: KnowledgeCandidateLike): string => canonicalKnowledgeIdentity({
-  type: candidate.proposedType || candidate.type || candidate.recordType || candidate.record_type,
-  statement: candidate.statement,
-  scope: candidate.scope,
-});
+export const candidateKey = (candidate: KnowledgeCandidateLike): string => {
+  const typeValue = candidate.proposedType
+    || candidate.type
+    || candidate.recordType
+    || candidate.record_type;
+  const canonical = canonicalKnowledgeIdentity({
+    type: typeValue,
+    statement: candidate.statement,
+    scope: candidate.scope,
+    practiceJson: candidate.practiceJson,
+    verification: candidate.verification,
+    obligation: candidate.obligation,
+    obligationId: candidate.obligationId,
+    obligationIds: candidate.obligationIds,
+  });
+  if (canonicalKnowledgeType(typeValue) !== 'known_failure_pattern') {
+    return canonical;
+  }
+
+  const group = isRecord(candidate.crossRunEvidenceGroup)
+    ? candidate.crossRunEvidenceGroup
+    : {};
+  const pair = isRecord(candidate.improvementPair)
+    ? candidate.improvementPair
+    : {};
+  const promotion = isRecord(candidate.crossRunPromotion)
+    ? candidate.crossRunPromotion
+    : {};
+  const verification = isRecord(candidate.verification)
+    ? candidate.verification
+    : {};
+  const failureFingerprints = list(group.failureFingerprints);
+  const causes = list(group.causes);
+
+  return digest({
+    canonical,
+    sourceRefs: [...new Set(list(candidate.sourceRefs))].sort(),
+    verificationCommandRefs: [...new Set([
+      ...list(verification.commandRefs),
+      ...list(verification.commandRef),
+    ])].sort(),
+    resolution: text(
+      candidate.resolution
+        || candidate.prevention
+        || candidate.resolutionSummary,
+    ),
+    failureFingerprint: text(
+      candidate.signalFingerprint
+        || candidate.failureFingerprint
+        || (failureFingerprints.length === 1 ? failureFingerprints[0] : ''),
+    ),
+    cause: text(
+      candidate.cause
+        || candidate.rootCause
+        || candidate.identifiedCause
+        || (causes.length === 1 ? causes[0] : ''),
+    ),
+    correctionIdentity: text(group.correctionIdentity || pair.correctionId),
+    improvementPairId: text(pair.pairId),
+    promotionSourcePairId: text(promotion.sourcePairId),
+  });
+};
 
 const evidenceRefsFor = (signal: UnknownRecord = {}): string[] => [...new Set([
   ...list(signal.evidenceRefs),

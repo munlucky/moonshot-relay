@@ -74,15 +74,21 @@ const priorFailure = ({
   contradiction = false,
   pair = promotionBasisPair(),
   signalScope = scope,
+  fingerprint = 'auth-refresh-after-expiry',
+  cause = 'expired refresh tokens bypass the rotation guard',
 }: {
   stale?: boolean;
   contradiction?: boolean;
   pair?: ReturnType<typeof promotionBasisPair> | null;
   signalScope?: string[];
+  fingerprint?: string;
+  cause?: string;
 } = {}) => ({
   runId: 'run-c24-prior',
   failures: [{
     obligationId: 'feedback-regression',
+    fingerprint,
+    cause,
     statement: 'Auth refresh fails after token expiry.',
     scope: signalScope,
     evidenceRefs: ['failure://run-c24-prior/auth'],
@@ -216,6 +222,22 @@ test('C24: stale contradictory scope-mismatched and non-current replay groups st
   }).find((candidate) => candidate.signalKind === 'cross-run-evidence');
   assert.ok(laterCandidate);
   assert.equal(laterCandidate.proposedType, 'episodic_observation');
+});
+
+test('A4: durable promotion requires an identified cause and reproducible failure fingerprint', () => {
+  const missingFingerprint = crossRunCandidate({
+    prior: priorFailure({ fingerprint: '' }),
+  });
+  assert.ok(missingFingerprint);
+  assert.equal(missingFingerprint.proposedType, 'episodic_observation');
+  assert.equal(missingFingerprint.signalKind, 'cross-run-evidence');
+
+  const missingCause = crossRunCandidate({
+    prior: priorFailure({ cause: '' }),
+  });
+  assert.ok(missingCause);
+  assert.equal(missingCause.proposedType, 'episodic_observation');
+  assert.equal(missingCause.signalKind, 'cross-run-evidence');
 });
 
 test('C24: eligible current-run resolution becomes known_failure_pattern with a fresh Improvement Pair', () => {

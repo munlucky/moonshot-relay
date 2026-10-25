@@ -72,6 +72,8 @@ export interface CrossRunEvidenceGroup {
   successEvidenceRefs: string[];
   staleEvidenceRefs: string[];
   contradictionEvidenceRefs: string[];
+  failureFingerprints: string[];
+  causes: string[];
   promotionBasis: CrossRunPromotionBasis | null;
   promotionBasisConflict: boolean;
   status: 'repeated_failure' | 'repeated_with_resolution' | 'repeated_success';
@@ -93,6 +95,7 @@ export interface CrossRunPromotionAssessment {
 
 interface NormalizedCrossRunSignal extends UnknownRecord {
   fingerprint: string;
+  cause: string;
   statement: string;
   scope: string[];
   evidenceRefs: string[];
@@ -136,6 +139,11 @@ const normalizeSignal = (signal: UnknownRecord): NormalizedCrossRunSignal => ({
     signal.fingerprint
       || signal.failureFingerprint
       || signal.blockerFingerprint,
+  ),
+  cause: text(
+    signal.cause
+      || signal.rootCause
+      || signal.identifiedCause,
   ),
   statement: text(
     signal.statement
@@ -290,6 +298,8 @@ export function buildCrossRunEvidenceGroups({
     correctionIdentity: string;
     scope: string[];
     statement: string;
+    failureFingerprints: Set<string>;
+    causes: Set<string>;
     runs: Map<string, MutableRunEvidence>;
     promotionBases: Map<string, CrossRunPromotionBasis>;
   };
@@ -339,11 +349,17 @@ export function buildCrossRunEvidenceGroups({
         correctionIdentity,
         scope,
         statement: normalized.statement,
+        failureFingerprints: new Set<string>(),
+        causes: new Set<string>(),
         runs: new Map<string, MutableRunEvidence>(),
         promotionBases: new Map<string, CrossRunPromotionBasis>(),
       };
       if (!group.statement && normalized.statement) {
         group.statement = normalized.statement;
+      }
+      if (outcome === 'failure') {
+        if (normalized.fingerprint) group.failureFingerprints.add(normalized.fingerprint);
+        if (normalized.cause) group.causes.add(normalized.cause);
       }
 
       const runEvidence = group.runs.get(runId) || {
@@ -484,6 +500,8 @@ export function buildCrossRunEvidenceGroups({
         successEvidenceRefs,
         staleEvidenceRefs,
         contradictionEvidenceRefs,
+        failureFingerprints: [...group.failureFingerprints].sort(),
+        causes: [...group.causes].sort(),
         promotionBasis,
         promotionBasisConflict,
         status,
@@ -514,6 +532,10 @@ export const buildCrossRunEvidenceCandidate = (
     obligationIds: [],
     sourceKind: 'auto',
     signalKind: 'cross-run-evidence',
+    signalFingerprint: group.failureFingerprints.length === 1
+      ? group.failureFingerprints[0]
+      : null,
+    cause: group.causes.length === 1 ? group.causes[0] : null,
     confidence: 0.75,
     status: 'observed',
     trustTier: 'derived',
@@ -540,6 +562,8 @@ export const buildCrossRunEvidenceCandidate = (
   if (
     group.projectId !== run.projectId
     || group.scope.length === 0
+    || group.failureFingerprints.length !== 1
+    || group.causes.length !== 1
     || group.status !== 'repeated_with_resolution'
     || !group.successRunIds.includes(run.runId)
     || group.staleEvidenceRefs.length > 0
