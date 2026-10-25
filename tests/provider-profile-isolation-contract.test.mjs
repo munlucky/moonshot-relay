@@ -19,11 +19,12 @@ test('Codex-specific policy is isolated under the provider namespace', async () 
   assert.match(text, /autoCompactTokenLimit: 240000/);
 });
 
-test('Codex discovery exposes the Codex guideline without leaking it to Claude or Qwen', async () => {
+test('Codex discovery keeps provider-specific model policy out of always-loaded profile instructions', async () => {
   const codex = await readFile(path.join(root, 'package/profile-templates/codex/.codex/AGENTS.md'), 'utf8');
   const claude = await readFile(path.join(root, 'package/profile-templates/claude/.claude/CLAUDE.md'), 'utf8');
   const qwen = await readFile(path.join(root, 'package/profile-templates/qwen/.qwen/QWEN.md'), 'utf8');
-  assert.match(codex, /codex-gpt-5-6-cost-control\.md/);
+  assert.match(codex, /Provider\/model selection is Host-owned/);
+  assert.doesNotMatch(codex, /codex-gpt-5-6-cost-control|gpt-[0-9]|272000|240000/i);
   assert.doesNotMatch(claude, /codex-gpt-5-6-cost-control|gpt-5\.6-luna|272000/);
   assert.doesNotMatch(qwen, /codex-gpt-5-6-cost-control|gpt-5\.6-luna|272000/);
 });

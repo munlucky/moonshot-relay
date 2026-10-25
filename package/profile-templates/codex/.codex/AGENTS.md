@@ -1,40 +1,31 @@
 # Moonshot Relay Codex Profile TOC
 
-Last-Reviewed: 2026-06-06
+Last-Reviewed: 2026-10-25
 
-`.codex/` is a service runtime profile, not canonical source. Keep this Tier 1 file as a short TOC.
+`.codex/` is an installed Codex runtime profile, not canonical source. Keep this file small. Codex also loads project and directory-local `AGENTS.md` files; let the nearest applicable project instruction own project-specific behavior.
 
-1. `AGENTS.md` is the Codex profile TOC.
-2. Store durable policy in canonical source docs first; use profile-local `rules/` for Codex service behavior and `${MOONSHOT_RELAY_HOME:-~/.moonshot-relay}/docs/public/guidelines/` for public guidelines.
-3. Keep always-loaded context minimal and under budget.
-4. Update canonical source docs first, then refresh TOC links.
-5. Run the active knowledge repository audit after structural doc changes when that support entrypoint is installed.
-6. Resolve shared runtime assets through `MOONSHOT_RELAY_HOME` (`%MOONSHOT_RELAY_HOME%` in cmd.exe, `$env:MOONSHOT_RELAY_HOME` in PowerShell, `${MOONSHOT_RELAY_HOME}` in bash/zsh; default `~/.moonshot-relay`).
-7. Runtime contract: `AGENTS.md` + `verification.contract.yaml`.
-8. Generated state, logs, caches, traces, browser artifacts, sqlite state, memorygraph data, and verdict JSON are excluded from package payloads.
+## Core Working Rules
 
-## Default Document Paths
+1. Execute the requested goal at the intended scope. Prefer the smallest change that fully satisfies the requirement.
+2. Inspect the existing implementation and reuse established abstractions before adding a new layer, state machine, fallback, compatibility path, or policy rule.
+3. Do not encode one project, one failure, one environment, or one model into shared harness behavior unless the boundary is genuinely general and verified.
+4. Treat repeated special-case rules as an architecture signal. Fix the owning boundary when possible instead of accumulating prompt restrictions.
+5. Make routine implementation decisions autonomously. Add planning, decomposition, subagents, independent review, or extra verification only when the task, project contract, or active Kernel action requires them.
+6. Verify proportionally: use focused checks while implementing, then run the broader checks required by the project's actual completion contract. Do not rerun expensive proof only to reassure yourself.
+7. When execution is interrupted or fails unexpectedly, distinguish a repository/harness defect from a local environment problem. Preserve evidence and remaining uncertainty; do not hide the failure with a new fallback.
+8. Keep generated state, logs, caches, traces, browser artifacts, SQLite state, and verdict output out of canonical source unless the project explicitly defines them as deliverables.
+9. When a selected skill or runtime owns workflow state, evidence, or completion authority, follow that authority instead of recreating the same process in this profile.
 
-```yaml
-documentPaths:
-  tasksRoot: ".moonshot-relay/docs/tasks"
-  agreementsRoot: ".moonshot-relay/docs/agreements"
-  guidelinesRoot: "${MOONSHOT_RELAY_HOME:-~/.moonshot-relay}/docs/public/guidelines"
-```
+## Source and Runtime Boundaries
 
-## Project-Local Knowledge Anchors
-
-When a workspace root `AGENTS.md` declares `knowledgeAnchors`, treat those anchors as always-loaded discovery metadata for Moonshot work in that workspace.
-
-`moonshot-architecture` must consult applicable anchors before producing or updating an architecture package. Load only the referenced agreement documents needed for the current scope, and record consulted anchor IDs and consumed paths in the architecture package.
-
-Project-specific anchor entries belong in the consuming project, not in this installed runtime profile.
+- Durable Moonshot Relay policy belongs in canonical repository source first; installed profile files are derived runtime material.
+- Resolve shared runtime assets through `MOONSHOT_RELAY_HOME` (default `~/.moonshot-relay`).
+- Runtime contract: `AGENTS.md` + `verification.contract.yaml`.
+- Provider/model selection is Host-owned. Keep provider-specific model names, prices, routing heuristics, and temporary capability workarounds out of this global instruction file.
 
 ## References
 
 - `@verification.contract.yaml`
 - `@rules/agents/agent-definition.md`
-- `${MOONSHOT_RELAY_HOME:-~/.moonshot-relay}/docs/public/guidelines/knowledge-repository-ops.md`
 - `${MOONSHOT_RELAY_HOME:-~/.moonshot-relay}/docs/public/guidelines/provider-neutral-model-routing.md`
-- `${MOONSHOT_RELAY_HOME:-~/.moonshot-relay}/docs/public/guidelines/resumable-session-layer.md`
-- `${MOONSHOT_RELAY_HOME:-~/.moonshot-relay}/docs/public/guidelines/codex-gpt-5-6-cost-control.md` (Codex-only cost guard)
+- `${MOONSHOT_RELAY_HOME:-~/.moonshot-relay}/docs/public/guidelines/kernel-agent-recovery.md`

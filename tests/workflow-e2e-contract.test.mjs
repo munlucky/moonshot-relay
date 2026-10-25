@@ -158,7 +158,6 @@ test('profile document paths use one active task root and public guideline root'
   const files = [
     'AGENTS.md',
     'package/profile-templates/claude/.claude/CLAUDE.md',
-    'package/profile-templates/codex/.codex/AGENTS.md',
     'package/profile-templates/qwen/.qwen/QWEN.md',
     'package/profile-templates/claude/.claude/PROJECT.md',
   ];
@@ -172,29 +171,31 @@ test('profile document paths use one active task root and public guideline root'
       assert.equal(parseYamlStringValue(content, 'guidelinesRoot'), profileGuidelinesRoots.get(file), `${file} guidelinesRoot`);
     }
   }
+
+  const codex = await readRoot('package/profile-templates/codex/.codex/AGENTS.md');
+  assert.doesNotMatch(codex, /tasksRoot:|agreementsRoot:|guidelinesRoot:/);
 });
 
 test('service profile TOCs carry current boundary metadata', async () => {
-  const files = [
-    'package/profile-templates/claude/.claude/CLAUDE.md',
-    'package/profile-templates/codex/.codex/AGENTS.md',
-    'package/profile-templates/qwen/.qwen/QWEN.md',
-  ];
+  const files = new Map([
+    ['package/profile-templates/claude/.claude/CLAUDE.md', '2026-06-06'],
+    ['package/profile-templates/codex/.codex/AGENTS.md', '2026-10-25'],
+    ['package/profile-templates/qwen/.qwen/QWEN.md', '2026-06-06'],
+  ]);
 
-  for (const file of files) {
+  for (const [file, reviewDate] of files) {
     const content = await readRoot(file);
-    assert.match(content, /Last-Reviewed: 2026-06-06/, `${file} review date`);
+    assert.match(content, new RegExp(`Last-Reviewed: ${reviewDate}`), `${file} review date`);
     assert.doesNotMatch(content, /Last-Reviewed: 2026-04-09/, `${file} stale review date`);
-    assert.match(content, /service runtime profile, not canonical source/i, `${file} boundary wording`);
+    assert.match(content, /runtime profile, not canonical source/i, `${file} boundary wording`);
     assert.doesNotMatch(content, /development profile, not canonical source/i, `${file} stale boundary wording`);
   }
 });
 
-test('installed profile TOCs set up project-local knowledge anchor discovery', async () => {
+test('installed profile TOCs keep knowledge discovery aligned with their runtime authority', async () => {
   for (const file of [
     'AGENTS.md',
     'package/profile-templates/claude/.claude/CLAUDE.md',
-    'package/profile-templates/codex/.codex/AGENTS.md',
     'package/profile-templates/qwen/.qwen/QWEN.md',
   ]) {
     const content = await readRoot(file);
@@ -202,6 +203,10 @@ test('installed profile TOCs set up project-local knowledge anchor discovery', a
     assert.match(content, /knowledgeAnchors/, `${file} anchor key`);
     assert.match(content, /moonshot-architecture/, `${file} architecture skill setup`);
   }
+
+  const codex = await readRoot('package/profile-templates/codex/.codex/AGENTS.md');
+  assert.match(codex, /selected skill or runtime owns workflow state/i);
+  assert.doesNotMatch(codex, /Project-Local Knowledge Anchors|knowledgeAnchors|moonshot-architecture/);
 });
 
 test('service profile TOCs point at their own profile entries and common home docs', async () => {
