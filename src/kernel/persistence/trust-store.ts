@@ -195,6 +195,68 @@ const verificationProjection = (row: VerificationRow): PersistedVerification => 
     : null,
 });
 
+type VerificationSelectionRecord = {
+  id: number;
+  runId: string;
+  obligationId: string;
+  executor?: unknown;
+  evidenceIdentity?: unknown;
+};
+
+const evidenceIdentityDigest = (verification: VerificationSelectionRecord): string | null => {
+  const identity = asRecord(verification.evidenceIdentity);
+  const digest = typeof identity.digest === 'string' ? identity.digest : '';
+  const freshnessInputs = Array.isArray(identity.freshnessInputs) ? identity.freshnessInputs : [];
+  const values = asRecord(identity.values);
+  return /^sha256:[a-f0-9]{64}$/u.test(digest)
+    && freshnessInputs.length > 0
+    && Object.keys(values).length > 0
+    ? digest
+    : null;
+};
+
+const verificationAuthority = (verification: VerificationSelectionRecord): number => (
+  verification.executor === 'kernel-runtime' ? 2 : 1
+);
+
+const preferCurrentVerification = <T extends VerificationSelectionRecord>(
+  current: T,
+  candidate: T,
+): T => {
+  const currentIdentity = evidenceIdentityDigest(current);
+  const candidateIdentity = evidenceIdentityDigest(candidate);
+
+  // Evidence generations are comparable only when they share one normalized
+  // Evidence Identity. A newly observed identity becomes the current
+  // generation; Trust Authority then decides whether it is fresh enough to
+  // satisfy completion.
+  if (currentIdentity && candidateIdentity && currentIdentity !== candidateIdentity) {
+    return candidate;
+  }
+
+  // Missing identity is a weaker/unobserved statement. Once an identity-bound
+  // generation exists, it cannot be replaced by a row that cannot establish
+  // which evidence generation it describes.
+  if (currentIdentity && !candidateIdentity) return current;
+  if (!currentIdentity && candidateIdentity) return candidate;
+
+  // Within one Evidence Identity (or the legacy identity-less generation),
+  // only equal-or-stronger authority may advance the current projection.
+  return verificationAuthority(candidate) >= verificationAuthority(current)
+    ? candidate
+    : current;
+};
+
+const selectCurrentVerifications = <T extends VerificationSelectionRecord>(rows: T[]): T[] => {
+  const current = new Map<string, T>();
+  for (const row of rows) {
+    const key = JSON.stringify([row.runId, row.obligationId]);
+    const previous = current.get(key);
+    current.set(key, previous ? preferCurrentVerification(previous, row) : row);
+  }
+  return [...current.values()].sort((left, right) => left.id - right.id);
+};
+
 const verificationSelect = `
   SELECT id,
     run_id as runId,
@@ -284,14 +346,14 @@ export const createTrustPersistence = ({
   });
 
   const getVerifications = (runId: string): PersistedVerification[] => (
-    db.prepare(`
-      ${verificationSelect}
-      WHERE run_id=? AND id IN (
-        SELECT MAX(v2.id) FROM verifications v2 WHERE v2.run_id=? GROUP BY v2.obligation_id
-      )
-      ORDER BY id ASC
-    `).all(runId, runId)
-      .map((row) => verificationProjection(row as VerificationRow))
+    selectCurrentVerifications(
+      db.prepare(`
+        ${verificationSelect}
+        WHERE run_id=?
+        ORDER BY id ASC
+      `).all(runId)
+        .map((row) => verificationProjection(row as VerificationRow)),
+    )
   );
 
   const getVerificationHistory = (runId: string): PersistedVerification[] => (
@@ -327,19 +389,21 @@ export const createTrustPersistence = ({
         FROM verifications v
         JOIN runs r ON r.run_id=v.run_id
         WHERE r.project_id=? AND v.obligation_id=?
-          AND v.status='passed' AND v.exit_code=0
-          AND v.evidence_digest IS NOT NULL
           ${contractClause}
-          AND v.id IN (
-            SELECT MAX(v2.id) FROM verifications v2
-            WHERE v2.run_id=v.run_id AND v2.obligation_id=v.obligation_id
-          )
-        ORDER BY v.id DESC
-      `).all(...params) as Array<Omit<ReusableVerification, 'evidenceIdentity'> & { evidenceIdentityJson?: string | null }>;
-      return rows.map((row) => ({
+        ORDER BY v.id ASC
+      `).all(...params) as Array<Omit<ReusableVerification, 'evidenceIdentity'> & {
+        evidenceIdentityJson?: string | null;
+      }>;
+      return selectCurrentVerifications(rows.map((row) => ({
         ...row,
         evidenceIdentity: parseJson<UnknownRecord>(row.evidenceIdentityJson, {}),
-      }));
+      })))
+        .filter((row) => (
+          row.status === 'passed'
+          && row.exitCode === 0
+          && Boolean(row.evidenceDigest)
+        ))
+        .sort((left, right) => right.id - left.id);
     };
 
   return {

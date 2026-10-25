@@ -9,6 +9,7 @@ import { createKernelControlPlane } from '../src/host/kernel/control-plane-runti
 import { kernelDbPath } from '../src/kernel/state-store.js';
 import { openSqliteDb } from '../src/kernel/sqlite-adapter.js';
 import { normalizeTaskContract } from '../src/kernel/task/task-contract.js';
+import { buildTrustAuthorityView } from '../src/kernel/proof/trust-authority.js';
 
 const setup = async () => {
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'krn-evidence-semantics-home-'));
@@ -378,6 +379,134 @@ test('S-14: Work-level evidence can cover acceptance but cannot close the Goal w
   }
 });
 
+test('same Evidence Identity keeps authoritative verification monotonic until an authoritative contradiction', async () => {
+  const fixture = await setup();
+  const cp = await createKernelControlPlane(fixture);
+  try {
+    const runId = 'r-evidence-authority-merge';
+    await cp.startRun({ runId, objective: 'x', taskContract: plannedContract() });
+    await cp.transition(runId, 'EXECUTE');
+    await cp.transition(runId, 'PROVE');
+    await cp.executeProof(runId, {
+      obligationId: 'default',
+      commandRef: 'test:ok',
+      acceptanceCoverage: [],
+    });
+
+    const authoritative = assertTestPresent(cp.stateStore.getVerifications(runId)[0]);
+    const evidenceIdentity = assertTestRecord(authoritative.evidenceIdentity);
+    const run = assertTestPresent(cp.stateStore.getRun(runId));
+
+    cp.stateStore.recordVerification(runId, {
+      obligationId: 'default',
+      status: 'failed',
+      evidenceRef: 'attested://same-identity/weaker',
+      sourceIdentity: run.sourceIdentity,
+      command: 'attested observation',
+      exitCode: 1,
+      evidenceDigest: `sha256:${'7'.repeat(64)}`,
+      acceptanceCoverage: [],
+      evidenceIdentity,
+      executor: 'caller-attested',
+    });
+    assert.equal(cp.stateStore.getVerifications(runId)[0]?.id, authoritative.id);
+    assert.equal(cp.stateStore.findExactReusableVerification({
+      projectId: run.projectId,
+      obligationId: 'default',
+      evidenceIdentity,
+      contractRevision: run.contractRevision,
+    })?.id, authoritative.id);
+
+    cp.stateStore.recordVerification(runId, {
+      obligationId: 'default',
+      status: 'failed',
+      evidenceRef: 'attested://unobserved',
+      sourceIdentity: run.sourceIdentity,
+      command: 'unobserved attestation',
+      exitCode: 1,
+      evidenceDigest: `sha256:${'8'.repeat(64)}`,
+      acceptanceCoverage: [],
+      executor: 'caller-attested',
+    });
+    assert.equal(cp.stateStore.getVerifications(runId)[0]?.id, authoritative.id);
+
+    cp.stateStore.recordVerification(runId, {
+      obligationId: 'default',
+      status: 'failed',
+      evidenceRef: 'proof://same-identity/contradiction',
+      sourceIdentity: run.sourceIdentity,
+      verifiedSourceIdentity: run.currentWorkspaceIdentity,
+      commandRef: 'test:ok',
+      command: 'npm run test:ok',
+      exitCode: 1,
+      evidenceDigest: `sha256:${'6'.repeat(64)}`,
+      acceptanceCoverage: [],
+      evidenceIdentity,
+      executor: 'kernel-runtime',
+      evidenceClass: 'hard',
+    });
+
+    const current = assertTestPresent(cp.stateStore.getVerifications(runId)[0]);
+    assert.equal(current.status, 'failed');
+    assert.notEqual(current.id, authoritative.id);
+    assert.equal(cp.stateStore.getVerificationHistory(runId).length, 4);
+    assert.equal(cp.stateStore.findExactReusableVerification({
+      projectId: run.projectId,
+      obligationId: 'default',
+      evidenceIdentity,
+      contractRevision: run.contractRevision,
+    }), null);
+
+    const completion = await cp.assessCompletion(runId);
+    const goal = assertTestPresent(completion.obligationStatuses.find((entry) => entry.obligationId === 'default'));
+    assert.equal(goal.satisfied, false);
+    assert.equal(completion.gates.goalEvidenceSatisfied, false);
+  } finally {
+    await cp.close();
+    await cleanup(fixture);
+  }
+});
+
+test('source identity change preserves verification history but requires current evidence', async () => {
+  const fixture = await setup();
+  const cp = await createKernelControlPlane(fixture);
+  try {
+    const runId = 'r-source-identity-stale';
+    await cp.startRun({ runId, objective: 'x', taskContract: plannedContract() });
+    await cp.transition(runId, 'EXECUTE');
+    await cp.transition(runId, 'PROVE');
+    await cp.executeProof(runId, {
+      obligationId: 'default',
+      commandRef: 'test:ok',
+      acceptanceCoverage: [],
+    });
+
+    const run = assertTestPresent(cp.stateStore.getRun(runId));
+    const verification = assertTestPresent(cp.stateStore.getVerifications(runId)[0]);
+    const obligations = cp.stateStore.getRunObligations(runId);
+    assert.equal(cp.stateStore.getVerificationHistory(runId).length, 1);
+
+    const trust = assertTestRecord(buildTrustAuthorityView({
+      run: { ...run, sourceIdentity: 'source-new-generation' },
+      obligations,
+      verifications: [verification],
+    }));
+    const hard = assertTestArray(assertTestRecord(trust.evidence).hard)
+      .find((entry: unknown) => assertTestRecord(entry).obligationId === 'default');
+    const freshness = assertTestRecord(assertTestRecord(hard).freshness);
+    assert.equal(freshness.status, 'stale');
+    assert.ok(assertTestArray(freshness.reasons).includes('source-identity-mismatch'));
+
+    const requirement = assertTestArray(trust.requirements)
+      .find((entry: unknown) => assertTestRecord(entry).obligationId === 'default');
+    assert.equal(assertTestRecord(requirement).satisfied, false);
+    assert.equal(cp.stateStore.getVerificationHistory(runId)[0]?.id, verification.id);
+  } finally {
+    await cp.close();
+    await cleanup(fixture);
+  }
+});
+
 test('S-13: an affected scoped proof becomes stale while an unaffected scope remains reusable', async () => {
   const fixture = await setup();
   const cp = await createKernelControlPlane(fixture);
@@ -423,6 +552,12 @@ test('S-13: an affected scoped proof becomes stale while an unaffected scope rem
     const scopedAfterAffected = assertTestArray(assertTestRecord(assertTestPresent(trust).evidence).hard).find((entry: unknown) => assertTestRecord(entry).obligationId === 'acceptance-ac-1');
     assert.equal(assertTestRecord(assertTestRecord(scopedAfterAffected).freshness).status, 'stale');
     assert.ok(assertTestArray(assertTestRecord(assertTestRecord(scopedAfterAffected).freshness).reasons).includes('verification-scope-stale'));
+    assert.equal(cp.stateStore.getVerificationHistory(runId).filter((entry) => entry.obligationId === 'acceptance-ac-1').length, 1);
+    assert.equal(assertTestPresent(cp.stateStore.getVerifications(runId).find((entry) => entry.obligationId === 'acceptance-ac-1')).status, 'passed');
+    const affectedCompletion = await cp.assessCompletion(runId);
+    const affectedRequirement = affectedCompletion.obligationStatuses
+      .find((entry) => entry.obligationId === 'acceptance-ac-1');
+    assert.equal(assertTestPresent(affectedRequirement).satisfied, false);
   } finally {
     await cp.close();
     await cleanup(fixture);
