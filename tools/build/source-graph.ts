@@ -1,7 +1,7 @@
 import type { SourceLayout, SourceEntry, ModuleReference } from './types.js';
 import { readFile, readdir, lstat } from 'node:fs/promises';
 import path from 'node:path';
-import ts from 'typescript';
+import ts from '@typescript/typescript6';
 
 export const slash = (value: string) => value.replaceAll('\\', '/');
 export const relativeSpecifier = (from: string, to: string) => {

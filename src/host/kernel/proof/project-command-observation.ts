@@ -74,18 +74,34 @@ const observeNode = (projectRoot: string): NodeProjectCommandObservation | null 
       ? 'yarn'
       : 'npm';
 
-  const localTypeScriptBinary = [
-    path.join(projectRoot, 'node_modules', '.bin', process.platform === 'win32' ? 'tsc.cmd' : 'tsc'),
-    path.join(projectRoot, 'node_modules', '.bin', 'tsc'),
-  ].find((candidate) => existsSync(candidate));
+  const typeScriptPackageRoot = path.join(projectRoot, 'node_modules', 'typescript');
+  const typeScriptPackage = readJson(path.join(typeScriptPackageRoot, 'package.json'));
+  const typeScriptBin = typeof typeScriptPackage?.bin === 'string'
+    ? typeScriptPackage.bin
+    : typeScriptPackage?.bin
+      && typeof typeScriptPackage.bin === 'object'
+      && !Array.isArray(typeScriptPackage.bin)
+      && typeof (typeScriptPackage.bin as Record<string, unknown>).tsc === 'string'
+        ? String((typeScriptPackage.bin as Record<string, unknown>).tsc)
+        : null;
+  const localTypeScriptBinary = typeScriptBin
+    ? path.resolve(typeScriptPackageRoot, typeScriptBin)
+    : null;
+  const resolvedTypeScriptPackageRoot = path.resolve(typeScriptPackageRoot);
+  const trustedTypeScriptBinary = localTypeScriptBinary
+    && localTypeScriptBinary !== resolvedTypeScriptPackageRoot
+    && localTypeScriptBinary.startsWith(resolvedTypeScriptPackageRoot + path.sep)
+    && existsSync(localTypeScriptBinary)
+      ? localTypeScriptBinary
+      : null;
 
   return {
     runner,
     scripts,
     hasTypeScriptDependency,
     hasTypeScriptConfig: existsSync(path.join(projectRoot, 'tsconfig.json')),
-    localTypeScriptBinary: localTypeScriptBinary
-      ? path.relative(projectRoot, localTypeScriptBinary).replaceAll('\\', '/')
+    localTypeScriptBinary: trustedTypeScriptBinary
+      ? path.relative(projectRoot, trustedTypeScriptBinary).replaceAll('\\', '/')
       : null,
   };
 };

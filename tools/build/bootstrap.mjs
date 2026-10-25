@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Generated build tool. Edit the corresponding .ts source.
 // Node 20 bootstrap. This file is the canonical strict TypeScript build entrypoint.
-import ts from 'typescript';
+import ts from '@typescript/typescript6';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

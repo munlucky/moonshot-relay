@@ -87,8 +87,8 @@
     "build:tests": "node tools/build/bootstrap.mjs --tests",
     "build:tests:check": "node tools/build/bootstrap.mjs --tests --check",
     "check:boundaries": "node tools/build/bootstrap.mjs --boundaries",
-    "typecheck": "tsc --noEmit",
-    "prepare": "node -e \"if(require('node:fs').existsSync('src/kernel')){const cp=require('node:child_process');cp.execFileSync(process.execPath,[require.resolve('typescript/bin/tsc'),'--project','tsconfig.tools.json','--outDir','dist/tools'],{stdio:'inherit'});cp.execFileSync(process.execPath,['dist/tools/prepare.js'],{stdio:'inherit'});}\"",
+    "typecheck": "node tools/build/typescript-cli.cjs --noEmit",
+    "prepare": "node -e \"if(require('node:fs').existsSync('src/kernel')){const cp=require('node:child_process');cp.execFileSync(process.execPath,['tools/build/typescript-cli.cjs','--project','tsconfig.tools.json','--outDir','dist/tools'],{stdio:'inherit'});cp.execFileSync(process.execPath,['dist/tools/prepare.js'],{stdio:'inherit'});}\"",
     "prepack": "npm run build && npm run typecheck && npm run build:check",
     "dev:kernel": "npm run build && node bin/moon-relay-kernel.mjs",
     "dev:standalone": "npm run build && node bin/moon-relay-standalone.mjs",
@@ -134,6 +134,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^26.6.5",
+    "@typescript/typescript6": "6.0.2",
     "json-schema-to-typescript": "16.0.0",
     "typescript": "7.0.2"
   }

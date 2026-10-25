@@ -11,30 +11,46 @@ const projectCommands = (projectRoot: string) => discoverProjectCommands({
   observation: observeProjectCommandDeclarations({ projectRoot }),
 });
 
+const writeInstalledTypeScript = async (root: string) => {
+  const packageRoot = path.join(root, 'node_modules', 'typescript');
+  await mkdir(path.join(packageRoot, 'bin'), { recursive: true });
+  await mkdir(path.join(root, 'node_modules', '.bin'), { recursive: true });
+  await writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
+    name: 'typescript',
+    version: '7.0.2',
+    bin: { tsc: './bin/tsc' },
+  }), 'utf8');
+  await writeFile(path.join(packageRoot, 'bin', 'tsc'), '#!/usr/bin/env node\nprocess.exit(0);\n', 'utf8');
+  const poisonedBin = path.join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'tsc.cmd' : 'tsc');
+  await writeFile(
+    poisonedBin,
+    process.platform === 'win32'
+      ? '@echo off\r\nexit /b 91\r\n'
+      : '#!/bin/sh\nexit 91\n',
+    'utf8',
+  );
+};
+
 const writeTypeScriptFixture = async ({ withDependency }: { withDependency: boolean }) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-command-catalog-'));
-  await mkdir(path.join(root, 'node_modules', '.bin'), { recursive: true });
+  await writeInstalledTypeScript(root);
   await writeFile(path.join(root, 'package.json'), JSON.stringify({
     name: 'command-catalog-fixture',
-    ...(withDependency ? { devDependencies: { typescript: '^5.0.0' } } : {}),
+    ...(withDependency ? { devDependencies: { typescript: '7.0.2' } } : {}),
     scripts: {},
   }), 'utf8');
   await writeFile(path.join(root, 'tsconfig.json'), '{"compilerOptions":{"noEmit":true}}\n', 'utf8');
-  const binary = path.join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'tsc.cmd' : 'tsc');
-  await writeFile(binary, process.platform === 'win32' ? '@echo off\r\nexit /b 0\r\n' : '#!/bin/sh\nexit 0\n', 'utf8');
   return { root, packagePath: path.join(root, 'package.json') };
 };
 
 const writeTypeScriptFixtureWithoutScripts = async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-command-catalog-no-scripts-'));
-  await mkdir(path.join(root, 'node_modules', '.bin'), { recursive: true });
+  await writeInstalledTypeScript(root);
   await writeFile(path.join(root, 'package.json'), JSON.stringify({
     name: 'command-catalog-no-scripts-fixture',
-    devDependencies: { typescript: '^5.0.0' },
+    devDependencies: { typescript: '7.0.2' },
   }), 'utf8');
   await writeFile(path.join(root, 'tsconfig.json'), '{}\n', 'utf8');
-  const binary = path.join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'tsc.cmd' : 'tsc');
-  await writeFile(binary, process.platform === 'win32' ? '@echo off\r\nexit /b 0\r\n' : '#!/bin/sh\nexit 0\n', 'utf8');
   return { root };
 };
 
@@ -46,8 +62,10 @@ test('discovers a local TypeScript static-analysis command only from project-own
     const typecheck = commands.find((command) => command.commandRef === 'typescript:check');
     assert.ok(typecheck);
     assert.equal(typecheck.commandClass, 'static-analysis');
-    assert.deepEqual(typecheck.args, ['--noEmit']);
-    assert.match(typecheck.source, /package\.json\+tsconfig\.json\+node_modules/);
+    assert.equal(typecheck.command, 'node');
+    assert.deepEqual(typecheck.args, ['node_modules/typescript/bin/tsc', '--noEmit']);
+    assert.equal(typecheck.source, 'package.json+tsconfig.json+typescript package bin');
+    assert.equal(typecheck.declaration, 'node node_modules/typescript/bin/tsc --noEmit');
     assert.equal(await readFile(fixture.packagePath, 'utf8'), before);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });

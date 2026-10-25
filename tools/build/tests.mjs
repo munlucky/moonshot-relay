@@ -1,5 +1,5 @@
 // Generated build tool. Edit the corresponding .ts source.
-import ts from 'typescript';
+import ts from '@typescript/typescript6';
 import { readFile, writeFile, mkdir, unlink, lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

@@ -1,7 +1,7 @@
 // Generated build tool. Edit the corresponding .ts source.
 import { readFile, readdir, lstat } from 'node:fs/promises';
 import path from 'node:path';
-import ts from 'typescript';
+import ts from '@typescript/typescript6';
 export const slash = (value) => value.replaceAll('\\', '/');
 export const relativeSpecifier = (from, to) => {
     const value = path.posix.relative(path.posix.dirname(from), to);

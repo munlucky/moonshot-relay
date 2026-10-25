@@ -119,11 +119,11 @@ const nodeCommands = (observation) => {
         commands.push({
             commandRef: 'typescript:check',
             commandClass: 'static-analysis',
-            command: node.localTypeScriptBinary,
-            args: ['--noEmit'],
+            command: 'node',
+            args: [node.localTypeScriptBinary, '--noEmit'],
             ecosystem: 'node',
-            source: 'package.json+tsconfig.json+node_modules/.bin/tsc',
-            declaration: `${node.localTypeScriptBinary} --noEmit`,
+            source: 'package.json+tsconfig.json+typescript package bin',
+            declaration: `node ${node.localTypeScriptBinary} --noEmit`,
         });
     }
     return commands;

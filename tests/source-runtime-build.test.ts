@@ -24,7 +24,7 @@ const fixture = async (t: TestContext) => {
   await write(root, 'tsconfig.json', JSON.stringify({ compilerOptions: { strict: true, target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', noEmit: true, types: [] }, include: ['src/**/*.ts', 'src/**/*.mts'] }));
   await cp(path.join(ROOT, 'tsconfig.tools.json'), path.join(root, 'tsconfig.tools.json'));
   await write(root, 'tsconfig.build.json', JSON.stringify({ extends: './tsconfig.json', compilerOptions: { noEmit: false, noEmitOnError: true, declaration: false }, include: ['src/**/*.ts', 'src/**/*.mts'] }));
-  for (const file of ['tools/build/contracts.ts', 'tools/build/contracts.mjs', 'tools/build/source-graph.mjs', 'tools/build/runtime.mjs', 'tools/build/tests.mjs', 'tools/build/types.mjs', 'tools/build/source-graph.ts', 'tools/build/runtime.ts', 'tools/build/tests.ts', 'tools/build/types.ts', 'tools/build/bootstrap.ts', 'tools/build/bootstrap.mjs', 'tools/build/prepare.ts', 'tools/build/prepare.mjs']) {
+  for (const file of ['tools/build/contracts.ts', 'tools/build/contracts.mjs', 'tools/build/source-graph.mjs', 'tools/build/runtime.mjs', 'tools/build/tests.mjs', 'tools/build/types.mjs', 'tools/build/source-graph.ts', 'tools/build/runtime.ts', 'tools/build/tests.ts', 'tools/build/types.ts', 'tools/build/bootstrap.ts', 'tools/build/bootstrap.mjs', 'tools/build/prepare.ts', 'tools/build/prepare.mjs', 'tools/build/typescript-cli.cjs']) {
     await mkdir(path.dirname(path.join(root, file)), { recursive: true });
     await cp(path.join(ROOT, file), path.join(root, file));
   }

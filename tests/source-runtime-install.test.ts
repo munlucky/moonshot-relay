@@ -168,7 +168,7 @@ test('packaging and installation reject a checkout changed after build before wr
   // A source checkout is built after npm ci. Reproduce only the type-resolution
   // part of that prerequisite; native/runtime dependencies are deliberately not
   // copied because this case must fail on stale source before installation.
-  for (const relative of ['node_modules/@types', 'node_modules/@apidevtools', 'node_modules/undici-types', 'node_modules/typescript', 'node_modules/json-schema-to-typescript', 'node_modules/prettier', 'node_modules/ajv', 'node_modules/ajv-formats', 'node_modules/fast-uri']) {
+  for (const relative of ['node_modules/@types', 'node_modules/@apidevtools', 'node_modules/@typescript/typescript6', 'node_modules/@typescript/old', 'node_modules/undici-types', 'node_modules/typescript', 'node_modules/json-schema-to-typescript', 'node_modules/prettier', 'node_modules/ajv', 'node_modules/ajv-formats', 'node_modules/fast-uri']) {
     await mkdir(path.dirname(path.join(fixture, relative)), { recursive: true });
     await cp(path.join(ROOT, relative), path.join(fixture, relative), { recursive: true });
   }

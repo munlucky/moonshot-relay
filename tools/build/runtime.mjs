@@ -4,7 +4,8 @@ import { createHash } from 'node:crypto';
 import { readFile, writeFile, mkdir, lstat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import ts from 'typescript';
+import ts from '@typescript/typescript6';
+import { version as canonicalTypeScriptVersion } from 'typescript';
 import { listFiles, readSourceGraph, rewriteReferences, relativeSpecifier, runtimeOutputForSource, checkSafeOutput } from './source-graph.mjs';
 import { buildContractArtifacts } from './contracts.mjs';
 const errorCode = (error) => error && typeof error === 'object' && 'code' in error ? error.code : null;
@@ -78,7 +79,7 @@ export const compileRuntime = async (root = ROOT) => {
         outputs.push({ source: entry.source, output: entry.output, code, sourceDigest: digest(entry.text), outputDigest: digest(code) });
     }
     const tools = {};
-    const toolInputs = ['package/source-layout.json', 'tools/build/source-graph.mjs', 'tools/build/runtime.mjs', 'tools/build/runtime.ts', 'tools/build/source-graph.ts', 'tools/build/types.ts', 'tools/build/bootstrap.ts', 'tools/build/bootstrap.mjs', 'tools/build/prepare.ts', 'tools/build/prepare.mjs', 'tools/build/contracts.ts', 'tools/build/contracts.mjs', 'tsconfig.tools.json', 'tsconfig.json', 'tsconfig.build.json'];
+    const toolInputs = ['package/source-layout.json', 'tools/build/source-graph.mjs', 'tools/build/runtime.mjs', 'tools/build/runtime.ts', 'tools/build/source-graph.ts', 'tools/build/types.ts', 'tools/build/bootstrap.ts', 'tools/build/bootstrap.mjs', 'tools/build/prepare.ts', 'tools/build/prepare.mjs', 'tools/build/typescript-cli.cjs', 'tools/build/contracts.ts', 'tools/build/contracts.mjs', 'tsconfig.tools.json', 'tsconfig.json', 'tsconfig.build.json'];
     for (const file of ['package.json', 'package-lock.json']) {
         if (await readOptional(path.join(root, file)))
             toolInputs.push(file);
@@ -91,7 +92,7 @@ export const compileRuntime = async (root = ROOT) => {
     }
     const manifest = {
         schemaVersion: 1,
-        compiler: 'typescript@' + ts.version,
+        compiler: 'typescript@' + canonicalTypeScriptVersion,
         tools,
         files: outputs.map(({ code, ...entry }) => entry),
     };
