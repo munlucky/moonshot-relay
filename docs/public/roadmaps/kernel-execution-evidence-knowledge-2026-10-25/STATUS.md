@@ -9,8 +9,8 @@
 | 01 | A0 Characterization | COMPLETE | 66cabf23 | verified |
 | 02 | A1 Identity + Evidence | COMPLETE | d08a887b | verified |
 | 03 | A2+A3 Proof Delta + Failure Ownership | COMPLETE | 3c66d01d | verified |
-| 04 | A4 Knowledge Quality | COMPLETE | current Preset 04 closeout | verify after push |
-| 05 | A5 Knowledge Reuse | NOT_STARTED | - | - |
+| 04 | A4 Knowledge Quality | COMPLETE | 78c05a9d | verified |
+| 05 | A5 Knowledge Reuse | COMPLETE | current Preset 05 commit | verify after push |
 | 06 | A6+A7 Usage Receipt + Historical Replay | NOT_STARTED | - | - |
 | 07 | B1+B2 Policy/Prompt Reduction | NOT_STARTED | - | - |
 | 08 | B3 Control Plane / State Store Thinning | NOT_STARTED | - | - |
@@ -83,4 +83,22 @@
 - Test build freshness: **289 tests / 8 helpers**
 - Boundary check: **9 modules / 308 files / 829 edges**
 - Complexity: 새 Knowledge subsystem/table/lifecycle, failure registry, repeat threshold, provider/OS/project-specific production branch를 추가하지 않음
+- Kernel authoritative proof는 위 Run의 최종 receipt를 authority로 사용한다.
+
+## Preset 05 evidence
+
+- Kernel Run: `run-09f0c88f-9b5d-4928-a4af-ceededc3d48c`
+- Production source changes: **2 files** — `src/kernel/knowledge/context-load.ts`, `src/kernel/run/obligation-compiler.ts`
+- Cross-run reuse: 기존 Run A → Run B SQLite Knowledge reuse/revision continuity/project namespace isolation E2E를 유지
+- Semantic validity vs provenance freshness: `semantic_fact`와 `architecture_decision`은 단순 referenced path missing만으로 semantic invalidation 처리하지 않고 계속 selection 가능
+- Source evolution: 같은 source path의 digest drift는 기존 `needs_deep_verify`로 selection에서 제외
+- Semantic invalidation: superseded/rejected/archived status와 기존 canonical/scope/trust authority는 그대로 유지
+- Trust-critical verification: source-bound `required_verification`은 source missing 또는 source digest drift 상태에서 executable obligation으로 컴파일하지 않음
+- A1 boundary: applicability `scope`와 provenance `sourceRefs` 책임 분리를 유지
+- Focused retrieval/freshness/reuse/obligation regression: **68/68 pass**
+- TypeScript typecheck: **pass**
+- Runtime build freshness: **308 files / 830 edges, changed 0**
+- Test build freshness: **289 tests / 8 helpers**
+- Boundary check: **9 modules / 308 files / 830 edges**
+- Complexity: 새 freshness taxonomy, vector store, path alias registry/fallback, Knowledge table/lifecycle, provider/OS/project-specific production branch를 추가하지 않음
 - Kernel authoritative proof는 위 Run의 최종 receipt를 authority로 사용한다.

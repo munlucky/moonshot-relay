@@ -192,15 +192,16 @@ test('W4: stage materialization supplies only fresh relevant canonical Knowledge
       'K2-execute-fact',
       'K3-procedure-a',
       'K4-procedure-b',
+      'K8-missing-source',
     ].sort());
     assert.ok(hasReason(frameKnowledge.omittedByPolicy, 'K5-prove-verification', 'type_required_verification_not_in_FRAME'));
     assert.ok(hasReason(frameKnowledge.omittedByPolicy, 'K11-wrong-stage-component', 'type_component_boundary_not_in_FRAME'));
-    assert.ok(hasReason(frameKnowledge.staleOrUnavailable, 'K8-missing-source', 'freshness_stale'));
+    assert.equal(asRecords(frameKnowledge.staleOrUnavailable).some((entry) => entry.id === 'K8-missing-source'), false);
     assert.ok(hasReason(frameKnowledge.staleOrUnavailable, 'K9-changed-source', 'freshness_needs_deep_verify'));
     assert.equal(asRecords(frameKnowledge.staleOrUnavailable).some((entry) => entry.id === 'K10-scope-only-fact'), false);
     assert.match(String(frameKnowledge.promptBlock), /bounded service architecture/);
     assert.match(String(frameKnowledge.promptBlock), /bounded service mode/);
-    assert.doesNotMatch(String(frameKnowledge.promptBlock), /Missing source Knowledge/);
+    assert.match(String(frameKnowledge.promptBlock), /Missing source Knowledge/);
     assert.doesNotMatch(String(frameKnowledge.promptBlock), /Changed source Knowledge/);
     assert.doesNotMatch(String(frameKnowledge.promptBlock), /component boundary applies only during implementation/);
 
@@ -220,6 +221,7 @@ test('W4: stage materialization supplies only fresh relevant canonical Knowledge
       'K3-procedure-a',
       'K4-procedure-b',
       'K5-prove-verification',
+      'K8-missing-source',
     ].sort());
     assert.ok(hasReason(executeKnowledge.omittedByPolicy, 'K1-frame-architecture', 'type_architecture_decision_not_in_EXECUTE'));
     assert.ok(hasReason(executeKnowledge.omittedByPolicy, 'K6-known-failure', 'type_known_failure_pattern_not_in_EXECUTE'));
@@ -227,10 +229,10 @@ test('W4: stage materialization supplies only fresh relevant canonical Knowledge
     assert.match(String(executeKnowledge.promptBlock), /PROCEDURE_STEP_B/);
     assert.match(String(executeKnowledge.promptBlock), /Run the bounded service verification before accepting the change/);
     assert.doesNotMatch(String(executeKnowledge.promptBlock), /bounded service architecture/);
-    assert.doesNotMatch(String(executeKnowledge.promptBlock), /Missing source Knowledge/);
+    assert.match(String(executeKnowledge.promptBlock), /Missing source Knowledge/);
     assert.doesNotMatch(String(executeKnowledge.promptBlock), /Changed source Knowledge/);
     assert.equal(asRecords(executeKnowledge.semanticFacts).filter((entry) => entry.statement === 'Procedure metadata: bounded service repair').length, 2);
-    assert.ok(hasReason(executeKnowledge.staleOrUnavailable, 'K8-missing-source', 'freshness_stale'));
+    assert.equal(asRecords(executeKnowledge.staleOrUnavailable).some((entry) => entry.id === 'K8-missing-source'), false);
     assert.ok(hasReason(executeKnowledge.staleOrUnavailable, 'K9-changed-source', 'freshness_needs_deep_verify'));
 
     const executeRepeat = asRecord(await cp.buildStageContext('run-supply-target', { stage: 'EXECUTE', ...contextInput }));
@@ -246,17 +248,18 @@ test('W4: stage materialization supplies only fresh relevant canonical Knowledge
       'K2-execute-fact',
       'K5-prove-verification',
       'K6-known-failure',
+      'K8-missing-source',
     ].sort());
     assert.ok(hasReason(proveKnowledge.omittedByPolicy, 'K7-known-failure-duplicate', 'canonical_duplicate'));
     assert.ok(hasReason(proveKnowledge.omittedByPolicy, 'K3-procedure-a', 'type_episodic_observation_not_in_PROVE'));
     assert.ok(hasReason(proveKnowledge.omittedByPolicy, 'K11-wrong-stage-component', 'type_component_boundary_not_in_PROVE'));
-    assert.ok(hasReason(proveKnowledge.staleOrUnavailable, 'K8-missing-source', 'freshness_stale'));
+    assert.equal(asRecords(proveKnowledge.staleOrUnavailable).some((entry) => entry.id === 'K8-missing-source'), false);
     assert.ok(hasReason(proveKnowledge.staleOrUnavailable, 'K9-changed-source', 'freshness_needs_deep_verify'));
     assert.match(String(proveKnowledge.promptBlock), /Run the bounded service verification before accepting the change/);
     assert.equal(occurrenceCount(String(proveKnowledge.promptBlock), 'Service regression repeats when bounded state is bypassed.'), 1);
     assert.doesNotMatch(String(proveKnowledge.promptBlock), /PROCEDURE_STEP_A/);
     assert.doesNotMatch(String(proveKnowledge.promptBlock), /component boundary applies only during implementation/);
-    assert.doesNotMatch(String(proveKnowledge.promptBlock), /Missing source Knowledge/);
+    assert.match(String(proveKnowledge.promptBlock), /Missing source Knowledge/);
     assert.doesNotMatch(String(proveKnowledge.promptBlock), /Changed source Knowledge/);
 
     const proveVerification = asRecords(proveKnowledge.semanticFacts).find((entry) => entry.id === 'K5-prove-verification');

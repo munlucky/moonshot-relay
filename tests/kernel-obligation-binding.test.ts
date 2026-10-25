@@ -13,6 +13,7 @@ import { mergeContractRevisionWithBindings, normalizeTaskContract, replaceContra
 import { discoverProjectCommands, classifyCommandName } from '../src/contracts/command-catalog.js';
 import { observeProjectCommandDeclarations } from '../src/host/kernel/proof/project-command-observation.js';
 import { createHostProcessObservation } from '../src/host/kernel/process-observation.js';
+import { computeSourceDigest } from '../src/kernel/knowledge/freshness.js';
 
 const projectCommands = (projectRoot: string) => discoverProjectCommands({
   observation: observeProjectCommandDeclarations({ projectRoot }),
@@ -112,6 +113,50 @@ test('legacy required-verification statements recover their Kernel command bindi
       changedPaths: ['app.mjs'],
     });
     assert.deepEqual(obligations[0].allowedCommandRefs, ['test:ok']);
+  } finally {
+    await cleanup(fixture);
+  }
+});
+
+test('A5: source-bound required verification is compiled only while its source binding is current', async () => {
+  const fixture = await setup();
+  const sourceRef = 'verification-source.md';
+  try {
+    await writeFile(path.join(fixture.projectRoot, sourceRef), 'verification contract v1\n');
+    const record = {
+      id: 'kn-source-bound-verification',
+      type: 'required_verification',
+      statement: 'Run the auth verification.',
+      scope: ['app.mjs'],
+      status: 'committed',
+      sourceRefs: [sourceRef],
+      sourceDigest: computeSourceDigest({
+        projectRoot: fixture.projectRoot,
+        sourceRefs: [sourceRef],
+      }),
+      verification: {
+        obligationId: 'knowledge-auth-verification',
+        commandRefs: ['test:ok'],
+        method: 'unit-test',
+      },
+    };
+
+    const compile = () => compileRunObligations({
+      projectRoot: fixture.projectRoot,
+      commands: projectCommands(fixture.projectRoot),
+      requiredChecks: [],
+      contract: {},
+      knowledgeRecords: [record],
+      changedPaths: ['app.mjs'],
+    });
+
+    assert.deepEqual(compile().map((obligation) => obligation.obligationId), ['knowledge-auth-verification']);
+
+    await writeFile(path.join(fixture.projectRoot, sourceRef), 'verification contract v2\n');
+    assert.deepEqual(compile(), [], 'source evolution requires current verification knowledge evidence');
+
+    await rm(path.join(fixture.projectRoot, sourceRef));
+    assert.deepEqual(compile(), [], 'missing provenance cannot authorize a required verification obligation');
   } finally {
     await cleanup(fixture);
   }

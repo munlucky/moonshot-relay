@@ -13,7 +13,7 @@ const makeStore = (records: ReturnType<ContextStore['listKnowledgeRecords']>) =>
   listKnowledgeRecords: () => records,
 });
 
-test('context load omits records whose referenced source vanished (stale)', async () => {
+test('context load keeps source-bound verification out when its referenced source vanished', async () => {
   const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'krn-freshload-'));
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'krn-freshload-home-'));
   try {
@@ -24,7 +24,7 @@ test('context load omits records whose referenced source vanished (stale)', asyn
       { projectRoot, sourceRefs: ['present.js'] },
     );
     const staleRecord = attachFreshness(
-      { id: 'kn-stale', type: 'semantic_fact', statement: 'stale fact', status: 'committed', trustTier: 'verified', scope: [] },
+      { id: 'kn-stale', type: 'required_verification', statement: 'stale verification', status: 'committed', trustTier: 'verified', scope: [] },
       { projectRoot, sourceRefs: ['deleted.js'] },
     );
 
@@ -41,7 +41,47 @@ test('context load omits records whose referenced source vanished (stale)', asyn
     assert.ok(servedIds.includes('kn-fresh'), 'fresh record should be served');
     assert.ok(!servedIds.includes('kn-stale'), 'stale record must be omitted');
     assert.ok(ctx.staleOrUnavailable.some((s) => s.id === 'kn-stale' && s.reason === 'freshness_stale'));
-    assert.ok(!ctx.promptBlock.includes('stale fact'));
+    assert.ok(!ctx.promptBlock.includes('stale verification'));
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+    await rm(runtimeHome, { recursive: true, force: true });
+  }
+});
+
+
+test('A5: reusable semantic and architecture knowledge survives source path relocation', async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'krn-fresh-relocation-'));
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'krn-fresh-relocation-home-'));
+  try {
+    await writeFile(path.join(projectRoot, 'fact-source.md'), 'fact source\n');
+    await writeFile(path.join(projectRoot, 'architecture-source.md'), 'architecture source\n');
+    const fact = attachFreshness(
+      { id: 'kn-relocated-fact', type: 'semantic_fact', statement: 'Authentication owns session issuance.', status: 'committed', trustTier: 'verified', scope: [] },
+      { projectRoot, sourceRefs: ['fact-source.md'] },
+    );
+    const architecture = attachFreshness(
+      { id: 'kn-relocated-architecture', type: 'architecture_decision', statement: 'Session issuance stays behind the auth boundary.', status: 'committed', trustTier: 'verified', scope: [] },
+      { projectRoot, sourceRefs: ['architecture-source.md'] },
+    );
+
+    await rm(path.join(projectRoot, 'fact-source.md'));
+    await rm(path.join(projectRoot, 'architecture-source.md'));
+
+    const ctx = await buildProjectKnowledgeContext({
+      projectId: 'p-relocation',
+      stage: 'FRAME',
+      runId: 'r-relocation',
+      objective: 'update authentication session behavior',
+      projectRoot,
+      stateStore: makeStore([fact, architecture]),
+      env: { MOON_RELAY_KERNEL_HOME: runtimeHome },
+    });
+
+    const servedIds = ctx.semanticFacts.map((record) => record.id);
+    assert.ok(servedIds.includes('kn-relocated-fact'));
+    assert.ok(servedIds.includes('kn-relocated-architecture'));
+    assert.ok(ctx.promptBlock.includes('Authentication owns session issuance.'));
+    assert.ok(ctx.promptBlock.includes('Session issuance stays behind the auth boundary.'));
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
     await rm(runtimeHome, { recursive: true, force: true });

@@ -16,6 +16,7 @@ import { KERNEL_POLICY } from '../policy.js';
 import { isProtectedObligation } from '../proof/protected-obligations.js';
 import { commandRefsForClasses } from '../../contracts/command-catalog.js';
 import { matchPathScope } from '../../shared/path-scope.js';
+import { cheapReVerify } from '../knowledge/freshness.js';
 import type { ProjectCommand } from '../../contracts/project-command.js';
 
 type UnknownRecord = Record<string, unknown>;
@@ -114,6 +115,8 @@ interface KnowledgeRecordLike extends UnknownRecord {
   evidenceLevel?: unknown;
   receiptContractRef?: unknown;
   freshnessInputs?: unknown[];
+  sourceRefs?: unknown[];
+  sourceDigest?: unknown;
 }
 
 interface DeclareOptions {
@@ -747,6 +750,14 @@ export const compileRunObligations = ({
   for (const record of Array.isArray(knowledgeRecords) ? knowledgeRecords : []) {
     const type = record?.type || record?.recordType;
     if (type !== 'required_verification' || ['superseded', 'rejected', 'archived'].includes(String(record.status || ''))) continue;
+    const sourceRefs = Array.isArray(record.sourceRefs) ? record.sourceRefs.map(String) : [];
+    if (sourceRefs.length > 0) {
+      const freshness = cheapReVerify({
+        sourceRefs,
+        sourceDigest: typeof record.sourceDigest === 'string' ? record.sourceDigest : null,
+      }, { projectRoot });
+      if (freshness.status !== 'fresh') continue;
+    }
     const verification = record.verification || record.recordJson?.verification || {};
     const recordScope = normalizeScope(record.scope);
     const verificationScope = normalizeScope(verification.scope);

@@ -136,6 +136,20 @@ const isValidStage = (value: string): value is Stage => (
   (VALID_STAGES as readonly string[]).includes(value)
 );
 
+const RELOCATABLE_SEMANTIC_TYPES = new Set([
+  'semantic_fact',
+  'architecture_decision',
+]);
+
+const canReuseWithMissingProvenance = (
+  record: KnowledgeRecordLike,
+  freshness: ReturnType<typeof cheapReVerify>,
+): boolean => (
+  freshness.status === 'stale'
+  && freshness.reason === 'referenced-path-missing'
+  && RELOCATABLE_SEMANTIC_TYPES.has(String(record.type || record.recordType || 'semantic_fact'))
+);
+
 const procedureParts = (record: KnowledgeRecordLike): {
   metadata: UnknownRecord;
   body: UnknownRecord;
@@ -359,14 +373,15 @@ export async function buildProjectKnowledgeContext({
       }
     }
 
-    // Filter 1.5: freshness (§21.3). When the project filesystem is available,
-    // a cheap re-verify decides keep-vs-stale. A record whose referenced source
-    // vanished ('stale') or drifted ('needs_deep_verify') is omitted from the
-    // served context rather than rendered as still-verified knowledge.
+    // Provenance freshness is not semantic validity. Missing source paths can
+    // be caused by repository relocation, so reusable semantic/project facts
+    // stay selectable until an explicit semantic invalidation (for example a
+    // supersession) occurs. Source evolution at the same path still requires
+    // deep verification, and trust-critical records remain source-bound.
     if (projectRoot && Array.isArray(record.sourceRefs) && record.sourceRefs.length > 0) {
       const freshness = cheapReVerify(record, { projectRoot });
       if (
-        freshness.status === 'stale'
+        (freshness.status === 'stale' && !canReuseWithMissingProvenance(record, freshness))
         || freshness.status === 'needs_deep_verify'
       ) {
         staleOrUnavailable.push({
