@@ -557,21 +557,23 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
     // Worktree mutation authority follows the surviving workspace identity.
     // Keep the existing target lease when one is already present; otherwise
     // move the source lease to the surviving worktree id.
-    db.prepare(`
-      UPDATE runs
-      SET worktree_id=?
-      WHERE project_id=? AND workspace_id=?
-    `).run(nextWorktreeId, fromProjectId, workspaceId);
+    workLifecyclePersistence.rebindRunWorktreeId({
+      projectId: fromProjectId,
+      workspaceId,
+      worktreeId: nextWorktreeId,
+    });
     for (const priorWorktreeId of priorWorktreeIds) {
       const sourceLease = workLifecyclePersistence.getWorktreeMutationLease(priorWorktreeId);
       if (!sourceLease || sourceLease.projectId !== fromProjectId) continue;
       if (priorWorktreeId === nextWorktreeId) {
         if (fromProjectId !== toProjectId) {
-          db.prepare(`
-            UPDATE worktree_mutation_leases
-            SET project_id=?
-            WHERE worktree_id=? AND project_id=? AND holder_run_id=?
-          `).run(toProjectId, priorWorktreeId, fromProjectId, sourceLease.holderRunId);
+          workLifecyclePersistence.rebindWorktreeMutationLease({
+            worktreeId: priorWorktreeId,
+            nextWorktreeId: priorWorktreeId,
+            fromProjectId,
+            toProjectId,
+            runId: sourceLease.holderRunId,
+          });
         }
         continue;
       }
@@ -591,17 +593,13 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         });
         continue;
       }
-      db.prepare(`
-        UPDATE worktree_mutation_leases
-        SET worktree_id=?, project_id=?
-        WHERE worktree_id=? AND project_id=? AND holder_run_id=?
-      `).run(
+      workLifecyclePersistence.rebindWorktreeMutationLease({
+        worktreeId: priorWorktreeId,
         nextWorktreeId,
-        toProjectId,
-        priorWorktreeId,
         fromProjectId,
-        sourceLease.holderRunId,
-      );
+        toProjectId,
+        runId: sourceLease.holderRunId,
+      });
     }
   };
 

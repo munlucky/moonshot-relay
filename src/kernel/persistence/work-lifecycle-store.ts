@@ -255,6 +255,11 @@ export interface WorkLifecyclePersistence {
     workspaceId: string;
     worktreeId: string;
   }): number;
+  rebindRunWorktreeId(input: {
+    projectId: string;
+    workspaceId: string;
+    worktreeId: string;
+  }): number;
   getWorktreeMutationLease(worktreeId: string): PersistedWorktreeMutationLease | null;
   listWorktreeMutationLeases(input?: {
     projectId?: string | null;
@@ -270,6 +275,13 @@ export interface WorkLifecyclePersistence {
     runId: string;
     projectId?: string | null;
   }): boolean;
+  rebindWorktreeMutationLease(input: {
+    worktreeId: string;
+    nextWorktreeId: string;
+    fromProjectId: string;
+    toProjectId: string;
+    runId: string;
+  }): number;
   getWorkspaceMutationLockV2(workspaceId: string): PersistedWorkspaceMutationLock | null;
   listWorkspaceMutationLocksV2(input?: {
     projectId?: string | null;
@@ -1107,6 +1119,15 @@ export const createWorkLifecyclePersistence = ({
       return Number(result.changes || 0);
     },
 
+    rebindRunWorktreeId({ projectId, workspaceId, worktreeId }) {
+      const result = db.prepare(`
+        UPDATE runs
+        SET worktree_id=?
+        WHERE project_id=? AND workspace_id=?
+      `).run(worktreeId, projectId, workspaceId) as ChangeResult;
+      return Number(result.changes || 0);
+    },
+
     getWorktreeMutationLease,
 
     listWorktreeMutationLeases({ projectId = null, runId = null } = {}) {
@@ -1160,6 +1181,21 @@ export const createWorkLifecyclePersistence = ({
             WHERE worktree_id=? AND holder_run_id=?
           `).run(worktreeId, runId);
       return Number((result as ChangeResult).changes || 0) === 1;
+    },
+
+    rebindWorktreeMutationLease({
+      worktreeId,
+      nextWorktreeId,
+      fromProjectId,
+      toProjectId,
+      runId,
+    }) {
+      const result = db.prepare(`
+        UPDATE worktree_mutation_leases
+        SET worktree_id=?, project_id=?
+        WHERE worktree_id=? AND project_id=? AND holder_run_id=?
+      `).run(nextWorktreeId, toProjectId, worktreeId, fromProjectId, runId) as ChangeResult;
+      return Number(result.changes || 0);
     },
 
     getSessionBinding,

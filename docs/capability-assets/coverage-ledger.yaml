@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "kind": "capability-asset-coverage-ledger",
   "baselineCommit": "9701a86d2225c938f13982a7e0f7f43a7f9bc10e",
-  "updatedAt": "2026-10-06",
+  "updatedAt": "2026-10-25",
   "summary": {
-    "totalMapped": 788,
-    "classifiedCapabilityCount": 763,
+    "totalMapped": 789,
+    "classifiedCapabilityCount": 764,
     "ignoredCount": 25,
     "unclassifiedCount": 0
   },
@@ -3105,6 +3105,10 @@
     "tests/kernel-subagent-review.test.mjs": {
       "classification": "capability",
       "capability": "evidence-completion-and-review-authority"
+    },
+    "tests/kernel-successor-lineage-recovery.test.mjs": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
     },
     "tests/kernel-successor-worktree.test.mjs": {
       "classification": "capability",
