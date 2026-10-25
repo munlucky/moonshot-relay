@@ -10,8 +10,8 @@
 | 02 | A1 Identity + Evidence | COMPLETE | d08a887b | verified |
 | 03 | A2+A3 Proof Delta + Failure Ownership | COMPLETE | 3c66d01d | verified |
 | 04 | A4 Knowledge Quality | COMPLETE | 78c05a9d | verified |
-| 05 | A5 Knowledge Reuse | COMPLETE | current Preset 05 commit | verify after push |
-| 06 | A6+A7 Usage Receipt + Historical Replay | NOT_STARTED | - | - |
+| 05 | A5 Knowledge Reuse | COMPLETE | 5b5cd618 | verified |
+| 06 | A6+A7 Usage Receipt + Historical Replay | COMPLETE | current Preset 06 commit | verify after push |
 | 07 | B1+B2 Policy/Prompt Reduction | NOT_STARTED | - | - |
 | 08 | B3 Control Plane / State Store Thinning | NOT_STARTED | - | - |
 | 09 | B4 Final Replay + Complexity Audit | NOT_STARTED | - | - |
@@ -102,3 +102,19 @@
 - Boundary check: **9 modules / 308 files / 830 edges**
 - Complexity: 새 freshness taxonomy, vector store, path alias registry/fallback, Knowledge table/lifecycle, provider/OS/project-specific production branch를 추가하지 않음
 - Kernel authoritative proof는 위 Run의 최종 receipt를 authority로 사용한다.
+
+## Preset 06 evidence
+
+- Production source changes: **0**
+- Usage lineage production status: **VERIFIED_EXISTING**
+- Regression strengthened: representative Host dispatch에서 provider/model/input/cached input/output/wall time + route decision + attempt + usage receipt + run lineage를 한 번에 확인
+- Attempt reverse linkage: persisted attempt의 `usageReceiptId`가 receipt ID와 일치
+- A-stage representative integration gate: **121/121 pass**
+- Fixed sentinel: **false completion 0 / missed accept 0**
+- Historical replay contract: current supported candidate만 single-variable replay에 진입하고 quality → rework → efficiency 판정 순서 유지
+- Failed Proof: 동일 Evidence Identity no-delta executor 재호출 0, meaningful delta에서만 재실행
+- Knowledge quality: generic failure는 episodic, durable failure는 fingerprint/cause/scope/current verified resolution-replay 필요
+- Knowledge reuse: Run A → Run B reuse/revision continuity/project isolation 유지
+- B-stage entry: **PASS**
+- 상세 결과: `A_STAGE_HISTORICAL_REPLAY_RESULT.md`
+- Complexity: 새 telemetry table/exporter/provider-specific Kernel cost policy/workflow stage/fallback/failure registry를 추가하지 않음

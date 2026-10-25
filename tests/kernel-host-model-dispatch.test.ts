@@ -42,7 +42,9 @@ test('a Host that applies the requested model records an enforced receipt', asyn
         observedSessionConfig: { model: invocation.model, effort: invocation.effort },
         sessionId: 'claude-session-1',
         inputTokens: 900,
+        cachedInputTokens: 300,
         outputTokens: 120,
+        wallClockMs: 1250,
       }); },
     });
     const result = await dispatchKernelTurn({ controlPlane: cp, runId, adapter, registry: registryFor('claude', FRONTIER_ENV), actionContext: { executionMode: 'native-subagent', delegationRequested: true } });
@@ -68,6 +70,21 @@ test('a Host that applies the requested model records an enforced receipt', asyn
     assert.ok(result.receipt && typeof result.receipt === 'object' && 'actorSessionId' in result.receipt);
     assert.ok(typeof result.receipt.actorSessionId === 'string');
     assert.match(result.receipt.actorSessionId, /^sha256:[a-f0-9]{64}$/);
+    const usage = result.receipt as Record<string, unknown>;
+    assert.equal(usage.provider, 'claude');
+    assert.equal(usage.cachedInputTokens, 300);
+    assert.equal(usage.outputTokens, 120);
+    assert.equal(usage.wallClockMs, 1250);
+    assert.equal(usage.runId, runId);
+    assert.ok(typeof result.attemptId === 'string');
+    assert.equal(usage.attemptId, result.attemptId);
+    const attempt = cp.getAttemptById(runId, result.attemptId);
+    assert.ok(attempt);
+    assert.equal(attempt.usageReceiptId, usage.receiptId);
+    const decision = cp.stateStore.getModelRouteDecision(String(usage.decisionId), { runId });
+    assert.ok(decision);
+    assert.equal(decision.runId, runId);
+    assert.ok(decision.executionClass);
     assert.equal(cp.modelRoutingSummary(runId).enforcedTurns, 1);
   });
 });
