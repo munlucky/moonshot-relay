@@ -5,6 +5,7 @@ import path from 'node:path';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { runGit } from '../src/shared/git-safe.js';
 import {
+  assertStagingContentSafe,
   isPathStagable,
   filterStagingSelection,
 } from '../src/kernel/git/staging-policy.js';
@@ -43,6 +44,38 @@ const stagedPaths = (repoRoot: string) => git(repoRoot, ['diff', '--cached', '--
   .split(/\r?\n/)
   .filter(Boolean)
   .sort();
+
+test('env templates allow public OAuth configuration and explicit replacement placeholders', async () => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'kernel-env-template-'));
+  try {
+    await writeFile(path.join(repoRoot, '.env.example'), [
+      'MCP_OAUTH_ENABLED=true', 'MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS=3600',
+      'MCP_OAUTH_MAX_REGISTERED_CLIENTS=256', 'TOKEN_TTL_MS=1000',
+      'OAUTH_ISSUER=https://example.com', 'OAUTH_ENABLED=false', 'KEYBOARD=public',
+      'API_KEY=replace-with-your-key', 'AUTH_TOKEN="replace_with_a_secret"',
+      'CLIENT_SECRET=your-client-secret', 'PASSWORD=<password>', 'AUTH=',
+    ].join('\n'));
+    assert.doesNotThrow(() => assertStagingContentSafe(repoRoot, '.env.example'));
+  } finally { await rm(repoRoot, { recursive: true, force: true }); }
+});
+
+test('env templates still reject real secret values and disguised provider keys', async () => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'kernel-env-secret-'));
+  try {
+    for (const assignment of [
+      'AUTH=not-a-placeholder', 'SERVICE_AUTH_TOKEN=not-a-placeholder',
+      'OAUTH_CLIENT_SECRET=not-a-placeholder', 'APIKEY=not-a-placeholder',
+      'DBPASSWORD=not-a-placeholder', 'API_KEY=replace-with-key123',
+      'CREDENTIAL_VALUE=not-a-placeholder', 'API_KEY_VALUE=not-a-placeholder',
+      'AUTH_HEADER=not-a-placeholder', 'SECRET_BACKUP=not-a-placeholder',
+      'TOKEN_TTL_SECONDS=not-a-duration',
+      `API_KEY=replace-with-ghp_${'a'.repeat(24)}`, 'PUBLIC=-----BEGIN RSA PRIVATE KEY-----',
+    ]) {
+      await writeFile(path.join(repoRoot, '.env.example'), assignment);
+      assert.throws(() => assertStagingContentSafe(repoRoot, '.env.example'), /GIT_ENV_TEMPLATE_SECRET/, assignment);
+    }
+  } finally { await rm(repoRoot, { recursive: true, force: true }); }
+});
 
 test('isPathStagable rejects runtime DB, env, and memorygraph files', () => {
   assert.equal(isPathStagable('src/index.mjs'), true);

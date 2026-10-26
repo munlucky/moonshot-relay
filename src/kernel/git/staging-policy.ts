@@ -34,9 +34,12 @@ export function assertStagingContentSafe(repoRoot: string, filePath: string): vo
     if (!line.trim() || line.trim().startsWith('#')) continue;
     const assignment = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/u.exec(line.trim());
     if (!assignment) throw new Error('GIT_ENV_TEMPLATE_INVALID');
-    if (/(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTH)(?:_|$)/iu.test(assignment[1]!)) {
+    // AUTH must be a name token: OAUTH configuration is not itself a credential.
+    if (/(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|(?:^|_)AUTH)(?:_|$)/iu.test(assignment[1]!)) {
       const value = assignment[2]!.trim().replace(/^(['"])(.*)\1$/u, '$2');
-      if (value && !/^(?:<[^<>]+>|\$\{[A-Za-z_][A-Za-z0-9_]*\}|changeme|replace_me|your[-_][A-Za-z_-]+)$/iu.test(value)) {
+      // Numeric TTL metadata carries a duration rather than the credential.
+      if (/_TTL_(?:SECONDS|MS)$/iu.test(assignment[1]!) && /^\d+$/u.test(value)) continue;
+      if (value && !/^(?:<[^<>]+>|\$\{[A-Za-z_][A-Za-z0-9_]*\}|changeme|replace_me|replace[-_]with[-_][A-Za-z_-]+|your[-_][A-Za-z_-]+)$/iu.test(value)) {
         throw new Error('GIT_ENV_TEMPLATE_SECRET');
       }
     }
