@@ -9,11 +9,11 @@
     "estimatedPromptTokens": 3093984
   },
   "allowedDelta": {
-    "files": 233,
-    "nonblankLines": 73751,
-    "utf8Bytes": 2911791,
-    "estimatedPromptTokens": 727947
+    "files": 244,
+    "nonblankLines": 74606,
+    "utf8Bytes": 2984984,
+    "estimatedPromptTokens": 746246
   },
-  "allowedDeltaRationale": "The immutable aca19ec baseline is retained. At reviewed main 48daf03d9fcc0b70ddf84a0dd80d0ba2065a14fb, before the pending TypeScript 7 compatibility work is tracked, the measured canonical surface is 2237 files, 345403 nonblank lines, 15238216 UTF-8 bytes and 3809554 estimated prompt tokens. The growth since the previous C10 budget comes from already-integrated project-identity and independent-review boundary work plus successor/recovery corrections on main; the surface gate had become stale before the current TypeScript change. The allowances preserve the previous reviewed headroom exactly: 4 files, 1158 nonblank lines, 49509 UTF-8 bytes and 12377 estimated prompt tokens. This is a bounded baseline maintenance update rather than an automatic ratchet or an exception for the pending TypeScript work. It adds no public Kernel command, workflow stage, Authority, durable table, scheduler, cache, suppression rule, provider fallback, automatic mutation/promotion path, or project/model-specific Kernel branch.",
+  "allowedDeltaRationale": "Preset 09 final maintenance retains the immutable aca19ec baseline and sets each limit to the reviewed final canonical repository surface with zero headroom. The update absorbs only already-integrated harness evolution plus final regression/audit documentation, removes one shadowed Codex profile skill copy, and leaves zero unregistered tests. It is not an automatic ratchet or exception mechanism and adds no public Kernel command, workflow stage, Authority, durable table, scheduler, cache, suppression rule, fallback/retry engine, automatic mutation/promotion path, or provider/OS/project-specific Kernel branch.",
   "allowedUnregisteredTests": 0
 }

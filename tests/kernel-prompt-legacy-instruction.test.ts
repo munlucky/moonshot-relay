@@ -43,12 +43,11 @@ test('no Kernel prompt surface carries a legacy instruction', async () => {
 
 test('Kernel authority rules survive the cleanup', async () => {
   const skill = await readFile('skills/moon-relay-kernel/SKILL.md', 'utf8');
-  assert.match(skill, /Never mutate files outside `allowedPaths`/i);
-  assert.match(skill, /Kernel runtime executes them/i);
-  assert.match(skill, /independent reviewer session/i);
-  assert.match(skill, /only completion authority/i);
-  assert.match(skill, /exact reusable evidence/i);
-  assert.match(skill, /do not duplicate Kernel completion proof before `report`/i);
+  assert.match(skill, /Do not mutate outside the current work unit/i);
+  assert.match(skill, /Kernel executes trusted proof or reuses exact fresh evidence/i);
+  assert.match(skill, /Independent judgment obligations use trusted review receipts/i);
+  assert.match(skill, /Local checks may support implementation feedback, but they do not replace Kernel evidence/i);
+  assert.match(skill, /A Run is complete only when the latest canonical continuation returns/i);
   assert.doesNotMatch(skill, /report only after all required evidence is recorded/i);
 
   const implementer = await readFile('package/profile-templates/claude/.claude/agents/kernel-implementer.md', 'utf8');
@@ -58,44 +57,35 @@ test('Kernel authority rules survive the cleanup', async () => {
 
 test('model-facing Kernel guidance consumes report continuation without an immediate next round trip', async () => {
   const skill = await readFile('skills/moon-relay-kernel/SKILL.md', 'utf8');
-  const shippedSkill = await readFile('package/kernel/profiles/codex/skills/moon-relay-kernel/SKILL.md', 'utf8');
   const qwen = await readFile('package/kernel/profiles/ade/QWEN.md', 'utf8');
 
-  for (const text of [skill, shippedSkill]) {
-    assert.match(text, /canonical continuation in `next`/i);
-    assert.match(text, /consume that returned continuation directly/i);
-    assert.match(text, /latest canonical continuation has `{ action: { type: "done" } }`/i);
-    assert.doesNotMatch(text, /run is done only when `kernel next` returns/i);
-  }
+  assert.match(skill, /Consume the returned `next` continuation instead of issuing an extra advance call/i);
+  assert.match(skill, /latest canonical continuation returns `action\.type = "done"`/i);
+  assert.match(skill, /Do not call `next` again only to reconfirm it/i);
+  assert.doesNotMatch(skill, /run is done only when `kernel next` returns/i);
+
   assert.match(qwen, /Continue from the canonical `next` returned by that report/i);
   assert.doesNotMatch(qwen, /then call `kernel next` again/i);
 });
 
 test('Kernel skill asks for semantic contract meaning instead of internal wiring', async () => {
   const skill = await readFile('skills/moon-relay-kernel/SKILL.md', 'utf8');
-  const shippedSkill = await readFile('package/kernel/profiles/codex/skills/moon-relay-kernel/SKILL.md', 'utf8');
 
-  for (const text of [skill, shippedSkill]) {
-    assert.match(text, /pass semantic `contractJson` directly/i);
-    assert.match(text, /Kernel assigns acceptance IDs, obligation wiring, digest, and revision/i);
-    assert.match(text, /do not author those internal identifiers/i);
-    assert.ok(text.includes('omit unknown scope instead of sending `allowedPaths: []` as a claim'));
-    assert.ok(text.includes('do not manufacture `AC-*` or obligation IDs'));
-    assert.doesNotMatch(text, /supply bounded steps with acceptance IDs/i);
-  }
+  assert.match(skill, /send semantic contract data: objective, acceptance, constraints, non-goals, and known bounded mutation scope/i);
+  assert.match(skill, /Kernel owns internal acceptance IDs, obligation wiring, revisions, and digests/i);
+  assert.match(skill, /Omit unknown scope instead of declaring an empty allowlist/i);
+  assert.match(skill, /Do not manufacture Kernel internal IDs/i);
+  assert.doesNotMatch(skill, /supply bounded steps with acceptance IDs/i);
 });
 
-test('Kernel skill keeps recovery continuity in the Host instead of model bookkeeping', async () => {
+test('Kernel skill keeps recovery authority out of model bookkeeping', async () => {
   const skill = await readFile('skills/moon-relay-kernel/SKILL.md', 'utf8');
-  const shippedSkill = await readFile('package/kernel/profiles/codex/skills/moon-relay-kernel/SKILL.md', 'utf8');
 
-  for (const text of [skill, shippedSkill]) {
-    assert.match(text, /Host-managed surfaces preserve the previous diagnosis capsule across retries/i);
-    assert.match(text, /does not maintain recovery fingerprints or counters/i);
-    assert.match(text, /Let the Host feed the previous diagnosis capsule back into recovery continuity/i);
-    assert.match(text, /stateless\/manual CLI process/i);
-    assert.doesNotMatch(text, /Retain the last diagnosis capsule and pass .* on each diagnostic retry/i);
-  }
+  assert.match(skill, /Provider model selection, execution mechanism, delegation, session freshness, and concurrency are Host-owned/i);
+  assert.match(skill, /use the returned recovery\/diagnosis state/i);
+  assert.match(skill, /Repair the owning cause; do not create fallback completion or edit runtime DB\/receipts/i);
+  assert.match(skill, /Refresh `next` only when a new canonical state is needed/i);
+  assert.doesNotMatch(skill, /Retain the last diagnosis capsule and pass .* on each diagnostic retry/i);
 });
 
 test('provider prompts do not restate the common execution contract', () => {

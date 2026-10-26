@@ -84,3 +84,67 @@ OVERALL = COMPLETE / BLOCKED
 ## 커밋 제목 예시
 
 `test(kernel): 실행 연속성 및 decomplexification 최종 회귀 검증`
+
+## 최종 실행 결과
+
+Preset 09는 새 제품 기능을 추가하지 않고 최종 replay와 complexity audit에서 드러난 회귀만 정리했다.
+
+- 최종 `test:active:2`: **1,067 tests / 1,062 pass / 0 fail / 5 skip**
+- `test:active:3`: **41/41 pass**
+- `test:profile-ownership`: **17/17 pass**
+- `test:kernel-explicit-invocation`: **3/3 pass**
+- `test:kernel-commit-message`: **7/7 pass**
+- `test:capability-assets`: **1/1 pass**
+- `test:decomplexification`: **17/17 pass**
+- `test:kernel-reliability`: **282/282 pass**
+- `test:kernel-git-closeout`: **61/61 pass**
+- `test:source-runtime`: **20/20 pass**
+- TypeScript typecheck: **pass**
+- Runtime build freshness: **308 files / 840 edges / changed 0**
+- Test build freshness: **289 tests / 8 helpers**
+- Boundary check: **9 modules / 308 files / 840 edges**
+- Unregistered tests: **0**
+
+초기 `test:active:2`의 6 failures는 제품 동작 결함과 환경 문제를 분리해 처리했다.
+
+1. Preset 08에서 completion 판단을 Trust Authority로 옮긴 뒤 남은 세 legacy test가 `StateStore.evaluateCompletion()`을 호출하고 있었다. 호환 메서드를 되살리지 않고 세 테스트를 canonical `evaluateTrustCompletion()` 경계로 옮겼다.
+2. Prompt cleanup 테스트 네 건이 Preset 07 이전의 장문 문구를 그대로 요구하고 있었다. 축약된 canonical guidance의 의미와 authority를 검증하도록 바꿨으며 삭제된 micro-guidance를 복원하지 않았다.
+3. install-isolation 한 건의 `ENOMEM`은 동일 테스트 단독 재실행과 최종 전체 재실행에서 모두 통과했다. 환경성 실패로 판정했고 retry/fallback 코드는 추가하지 않았다.
+
+## Complexity audit
+
+- Production `src/`, `scripts/`, `bin/` 변경: **0 files**
+- 제거된 shadowed Codex profile Kernel skill 사본: **1 → 0**
+- legacy `.evaluateCompletion()` test caller: **3 → 0**
+- 신규 compatibility shim: **0**
+- 신규 fallback/retry engine: **0**
+- 신규 public command/workflow stage/Authority/durable table: **0**
+- 신규 provider/OS/project-specific Kernel branch: **0**
+- capability coverage ledger는 제거된 중복 surface를 반영해 **789 → 788 surfaces**, capability-classified **764 → 763**으로 정합화했다.
+- canonical `skills/moon-relay-kernel/SKILL.md`가 유일한 skill source다. Profile installer는 이 canonical source를 provider home에 투영하며 canonical source가 없으면 fail-closed한다.
+- 최종 harness surface budget은 immutable baseline을 유지한 채 최종 canonical actual에 정확히 맞추는 zero-headroom 방식으로 고정한다. 예외 headroom이나 자동 ratchet은 두지 않는다.
+
+## Stop Rule 판정
+
+- 대표 failure가 새 special-case 없이 해결됨: **PASS**
+- completion safety 비열화 없음: **PASS**
+- 동일 proof 반복 감소 경계 유지: **PASS**
+- binding/environment recovery 경계 유지: **PASS**
+- generic failure Knowledge quality gate 유지: **PASS**
+- usable current Knowledge/reuse 경계 유지: **PASS**
+- usage receipt lineage 유지: **PASS**
+- duplicate authority 감소: **PASS**
+- model-visible 규칙 감소 상태 유지: **PASS**
+
+최종 Kernel proof는 모든 repository mutation이 끝난 뒤 수행한다. Proof receipt는 Kernel authority에 보존하며, receipt ID를 다시 source 문서에 기록해 evidence freshness를 무효화하지 않는다.
+
+```text
+EXECUTION CONTINUITY = PASS
+EVIDENCE SEMANTICS = PASS
+KNOWLEDGE QUALITY = PASS
+KNOWLEDGE REUSE = PASS
+USAGE LINEAGE = PASS
+DECOMPLEXIFICATION = PASS
+REMOTE PARITY = PASS
+OVERALL = COMPLETE
+```

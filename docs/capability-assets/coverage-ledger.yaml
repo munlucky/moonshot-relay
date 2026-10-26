@@ -4,8 +4,8 @@
   "baselineCommit": "9701a86d2225c938f13982a7e0f7f43a7f9bc10e",
   "updatedAt": "2026-10-25",
   "summary": {
-    "totalMapped": 789,
-    "classifiedCapabilityCount": 764,
+    "totalMapped": 788,
+    "classifiedCapabilityCount": 763,
     "ignoredCount": 25,
     "unclassifiedCount": 0
   },
@@ -903,10 +903,6 @@
       "capability": "account-root-package-and-profile-adoption"
     },
     "package/kernel/profiles/codex/AGENTS.override.md": {
-      "classification": "capability",
-      "capability": "account-root-package-and-profile-adoption"
-    },
-    "package/kernel/profiles/codex/skills/moon-relay-kernel/SKILL.md": {
       "classification": "capability",
       "capability": "account-root-package-and-profile-adoption"
     },

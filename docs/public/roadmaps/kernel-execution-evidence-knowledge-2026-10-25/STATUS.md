@@ -14,7 +14,7 @@
 | 06 | A6+A7 Usage Receipt + Historical Replay | COMPLETE | fa7243c7 | verified |
 | 07 | B1+B2 Policy/Prompt Reduction | COMPLETE | 94114497 | verified |
 | 08 | B3 Control Plane / State Store Thinning | COMPLETE | current Preset 08 commit | verified |
-| 09 | B4 Final Replay + Complexity Audit | NOT_STARTED | - | - |
+| 09 | B4 Final Replay + Complexity Audit | COMPLETE | current Preset 09 commit | verified after push |
 
 허용 상태:
 
@@ -159,3 +159,25 @@
 - Kernel reliability: **282/282 pass**.
 - State Store에 남긴 판단은 schema/command binding, referential integrity, transition/OCC, transaction 경계다. route/completion/domain policy를 persistence에 다시 복제하지 않았다.
 - Complexity: 새 facade/compatibility layer/fallback chain/provider·OS·프로젝트 전용 분기 없이 기존 Work/Trust owner를 재사용했다.
+
+## Preset 09 evidence
+
+- Base / Preset 08 HEAD: `d4998b2fe1bc1a9212678eead720834f11e6833a`.
+- Production `src/`, `scripts/`, `bin/` changes: **0**.
+- Initial `test:active:2`: **1,067 tests / 1,056 pass / 6 fail / 5 skip**. 실패 6건을 stale test contract 5건과 일시적 `ENOMEM` 1건으로 분리했다.
+- Completion regression: 제거된 `StateStore.evaluateCompletion()`에 남아 있던 test caller **3 → 0**. State Store compatibility shim은 복구하지 않고 canonical Trust Authority를 직접 검증한다.
+- Prompt regression: Preset 07 이전 장문 문구를 요구하던 stale assertions를 현재 semantic authority 기준으로 갱신했다. 삭제된 operational micro-guidance는 복원하지 않았다.
+- Duplicate authority cleanup: `package/kernel/profiles/codex/skills/moon-relay-kernel/SKILL.md` shadow copy **1 → 0**. Installer는 canonical `skills/moon-relay-kernel`을 provider home에 투영하고 canonical source가 없으면 fail-closed한다.
+- Capability asset 정합화: coverage surface **789 → 788**, capability-classified **764 → 763**, ignored **25 유지**. `test:capability-assets` **1/1 pass**.
+- Environment classification: install-isolation `ENOMEM`은 단독 **1/1 pass** 및 최종 전체 재실행에서도 통과했다. retry/fallback이나 환경별 production branch는 추가하지 않았다.
+- Final `test:active:2`: **1,067 tests / 1,062 pass / 0 fail / 5 skip**.
+- Additional regression: `active:3` **41/41**, profile ownership **17/17**, explicit invocation **3/3**, commit message **7/7**, decomplexification **17/17**, reliability **282/282**, git closeout **61/61**.
+- Source/runtime: `test:source-runtime` **20/20 pass**.
+- TypeScript typecheck: **pass**.
+- Runtime build freshness: **308 files / 840 edges / changed 0**.
+- Test build freshness: **289 tests / 8 helpers**.
+- Boundary check: **9 modules / 308 files / 840 edges**.
+- Negative Complexity Budget: 신규 compatibility shim/fallback/retry engine/public command/workflow stage/Authority/durable table/provider·OS·project-specific Kernel branch **0**.
+- Surface budget: immutable baseline을 유지하고 최종 canonical actual을 limit로 사용하는 zero-headroom maintenance로 마감한다. unregistered tests **0**.
+- Final Kernel proof는 모든 repository mutation 이후 실행하고 receipt는 Kernel authority에 보존한다. Source 문서에 receipt ID를 되써서 proof freshness를 깨지 않는다.
+- Detailed result: `09_B4_FINAL_REPLAY_AUDIT.md`.

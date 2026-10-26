@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { commitProjectKnowledge } from '../scripts/kernel/knowledge/commit.js';
 import { openKernelStateStore } from '../scripts/kernel/state-store.js';
+import { evaluateTrustCompletion } from '../scripts/kernel/proof/trust-authority.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -32,7 +33,16 @@ test('Knowledge Commit - performs transactional knowledge commit upon accepted c
 
     store.transition('run-kn-c1', 'CLOSE');
 
-    const completion = store.evaluateCompletion('run-kn-c1');
+    const runSnapshot = store.getRun('run-kn-c1');
+    assert.ok(runSnapshot);
+    const completion = evaluateTrustCompletion({
+      run: runSnapshot,
+      verifications: store.getVerifications('run-kn-c1'),
+      obligations: store.getRunObligations('run-kn-c1'),
+      waivers: store.getWaivers('run-kn-c1'),
+      reviewReceipts: store.listReviewReceipts('run-kn-c1'),
+      mutationProvenance: store.getMutationProvenance('run-kn-c1'),
+    });
     store.persistCompletionDecision('run-kn-c1', completion);
 
     const candidates = [
