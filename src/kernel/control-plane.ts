@@ -4125,12 +4125,42 @@ export const createKernelControlPlane = async ({
             },
           });
         }
-        const changeSet = deriveRunChangedPaths({
+        let changeSet = deriveRunChangedPaths({
           observation: liveWorkspaceObservation,
           baselineChangedPaths: run.reportBaselineChangedPaths || run.baselineChangedPaths,
           baselineEntries: run.reportBaselineWorkspaceEntries || run.baselineWorkspaceEntries,
           baselineStatus: run.workspaceBaselineStatus,
         });
+        // A delivery materialization failure can advance the report-local
+        // cursor to the already-materialized workspace before provenance is
+        // repaired. In that exact blocked state, an unchanged live identity
+        // means there is no newer drift to hide. Re-derive the authoritative
+        // Git delta from the immutable Run-start baseline so a follow-up
+        // report can repair provenance. Caller paths are still validated
+        // against this Git-derived set; ordinary stale reports keep failing
+        // closed on the report-local baseline.
+        if (
+          changeSet.status === 'observed'
+          && canonicalChangedPaths(changeSet.actualChangedPaths).length === 0
+          && changedPathsClaimed
+          && run.status === 'blocked'
+          && run.blockedReason === 'delivery_materialization_recovery_required'
+          && liveWorkspaceObservation.method === 'git'
+          && liveWorkspaceObservation.identity === run.currentWorkspaceIdentity
+        ) {
+          const recoveryChangeSet = deriveRunChangedPaths({
+            observation: liveWorkspaceObservation,
+            baselineChangedPaths: run.baselineChangedPaths,
+            baselineEntries: run.baselineWorkspaceEntries,
+            baselineStatus: run.workspaceBaselineStatus,
+          });
+          if (
+            recoveryChangeSet.status === 'observed'
+            && canonicalChangedPaths(recoveryChangeSet.actualChangedPaths).length > 0
+          ) {
+            changeSet = recoveryChangeSet;
+          }
+        }
         if (changeSet.status !== 'observed' && liveWorkspaceObservation.method === 'git') {
           return workspaceScopeRejected({
             reportedChangedPaths,

@@ -1,13 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveBoundInvocation } from '../src/kernel/run/invocation-resolver.js';
+import { normalizeTaskContract } from '../src/kernel/task/task-contract.js';
 
 const run = { runId: 'old', projectId: 'p', worktreeId: 'w', status: 'completed', finalizationStatus: 'completed', currentWorkspaceIdentity: 'old-snapshot', objective: 'old task' };
+const recoveryContract = normalizeTaskContract({
+  objective: 'new task',
+  acceptance: ['fresh proof'],
+  workspaceRecovery: { acknowledgedIdentity: 'current-snapshot' },
+});
 const resolve = (overrides = {}) => resolveBoundInvocation({
   stateStore: { getRun: () => run, listRuns: () => [], getLatestRunForWorktree: () => run },
   projectId: 'p', worktreeId: 'w', observedWorkspaceIdentity: 'current-snapshot',
   invocationIntent: 'new-task',
-  taskContract: { objective: 'new task', acceptance: ['fresh proof'], workspaceRecovery: { acknowledgedIdentity: 'current-snapshot' } },
+  taskContract: recoveryContract,
   ...overrides,
 });
 test('acknowledged changed workspace creates fresh run without altering predecessor evidence', () => {

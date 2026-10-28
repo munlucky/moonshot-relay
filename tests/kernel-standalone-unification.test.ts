@@ -98,10 +98,11 @@ test('kernel commit admission rejects unknown, foreign, and drifted provenance',
     const run = { runId: 'run-valid', projectId: project.projectId, workspaceId: stable.workspaceId, worktreeId: 'worktree-fixture', status: 'completed', currentState: 'CLOSE', finalizationStatus: 'completed', mutationRevision: 1, sourceIdentity, currentWorkspaceIdentity: workspaceIdentity };
     const completion = { runId: run.runId, decision: 'accepted', sourceIdentity, mutationRevision: 1 };
     const provenance = { runId: run.runId, projectId: project.projectId, workspaceId: stable.workspaceId, sourceIdentity, mutationRevision: 1, changedPaths: ['app.txt'], workspaceIdentity, mutationDigest: 'sha256:' + 'd'.repeat(64), status: 'passed' };
+    let baselineWorkspaceEntries: ReturnType<typeof observeWorkspaceIdentity>['changeEntries'] = [];
     const stateStore = {
       registerProjectWorkspace: () => ({ workspaceId: stable.workspaceId, canonicalRoot: stable.canonicalRoot }),
-      getRun: (runId: string) => runId === run.runId ? run : null,
-      listRuns: () => [run],
+      getRun: (runId: string) => runId === run.runId ? { ...run, baselineWorkspaceEntries } : null,
+      listRuns: () => [{ ...run, baselineWorkspaceEntries }],
       getCompletionDecision: () => completion,
       getMutationProvenance: () => provenance,
       getLatestImplementationAttempt: () => null,
@@ -176,10 +177,23 @@ test('kernel commit admission rejects unknown, foreign, and drifted provenance',
     const resolvedEnv = resolveKernelCloseoutRun({ stateStore: multiStateStore, projectId: project.projectId, workspaceId: stable.workspaceId, env: { MOON_RELAY_KERNEL_RUN_ID: 'run-older' } });
     assert.equal(resolvedEnv.run.runId, 'run-older');
     await writeFile(path.join(temp, 'foreign.txt'), 'outside kernel\n', 'utf8');
-    const foreignIdentity = observeWorkspaceIdentity({ projectRoot: temp }).identity;
+    const foreignObservation = observeWorkspaceIdentity({ projectRoot: temp });
+    const foreignIdentity = foreignObservation.identity;
     run.currentWorkspaceIdentity = foreignIdentity;
     provenance.workspaceIdentity = foreignIdentity;
-    assert.throws(() => admitKernelMutation({ stateStore, project, statusEntries: [{ status: ' M', path: 'app.txt' }, { status: '??', path: 'foreign.txt' }], selected: ['app.txt'], runId: run.runId }), (error) => { assert.ok(error && typeof error === 'object'); assert.ok(error && typeof error === 'object' && 'code' in error);
+    baselineWorkspaceEntries = foreignObservation.changeEntries.filter((entry) => entry.path === 'foreign.txt');
+    const preserved = admitKernelMutation({
+      stateStore,
+      project,
+      statusEntries: [{ status: ' M', path: 'app.txt' }, { status: '??', path: 'foreign.txt' }],
+      selected: ['app.txt', 'foreign.txt'],
+      runId: run.runId,
+    });
+    assert.deepEqual(preserved.stagingPaths, ['app.txt']);
+    assert.deepEqual(preserved.preservedBaselinePaths, ['foreign.txt']);
+
+    baselineWorkspaceEntries = [];
+    assert.throws(() => admitKernelMutation({ stateStore, project, statusEntries: [{ status: ' M', path: 'app.txt' }, { status: '??', path: 'foreign.txt' }], selected: ['app.txt', 'foreign.txt'], runId: run.runId }), (error) => { assert.ok(error && typeof error === 'object'); assert.ok(error && typeof error === 'object' && 'code' in error);
     return error.code === 'FOREIGN_MUTATION'; });
     await rm(path.join(temp, 'foreign.txt'));
     run.currentWorkspaceIdentity = workspaceIdentity;

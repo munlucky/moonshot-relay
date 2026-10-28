@@ -156,6 +156,38 @@ test('doctor includes clean project lifecycle diagnostics without changing its r
   }
 });
 
+test('lifecycle diagnostics isolate incompatible completed Run history', async () => {
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-lifecycle-doctor-legacy-history-'));
+  const store = await openKernelStateStore({ runtimeHome });
+  const projectId = 'legacy-history-project';
+  const workspaceId = 'legacy-history-workspace';
+  try {
+    register(store, projectId, workspaceId);
+    createRun(store, { runId: 'legacy-completed', projectId, workspaceId });
+
+    const raw = await openSqliteDb(store.dbPath);
+    try {
+      raw.prepare(
+        "UPDATE runs SET proof_tier='high', status='completed' WHERE run_id='legacy-completed'",
+      ).run();
+    } finally {
+      raw.close();
+    }
+
+    assert.throws(
+      () => store.getRun('legacy-completed'),
+      /Unknown persisted proof tier: high/,
+    );
+
+    const diagnostics = store.diagnoseLifecycleState({ projectId });
+    assert.equal(diagnostics.status, 'ready');
+    assert.deepEqual(diagnostics.findings, []);
+  } finally {
+    store.close();
+    await rm(runtimeHome, { recursive: true, force: true });
+  }
+});
+
 test('lifecycle diagnostics expose stale untouched active Runs with deterministic recovery choices', async () => {
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-stale-run-doctor-'));
   const store = await openKernelStateStore({ runtimeHome });

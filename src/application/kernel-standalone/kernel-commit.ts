@@ -165,6 +165,8 @@ interface MutationAdmission {
   mutationRevision: number;
   approvedPaths: string[];
   currentPaths: string[];
+  stagingPaths: string[];
+  preservedBaselinePaths: string[];
   workspaceIdentity: string;
   mutationDigest: string;
 }
@@ -286,6 +288,19 @@ const pathKey = (value: unknown): string => {
 };
 
 const uniquePaths = (paths: readonly unknown[] = []): string[] => [...new Set(paths.map(pathKey).filter(Boolean))].sort();
+
+const preservedBaselinePaths = (run: Pick<KernelCommitRun, 'baselineWorkspaceEntries'>, currentEntries: WorkspaceChangeEntry[] = []): string[] => {
+  const baseline = new Map((run.baselineWorkspaceEntries || []).map((entry) => [pathKey(entry.path), entry]));
+  return uniquePaths(currentEntries
+    .filter((current) => {
+      const prior = baseline.get(pathKey(current.path));
+      return Boolean(prior
+        && prior.digest === current.digest
+        && prior.statusCode === current.statusCode
+        && prior.indexDigest === current.indexDigest);
+    })
+    .map((entry) => entry.path));
+};
 
 const admissionError = (code: string, details: UnknownRecord = {}) => Object.assign(new Error(code), {
   code,
@@ -515,14 +530,20 @@ export function admitKernelMutation({ stateStore, project, statusEntries = [], s
     }
     approvedPaths.sort();
   }
-  const foreignPaths = currentPaths.filter((candidate) => !approvedSet.has(candidate));
-  const unapprovedSelectedPaths = selectedPaths.filter((candidate) => !approvedSet.has(candidate));
+  const preservedBaseline = initialPaths.length === 0 && readGitHead(project.projectRoot)
+    ? preservedBaselinePaths(run, currentObservation.changeEntries)
+    : [];
+  const preservedBaselineSet = new Set(preservedBaseline);
+  const stagingPaths = selectedPaths.filter((candidate) => !preservedBaselineSet.has(candidate));
+  const foreignPaths = currentPaths.filter((candidate) => !approvedSet.has(candidate) && !preservedBaselineSet.has(candidate));
+  const unapprovedSelectedPaths = stagingPaths.filter((candidate) => !approvedSet.has(candidate));
   if (foreignPaths.length > 0 || unapprovedSelectedPaths.length > 0) {
     throw admissionError('FOREIGN_MUTATION', {
       runId: run.runId,
       foreignPaths,
       unapprovedSelectedPaths,
       approvedPaths,
+      preservedBaselinePaths: preservedBaseline,
     });
   }
   const expectedSourceIdentity = run.sourceIdentity;
@@ -569,6 +590,8 @@ export function admitKernelMutation({ stateStore, project, statusEntries = [], s
     mutationRevision,
     approvedPaths,
     currentPaths,
+    stagingPaths,
+    preservedBaselinePaths: preservedBaseline,
     workspaceIdentity: currentObservation.identity,
     mutationDigest: mutationAdmissionDigest({
       runId: run.runId,
@@ -646,20 +669,21 @@ export async function kernelCommit({ cwd = process.cwd(), env = process.env, mes
     const admission = selected.length > 0
       ? admitKernelMutation({ stateStore, project, statusEntries, selected, runId, env, initialPaths })
       : null;
+    const stagingPaths = admission?.stagingPaths || selected;
     const index = await buildCodebaseIndex({ projectRoot: project.projectRoot, projectId: project.projectId, codebaseRoot: project.codebaseRoot, runtimeHome: project.runtimeHome });
     let candidates: KnowledgeCandidate[] = [];
     if (memory || memoryReview) {
       const map = await readJson<UnknownRecord>(path.join(project.codebaseRoot, 'codebase-map.json'), { files: [] });
       candidates = extractCodebaseCandidates(map || {}, { projectId: project.projectId, sourceDigest: index.manifest?.sourceTreeDigest });
     }
-    if (memoryReview && !approvalRef) return { status: 'awaiting_review', projectId: project.projectId, staging: { selected, denied }, candidates, index };
-    if (selected.length === 0 && !push) return { status: 'no_op', projectId: project.projectId, staging: { selected, denied }, index, candidates };
+    if (memoryReview && !approvalRef) return { status: 'awaiting_review', projectId: project.projectId, staging: { selected: stagingPaths, denied }, candidates, index };
+    if (stagingPaths.length === 0 && !push) return { status: 'no_op', projectId: project.projectId, staging: { selected: stagingPaths, denied }, index, candidates };
     const effectiveRunId = admission?.run.runId || runId || env.MOON_RELAY_KERNEL_RUN_ID;
     if (!effectiveRunId) throw admissionError('RUN_PROVENANCE_REQUIRED');
     const prior = stateStore.getGitCloseoutReceipt(effectiveRunId);
     const gitHost = createGitCloseoutHost();
-    const existingCommitSha = selected.length === 0 ? prior?.commitSha || null : null;
-    if (selected.length === 0 && (!existingCommitSha || prior?.projectId !== project.projectId
+    const existingCommitSha = stagingPaths.length === 0 ? prior?.commitSha || null : null;
+    if (stagingPaths.length === 0 && (!existingCommitSha || prior?.projectId !== project.projectId
       || !gitHost.isAuthorizedCloseoutWorkspace({ repoRoot: project.projectRoot, commitSha: existingCommitSha }))) {
       throw admissionError('GIT_CLOSEOUT_RECEIPT_REQUIRED');
     }
@@ -675,7 +699,7 @@ export async function kernelCommit({ cwd = process.cwd(), env = process.env, mes
     try {
       closeout = await executeKernelGitCloseout({
         runId: effectiveRunId, projectId: project.projectId, stateStore,
-        repoRoot: project.projectRoot, changedFiles: selected,
+        repoRoot: project.projectRoot, changedFiles: stagingPaths,
         observeWorkspaceIdentity, gitCloseoutHost: gitHost,
         gitCloseoutRequest: {
           requested: true, mode: push ? 'commit_and_push' : 'commit',
@@ -698,7 +722,7 @@ export async function kernelCommit({ cwd = process.cwd(), env = process.env, mes
     const receipt: KernelCommitReceipt = {
       ...closeout, schemaVersion: 2, authority: 'kernel-closeout-only', projectId: project.projectId,
       branch: String(closeout.branch), commitHash, commitSubject, commitMessage,
-      selectedPaths: selected.length > 0 ? selected : prior?.selectedPaths || [], deniedPaths: denied,
+      selectedPaths: stagingPaths.length > 0 ? stagingPaths : prior?.selectedPaths || [], deniedPaths: denied,
       treeDigest: readGitTree(project.projectRoot),
       knowledgeStatus: 'not-requested', closeoutStatus: 'completed', mutationAdmission,
       createdAt: new Date().toISOString(),
@@ -724,7 +748,7 @@ export async function kernelCommit({ cwd = process.cwd(), env = process.env, mes
       parity: push ? 'matched' : 'not_requested', status: 'completed',
       beforeHeadSha, selectedPaths: receipt.selectedPaths, receiptJson: receipt,
     });
-    return { status: 'committed', projectId: project.projectId, commitHash, commitSubject, commitMessage, receipt, staging: { selected, denied }, index };
+    return { status: 'committed', projectId: project.projectId, commitHash, commitSubject, commitMessage, receipt, staging: { selected: stagingPaths, denied }, index };
   } finally { await stateStore.close(); }
 }
 

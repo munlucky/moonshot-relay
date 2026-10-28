@@ -47,6 +47,54 @@ test('latest scoped Run discovery does not deserialize older incompatible histor
   }
 });
 
+test('same workspace identity can refresh authoritative mutation provenance without advancing revision', async () => {
+  const h = await mkdtemp(path.join(os.tmpdir(), 'krn-provenance-refresh-'));
+  const s = await openKernelStateStore({ runtimeHome: h });
+  try {
+    const baselineIdentity = `sha256:${'a'.repeat(64)}`;
+    const mutatedIdentity = `sha256:${'b'.repeat(64)}`;
+    s.createRun({
+      runId: 'run-provenance-refresh',
+      objective: 'refresh materialized delivery provenance',
+      sourceIdentity: 'source-provenance-refresh',
+      projectId: 'project-provenance-refresh',
+      workspaceId: 'workspace-provenance-refresh',
+    });
+
+    const baseline = s.observeWorkspaceIdentity('run-provenance-refresh', baselineIdentity);
+    assert.equal(baseline.changed, false);
+    assert.equal(baseline.run.mutationRevision, 0);
+
+    const mutated = s.observeWorkspaceIdentity('run-provenance-refresh', mutatedIdentity, {
+      provenance: {
+        changedPaths: ['content/post.mdx'],
+        mutationDigest: mutatedIdentity,
+      },
+    });
+    assert.equal(mutated.changed, true);
+    assert.equal(mutated.run.mutationRevision, 1);
+    assert.deepEqual(s.getMutationProvenance('run-provenance-refresh')?.changedPaths, ['content/post.mdx']);
+
+    const refreshed = s.observeWorkspaceIdentity('run-provenance-refresh', mutatedIdentity, {
+      provenance: {
+        changedPaths: ['content/post.mdx', 'public/rss.xml'],
+        mutationDigest: mutatedIdentity,
+      },
+    });
+
+    assert.equal(refreshed.changed, false);
+    assert.equal(refreshed.run.mutationRevision, 1);
+    assert.deepEqual(
+      refreshed.provenance?.changedPaths,
+      ['content/post.mdx', 'public/rss.xml'],
+    );
+    assert.equal(refreshed.provenance?.workspaceIdentity, mutatedIdentity);
+    assert.equal(refreshed.provenance?.mutationRevision, 1);
+  } finally {
+    s.close();
+  }
+});
+
 test('Run start Git commit provenance validates and persists independently from workspace identity', async () => {
   const h = await mkdtemp(path.join(os.tmpdir(), 'krn-run-start-git-'));
   const s = await openKernelStateStore({ runtimeHome: h });

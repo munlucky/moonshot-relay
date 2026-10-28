@@ -556,6 +556,69 @@ test('Git owner-direct report derives changed paths when the caller omits the cl
   }
 });
 
+test('delivery materialization recovery re-derives the immutable Run delta after the report baseline advanced', async () => {
+  const fixture = await setupActualDiffFixture();
+  const cp = await createKernelControlPlane({ runtimeHome: fixture.runtimeHome, projectRoot: fixture.projectRoot });
+  const runId = 'run-materialized-report-recovery';
+  try {
+    await cp.startRun({
+      runId,
+      objective: 'Recover tracked delivery materialization after proof',
+      taskContract: {
+        behaviorChanging: true,
+        allowedPaths: ['src/**', 'public/**'],
+        acceptance: [{
+          acceptance: 'the materialized delivery is included in authoritative provenance',
+          evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test:ok'], obligationId: 'default' },
+        }],
+      },
+    });
+
+    await writeFile(path.join(fixture.projectRoot, 'src', 'tracked.mjs'), 'export const value = 7;\n');
+    await mkdir(path.join(fixture.projectRoot, 'public'), { recursive: true });
+    await writeFile(path.join(fixture.projectRoot, 'public', 'rss.xml'), '<rss>materialized</rss>\n');
+
+    const current = observeWorkspaceIdentity({ projectRoot: fixture.projectRoot });
+    const beforeRecovery = cp.stateStore.getRun(runId);
+    assert.ok(beforeRecovery);
+    cp.stateStore.observeWorkspaceIdentity(runId, current.identity, {
+      provenance: {
+        workspaceId: beforeRecovery.workspaceId,
+        baseSourceIdentity: beforeRecovery.sourceIdentity,
+        changedPaths: ['src/tracked.mjs'],
+        mutationDigest: current.identity,
+      },
+    });
+    cp.stateStore.updateRunWorkspaceBaseline(runId, {
+      changedPaths: current.changedPaths || [],
+      entries: current.changeEntries || [],
+    });
+    cp.stateStore.markRunBlocked(
+      runId,
+      'delivery_materialization_recovery_required',
+      'verification-or-environment',
+    );
+
+    const recovered = await cp.report(runId, {
+      summary: 'recover the already-materialized tracked delivery',
+      changedPaths: ['public/rss.xml', 'src/tracked.mjs'],
+    });
+
+    assert.notEqual(assertTestPresent(recovered).status, 'scope-rejected', JSON.stringify(recovered));
+    assert.deepEqual(
+      assertTestArray(assertTestRecord(assertTestPresent(recovered)).actualChangedPaths),
+      ['public/rss.xml', 'src/tracked.mjs'],
+    );
+    assert.deepEqual(
+      cp.stateStore.getMutationProvenance(runId)?.changedPaths,
+      ['public/rss.xml', 'src/tracked.mjs'],
+    );
+  } finally {
+    await cp.close();
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test('non-Git owner report fails closed when changedPaths is omitted', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-non-git-report-'));
   const runtimeHome = path.join(root, 'runtime');

@@ -91,6 +91,7 @@ export interface TaskContractLike extends UnknownRecord {
   filesChanged?: unknown;
   strictBoundedScope?: unknown;
   changedPaths?: unknown;
+  workspaceRecovery?: unknown;
   flags?: UnknownRecord;
   risk?: UnknownRecord;
   seedProvenance?: unknown;
@@ -449,6 +450,16 @@ export const normalizeTaskContract = (
     ].map(String).filter(Boolean))],
     allowedPaths: asStringList(contract.allowedPaths),
     forbiddenPaths: asStringList(contract.forbiddenPaths),
+    // Invocation-only recovery metadata. It is intentionally excluded from
+    // contractDigest so acknowledging the current workspace starts a fresh
+    // proof baseline without changing the semantic task identity.
+    workspaceRecovery: contract.workspaceRecovery && typeof contract.workspaceRecovery === 'object' && !Array.isArray(contract.workspaceRecovery)
+      ? {
+          acknowledgedIdentity: typeof (contract.workspaceRecovery as UnknownRecord).acknowledgedIdentity === 'string'
+            ? String((contract.workspaceRecovery as UnknownRecord).acknowledgedIdentity)
+            : null,
+        }
+      : null,
     filesChanged: Number.isFinite(contract.filesChanged) ? Number(contract.filesChanged) : changedFileCount,
     strictBoundedScope: contract.strictBoundedScope === true || flags.strictBoundedScope === true,
     flags,

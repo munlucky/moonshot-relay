@@ -17,6 +17,7 @@
     "test:kernel": "node --test --test-concurrency=2 tests/kernel-*.test.mjs",
     "test:kernel-compression": "node --test tests/kernel-attempt-provenance.test.mjs tests/kernel-parallel-admission.test.mjs tests/kernel-bounded-work-unit.test.mjs tests/kernel-project-identity-migration.test.mjs tests/kernel-run-step-ledger.test.mjs tests/kernel-parallel-ledger.test.mjs tests/kernel-parallel-runtime.test.mjs tests/kernel-parallel-scope.test.mjs tests/kernel-parallel-selection.test.mjs",
     "test:kernel-recovery": "node --test tests/kernel-parallel-recovery.test.mjs tests/kernel-parallel-fencing.test.mjs tests/kernel-parallel-dispatch.test.mjs",
+    "test:kernel-mutation-provenance": "node --test --test-concurrency=2 tests/kernel-host-loop-e2e.test.mjs tests/kernel-state-authority.test.mjs tests/kernel-lifecycle-doctor.test.mjs tests/kernel-workspace-recovery.test.mjs tests/kernel-standalone-unification.test.mjs",
     "test:kernel-compression-audit": "node --test tests/kernel-compression-audit.test.mjs",
     "test:profile-ownership": "node --test tests/kernel-profile-ownership.test.mjs",
     "test:kernel-explicit-invocation": "node --test tests/kernel-explicit-invocation-policy.test.mjs",

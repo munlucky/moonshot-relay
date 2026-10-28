@@ -3,7 +3,7 @@
   "scope": "kernel-standalone",
   "catalogId": "moon-relay-kernel-standalone-skills.v2",
   "catalogDigest": "a3c3bcf6f36d916d619d211ee90d2babcb2cbbddeb539a4a5393ff9b500347ee",
-  "generatedAt": "2026-10-13T13:07:56.855Z",
+  "generatedAt": "2026-10-27T08:03:56.361Z",
   "sourceCommit": "b40bdba4e05b54b54dc91c826a38cf180d0d4e83",
   "skills": [
     {
@@ -35,7 +35,7 @@
       "skillPath": "skills/kernel-commit",
       "entrypoint": "scripts/kernel/standalone/kernel-commit.mjs",
       "exportName": "kernelCommit",
-      "contentHash": "c16751329b74f5b40074be17e030d8b9708eee478f04cc0a5f61fbf13863670e",
+      "contentHash": "e77e3ba46fabd382dc4794428f27ea6b9b54d8fcbda222388fcf2b8fee66ea78",
       "cli": {
         "enabled": true,
         "binName": "kernel-commit"

@@ -1323,6 +1323,22 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         const run = this.getRun(runId);
         if (!run) throw new Error(`Run ${runId} not found`);
         if (run.currentWorkspaceIdentity === identity) {
+          // A follow-up report can describe the same materialized workspace with
+          // a more complete authoritative path set (for example, a tracked
+          // generated artifact produced by proof). Refresh provenance without
+          // inventing another mutation revision.
+          if (provenance) {
+            this.recordMutationProvenance(runId, {
+              ...provenance,
+              projectId: run.projectId,
+              workspaceId: provenance.workspaceId ?? run.workspaceId ?? null,
+              sourceIdentity: run.sourceIdentity,
+              baseSourceIdentity: provenance.baseSourceIdentity ?? run.sourceIdentity,
+              mutationRevision: run.mutationRevision,
+              workspaceIdentity: identity,
+              mutationDigest: provenance.mutationDigest || identity,
+            });
+          }
           return { changed: false, run, provenance: this.getMutationProvenance(runId) };
         }
         const isInitialObservation = !run.currentWorkspaceIdentity;
@@ -2055,8 +2071,14 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         }
       }
 
-      for (const run of this.listRuns({ projectId })) {
-        if (!run.ownerBindingId) continue;
+      for (const runId of workLifecyclePersistence.listRunIds({ projectId })) {
+        // Lifecycle diagnostics only need binding identity here. Avoid
+        // materializing historical Runs through getRun(): old persisted
+        // schemas (for example legacy proof tiers) must not make an otherwise
+        // usable project unavailable. Explicit Run reads and the selected
+        // current Run still keep strict schema validation.
+        const run = workLifecyclePersistence.getRunLifecycleIdentity(runId);
+        if (!run?.ownerBindingId) continue;
         const binding = workLifecyclePersistence.getSessionBinding(run.ownerBindingId);
         if (!binding
           || binding.runId !== run.runId
