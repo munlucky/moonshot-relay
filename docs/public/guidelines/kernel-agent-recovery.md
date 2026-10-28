@@ -65,6 +65,29 @@ Safety denials remain inspect-only. A workspace or authority change produces
 a fresh fingerprint and invalidates the old description; native next/report
 then decides which proof must be rerun.
 
+## Successor lineage after contract revision
+
+A successor key binds the contract used when the successor was created. The
+store retains that digest separately from the current task contract. Replanning
+may change the current contract without changing the creation identity. Lineage
+resolution and idempotent creation replay use the retained creation digest.
+Scope, workspace continuity, fork, cycle and accepted mutation proof checks
+still apply.
+
+Migration leaves the creation digest empty for legacy rows. An unchanged legacy
+contract can still prove its key. A revised legacy contract without a retained
+creation digest cannot prove that relationship and fails closed. Do not infer a
+digest from the current contract or edit historical runtime records to admit it.
+An explicit closeout preserves the lineage error instead of reporting the Run
+as unfinished. User-authorized manual Git work remains separate from Kernel
+completion and never creates a Kernel proof receipt.
+
+After final acceptance of the exact workspace, Git closeout also retains paths
+from an earlier owner report whose executable proof failed. This requires the
+immutable canonical report to confirm the same Run, owner binding, workspace,
+report key and actual changed paths. A failed attempt, rejected scope or parallel
+worker report alone grants no commit authority. Historical reports stay unchanged.
+
 ## Account adoption with user skill ownership
 
 For a catalog skill that already exists outside the Kernel profile manifest,

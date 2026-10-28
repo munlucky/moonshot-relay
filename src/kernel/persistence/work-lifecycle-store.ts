@@ -95,6 +95,7 @@ export interface PersistedRunRecord {
   worktreeId: string | null;
   ownerBindingId: string | null;
   successorKey: string | null;
+  successorContractDigest: string | null;
   runSignalsJson: string | null;
   updatedAt: string;
 }
@@ -126,6 +127,7 @@ export interface PersistRunInput {
   workspaceBaselineStatus: string;
   ownerBindingId: string | null;
   successorKey: string | null;
+  successorContractDigest: string | null;
 }
 
 export interface RunQuery {
@@ -525,7 +527,8 @@ export const createWorkLifecyclePersistence = ({
       implementation_context_json as implementationContextJson,
       plan_revision as planRevision, workspace_id as workspaceId,
       worktree_id as worktreeId, owner_binding_id as ownerBindingId,
-      successor_key as successorKey, run_signals_json as runSignalsJson,
+      successor_key as successorKey, successor_contract_digest as successorContractDigest,
+      run_signals_json as runSignalsJson,
       updated_at as updatedAt
     FROM runs
   `;
@@ -822,11 +825,11 @@ export const createWorkLifecyclePersistence = ({
           implementation_context_json, workspace_id, worktree_id,
           baseline_changed_paths, baseline_workspace_entries,
           workspace_baseline_changed_paths, workspace_baseline_entries,
-          workspace_baseline_status, owner_binding_id, successor_key, updated_at
+          workspace_baseline_status, owner_binding_id, successor_key, successor_contract_digest, updated_at
         )
         VALUES(
           ?, ?, 'FRAME', 'active', 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-          'active', ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          'active', ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
       `).run(
         input.runId,
@@ -856,6 +859,7 @@ export const createWorkLifecyclePersistence = ({
         input.workspaceBaselineStatus,
         input.ownerBindingId,
         input.successorKey,
+        input.successorContractDigest,
         now(),
       );
     },

@@ -32,6 +32,9 @@ export const migrateKernelSchema = (db: SqliteDatabase): void => {
   addCol('runs', 'project_id', 'TEXT');
   addCol('runs', 'owner_binding_id', 'TEXT');
   addCol('runs', 'successor_key', 'TEXT');
+  // A successor key binds the creation contract, not later contract revisions.
+  // Legacy rows stay null; never infer a missing creation identity from a replan.
+  addCol('runs', 'successor_contract_digest', 'TEXT');
   // Nullable on migration so a legacy Run can fall back to its immutable
   // Run-start baseline. Fresh Runs always initialize these fields explicitly.
   addCol('runs', 'workspace_baseline_changed_paths', 'TEXT');

@@ -902,6 +902,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
           workspaceBaselineStatus,
           ownerBindingId,
           successorKey,
+          successorContractDigest: successorKey ? taskContract?.digest || null : null,
         });
         if (effectiveWorktreeId && projectId) {
           const lease = claimWorktreeLeaseInTransaction({
@@ -1476,6 +1477,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         worktreeId: row.worktreeId || null,
         ownerBindingId: row.ownerBindingId || null,
         successorKey: row.successorKey || null,
+        successorContractDigest: row.successorContractDigest || null,
         runSignals: row.runSignalsJson ? safeJsonParse<RunSignals>(row.runSignalsJson, {}) : {},
         updatedAt: row.updatedAt,
       };
@@ -1649,7 +1651,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
             || (successorRun.worktreeId
               ? existing.worktreeId !== successorRun.worktreeId
               : existing.workspaceId !== successorRun.workspaceId)
-            || existingContract?.digest !== taskContractDigest
+            || (existing.successorContractDigest || existingContract?.digest) !== taskContractDigest
           ) {
             throw Object.assign(new Error('successor_creation_conflict'), {
               code: 'successor_creation_conflict',
@@ -3304,12 +3306,12 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
           diagnostics.push({ runId: id, code: 'invalid-successor-candidate' });
           return [];
         }
-        return [{ row, digest: contract.digest }];
+        return [{ row, digest: row.successorContractDigest || contract.digest }];
       });
       const expectedKey = (predecessorRunId: string, successor: KernelRun) => buildSuccessorKey({
         projectId: successor.projectId, predecessorRunId,
         worktreeId: successor.worktreeId, workspaceId: successor.workspaceId,
-        taskContractDigest: successor.taskContract?.digest,
+        taskContractDigest: successor.successorContractDigest || successor.taskContract?.digest,
       });
       const successorsOf = (id: string) => [...new Set([
         ...workLifecyclePersistence.listSessionBindings({ runId: id })

@@ -98,6 +98,7 @@ export interface KernelRun extends UnknownRecord {
     worktreeId: string | null;
     ownerBindingId: string | null;
     successorKey: string | null;
+    successorContractDigest: string | null;
     runSignals: RunSignals;
     updatedAt: string;
 }
