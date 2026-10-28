@@ -1,0 +1,258 @@
+{
+  "schemaVersion": 1,
+  "tool": {
+    "release": "v1.7.4",
+    "url": "https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar",
+    "sha256": "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+  },
+  "defaultCases": [
+    "base-core",
+    "base-reissue-core"
+  ],
+  "cases": [
+    {
+      "id": "base-core",
+      "kind": "guard",
+      "mutant": "none",
+      "reissue": false,
+      "invariants": [
+        "TypeOK",
+        "Safety1",
+        "Safety2",
+        "Safety3",
+        "Safety4BApproval",
+        "Safety4BSettlement",
+        "Recovery1Block"
+      ],
+      "expected": "PASS"
+    },
+    {
+      "id": "base-recovery-mark",
+      "kind": "characterization",
+      "mutant": "none",
+      "reissue": false,
+      "invariants": [
+        "Recovery1Mark"
+      ],
+      "expected": "VIOLATION"
+    },
+    {
+      "id": "base-reissue-core",
+      "kind": "guard",
+      "mutant": "none",
+      "reissue": true,
+      "invariants": [
+        "TypeOK",
+        "Safety1",
+        "Safety2",
+        "Safety3",
+        "Safety4BApproval",
+        "Safety4BSettlement",
+        "Recovery1Block"
+      ],
+      "expected": "PASS"
+    },
+    {
+      "id": "base-stale-effect",
+      "kind": "characterization",
+      "mutant": "none",
+      "reissue": false,
+      "invariants": [
+        "Safety4A"
+      ],
+      "expected": "VIOLATION"
+    },
+    {
+      "id": "mutant-cas",
+      "kind": "control",
+      "mutant": "cas",
+      "reissue": false,
+      "invariants": [
+        "Safety2"
+      ],
+      "expected": "VIOLATION"
+    },
+    {
+      "id": "mutant-overlap",
+      "kind": "control",
+      "mutant": "overlap",
+      "reissue": false,
+      "invariants": [
+        "Safety1"
+      ],
+      "expected": "VIOLATION"
+    },
+    {
+      "id": "mutant-post-retained-final",
+      "kind": "control",
+      "mutant": "post",
+      "reissue": false,
+      "invariants": [
+        "Safety3",
+        "Safety4BSettlement"
+      ],
+      "expected": "PASS"
+    },
+    {
+      "id": "mutant-pre-retained-post",
+      "kind": "control",
+      "mutant": "pre",
+      "reissue": false,
+      "invariants": [
+        "Safety3",
+        "Safety4BSettlement"
+      ],
+      "expected": "PASS"
+    },
+    {
+      "id": "mutant-settlement",
+      "kind": "control",
+      "mutant": "settlement",
+      "reissue": false,
+      "invariants": [
+        "Safety4BSettlement"
+      ],
+      "expected": "VIOLATION"
+    },
+    {
+      "id": "mutant-token",
+      "kind": "control",
+      "mutant": "token",
+      "reissue": true,
+      "invariants": [
+        "Safety3"
+      ],
+      "expected": "VIOLATION"
+    },
+    {
+      "id": "property-Recovery1Block",
+      "kind": "guard",
+      "mutant": "none",
+      "reissue": false,
+      "invariants": [
+        "Recovery1Block"
+      ],
+      "expected": "PASS"
+    },
+    {
+      "id": "property-Safety1",
+      "kind": "guard",
+      "mutant": "none",
+      "reissue": false,
+      "invariants": [
+        "Safety1"
+      ],
+      "expected": "PASS"
+    },
+    {
+      "id": "property-Safety2",
+      "kind": "guard",
+      "mutant": "none",
+      "reissue": false,
+      "invariants": [
+        "Safety2"
+      ],
+      "expected": "PASS"
+    },
+    {
+      "id": "property-Safety3",
+      "kind": "guard",
+      "mutant": "none",
+      "reissue": false,
+      "invariants": [
+        "Safety3"
+      ],
+      "expected": "PASS"
+    },
+    {
+      "id": "property-Safety4BApproval",
+      "kind": "guard",
+      "mutant": "none",
+      "reissue": false,
+      "invariants": [
+        "Safety4BApproval"
+      ],
+      "expected": "PASS"
+    },
+    {
+      "id": "property-Safety4BSettlement",
+      "kind": "guard",
+      "mutant": "none",
+      "reissue": false,
+      "invariants": [
+        "Safety4BSettlement"
+      ],
+      "expected": "PASS"
+    },
+    {
+      "id": "witness-NotDuplicateRequest",
+      "kind": "witness",
+      "mutant": "none",
+      "reissue": false,
+      "invariants": [
+        "NotDuplicateRequest"
+      ],
+      "expected": "VIOLATION"
+    },
+    {
+      "id": "witness-NotExpiredCommit",
+      "kind": "witness",
+      "mutant": "none",
+      "reissue": false,
+      "invariants": [
+        "NotExpiredCommit"
+      ],
+      "expected": "VIOLATION"
+    },
+    {
+      "id": "witness-NotExpiredReturn",
+      "kind": "witness",
+      "mutant": "none",
+      "reissue": false,
+      "invariants": [
+        "NotExpiredReturn"
+      ],
+      "expected": "VIOLATION"
+    },
+    {
+      "id": "witness-NotNormalSettlement",
+      "kind": "witness",
+      "mutant": "none",
+      "reissue": false,
+      "invariants": [
+        "NotNormalSettlement"
+      ],
+      "expected": "VIOLATION"
+    },
+    {
+      "id": "witness-NotPendingTimeout",
+      "kind": "witness",
+      "mutant": "none",
+      "reissue": false,
+      "invariants": [
+        "NotPendingTimeout"
+      ],
+      "expected": "VIOLATION"
+    },
+    {
+      "id": "witness-NotReconciledCrash",
+      "kind": "witness",
+      "mutant": "none",
+      "reissue": false,
+      "invariants": [
+        "NotReconciledCrash"
+      ],
+      "expected": "VIOLATION"
+    },
+    {
+      "id": "witness-NotStaleReacquire",
+      "kind": "witness",
+      "mutant": "none",
+      "reissue": false,
+      "invariants": [
+        "NotStaleReacquire"
+      ],
+      "expected": "VIOLATION"
+    }
+  ]
+}

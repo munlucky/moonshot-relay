@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "snapshotDigest": "c304e312a9c0386f9232f3f10cb092eeeab604487a78ac0dc7dfadf406ce9aa3",
+  "note": "Reviewed committed source on HEAD 656f8e43750c7fdcaaa1226c74cfcff538eda29a. The prior dirty-source changes affected report provenance and historical diagnostics, outside the modeled mutation/settlement boundaries. Re-review correspondence before updating these hashes.",
+  "files": [
+    {
+      "file": "src/kernel/control-plane.ts",
+      "sha256": "7f3d87c7b8b911f709efcf895a9e738eafe294091af5ba95a4d4395456c01cfb"
+    },
+    {
+      "file": "src/kernel/state-store.ts",
+      "sha256": "7197c2057224b78c31f38a7de7b2315936a5b3362e78ffc9ca8ab6df12632e1c"
+    },
+    {
+      "file": "src/kernel/persistence/work-lifecycle-store.ts",
+      "sha256": "66f33d5be4b27761227ec2e8d9055c95b058ba401ddf1114eda731b7601bc906"
+    },
+    {
+      "file": "src/kernel/run/mutation-guard.ts",
+      "sha256": "64d0ec8c44848b6e1e777c08f1f43804ec7a66694b5528b2137d5616fc4deda8"
+    },
+    {
+      "file": "src/host/kernel/parallel-dispatcher.ts",
+      "sha256": "bc4703f0e0d6deed0c4576b7d89abb2962f72f990bf35688a0ba55c66c86a319"
+    },
+    {
+      "file": "src/host/kernel/workspace/workspace-identity.ts",
+      "sha256": "5dea007e54a16caf2a2d1dfe54c2a59373282ca6a14775fd6b8cc8b75a2a3047"
+    },
+    {
+      "file": "src/shared/git-safe.ts",
+      "sha256": "34bcb83d60496b4415f2feff3e218a148004ec9c76d218a3bc03c1f992b47373"
+    }
+  ],
+  "sourceCommit": "656f8e43750c7fdcaaa1226c74cfcff538eda29a"
+}
