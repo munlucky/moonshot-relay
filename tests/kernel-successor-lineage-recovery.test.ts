@@ -3,7 +3,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { openKernelStateStore } from '../src/kernel/state-store.js';
+import { kernelDbPath, openKernelStateStore } from '../src/kernel/state-store.js';
+import { openSqliteDb } from '../src/kernel/sqlite-adapter.js';
 import { normalizeTaskContract } from '../src/kernel/task/task-contract.js';
 import { buildSuccessorKey } from '../src/kernel/run/successor-key.js';
 import { resolveKernelCloseoutRun } from '../src/application/kernel-standalone/kernel-commit.js';
@@ -41,7 +42,7 @@ const fixture = async () => {
     });
     store.setFinalizationStatus(runId, 'completed');
   };
-  return { store, workspace, create, async close() { store.close(); await rm(runtimeHome, { recursive: true, force: true }); } };
+  return { store, workspace, create, runtimeHome, async close() { store.close(); await rm(runtimeHome, { recursive: true, force: true }); } };
 };
 
 test('key-only successor restores predecessor and earlier waves without rewriting records', async () => {
@@ -88,6 +89,78 @@ test('native successor creation after owner finalization retains derivable linea
   } finally { await f.close(); }
 });
 
+test('key-only lineage survives contract revisions and reopening the store', async () => {
+  const f = await fixture();
+  try {
+    f.create('first');
+    f.create('second', 'first', {}, false, runId => {
+      f.store.reviseTaskContractAtomic(runId, normalizeTaskContract({
+        objective: 'second refined', acceptance: ['revised acceptance'],
+      }));
+      f.store.updateTaskContract(runId, normalizeTaskContract({
+        objective: 'second final', acceptance: ['final acceptance'],
+      }));
+    });
+    f.create('third', 'second');
+    assert.deepEqual(f.store.resolveSuccessorLineage('third').runIds, ['first', 'second', 'third']);
+    assert.equal(f.store.resolveSuccessorLineage('first').isTerminal, false);
+    const reopened = await openKernelStateStore({ runtimeHome: f.runtimeHome });
+    try {
+      assert.deepEqual(reopened.resolveSuccessorLineage('third').runIds, ['first', 'second', 'third']);
+    } finally { reopened.close(); }
+  } finally { await f.close(); }
+});
+
+test('legacy keys without creation metadata remain read-only and fail closed after revision', async () => {
+  const f = await fixture();
+  try {
+    f.create('first'); f.create('second', 'first');
+    // Model a pre-migration row only in this isolated fixture database.
+    const db = await openSqliteDb(kernelDbPath(f.runtimeHome));
+    try { db.prepare('UPDATE runs SET successor_contract_digest = NULL WHERE run_id = ?').run('second'); }
+    finally { db.close(); }
+    assert.deepEqual(f.store.resolveSuccessorLineage('second').runIds, ['first', 'second']);
+    assert.equal(f.store.getRun('second')?.successorContractDigest, null);
+    f.store.updateTaskContract('second', normalizeTaskContract({ objective: 'revised', acceptance: ['revised'] }));
+    const before = f.store.getRun('second');
+    assert.throws(() => f.store.resolveSuccessorLineage('second'), /SUCCESSOR_LINEAGE_KEY_MISMATCH/);
+    assert.deepEqual(f.store.getRun('second'), before);
+  } finally { await f.close(); }
+});
+
+test('native successor creation replay uses the creation contract after revision', async () => {
+  const f = await fixture();
+  try {
+    f.create('first');
+    const contract = normalizeTaskContract({ objective: 'second', acceptance: ['second works'] });
+    const input = {
+      projectId: 'project', predecessorRunId: 'first',
+      successorKey: buildSuccessorKey({ projectId: 'project', predecessorRunId: 'first',
+        worktreeId: f.workspace.worktreeId, taskContractDigest: contract.digest }),
+      successorRun: { runId: 'second', objective: 'second', sourceIdentity: `sha256:${'a'.repeat(64)}`,
+        projectId: 'project', workspaceId: f.workspace.workspaceId, worktreeId: f.workspace.worktreeId,
+        workspaceIdentity: identity, taskContract: contract },
+    };
+    assert.equal(f.store.createSuccessorRunAtomic(input).created, true);
+    f.store.updateTaskContract('second', normalizeTaskContract({
+      objective: 'second refined', acceptance: ['new acceptance'],
+    }));
+    assert.equal(f.store.createSuccessorRunAtomic(input).created, false);
+    assert.deepEqual(f.store.resolveSuccessorLineage('second').runIds, ['first', 'second']);
+    assert.equal(f.store.getRun('second')?.taskContract?.objective, 'second refined');
+  } finally { await f.close(); }
+});
+
+test('explicit closeout retains the lineage error instead of reporting an unfinished Run', async () => {
+  const f = await fixture();
+  try {
+    f.create('first'); f.create('second', 'first', { successorKey: 'successor-invalid' });
+    assert.throws(() => resolveKernelCloseoutRun({ stateStore: f.store,
+      projectId: 'project', workspaceId: f.workspace.workspaceId, runId: 'second',
+    }), /SUCCESSOR_LINEAGE_KEY_MISMATCH/);
+  } finally { await f.close(); }
+});
+
 test('a malformed or foreign stored key cannot import predecessor proof', async () => {
   for (const key of ['successor-invalid', buildSuccessorKey({ projectId: 'foreign', predecessorRunId: 'first',
     worktreeId: 'foreign', taskContractDigest: 'foreign' })]) {
@@ -119,7 +192,11 @@ test('key recovery does not import another workspace', async () => {
 test('a key-only fork fails closed from its parent, either child and a later descendant', async () => {
   const f = await fixture();
   try {
-    f.create('first'); f.create('second', 'first'); f.create('third', 'first');
+    f.create('first');
+    f.create('second', 'first', {}, false, runId => {
+      f.store.updateTaskContract(runId, normalizeTaskContract({ objective: 'revised fork', acceptance: ['revised'] }));
+    });
+    f.create('third', 'first');
     f.create('fourth', 'second');
     for (const id of ['first', 'second', 'third', 'fourth']) {
       assert.throws(() => f.store.resolveSuccessorLineage(id), /SUCCESSOR_LINEAGE_AMBIGUOUS/);
@@ -189,7 +266,10 @@ test('closeout consumes recovered lineage and retains accepted mutation provenan
       } });
     };
     f.create('first', null, {}, true, mutate(middleIdentity, 'app.ts'));
-    f.create('second', 'first', { workspaceIdentity: middleIdentity }, false, mutate(finalIdentity, 'README.md'));
+    f.create('second', 'first', { workspaceIdentity: middleIdentity }, false, runId => {
+      f.store.updateTaskContract(runId, normalizeTaskContract({ objective: 'revised closeout', acceptance: ['revised'] }));
+      mutate(finalIdentity, 'README.md')(runId);
+    });
     const input = { stateStore: f.store, projectId: 'project', workspaceId: f.workspace.workspaceId,
       currentWorkspaceIdentity: finalIdentity, currentPaths: ['app.ts', 'README.md'],
       selectedPaths: ['app.ts', 'README.md'] };
@@ -209,5 +289,47 @@ test('closeout consumes recovered lineage and retains accepted mutation provenan
     assert.throws(() => resolveKernelCloseoutRun({ ...input, stateStore: { ...f.store,
       getMutationProvenance: (id: string) => id === 'first' ? { ...provenance(id), mutationRevision: 999 } : provenance(id),
     } }), /RUN_PROVENANCE_REQUIRED/);
+  } finally { await f.close(); }
+});
+
+test('accepted closeout retains only canonically admitted owner paths from an earlier proof failure', async () => {
+  const f = await fixture();
+  try {
+    const finalIdentity = `sha256:${'e'.repeat(64)}`;
+    f.create('first', null, {}, true, runId => {
+      f.store.observeWorkspaceIdentity(runId, finalIdentity, { provenance: {
+        changedPaths: ['fixed.ts'], mutationDigest: finalIdentity,
+      } });
+    });
+    const run = f.store.getRun('first')!;
+    const receipt = { status: 'evidence-failed', runId: 'first', reportKey: 'report', actualChangedPaths: ['earlier.ts'] };
+    const attempt = { status: 'failed', runId: 'first', mutationRevision: 1, changedPaths: ['earlier.ts'],
+      provenanceKind: 'owner-session', attemptId: 'attempt', reportKey: 'report', reportPayloadDigest: 'digest',
+      finishedAt: 'finished', bindingId: run.ownerBindingId, workspaceId: run.workspaceId,
+      workspaceIdentityEnd: identity, resultWorkspaceIdentity: identity, reportResult: receipt };
+    const resolve = (candidate = attempt) => resolveKernelCloseoutRun({
+      stateStore: { ...f.store, getStepAttempts: () => [candidate] },
+      projectId: 'project', workspaceId: f.workspace.workspaceId, runId: 'first',
+      currentWorkspaceIdentity: finalIdentity,
+    });
+    const before = f.store.getRun('first');
+    assert.deepEqual(resolve().approvedPaths, ['earlier.ts', 'fixed.ts']);
+    assert.deepEqual(resolve({ ...attempt, workspaceId: null }).approvedPaths, ['earlier.ts', 'fixed.ts']);
+    for (const invalid of [
+      { ...attempt, reportResult: { ...receipt, status: 'scope-rejected' } },
+      { ...attempt, reportResult: { ...receipt, runId: 'foreign' } },
+      { ...attempt, reportResult: { ...receipt, reportKey: 'foreign' } },
+      { ...attempt, reportResult: { ...receipt, actualChangedPaths: ['foreign.ts'] } },
+      { ...attempt, provenanceKind: 'parallel-task' },
+      { ...attempt, runId: 'foreign' },
+      { ...attempt, bindingId: 'foreign' },
+      { ...attempt, workspaceId: 'foreign' },
+      { ...attempt, reportPayloadDigest: '' },
+      { ...attempt, resultWorkspaceIdentity: finalIdentity },
+      { ...attempt, mutationRevision: 999 },
+    ]) {
+      assert.deepEqual(resolve(invalid).approvedPaths, ['fixed.ts']);
+    }
+    assert.deepEqual(f.store.getRun('first'), before);
   } finally { await f.close(); }
 });

@@ -97,18 +97,55 @@ interface ValidLineage {
   entries: ValidLineageEntry[];
 }
 
+interface CloseoutStepAttempt {
+  status: string;
+  mutationRevision?: number | null;
+  changedPaths?: string[] | null;
+  runId?: string;
+  provenanceKind?: string;
+  attemptId?: string | null;
+  reportKey?: string | null;
+  reportPayloadDigest?: string | null;
+  finishedAt?: string | null;
+  bindingId?: string | null;
+  workspaceId?: string | null;
+  workspaceIdentityEnd?: string | null;
+  resultWorkspaceIdentity?: string | null;
+  reportResult?: unknown;
+}
+
+// A final accepted workspace also covers earlier, scope-admitted owner edits
+// whose proof failed. The immutable canonical report must witness those paths;
+// a failed attempt alone never grants Git authority.
+const admittedProofFailure = (attempt: CloseoutStepAttempt, run: KernelCommitRun): boolean => {
+  const result = attempt.reportResult;
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
+  const receipt = result as UnknownRecord;
+  return attempt.status === 'failed' && receipt.status === 'evidence-failed'
+    && attempt.provenanceKind === 'owner-session'
+    && attempt.runId === run.runId && receipt.runId === run.runId
+    && Boolean(attempt.attemptId && attempt.reportKey && attempt.reportPayloadDigest && attempt.finishedAt)
+    && receipt.reportKey === attempt.reportKey
+    && Boolean(run.ownerBindingId && attempt.bindingId === run.ownerBindingId)
+    && (attempt.workspaceId || run.workspaceId) === run.workspaceId
+    && Boolean(attempt.workspaceIdentityEnd)
+    && attempt.workspaceIdentityEnd === attempt.resultWorkspaceIdentity
+    && Array.isArray(receipt.actualChangedPaths)
+    && JSON.stringify(uniquePaths(receipt.actualChangedPaths)) === JSON.stringify(uniquePaths(attempt.changedPaths || []));
+};
+
 const lineageApprovedPaths = (stateStore: KernelCommitStateStore, entries: ValidLineageEntry[]): string[] =>
   uniquePaths(entries.flatMap((entry) => [
     ...(entry.provenance.changedPaths || []),
     ...(stateStore.getStepAttempts?.(entry.run.runId) || [])
-      .filter((attempt) => attempt.status === 'passed'
+      .filter((attempt) => (attempt.status === 'passed' || admittedProofFailure(attempt, entry.run))
         && Number(attempt.mutationRevision) > 0
         && Number(attempt.mutationRevision) <= entry.run.mutationRevision)
       .flatMap((attempt) => attempt.changedPaths || []),
   ]));
 
 interface KernelCommitStateStore {
-  getStepAttempts?(runId: string): Array<{ status: string; mutationRevision?: number | null; changedPaths?: string[] | null }>;
+  getStepAttempts?(runId: string): CloseoutStepAttempt[];
   getRun(runId: string): KernelCommitRun | null;
   listRuns(input: { projectId: string; statuses: string[] }): KernelCommitRun[];
   resolveSuccessorLineage?(runId: string): SuccessorLineage;
@@ -366,7 +403,10 @@ export function resolveKernelCloseoutRun({
         return { runs: [candidate], runIds: [candidate.runId], terminalRunId: candidate.runId, isTerminal: true, edges: [] };
       }
       return stateStore.resolveSuccessorLineage(candidate.runId);
-    } catch {
+    } catch (error) {
+      // An explicit recovery target must retain its actionable lineage error.
+      // Discovery may still skip an unrelated malformed historical candidate.
+      if (effectiveRunId) throw error;
       return null;
     }
   };
