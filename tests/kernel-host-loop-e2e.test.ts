@@ -126,6 +126,26 @@ test('run loop routes judgment-only obligations to independent review', () => {
   assert.deepEqual(payload.action.outstandingObligations, ['security-review']);
 });
 
+test('legacy blockers without a stored class use the same Kernel-owned classification', () => {
+  for (const { reason, expected } of [
+    { reason: 'unsupported-verification', expected: 'completion' },
+    { reason: 'external-dependency', expected: 'completion' },
+    { reason: 'question', expected: 'completion' },
+    { reason: 'unsafe-command', expected: 'safety' },
+    { reason: 'network-policy', expected: 'safety' },
+  ]) {
+    const projected = buildNextPayload({
+      run: { runId: `legacy-${reason}`, objective: 'legacy blocked state', status: 'blocked', blockedReason: reason },
+    });
+    assert.equal(projected.action.type, 'blocked');
+    assert.equal(projected.action.blockingClass, expected);
+  }
+  const explicitlySafe = buildNextPayload({
+    run: { runId: 'explicit-class', objective: 'preserve stored authority', status: 'blocked', blockedReason: 'external-dependency', blockingClass: 'safety' },
+  });
+  assert.equal(explicitlySafe.action.blockingClass, 'safety');
+});
+
 test('blocker report preserves the original blocker after the owner binding is closed', async () => {
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'krn-blocker-report-home-'));
   const projectRoot = await setupProject();
@@ -165,6 +185,46 @@ test('blocker report preserves the original blocker after the owner binding is c
     await controlPlane.close();
     await rm(runtimeHome, { recursive: true, force: true });
     await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test('reported blockingClass cannot downgrade safety or impose a safety gate on completion-only blockers', async () => {
+  for (const { reason, injectedClass, expectedClass } of [
+    { reason: 'unsafe-command', injectedClass: 'completion', expectedClass: 'safety' },
+    { reason: 'external-dependency', injectedClass: 'safety', expectedClass: 'completion' },
+  ]) {
+    const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'krn-block-authority-home-'));
+    const projectRoot = await setupProject();
+    const controlPlane = await createKernelControlPlane({ runtimeHome, projectRoot });
+    const runId = `run-block-authority-${reason}`;
+    try {
+      await controlPlane.startRun({
+        runId,
+        objective: 'test Kernel-owned blocking classification',
+        taskContract: {
+          acceptance: [{ acceptance: 'verify the blocker decision', evidencePlan: {
+            class: 'hard', method: 'unit-test', commandRefs: ['test:focus'], obligationId: 'proof',
+          } }],
+        },
+      });
+      const report = await controlPlane.report(runId, {
+        summary: 'report the current blocker without granting its classification',
+        blocker: { reason, blockingClass: injectedClass, detail: 'caller-provided classification' },
+      });
+      const persisted = controlPlane.stateStore.getRun(runId);
+      assert.equal(assertTestRecord(assertTestPresent(report)).status, 'blocked');
+      assert.equal(persisted?.status, 'blocked');
+      assert.equal(persisted?.blockedReason, reason);
+      assert.equal(persisted?.blockingClass, expectedClass);
+      const next = await controlPlane.next(runId);
+      const action = assertTestRecord(assertTestRecord(next).action);
+      assert.equal(action.type, 'blocked');
+      assert.equal(action.blockingClass, expectedClass);
+    } finally {
+      await controlPlane.close();
+      await rm(runtimeHome, { recursive: true, force: true });
+      await rm(projectRoot, { recursive: true, force: true });
+    }
   }
 });
 

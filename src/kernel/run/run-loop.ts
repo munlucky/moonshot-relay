@@ -1,5 +1,6 @@
 import { TRANSITIONS, type KernelState } from '../transition.js';
 import { sanitizePersistentPayload } from '../../shared/persistent-sanitizer.js';
+import { resolveWorkBlockingClass } from './work-authority.js';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -394,7 +395,7 @@ export const buildNextPayload = ({
     return currentAction({
         type: 'blocked',
         reason: run.blockedReason,
-        blockingClass: run.blockingClass || 'safety',
+        blockingClass: run.blockingClass || resolveWorkBlockingClass(run.blockedReason),
         guidance: run.blockedReason === 'unsupported-verification'
           ? 'Required verification commands are missing or unsatisfiable. Use an existing discovered project command when available; otherwise report an unsupported-verification blocker for the project owner, without mutating the product manifest.'
           : 'Resolve the blocker with the user, then submit a new report.',

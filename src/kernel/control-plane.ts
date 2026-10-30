@@ -4334,7 +4334,8 @@ export const createKernelControlPlane = async ({
             changedPaths: report.changedPaths,
           }));
         }
-        blockRun(runId, String(report.blocker.reason || ''), report.blocker.blockingClass ? String(report.blocker.blockingClass) : null);
+        // A report may describe the blocker, but cannot assign its safety authority.
+        blockRun(runId, String(report.blocker.reason || ''));
         await syncRunLocator(getRunSnapshot(runId));
         await projectRunState(getRunSnapshot(runId), { runtimeHome });
         return buildBlockedResponse({ runId, reason: String(report.blocker.reason || ''), detail: report.blocker.detail || null });

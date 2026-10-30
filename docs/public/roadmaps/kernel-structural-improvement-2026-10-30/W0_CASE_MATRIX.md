@@ -6,8 +6,8 @@
 |---|---|---|---|---|
 | C01 | `get_work_context` partial/HEAD null + drift detected, 직접 Git clean/HEAD 일치. `kernel-run-locator-fail-soft` 회귀 통과 | `internal_unverified` (관측 불일치 확인) | **W1** | transport의 부분 관측이 실제 승인/작업 차단으로 이어지는지 검사. Moonremote 전용이면 외부 소유로 분리 |
 | C02 | `kernel-parallel-fencing`의 HEAD/dirty/revision mismatch 거부 회귀 통과 | `already_fixed` (해당 fixture 경계) | **W1** 관측, **W3-A** 물리 쓰기 | 실제 소스 변경 뒤 stale proof 재승인 여부는 별도 |
-| C03 | `external-dependency` 때문에 안전한 구현까지 중단된다는 과거 보고 | `historical_only` | **W2** | blocked 관측과 권위 판정의 현행 실제 경로 재현 |
-| C04 | `kernel-required-capability` 회귀 통과, 실제 필수 환경 부재 표면은 미시험 | `internal_unverified` | **W2** | 일반 구현 진행과 필수 Proof 완료 승인 분리 |
+| C03 | W0 DB 백업에서 blocked `external-dependency` 7건(FRAME 2/PROVE 5). Report가 차단 Class를 덮어쓸 수 있던 실결함은 W2에서 수정 | `internal_unverified` (독립 구현 중단의 인과 미확정) | **W2** | 명시적으로 blocked인 Run에 독립 실행 가능 Step이 남아 있었는지 원본 사례/인과가 없으므로 자동 unblock 추가 금지 |
+| C04 | W2에서 `progressive-admission` 재실행 PASS: 명령 부재 시 구현 시작/EXECUTE 가능, PROVE에서 Hard Evidence 미충족 차단, 명령 제공 후 자동 Rebinding | `already_fixed` (격리 Linux PROVE 경계) | **W2** | 실제 Provider/native Host와 계정 설치 환경은 별도 소유 Wave에서 검증 |
 | C05 | `kernel-review-host-bridge`와 Reviewer 관련 회귀 통과 | `internal_unverified` | **W4** | macOS native/실제 독립 Reviewer 세션 증거 미확인 |
 | C06 | 패치 전 owner fence expiry 시 actual byte 0·revision 0. 실제 `git apply` 3,000파일 실행에 250ms fence-derived timeout 적용 시 ETIMEDOUT/SIGTERM, 996파일 생성 뒤 만료 이후 **추가 파일 0** | `internal_unverified` (단일 subprocess deadline 사례 통과) | **W3-A** | 외부 owner fence 강제 교체와 실제 kernel dispatcher 동시 경합은 미검증; 경계 실패로 곧바로 새 권위/Lock 추가 금지 |
 | C07 | 기존 C07 제3자·부분 파일 상태와 더불어 실제 `git apply` 3,000파일 중 SIGKILL 후 **16파일 잔존**, 격리 Kernel durable routed attempt 기반 재시작 **blocked/revision 0**, 바이트 보존 확인 | `already_fixed` (대표 crash recovery) | **W3-A** | worker receipt는 fixture가 만들어 제공; 실 Provider 연결·동시 중복 요청은 다른 경계 |
