@@ -22,3 +22,4 @@
 - W9: `W9_RESULT.md`, Proof/Prompt/Cache 50/50 PASS, 동일 stable next 60회 p50 11.154ms/p95 18.661ms. 실제 Provider usage receipt·최초 편집/전달 latency 및 전후 A/B 미측정, 추가 캐시 없음.
 - W10: `W10_FINAL_RESULT.md`. Recovery 24/24, Lifecycle 66/66, 격리 정상 빌드 Unification 13/13, TS7/Boundaries/BuildCheck PASS. 광역 Reliability 격리 279 PASS/2 FAIL/1 SKIP, 개별 실패 2/2 원본 Git 재검증 PASS이나 전체 PASS 미확정. 전체 PARTIAL.
 - W10 Reliability 추가 검증: Git metadata가 있는 독립 Linux checkout, 동일 HEAD/native 의존성, Runtime·Test build 후 **282/282 PASS (skip 0)**. 이전 Git 없는 archive 2 FAIL/1 SKIP은 재현 경계 차이로 분리. 통합은 native/계정 검증 부족으로 PARTIAL 유지.
+- W8 native follow-up (2026-10-31): `W8_NATIVE_FOLLOWUP_2026-10-31.md`. Mac ARM64 canonical `edbefb26` 격리 집중 회귀 62/62, Resolver 1/1, TypeScript7/BuildCheck PASS. 전체 optional CLI Smoke Qwen/ADE timeout, Mac 계정 설치 파일 SHA 불일치, Windows native 미확인. **전체 PARTIAL 유지**.

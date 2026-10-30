@@ -10,3 +10,7 @@
 - 설치 자체가 필요한 경우 사용자 소유 파일·진행 중 작업을 확인하고 별도 지원 경계에서 수행한다. 운영 namespace merge/adopt 승인은 W8 검증만으로 대체하지 않는다.
 
 **W8 판정: Linux SOURCE PASS, native Host/계정 설치는 PARTIAL/environment_blocked.** 새 제품 폴백·프로세스 권위·Identity 정책을 추가하지 않았다.
+
+## 2026-10-31 native macOS follow-up
+
+실제 macOS ARM64에 canonical `edbefb26`을 별도 checkout하여 Codex 관련 native 테스트 **62/62 PASS**, TypeScript7/Boundaries/BuildCheck PASS를 검증했다. Mac 계정 설치 소스는 이전 버전이고 실제 생성 파일 2개의 SHA가 달라 설치 parity는 실패한다. 선택적 Qwen/ADE CLI Smoke도 timeout으로 전체 PASS가 아니다. 자세한 증거와 소유권 보호 판단: `W8_NATIVE_FOLLOWUP_2026-10-31.md`. 최종 판정은 **source verified / native account PARTIAL**을 유지한다.

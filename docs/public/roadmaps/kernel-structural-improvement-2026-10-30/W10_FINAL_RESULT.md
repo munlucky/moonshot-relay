@@ -44,3 +44,7 @@ W10 문서 커밋은 최종 SHA가 기록되는 Git 로그를 권위로 사용�
 3. **운영 승인 경계:** 운영 Knowledge migration은 비필수 보류. 추후 실제 필수가 되면 owner 승인·Online Backup·dry-run·rollback 없이 변경하지 않는다.
 
 **현재 결론:** W4~W9의 확보된 검증/변경은 적용했고 `main`에 Wave별 푸시했다. W10 최종 RELEASE 판정은 **PARTIAL**. 필수 native Host·계정 설치 검증이 충족되기 전 `COMPLETE`라고 선언하지 않는다.
+
+## 2026-10-31 W8 native Host 후속 확인
+
+Mac ARM64에서 같은 HEAD `edbefb26`의 focused native Host/Reviewer/Session 62/62, Native Resolver 1/1, TypeScript7/BuildCheck가 통과했다. 그러나 계정 설치 시점이 오래되고 canonical과 다른 소스 파일 해시가 확인되어 **계정 설치 parity는 미충족**. Windows native도 NOT_TESTED. Linux 전체 회귀 PASS는 보존하며 통합 **PARTIAL**을 유지한다. 자세한 결과는 `W8_NATIVE_FOLLOWUP_2026-10-31.md`를 따른다.
