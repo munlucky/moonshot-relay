@@ -1,6 +1,6 @@
 # W0 환경·백업·회귀 증거 인벤토리
 
-**작업:** `e72d8f88-5920-426b-8565-0edc713faa18` · 2026-10-30 · W0 PARTIAL
+**작업:** `e72d8f88-5920-426b-8565-0edc713faa18` · 2026-10-30 · W0 격리 소스 기준선 최종 PASS
 
 | 표면 | 기준선/결과 |
 |---|---|
@@ -51,3 +51,7 @@
 - 물리적 늦은 writer/DB 차단 쓰기 실패의 원본 바이트·revision·재시작 결과(C06~C08)
 - 소유 Wave 결정 뒤 독립적으로 가능한 build/typecheck/Native 호스트 검사
 - 원격 추적 최신성 확인 및 필요한 문서 커밋/푸시 (force push·일괄 staging 금지)
+
+### W0 후속 Linux 빌드 검증
+
+`W0_ENVIRONMENT_VERIFICATION.md` 참고. 원본 공유 마운트에서 환경 검사 재시도는 PASS 근거로 사용하지 않았고, 동일 HEAD의 격리 Linux overlay에서 정상 빌드→검증 결과를 사용했다. Windows/macOS native 미확인은 해당 Host Wave로 이관하며 원본 계정 설치는 변경하지 않았다.

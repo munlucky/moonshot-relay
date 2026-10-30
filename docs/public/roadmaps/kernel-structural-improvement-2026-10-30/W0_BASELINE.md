@@ -5,7 +5,7 @@
 - 기준 HEAD: `bde95dab464461e6c810af0c8458bdd9b78011d0`
 - 작업 추적: `e72d8f88-5920-426b-8565-0edc713faa18`
 - 원 계획: `moonshot-relay-kernel-structural-improvement-integrated-final-plan-2026-10-30-v2.md` §4
-- **W0 판정: PARTIAL.** 기준선 확보와 기존 회귀는 통과했지만 필수 물리적 파일 쓰기·내구 차단 반례가 남아 있다. 다른 Wave나 전체 계획을 COMPLETE로 선언하지 않는다.
+- **W0 최종 판정: PASS (Linux 격리 소스 기준선 및 대표 안전 반례).** 아래는 단계별 관측 당시의 PARTIAL 기록이며 최종 환경 판정은 `W0_ENVIRONMENT_VERIFICATION.md`에 있다. 다른 Wave 및 전체 계획은 COMPLETE가 아니다.
 
 ## 확인된 실행 사실
 
@@ -44,3 +44,7 @@ W0의 **남은 실행 환경 검증·C06 end-to-end 경계·C08 저장 장치 �
 - **빌드 환경**: `npm run check:boundaries`는 60초와 175초 제한 모두 exit 124. 분리한 Runtime graph 진단은 `scandir('/shared/moonshot-relay/src/contracts')`에서 `ENOMEM`을 반환했고, 별도 `find`에서도 같은 디렉터리 열거 중 메모리 할당 오류가 발생했다. `/proc/meminfo`의 MemAvailable은 약 950 MiB, cgroup memory.current 약 391MB로, 단순 RAM 부족 여부는 **입증되지 않았다**. 환경 파일시스템/자원 오류와 제품 코드 실패를 혼동하지 않는다. Linux `@typescript/typescript-linux-x64` 패키지 부재도 계속 확인했다.
 
 **판정: W0 PARTIAL 유지.** 대표 안전 반례는 통과했지만 이 실행 표면에서 필수 빌드/TypeScript 검증은 완료되지 않았다. 더 많은 오류 종류를 무조건 추가하는 W0 확대는 하지 않는다. W3-A의 새 방어 구현은 재현된 제품 P0 결함이 생기기 전까지 보류한다.
+
+## W0 범위별 최종 결정
+
+동일 HEAD의 격리 Linux overlay에서 TypeScript 7.0.2 `--noEmit`, boundaries(9/308/840), 정상 build(308개), 직후 build:check(변경 0건)를 PASS했다. 추가 native 플랫폼/공유 마운트 운영 검증은 W8, 실행 선택과 관측 인과는 W1에서 따로 다룬다. 현행 소스 P0 안전 위반은 대표 물리 파일 쓰기 반례에서 재현되지 않았다. 최초 파일/환경 실패 및 PARTIAL 증거는 위 원문 그대로 보존한다.
