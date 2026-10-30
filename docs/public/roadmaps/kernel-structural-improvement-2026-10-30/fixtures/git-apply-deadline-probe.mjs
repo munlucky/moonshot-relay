@@ -7,7 +7,8 @@ import path from 'node:path';
 import {runGit} from '../../../../../scripts/lib/git-safe.js';
 import {deliveryApplyTimeoutMs} from '../../../../../scripts/host/kernel/parallel-dispatcher.js';
 const dir=await fs.mkdtemp(path.join(os.tmpdir(),'w0-lease-deadline-'));
-const N=3000;
+// Enough real Git file writes to exercise the deadline on faster Linux hosts.
+const N=12000;
 try {
  const g=args=>{const r=spawnSync('git',args,{cwd:dir,encoding:'utf8',timeout:6000});assert.equal(r.status,0,String(r.stderr));};
  g(['init','-b','main']);g(['config','user.name','W0']);g(['config','user.email','w0@example.invalid']);
