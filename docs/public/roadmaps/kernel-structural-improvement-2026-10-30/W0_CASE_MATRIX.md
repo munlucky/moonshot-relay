@@ -9,8 +9,8 @@
 | C03 | `external-dependency` 때문에 안전한 구현까지 중단된다는 과거 보고 | `historical_only` | **W2** | blocked 관측과 권위 판정의 현행 실제 경로 재현 |
 | C04 | `kernel-required-capability` 회귀 통과, 실제 필수 환경 부재 표면은 미시험 | `internal_unverified` | **W2** | 일반 구현 진행과 필수 Proof 완료 승인 분리 |
 | C05 | `kernel-review-host-bridge`와 Reviewer 관련 회귀 통과 | `internal_unverified` | **W4** | macOS native/실제 독립 Reviewer 세션 증거 미확인 |
-| C06 | 현재 격리 Delivery에서 expiry 주입 시 **패치 전 actual byte 변경 0·Git clean·revision 0** 직접 확인. 기존 fencing 회귀도 통과 | **`internal_unverified` (적용 중 만료 미검증)** | **W3-A** | 패치 프로세스 시작 후 lease 상실/종료 경합에서 실제 바이트·Run/Step 검사 필요 |
-| C07 | 실제 Delivery 뒤 `third-party.txt` 삽입 및 `beta` 삭제(부분 파일 상태) 독립 fixture 각각 **blocked/revision 0**, 외부·잔여 파일 보존 확인. 기존 settlement crash 회귀 통과 | `internal_unverified` (실제 프로세스 강제 종료 중 patch 적용 경계 미검증) | **W3-A** | 실제 patch 도중 프로세스 중단·재시작에서 잔여 파일/Receipt 보존과 중복 적용 0 직접 검증 필요 |
+| C06 | 패치 전 owner fence expiry 시 actual byte 0·revision 0. 실제 `git apply` 3,000파일 실행에 250ms fence-derived timeout 적용 시 ETIMEDOUT/SIGTERM, 996파일 생성 뒤 만료 이후 **추가 파일 0** | `internal_unverified` (단일 subprocess deadline 사례 통과) | **W3-A** | 외부 owner fence 강제 교체와 실제 kernel dispatcher 동시 경합은 미검증; 경계 실패로 곧바로 새 권위/Lock 추가 금지 |
+| C07 | 기존 C07 제3자·부분 파일 상태와 더불어 실제 `git apply` 3,000파일 중 SIGKILL 후 **16파일 잔존**, 격리 Kernel durable routed attempt 기반 재시작 **blocked/revision 0**, 바이트 보존 확인 | `already_fixed` (대표 crash recovery) | **W3-A** | worker receipt는 fixture가 만들어 제공; 실 Provider 연결·동시 중복 요청은 다른 경계 |
 | C08 | 실제 격리 SQLite **배타 잠금**으로 owner CAS·차단 기록 모두 `ERR_SQLITE_ERROR`, 실패 직후 active/revision 0 → 잠금 해제 후 재시작 **blocked**. 기존 모의 실패도 재현 | `internal_unverified` (실제 디스크 I/O 오류 전체 범위 미검증) | **W3-A** | SQLITE_BUSY 경계 이외 I/O·디스크 가득 참, 차단 후 명시적 복구 승인 정책은 별도 검증 |
 | C09 | `kernel-git-closeout-retry` 및 `kernel-report-replay` 재시작·중복 Git 전달 회귀 통과 | `already_fixed` (fixture) | **W3-B** | accepted SHA·Identity 사용 지점, live closeout 재시도는 별도 |
 | C10 | `kernel-finalization-knowledge-nonblocking`에서 Knowledge 저장 실패·review·projection 후속 deferred 회귀 통과 | `already_fixed` (fixture) | **W3-B** | 선택/필수 Knowledge 후속의 운영 승인 대기는 별도 구분 |

@@ -35,4 +35,12 @@
 
 ## 다음 실행 하나
 
-W0의 **남은 C06 실행 중 만료·C07 실제 프로세스 crash·C08 저장 장치 오류 반례**를 정확히 분리한 완전 격리 테스트로 추가한다. 특히 늦은 writer의 실제 파일 바이트·Git diff·mutation revision·Receipt, patch 적용 직후 crash, `blockDeliveryMaterialization` DB 쓰기 실패/재시작을 검증한다. 다음 결과에서 현행 P0 위반이 확인되면 W3-A를 W1보다 우선한다. 위반이 재현되지 않으면 범위·사례별 불확실성을 기록하고 W1 진입 여부를 재판정한다. 재현 없이 정책 분기·새 lock·상시 gate를 추가하지 않는다.
+W0의 **남은 실행 환경 검증·C06 end-to-end 경계·C08 저장 장치 오류 범위**를 정확히 분리한 완전 격리 테스트로 추가한다. 특히 늦은 writer의 실제 파일 바이트·Git diff·mutation revision·Receipt, patch 적용 직후 crash, `blockDeliveryMaterialization` DB 쓰기 실패/재시작을 검증한다. 다음 결과에서 현행 P0 위반이 확인되면 W3-A를 W1보다 우선한다. 위반이 재현되지 않으면 범위·사례별 불확실성을 기록하고 W1 진입 여부를 재판정한다. 재현 없이 정책 분기·새 lock·상시 gate를 추가하지 않는다.
+
+## 2026-10-30 W0 후속 증거 (HEAD `a2a56790`)
+
+- **C07 실제 자식 종료**: `fixtures/real-git-apply-crash-probe.mjs`에서 3,000개 신규 파일의 `git apply`를 직접 실행하고 일부 파일 생성 뒤 **해당 fixture 소유 Git 자식만 SIGKILL**. 최초 실행 35개, 저장소 fixture 재실행 16개 파일이 물리적으로 잔존했다. Kernel의 기존 **영속 routed attempt fixture**를 재사용하여 다시 열고 `recoverPendingDeliveryMaterialization`을 실행하자 `blocked` / `delivery_materialization_recovery_required`, revision 0이었고 남은 파일 수는 불변이었다. 이는 실제 모델 워커가 아니라 **worker receipt를 직접 조립한 격리 fixture**라는 점을 유지한다.
+- **C06 실제 subprocess 시간 제한**: `fixtures/git-apply-deadline-probe.mjs`는 `deliveryApplyTimeoutMs()`에서 계산한 만료 전 budget을 `runGit(..., {timeout, killSignal:'SIGTERM'})`에 그대로 적용한다. 3,000개 파일 패치 기준 최초 실행 249ms 후 2,417개 파일, 재실행 250ms 후 996개 파일이 관측되었다. 두 실행 모두 `ETIMEDOUT`·`SIGTERM`, 1.4초 대기 후 파일 수 불변으로 **늦은 자식 writer가 관측되지 않았다**. 이 fixture는 실제 Kernel의 동시 Lease 경쟁 및 최종 Receipt 승인까지 통합 재현한 것은 아니다.
+- **빌드 환경**: `npm run check:boundaries`는 60초와 175초 제한 모두 exit 124. 분리한 Runtime graph 진단은 `scandir('/shared/moonshot-relay/src/contracts')`에서 `ENOMEM`을 반환했고, 별도 `find`에서도 같은 디렉터리 열거 중 메모리 할당 오류가 발생했다. `/proc/meminfo`의 MemAvailable은 약 950 MiB, cgroup memory.current 약 391MB로, 단순 RAM 부족 여부는 **입증되지 않았다**. 환경 파일시스템/자원 오류와 제품 코드 실패를 혼동하지 않는다. Linux `@typescript/typescript-linux-x64` 패키지 부재도 계속 확인했다.
+
+**판정: W0 PARTIAL 유지.** 대표 안전 반례는 통과했지만 이 실행 표면에서 필수 빌드/TypeScript 검증은 완료되지 않았다. 더 많은 오류 종류를 무조건 추가하는 W0 확대는 하지 않는다. W3-A의 새 방어 구현은 재현된 제품 P0 결함이 생기기 전까지 보류한다.

@@ -21,8 +21,10 @@
 | C08 장애 주입 | `/tmp/moonshot-w0-cases-k6N6GsRd/c08-result-v2.log`: 실제 patch bytes 반영 뒤 Control Plane 기록 실패 2곳 주입 → restart blocked/recovery required |
 | C07 추가 재현 | `/tmp/moonshot-w0-check-iye3P2sa/c07_external.log`, `c07_partial.log`: 적용 뒤 제3자 변경·부분 파일 상태 각각 blocked, revision 0 |
 | C08 SQLite 잠금 재현 | `/tmp/moonshot-w0-check-iye3P2sa/c08_busy-verified.log`: 실제 BEGIN EXCLUSIVE, 두 API에서 ERR_SQLITE_ERROR → unlock 뒤 restart blocked |
-
-
+| C07 자식 프로세스 중단 | `fixtures/real-git-apply-crash-probe.mjs`: 실제 Git SIGKILL, 3,000개 중 16개 적용 뒤 restart blocked, 잔여 파일 보존 |
+| C06 자식 프로세스 제한 | `fixtures/git-apply-deadline-probe.mjs`: 250ms·SIGTERM·ETIMEDOUT, 996/3,000 파일 생성 뒤 추가 writer 미관측 |
+| 재현 로그 | `/tmp/w0-repro-final-FTmxyMDL/{crash,deadline}.log` (현지 임시 자료, 영구 증거는 fixture/커밋) |
+| 컴파일 환경 | boundaries 175초에도 exit124; Runtime graph `scandir(src/contracts)` ENOMEM, 동일 위치 `find` 실패; Linux native TypeScript 패키지 없음 |
 | 소스 파일 | 테스트 전후 `src/kernel`, `src/host/kernel`, `tests` 추적 파일 목록·해시 동일; HEAD 불변 |
 | 빌드 검증 | `check:boundaries` exit 124 (60초); `build:check` exit 124 (60초); `typecheck` exit 1 (Linux native TS package 없음) |
 | 미시험 표면 | Windows native, Mac 연결 Linux workmachine, macOS native, 실제 Provider 세션 |
