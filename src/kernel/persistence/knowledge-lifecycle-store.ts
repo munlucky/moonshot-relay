@@ -6,6 +6,18 @@ import { canonicalKnowledgeIdentity } from '../knowledge/identity.js';
 type UnknownRecord = Record<string, unknown>;
 
 const knowledgeIdentity = canonicalKnowledgeIdentity;
+// Persisted records and submitted candidates must use the same full semantic
+// identity. A shared statement/scope cannot collapse distinct proof commands.
+const persistedRecordIdentity = (record: UnknownRecord, recordType: unknown): string => knowledgeIdentity({
+  recordType,
+  statement: record.statement,
+  scope: strings(record.scope),
+  practiceJson: record.practiceJson,
+  verification: record.verification,
+  obligation: record.obligation,
+  obligationId: record.obligationId,
+  obligationIds: record.obligationIds,
+});
 
 export interface KnowledgeRunLike extends UnknownRecord {
   runId?: string;
@@ -1000,24 +1012,14 @@ export const createKnowledgeLifecycleStore = ({
         `).all(projectId) as KnowledgeRecordRow[];
         const existingIdentities = new Set(existingRows.map((row) => {
           const parsed = parseJson<UnknownRecord | null>(row.recordJson, null);
-          return parsed
-            ? knowledgeIdentity({
-                recordType: row.record_type,
-                statement: parsed.statement,
-                scope: strings(parsed.scope),
-              })
-            : null;
+          return parsed ? persistedRecordIdentity(parsed, row.record_type) : null;
         }).filter((value): value is string => Boolean(value)));
 
         const seenBatchIdentities = new Set<string>();
         const deduplicatedRecords: UnknownRecord[] = [];
         for (const record of recordsToCommit || []) {
           const recordType = record.type || record.record_type || record.proposedType;
-          const identity = knowledgeIdentity({
-            recordType,
-            statement: record.statement,
-            scope: strings(record.scope),
-          });
+          const identity = persistedRecordIdentity(record, recordType);
           if (seenBatchIdentities.has(identity) || existingIdentities.has(identity)) continue;
           seenBatchIdentities.add(identity);
           deduplicatedRecords.push(record);
