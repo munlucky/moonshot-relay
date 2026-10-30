@@ -17,14 +17,19 @@
 6. `src/kernel`, `src/host/kernel`, `tests`의 추적 대상 파일 목록 및 바이트 해시는 테스트 전후 동일했다. 검사 종료 후 `HEAD`도 동일. `skills/explain-diff-html/scripts/render.py`는 일시적으로 Git status에 나타났으나 현재 clean이며 CRLF 정규화 후 HEAD 바이트와 동일했다. 파일을 변경·원복하지 않았다.
 7. `check:boundaries`, `build:check`는 각 60초 외부 제한에 걸려 **exit 124 (timed out)**. `typecheck`는 Linux native `@typescript/typescript-linux-x64` 부재로 **exit 1**. 세 작업 모두 PASS 아님. 단 시간 제한만으로 소스 실패라고 판단하지 않는다.
 8. 다른 Moonremote Mac Linux workmachine, Windows native, macOS native 표면은 이번 실행에서 직접 검증하지 않았다.
+9. W0 추가 장애 주입(동일 HEAD): 실제 격리 병렬 Delivery에서 owner fence expiry를 DB fixture에 강제로 기록해 renewal을 거부했다. **물리적 alpha/beta 파일 모두 없음, Git clean, mutationRevision=0, 재시작 후 active 유지**를 직접 확인했다(C06의 apply 전 만료 경계).
+10. W0 추가 장애 주입(동일 HEAD): 실제 alpha/beta 패치가 반영된 뒤 owner mutation 기록 실패와 차단 기록 실패를 **Control Plane 호출 경계에서 모의**했다. 실패 직후 Run은 active/revision 0이었지만, 재시작 복구는 **blocked / delivery_materialization_recovery_required**로 판정했다(C08의 대표 실패 경로). 실제 SQLite I/O 오류 전체 범위 검증은 아니다.
+
+
+증거 재현: `fixtures/delivery-fence-restart-probe.mjs`의 `c06`/`c08`을 각각 실행해 `W0_ISOLATED_PROBE_PASS`를 확인했다. 이 스크립트는 W0 진단 fixture이며 Kernel 제품 동작이나 필수 실행 절차를 추가하지 않는다.
 
 ## 증거와 해석 경계
 
-- 실제 163개 fixture 회귀 통과는 현재 Linux 소스의 **기존 테스트가 주장하는 계약**에 대한 결과다. C06(lease 만료 뒤 실제 늦은 writer의 물리적 파일 쓰기)과 C08(차단 DB 쓰기 실패 뒤 실제 재시작)의 모든 위험을 증명한 결과가 아니다.
+- 실제 163개 fixture 회귀 통과는 현재 Linux 소스의 **기존 테스트가 주장하는 계약**에 대한 결과다. C06의 **적용 전 lease 만료**, C08의 **Control Plane 차단 저장 예외 후 재시작**을 대표 장애 주입으로 확인했다. 하지만 C06의 적용 중 만료·실제 늦은 writer, C08의 SQLite I/O 오류 유형 전체를 증명한 결과는 아니다.
 - `get_work_context`는 `time_budget_exceeded` 시 HEAD=null·partial 관측에도 `drift=detected`를 반환한 반면, 직접 Git 조회는 HEAD 일치·변경 0이었다. 이는 **관측 의미 불일치**의 근거이며, 실제 Kernel mutation 차단 인과는 미확정이다. 소유자는 W1(Moonremote transport 관측과 Kernel Work 권위를 분리).
 - SQLite 용량과 Knowledge 중복은 확인됐지만 실행 지연·토큰 비용의 인과는 측정하지 않았다. 원인 미입증 상태에서 새 엔진/규칙/인덱스를 추가하지 않는다.
 - `PARTIAL`인 W0를 `KEEP` 또는 `PASS`로 승격하지 않는다. W3-A의 안전성이나 W10의 전체 완료도 미확정 상태다.
 
 ## 다음 실행 하나
 
-W0의 **C06/C07/C08 안전 반례**를 정확히 분리한 완전 격리 테스트로 추가한다. 특히 늦은 writer의 실제 파일 바이트·Git diff·mutation revision·Receipt, patch 적용 직후 crash, `blockDeliveryMaterialization` DB 쓰기 실패/재시작을 검증한다. 다음 결과에서 현행 P0 위반이 확인되면 W3-A를 W1보다 우선한다. 위반이 재현되지 않으면 범위·사례별 불확실성을 기록하고 W1 진입 여부를 재판정한다. 재현 없이 정책 분기·새 lock·상시 gate를 추가하지 않는다.
+W0의 **남은 C06/C07/C08 안전 반례**를 정확히 분리한 완전 격리 테스트로 추가한다. 특히 늦은 writer의 실제 파일 바이트·Git diff·mutation revision·Receipt, patch 적용 직후 crash, `blockDeliveryMaterialization` DB 쓰기 실패/재시작을 검증한다. 다음 결과에서 현행 P0 위반이 확인되면 W3-A를 W1보다 우선한다. 위반이 재현되지 않으면 범위·사례별 불확실성을 기록하고 W1 진입 여부를 재판정한다. 재현 없이 정책 분기·새 lock·상시 gate를 추가하지 않는다.
