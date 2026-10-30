@@ -10,8 +10,8 @@
 | C04 | `kernel-required-capability` 회귀 통과, 실제 필수 환경 부재 표면은 미시험 | `internal_unverified` | **W2** | 일반 구현 진행과 필수 Proof 완료 승인 분리 |
 | C05 | `kernel-review-host-bridge`와 Reviewer 관련 회귀 통과 | `internal_unverified` | **W4** | macOS native/실제 독립 Reviewer 세션 증거 미확인 |
 | C06 | 현재 격리 Delivery에서 expiry 주입 시 **패치 전 actual byte 변경 0·Git clean·revision 0** 직접 확인. 기존 fencing 회귀도 통과 | **`internal_unverified` (적용 중 만료 미검증)** | **W3-A** | 패치 프로세스 시작 후 lease 상실/종료 경합에서 실제 바이트·Run/Step 검사 필요 |
-| C07 | `kernel-parallel-recovery`: owner mutation 뒤 settlement crash/재시작 blocking, workspace drift 회귀 통과 | `internal_unverified` (일부 반례 확인) | **W3-A** | apply와 내구 Receipt 사이 crash, 0회/1회/부분 적용·제3자 파일 혼합 전수 미검증 |
-| C08 | 격리 Delivery 실제 패치 적용 후 owner CAS 실패·차단 기록 호출 실패를 주입. 오류 직후 active/revision 0 → **재시작 blocked** 확인 | **`internal_unverified` (SQLite I/O 실오류 미검증)** | **W3-A** | 실제 SQLite busy/I/O 실패 유형, blocking 내구성·재승인 0 확장 검증 필요 |
+| C07 | 실제 Delivery 뒤 `third-party.txt` 삽입 및 `beta` 삭제(부분 파일 상태) 독립 fixture 각각 **blocked/revision 0**, 외부·잔여 파일 보존 확인. 기존 settlement crash 회귀 통과 | `internal_unverified` (실제 프로세스 강제 종료 중 patch 적용 경계 미검증) | **W3-A** | 실제 patch 도중 프로세스 중단·재시작에서 잔여 파일/Receipt 보존과 중복 적용 0 직접 검증 필요 |
+| C08 | 실제 격리 SQLite **배타 잠금**으로 owner CAS·차단 기록 모두 `ERR_SQLITE_ERROR`, 실패 직후 active/revision 0 → 잠금 해제 후 재시작 **blocked**. 기존 모의 실패도 재현 | `internal_unverified` (실제 디스크 I/O 오류 전체 범위 미검증) | **W3-A** | SQLITE_BUSY 경계 이외 I/O·디스크 가득 참, 차단 후 명시적 복구 승인 정책은 별도 검증 |
 | C09 | `kernel-git-closeout-retry` 및 `kernel-report-replay` 재시작·중복 Git 전달 회귀 통과 | `already_fixed` (fixture) | **W3-B** | accepted SHA·Identity 사용 지점, live closeout 재시도는 별도 |
 | C10 | `kernel-finalization-knowledge-nonblocking`에서 Knowledge 저장 실패·review·projection 후속 deferred 회귀 통과 | `already_fixed` (fixture) | **W3-B** | 선택/필수 Knowledge 후속의 운영 승인 대기는 별도 구분 |
 | C11 | `kernel-project-identity`의 alias/merge/isolation 회귀 통과; 과거 Git common-dir 미검증 이력 | `internal_unverified` | **W8** 원천 정책, **W3-B** 승인 후 사용 지점 | 운영 namespace를 임의 adopt/merge 금지; 소유 승인 없이 live repair 금지 |

@@ -23,6 +23,9 @@
 
 증거 재현: `fixtures/delivery-fence-restart-probe.mjs`의 `c06`/`c08`을 각각 실행해 `W0_ISOLATED_PROBE_PASS`를 확인했다. 이 스크립트는 W0 진단 fixture이며 Kernel 제품 동작이나 필수 실행 절차를 추가하지 않는다.
 
+11. W0 후속 장애 주입: 실제 Delivery 이후 제3자 파일 추가(`c07_external`)와 이미 적용된 두 파일 중 하나 제거(`c07_partial`)를 각각 별도 fixture로 재현했다. 모두 Run `blocked`, `mutationRevision=0`이며 제3자/잔여 바이트를 보존했다. **이는 실제 `git apply` 프로세스 중 강제 종료 반례와는 구별한다.**
+12. `c08_busy`는 별도 `DatabaseSync` 연결에서 실제 `BEGIN EXCLUSIVE`를 실행해 owner mutation과 차단 기록의 기존 SQLite API 호출이 모두 `ERR_SQLITE_ERROR`로 실패하도록 했다. 잠금 해제 후 재시작 시 `blocked` 확인. 메서드 내부의 예외 문자열만 모의하는 `c08`과 별도 실행했다. 실제 디스크 I/O 오류 전체를 대표하지는 않는다.
+
 ## 증거와 해석 경계
 
 - 실제 163개 fixture 회귀 통과는 현재 Linux 소스의 **기존 테스트가 주장하는 계약**에 대한 결과다. C06의 **적용 전 lease 만료**, C08의 **Control Plane 차단 저장 예외 후 재시작**을 대표 장애 주입으로 확인했다. 하지만 C06의 적용 중 만료·실제 늦은 writer, C08의 SQLite I/O 오류 유형 전체를 증명한 결과는 아니다.
@@ -32,4 +35,4 @@
 
 ## 다음 실행 하나
 
-W0의 **남은 C06/C07/C08 안전 반례**를 정확히 분리한 완전 격리 테스트로 추가한다. 특히 늦은 writer의 실제 파일 바이트·Git diff·mutation revision·Receipt, patch 적용 직후 crash, `blockDeliveryMaterialization` DB 쓰기 실패/재시작을 검증한다. 다음 결과에서 현행 P0 위반이 확인되면 W3-A를 W1보다 우선한다. 위반이 재현되지 않으면 범위·사례별 불확실성을 기록하고 W1 진입 여부를 재판정한다. 재현 없이 정책 분기·새 lock·상시 gate를 추가하지 않는다.
+W0의 **남은 C06 실행 중 만료·C07 실제 프로세스 crash·C08 저장 장치 오류 반례**를 정확히 분리한 완전 격리 테스트로 추가한다. 특히 늦은 writer의 실제 파일 바이트·Git diff·mutation revision·Receipt, patch 적용 직후 crash, `blockDeliveryMaterialization` DB 쓰기 실패/재시작을 검증한다. 다음 결과에서 현행 P0 위반이 확인되면 W3-A를 W1보다 우선한다. 위반이 재현되지 않으면 범위·사례별 불확실성을 기록하고 W1 진입 여부를 재판정한다. 재현 없이 정책 분기·새 lock·상시 gate를 추가하지 않는다.

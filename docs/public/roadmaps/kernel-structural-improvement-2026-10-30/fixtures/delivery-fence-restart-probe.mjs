@@ -1,5 +1,5 @@
 // W0-only diagnostic fixture. Never use an account runtime or a production repository.
-// Run: node docs/public/roadmaps/kernel-structural-improvement-2026-10-30/fixtures/delivery-fence-restart-probe.mjs c06|c08
+// Run: node docs/public/roadmaps/kernel-structural-improvement-2026-10-30/fixtures/delivery-fence-restart-probe.mjs c06|c07_external|c07_partial|c08|c08_busy
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs/promises';
@@ -11,7 +11,7 @@ import { runGit } from '../../../../../scripts/lib/git-safe.js';
 import { cleanupExecutionWorkspaces } from '../../../../../scripts/host/kernel/workspace/physical-worktree.js';
 
 const scenario = process.argv[2];
-if (!['c06', 'c08'].includes(scenario)) throw new Error('Select c06 or c08');
+if (!['c06', 'c07_external', 'c07_partial', 'c08', 'c08_busy'].includes(scenario)) throw new Error('Select c06, c07_external, c07_partial, c08 or c08_busy');
 const projectRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'w0-delivery-project-'));
 const runtimeHome = await fs.mkdtemp(path.join(os.tmpdir(), 'w0-delivery-runtime-'));
 const runId = `run-w0-${scenario}-fixture`;
@@ -21,6 +21,8 @@ const capabilities = {
 };
 let controlPlane;
 let projectId;
+let busyConnection;
+const sqliteErrorCodes = [];
 try {
   runGit(projectRoot, ['init', '-b', 'main']);
   runGit(projectRoot, ['config', 'user.name', 'Kernel W0 Fixture']);
@@ -62,6 +64,40 @@ try {
       } finally { db.close(); }
       return originalRenew(...args);
     };
+  } else if (scenario === 'c07_external') {
+    const originalRecord = controlPlane.recordOwnerWorkspaceMutation.bind(controlPlane);
+    controlPlane.recordOwnerWorkspaceMutation = async (...args) => {
+      faultCount++;
+      // Independent third-party mutation after actual Delivery apply but before CAS.
+      await fs.writeFile(path.join(projectRoot, 'src', 'third-party.txt'), 'external-preserve\n');
+      return originalRecord(...args);
+    };
+  } else if (scenario === 'c07_partial') {
+    const originalRecord = controlPlane.recordOwnerWorkspaceMutation.bind(controlPlane);
+    controlPlane.recordOwnerWorkspaceMutation = async (...args) => {
+      faultCount++;
+      // Inject a partial filesystem state after patch bytes were materialized.
+      // The real owner CAS must reject the mismatch; no rollback may erase
+      // the surviving file.
+      await fs.unlink(path.join(projectRoot, 'src', 'beta', 'result.txt'));
+      return originalRecord(...args);
+    };
+  } else if (scenario === 'c08_busy') {
+    const originalRecord = controlPlane.recordOwnerWorkspaceMutation.bind(controlPlane);
+    const originalBlock = controlPlane.blockDeliveryMaterialization.bind(controlPlane);
+    controlPlane.recordOwnerWorkspaceMutation = (...args) => {
+      faultCount++;
+      busyConnection = new DatabaseSync(path.join(runtimeHome, 'state/runtime-state.sqlite'));
+      busyConnection.exec('BEGIN EXCLUSIVE');
+      // The real State Store connection encounters an actual SQLite write lock.
+      try { return originalRecord(...args); }
+      catch (error) { sqliteErrorCodes.push(error?.code || 'UNKNOWN'); throw error; }
+    };
+    controlPlane.blockDeliveryMaterialization = async (...args) => {
+      faultCount++;
+      try { return await originalBlock(...args); }
+      catch (error) { sqliteErrorCodes.push(error?.code || 'UNKNOWN'); throw error; }
+    };
   } else {
     controlPlane.recordOwnerWorkspaceMutation = async () => {
       faultCount++;
@@ -102,6 +138,11 @@ try {
     try { bytes[name] = await fs.readFile(path.join(projectRoot, 'src', name, 'result.txt'), 'utf8'); }
     catch (error) { if (error.code === 'ENOENT') bytes[name] = null; else throw error; }
   }
+  if (busyConnection) {
+    busyConnection.exec('ROLLBACK');
+    busyConnection.close();
+    busyConnection = null;
+  }
   const gitStatus = String(runGit(projectRoot, ['status', '--porcelain']).stdout).trim();
   const before = controlPlane.stateStore.getRun(runId);
   await controlPlane.close();
@@ -109,7 +150,7 @@ try {
   const recovery = await controlPlane.recoverPendingDeliveryMaterialization(runId);
   const after = controlPlane.stateStore.getRun(runId);
   const result = {
-    scenario, faultCount, dispatchStatus, bytes, gitStatus,
+    scenario, faultCount, dispatchStatus, sqliteErrorCodes, bytes, gitStatus,
     before: { status: before.status, mutationRevision: before.mutationRevision },
     recovery: { status: recovery.status, reason: recovery.reason || null },
     after: { status: after.status, mutationRevision: after.mutationRevision, blockedReason: after.blockedReason || null },
@@ -121,8 +162,25 @@ try {
     assert.equal(gitStatus, '');
     assert.equal(after.mutationRevision, 0);
     assert.equal(after.status, 'active');
+  } else if (scenario === 'c07_partial') {
+    assert.equal(faultCount, 1);
+    assert.equal(bytes.alpha, 'alpha\n');
+    assert.equal(bytes.beta, null);
+    assert.notEqual(gitStatus, '');
+    assert.equal(before.mutationRevision, 0);
+    assert.equal(after.status, 'blocked');
+    assert.equal(after.mutationRevision, 0);
+  } else if (scenario === 'c07_external') {
+    assert.equal(faultCount, 1);
+    assert.equal(bytes.alpha, 'alpha\n');
+    assert.equal(bytes.beta, 'beta\n');
+    assert.equal(await fs.readFile(path.join(projectRoot, 'src', 'third-party.txt'), 'utf8'), 'external-preserve\n');
+    assert.equal(before.mutationRevision, 0);
+    assert.equal(after.status, 'blocked');
+    assert.equal(after.mutationRevision, 0);
   } else {
     assert.equal(faultCount, 2);
+    if (scenario === 'c08_busy') assert.deepEqual(sqliteErrorCodes, ['ERR_SQLITE_ERROR', 'ERR_SQLITE_ERROR']);
     assert.equal(bytes.alpha, 'alpha\n');
     assert.equal(bytes.beta, 'beta\n');
     assert.notEqual(gitStatus, '');
@@ -135,6 +193,7 @@ try {
   }
   console.log('W0_ISOLATED_PROBE_PASS', JSON.stringify(result));
 } finally {
+  if (busyConnection) { busyConnection.exec('ROLLBACK'); busyConnection.close(); }
   if (controlPlane) await controlPlane.close().catch(() => {});
   if (projectId) await cleanupExecutionWorkspaces({ runtimeHome, projectId, runId, repoRoot: projectRoot, retain: false }).catch(() => {});
   await fs.rm(runtimeHome, { recursive: true, force: true });

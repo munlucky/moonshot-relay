@@ -16,9 +16,12 @@
 | 격리 테스트 | `/tmp/moonshot-w0-cases-k6N6GsRd`, `project`·`runtime`·`home`·`tmp`·`cache`·`config` 각각 격리 |
 | 자식/재시작 | HOME, MOON_RELAY_KERNEL_HOME, TMPDIR, XDG 경로 상속; fixture project의 `bin`/`scripts` 링크는 소스 실행만 참조 |
 | 테스트 로그 | `/tmp/moonshot-w0-cases-k6N6GsRd/results-v2.tap`, 163/163 PASS, 130606.93ms |
-| 재현 가능한 W0 fixture | `docs/public/roadmaps/kernel-structural-improvement-2026-10-30/fixtures/delivery-fence-restart-probe.mjs` (`node .../delivery-fence-restart-probe.mjs c06` 및 `c08`) — 임시 프로젝트/Runtime 생성·삭제, 운영 DB 미사용 |
+| 재현 가능한 W0 fixture | `docs/public/roadmaps/kernel-structural-improvement-2026-10-30/fixtures/delivery-fence-restart-probe.mjs` (`node .../delivery-fence-restart-probe.mjs c06|c07_external|c07_partial|c08|c08_busy`; 인자 각각 독립 실행) — 임시 프로젝트/Runtime 생성·삭제, 운영 DB 미사용 |
 | C06 장애 주입 | `/tmp/moonshot-w0-cases-k6N6GsRd/c06-result.log`: DB fixture owner lease 만료 → 실제 Delivery bytes 변경 0, Git clean, revision 0, restart active |
 | C08 장애 주입 | `/tmp/moonshot-w0-cases-k6N6GsRd/c08-result-v2.log`: 실제 patch bytes 반영 뒤 Control Plane 기록 실패 2곳 주입 → restart blocked/recovery required |
+| C07 추가 재현 | `/tmp/moonshot-w0-check-iye3P2sa/c07_external.log`, `c07_partial.log`: 적용 뒤 제3자 변경·부분 파일 상태 각각 blocked, revision 0 |
+| C08 SQLite 잠금 재현 | `/tmp/moonshot-w0-check-iye3P2sa/c08_busy-verified.log`: 실제 BEGIN EXCLUSIVE, 두 API에서 ERR_SQLITE_ERROR → unlock 뒤 restart blocked |
+
 
 | 소스 파일 | 테스트 전후 `src/kernel`, `src/host/kernel`, `tests` 추적 파일 목록·해시 동일; HEAD 불변 |
 | 빌드 검증 | `check:boundaries` exit 124 (60초); `build:check` exit 124 (60초); `typecheck` exit 1 (Linux native TS package 없음) |
