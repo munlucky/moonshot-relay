@@ -2,7 +2,7 @@
 
 - 시작: 2026-10-30, W0 최종 기준선 commit `40921a61a297fd33084c8368c792dfc7d6dc3baf29`
 - W1 작업 추적: `c2046ed2-32db-4bd2-8ff4-296de3de7d3e`
-- 판정: **W1 IN PROGRESS**, 코드 변경 없음. 현재 테스트로 재현된 W1 제품 결함은 없다.
+- 초기 판정: W1 IN PROGRESS였으며, 이후 SQLite 직접 재현 검증 결과 **W1 PASS / keep-baseline**으로 확정했다. 최종 증거는 `W1_RESULT.md` 참조.
 
 ## 현재 소스에서 확인한 권위 경계
 
@@ -30,3 +30,7 @@
 3. 잘못된 Run 선택·임의 abandon·중단 후 미복구 등 실제 결함이 재현되는 경우에만 가장 작은 기존 authority 경계에서 수정하고 집중 회귀 후 다음 결과를 판단한다.
 
 Wave 소유권: W1은 Run 선택·재개 권위만 수정한다. W8의 Host Session 수명·Identity 원천 정책, W3-B의 승인 후 Git 전달은 이 Wave에서 중복 구현하지 않는다.
+
+## 최종 결론
+
+`W1_RESULT.md`의 SQLite Active/Blocked/Completed 및 stale Session Binding 재시작 fixture가 통과했다. 외부 Moonremote 부분 관측은 Kernel Run identity가 아니므로 W1 제품 코드에 별도의 규칙/폴백을 추가하지 않고 keep-baseline으로 종료한다.
