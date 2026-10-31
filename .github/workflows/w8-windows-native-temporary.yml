@@ -1,0 +1,55 @@
+name: W8 Windows native isolated check (temporary)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-windows:
+    name: Windows native Kernel / Node 22
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout canonical source
+        uses: actions/checkout@v4
+      - name: Install Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build and validate canonical TypeScript
+        shell: pwsh
+        run: |
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run check:boundaries
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build:tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build:check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Windows native identity, runtime, session and reviewer regressions
+        shell: pwsh
+        run: |
+          node -p 'JSON.stringify({platform:process.platform,arch:process.arch,version:process.version})'
+          node --test --test-concurrency=1 tests/kernel-project-identity.test.mjs tests/kernel-managed-runtime.test.mjs tests/kernel-session-binding.test.mjs tests/kernel-review-host-bridge.test.mjs tests/kernel-review-cross-process.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Real Windows native isolated account installation and CLI smoke
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP ("w8-kernel-" + [System.Guid]::NewGuid().ToString("N"))
+          $runtime = Join-Path $root "runtime"
+          $profile = Join-Path $root "codex"
+          node bin/moon-relay-kernel.mjs install --target-root $runtime --source-root $env:GITHUB_WORKSPACE
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node bin/moon-relay-kernel.mjs profile-install --runtime codex --account-root --target-root $profile --source-root $env:GITHUB_WORKSPACE --runtime-home $runtime
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node bin/moon-relay-kernel.mjs profile-doctor --target-root $profile --runtime codex --runtime-home $runtime
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & (Join-Path $runtime "bin/kernel.cmd") --version --json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & (Join-Path $runtime ".moon-relay/kernel-payload/runtime/current/node.exe") --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
