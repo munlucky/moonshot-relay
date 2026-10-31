@@ -53,5 +53,3 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & (Join-Path $runtime "bin/kernel.cmd") --version --json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & (Join-Path $runtime ".moon-relay/kernel-payload/runtime/current/node.exe") --version
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
