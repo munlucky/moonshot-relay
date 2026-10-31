@@ -5,6 +5,8 @@ import os from 'node:os';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { runGit } from '../src/shared/git-safe.js';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
+import { openSqliteDb } from '../src/kernel/sqlite-adapter.js';
+import { kernelDbPath } from '../src/kernel/state-store.js';
 import { assessRunSettlement } from '../src/kernel/run/finalization.js';
 
 test('Kernel finalization orchestration (finalizeRun) executes full accepted lifecycle', async () => {
@@ -87,6 +89,86 @@ test('Kernel finalization orchestration (finalizeRun) executes full accepted lif
   }, runId);
   assert.equal(alteredCloseout.settled, false);
   assert.ok(alteredCloseout.blockers.includes('git_closeout_unsettled'));
+
+  // W4 isolated pilot: a settled single-step Run may be retired only with a
+  // fresh revision and no active ownership. Its Knowledge ledger must survive.
+  const store = cp.stateStore;
+  const before = store.getRun(runId)!;
+  const steps = store.getRunSteps(runId);
+  assert.equal(steps.length, 1);
+  assert.equal(steps[0]?.state, 'ready', 'legacy Finalization accepts code before Step is marked passed');
+  const projectId = before.projectId!;
+  const revision = before.mutationRevision;
+  const knowledgeBefore = store.listKnowledgeRecords({ projectId, statuses: ['committed'] });
+  assert.ok(knowledgeBefore.length > 0);
+  const knowledgeRevision = store.getProjectKnowledgeRevision(projectId);
+  const commitReceipt = store.getKnowledgeCommitReceipt(runId)!;
+  const ledgerBefore = store.getSettledKnowledgeTransaction(
+    runId, projectId, String(commitReceipt.revisionAfter),
+  );
+  assert.equal(ledgerBefore?.outcome && (ledgerBefore.outcome as { status: string }).status, 'committed');
+  const journalBefore = store.getRunJournal(runId);
+
+  assert.throws(() => store.retireSettledSingleStepRun(runId, {
+    projectId, expectedMutationRevision: revision + 1,
+  }), /EPHEMERAL_MUTATION_REVISION_STALE/);
+  assert.throws(() => store.retireSettledSingleStepRun(runId, {
+    projectId: 'unrelated-project', expectedMutationRevision: revision,
+  }), /EPHEMERAL_RUN_IDENTITY_MISMATCH/);
+  assert.throws(() => store.retireSettledSingleStepRun(runId, {
+    projectId, expectedMutationRevision: revision,
+  }), /EPHEMERAL_SINGLE_STEP_ONLY/);
+  // This isolated fixture explicitly settles the already accepted Step.
+  // The runtime does not auto-promote an incomplete Step during retirement.
+  store.updateRunStep(runId, steps[0]!.stepId, { state: 'passed' });
+  const settledJournal = store.getRunJournal(runId);
+
+  store.recordLease(runId, {
+    holder: 'w4-owner', expiresAt: new Date(Date.now() + 60000).toISOString(),
+    fencingToken: 1,
+  });
+  assert.throws(() => store.retireSettledSingleStepRun(runId, {
+    projectId, expectedMutationRevision: revision,
+  }), /EPHEMERAL_ACTIVE_OWNERSHIP/);
+  assert.equal(store.releaseLease(runId, { holder: 'w4-owner', fencingToken: 1 }), true);
+
+  // Crash/fault after child deletion must roll back the whole graph.
+  const rawDb = await openSqliteDb(kernelDbPath(tmpHome));
+  try {
+    rawDb.exec("CREATE TRIGGER w4_fault BEFORE DELETE ON runs WHEN OLD.run_id='fin-run-1' BEGIN SELECT RAISE(ABORT,'w4_injected_failure'); END");
+  } finally {
+    rawDb.close();
+  }
+  assert.throws(() => store.retireSettledSingleStepRun(runId, {
+    projectId, expectedMutationRevision: revision,
+  }), /w4_injected_failure/);
+  assert.ok(store.getRun(runId), 'SQL transaction must restore Run on failed deletion');
+  assert.ok(store.getCompletionDecision(runId), 'SQL rollback must restore Trust receipts');
+  assert.equal(store.listKnowledgeRecords({ projectId, statuses: ['committed'] }).length, knowledgeBefore.length);
+
+  const cleanDb = await openSqliteDb(kernelDbPath(tmpHome));
+  try {
+    cleanDb.exec('DROP TRIGGER w4_fault');
+  } finally {
+    cleanDb.close();
+  }
+  const retirement = store.retireSettledSingleStepRun(runId, {
+    projectId, expectedMutationRevision: revision,
+  });
+  assert.deepEqual(retirement, { status: 'retired', runId, retired: true });
+  assert.equal(store.getRun(runId), null);
+  assert.equal(store.getCompletionDecision(runId), null);
+  assert.equal(store.getRunSteps(runId).length, 0);
+  assert.equal(store.getProjectKnowledgeRevision(projectId), knowledgeRevision);
+  assert.deepEqual(store.listKnowledgeRecords({ projectId, statuses: ['committed'] }), knowledgeBefore);
+  assert.deepEqual(store.getSettledKnowledgeTransaction(
+    runId, projectId, String(commitReceipt.revisionAfter),
+  ), ledgerBefore, 'FK-free settled Knowledge transaction survives Run retirement');
+  assert.ok(settledJournal.length > journalBefore.length);
+  assert.deepEqual(store.getRunJournal(runId), settledJournal, 'append-only Run journal remains until W5');
+  assert.throws(() => store.retireSettledSingleStepRun(runId, {
+    projectId, expectedMutationRevision: revision,
+  }), /EPHEMERAL_RUN_IDENTITY_MISMATCH/);
 
   await cp.close();
 });

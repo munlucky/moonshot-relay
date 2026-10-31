@@ -44,6 +44,12 @@
 
 이 함수의 결과는 삭제 승인이 아니라 **W4/W5가 원자적 재검증을 구현할 때의 입력 경계**다. Run의 소유권·리뷰·증거 및 FK 소비자 정리까지 확인하기 전에는 운영 Run 삭제를 금지한다. 근거는 [W3_RESULT.md](W3_RESULT.md).
 
+## W4 격리 단일-Step 파일럿 (2026-11-01)
+
+W3 정착 판정만으로 Run을 자동 삭제하지 않는다. 이번 파일럿은 명시적으로 호출되는 `retireSettledSingleStepRun()`을 **한 개의 `passed` Step, accepted Completion, 영구 Knowledge 정착, 요청된 Git Closeout 완료, 활성 Owner/Lease/Lock 없음, Mutation Revision CAS**에만 허용한다. SQLite 트랜잭션 안에서 참조를 재검증하고 제거한다. W2의 FK-free Knowledge ledger는 남긴다. 정상 `next/report` 호출 경로에는 연결하지 않았다.
+
+기존 Finalization이 완료 Run의 Step을 `ready`로 남길 수 있음을 확인했다. 이 작업은 정리 불가다. 또한 `run_journal`의 append-only 트리거와 역사적 소비자가 남아 있으므로, 정리 성공도 `W4 완료 후 실행 이력 누적 0` 증거는 아니다. **W4 통합 PARTIAL**로 유지하고 W5의 소비자 정리·복구 계약 후 자동 적용 여부를 재판정한다. [W4_RESULT.md](W4_RESULT.md) 참조.
+
 ## W0 기준선/관찰 방법
 
 - **코드:** `src/kernel/state-store.ts`, `src/kernel/persistence/*.ts`, `src/kernel/control-plane.ts`, `src/kernel/run/*.ts`, `src/host/kernel/*.ts`, `src/application/kernel-cli/main.ts`의 실소비자 확인.

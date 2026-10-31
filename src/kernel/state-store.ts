@@ -50,6 +50,7 @@ import { deriveEvidenceLevel } from '../contracts/verification-settlement.js';
 import { normalizeModelRouteDecision } from '../contracts/model-route.js';
 import { hashSessionId, normalizeModelUsageReceipt } from '../contracts/model-execution.js';
 import { assertAttemptLineage } from './run/attempt-provenance.js';
+import { assessRunSettlement } from './run/finalization.js';
 import { digestOfEvidence, evaluateReviewReceipt, normalizeReviewReceipt, parseReviewEvidenceRef } from './proof/review-receipt.js';
 import { sanitizePersistentPayload, sanitizePersistentText } from '../shared/persistent-sanitizer.js';
 import { buildSuccessorKey } from './run/successor-key.js';
@@ -930,6 +931,47 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         projectId,
         sourceIdentity,
       }))();
+    },
+
+    // W4 isolated single-step pilot. Not wired into normal next/report.
+    // A future automatic retention policy must first settle W5 consumers.
+    retireSettledSingleStepRun(runId: string, {
+      projectId,
+      expectedMutationRevision,
+    }: { projectId: string; expectedMutationRevision: number }) {
+      return db.transaction(() => {
+        const run = this.getRun(runId);
+        if (!run || !projectId || run.projectId !== projectId) {
+          throw new Error('EPHEMERAL_RUN_IDENTITY_MISMATCH');
+        }
+        if (!Number.isInteger(expectedMutationRevision)
+          || run.mutationRevision !== expectedMutationRevision) {
+          throw new Error('EPHEMERAL_MUTATION_REVISION_STALE');
+        }
+        const settlement = assessRunSettlement(this, runId);
+        if (!settlement.settled) {
+          throw new Error('EPHEMERAL_NOT_SETTLED: ' + settlement.blockers.join(','));
+        }
+        const steps = this.getRunSteps(runId);
+        if (steps.length !== 1 || steps[0]?.state !== 'passed') {
+          throw new Error('EPHEMERAL_SINGLE_STEP_ONLY');
+        }
+        if (workLifecyclePersistence.getLease(runId)
+          || workLifecyclePersistence.listSessionBindings({ runId, status: 'active' }).length
+          || workLifecyclePersistence.listWorktreeMutationLeases({ runId }).length
+          || workLifecyclePersistence.listWorkspaceMutationLocksV2({ projectId }).some(
+            (lock) => lock.holderRunId === runId,
+          )
+          || db.prepare(
+            'SELECT 1 FROM session_bindings WHERE successor_run_id=? LIMIT 1',
+          ).get(runId)) {
+          throw new Error('EPHEMERAL_ACTIVE_OWNERSHIP');
+        }
+        if (!workLifecyclePersistence.purgeSettledRunRows(runId)) {
+          throw new Error('EPHEMERAL_RETIRE_CONFLICT');
+        }
+        return { status: 'retired', runId, retired: true };
+      })();
     },
 
     // Task Contract is the run's authority; a revision bump records that the

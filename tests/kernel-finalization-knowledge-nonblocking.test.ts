@@ -173,6 +173,12 @@ test('Finalization Wave 5: Knowledge conflict does not fail accepted code delive
       const unsettled = assessRunSettlement(store, deferredRunId);
       assert.equal(unsettled.settled, false, 'Accepted code and completed Git cannot release an outstanding Knowledge retry');
       assert.ok(unsettled.blockers.includes('knowledge_unsettled'));
+      const deferredRun = store.getRun(deferredRunId)!;
+      assert.throws(() => store.retireSettledSingleStepRun(deferredRunId, {
+        projectId: assertTestString(deferredRun.projectId),
+        expectedMutationRevision: deferredRun.mutationRevision,
+      }), /EPHEMERAL_NOT_SETTLED/);
+      assert.ok(store.getRun(deferredRunId), 'deferred Knowledge keeps the active recovery source');
       assert.ok(assertTestRecord(deferredReceipt).gitCloseoutReceipt, 'Git closeout receipt must exist');
       assert.ok(assertTestString(assertTestRecord(assertTestRecord(deferredReceipt).gitCloseoutReceipt).commitSha), 'Git closeout commitSha must exist');
 
@@ -323,6 +329,11 @@ test('S-18: required Knowledge can keep Task finalization incomplete without era
     assert.equal(requiredUnsettled.settled, false);
     assert.ok(requiredUnsettled.blockers.includes('finalization_unsettled'));
     assert.ok(requiredUnsettled.blockers.includes('knowledge_unsettled'));
+    const requiredRun = cp.stateStore.getRun(runId)!;
+    assert.throws(() => cp.stateStore.retireSettledSingleStepRun(runId, {
+      projectId: assertTestString(requiredRun.projectId),
+      expectedMutationRevision: requiredRun.mutationRevision,
+    }), /EPHEMERAL_NOT_SETTLED/);
   } finally {
     await cp.close();
     await cleanup(fixture);

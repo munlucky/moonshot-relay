@@ -227,6 +227,8 @@ export interface WorkLifecyclePersistence {
     projectId?: string | null;
     sourceIdentity?: string | null;
   }): { status: 'not-found' | 'rolled-back'; runId: string; rolledBack: boolean };
+  // Caller must hold the SQLite write transaction and verify settlement.
+  purgeSettledRunRows(runId: string): boolean;
   listRunIds(query?: RunQuery): string[];
   listStaleRunDiagnostics(input: {
     staleBefore: string;
@@ -768,6 +770,58 @@ export const createWorkLifecyclePersistence = ({
     listSessionBindings({ bindingId, limit: 1 })[0] ?? null
   );
 
+  const purgeRunChildRows = (runId: string) => {
+    const tableRows = db.prepare(`
+        SELECT name FROM sqlite_master
+        WHERE type='table' AND name NOT LIKE 'sqlite_%'
+      `).all() as Array<{ name: string }>;
+      const tables = tableRows
+        .map((row) => row.name)
+        .filter((name) => name !== 'runs' && name !== 'run_journal')
+        .map((name) => {
+          const quoted = quoteIdentifier(name);
+          const columns = db.prepare(`PRAGMA table_info(${quoted})`).all() as Array<{ name: string }>;
+          const references = db.prepare(`PRAGMA foreign_key_list(${quoted})`).all() as Array<{ table: string }>;
+          return {
+            name,
+            hasRunId: columns.some((column) => column.name === 'run_id'),
+            hasHolderRunId: columns.some((column) => column.name === 'holder_run_id'),
+            references: references.map((foreignKey) => foreignKey.table),
+          };
+        })
+        // A run_id column is not sufficient evidence that data is transient.
+        // The FK-free knowledge_transactions ledger is the W2 durable authority.
+        // Preserve every other FK-free record, including append-only run_journal.
+        .filter((table) => (table.hasRunId && table.references.includes('runs')) || table.hasHolderRunId);
+
+      const pending = new Map(tables.map((table) => [table.name, table]));
+      while (pending.size > 0) {
+        const deletable = [...pending.values()].find((candidate) => (
+          ![...pending.values()].some(
+            (other) => other.name !== candidate.name && other.references.includes(candidate.name),
+          )
+        ));
+        // Do not invent a deletion order for a future FK cycle.
+        if (!deletable) throw new Error('run_cleanup_fk_dependency_cycle');
+        const table = deletable;
+        const clauses: string[] = [];
+        const values: string[] = [];
+        if (table.hasRunId) {
+          clauses.push('run_id=?');
+          values.push(runId);
+        }
+        if (table.hasHolderRunId) {
+          clauses.push('holder_run_id=?');
+          values.push(runId);
+        }
+        db.prepare(
+          `DELETE FROM ${quoteIdentifier(table.name)} WHERE ${clauses.join(' OR ')}`,
+        ).run(...values);
+        pending.delete(table.name);
+      }
+
+  };
+
   return {
     recordLease({ runId, holder, expiresAt, fencingToken, ownerPid }) {
       const run = db.prepare('SELECT 1 as present FROM runs WHERE run_id=?').get(runId);
@@ -892,50 +946,7 @@ export const createWorkLifecyclePersistence = ({
         });
       }
 
-      const tableRows = db.prepare(`
-        SELECT name FROM sqlite_master
-        WHERE type='table' AND name NOT LIKE 'sqlite_%'
-      `).all() as Array<{ name: string }>;
-      const tables = tableRows
-        .map((row) => row.name)
-        .filter((name) => name !== 'runs' && name !== 'run_journal')
-        .map((name) => {
-          const quoted = quoteIdentifier(name);
-          const columns = db.prepare(`PRAGMA table_info(${quoted})`).all() as Array<{ name: string }>;
-          const references = db.prepare(`PRAGMA foreign_key_list(${quoted})`).all() as Array<{ table: string }>;
-          return {
-            name,
-            hasRunId: columns.some((column) => column.name === 'run_id'),
-            hasHolderRunId: columns.some((column) => column.name === 'holder_run_id'),
-            references: references.map((foreignKey) => foreignKey.table),
-          };
-        })
-        .filter((table) => table.hasRunId || table.hasHolderRunId);
-
-      const pending = new Map(tables.map((table) => [table.name, table]));
-      while (pending.size > 0) {
-        const deletable = [...pending.values()].find((candidate) => (
-          ![...pending.values()].some(
-            (other) => other.name !== candidate.name && other.references.includes(candidate.name),
-          )
-        ));
-        const table = deletable || pending.values().next().value;
-        if (!table) break;
-        const clauses: string[] = [];
-        const values: string[] = [];
-        if (table.hasRunId) {
-          clauses.push('run_id=?');
-          values.push(runId);
-        }
-        if (table.hasHolderRunId) {
-          clauses.push('holder_run_id=?');
-          values.push(runId);
-        }
-        db.prepare(
-          `DELETE FROM ${quoteIdentifier(table.name)} WHERE ${clauses.join(' OR ')}`,
-        ).run(...values);
-        pending.delete(table.name);
-      }
+      purgeRunChildRows(runId);
 
       const deleted = db.prepare(
         "DELETE FROM runs WHERE run_id=? AND status IN ('active', 'blocked') AND mutation_revision=0",
@@ -947,6 +958,21 @@ export const createWorkLifecyclePersistence = ({
         });
       }
       return { status: 'rolled-back', runId, rolledBack: true };
+    },
+
+    purgeSettledRunRows(runId) {
+      // Invoke only after settlement and owner/lease checks under the same
+      // SQLite BEGIN IMMEDIATE transaction. Refuse unsafe direct calls before
+      // removing a single child row.
+      const eligible = db.prepare(
+        "SELECT 1 FROM runs WHERE run_id=? AND status='completed' AND finalization_status='completed'",
+      ).get(runId);
+      if (!eligible) return false;
+      purgeRunChildRows(runId);
+      const changed = db.prepare(
+        "DELETE FROM runs WHERE run_id=? AND status='completed' AND finalization_status='completed'",
+      ).run(runId) as ChangeResult;
+      return Number(changed.changes || 0) === 1;
     },
 
     listRunIds,
