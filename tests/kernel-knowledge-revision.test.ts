@@ -4,6 +4,8 @@ import path from 'node:path';
 import os from 'node:os';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { openKernelStateStore } from '../src/kernel/state-store.js';
+import { openSqliteDb } from '../src/kernel/sqlite-adapter.js';
+import { createKnowledgeLifecycleStore } from '../src/kernel/persistence/knowledge-lifecycle-store.js';
 
 test('Knowledge revision advances through the SQLite CAS authority only', async () => {
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-rev-test-'));
@@ -156,6 +158,103 @@ test('W2: committed Knowledge retains Kernel-verified authority without relying 
     assert.equal((superseded.knowledgeAuthority as Record<string, unknown>).completionDecisionRef, completionDigest);
   } finally {
     store.close();
+    await rm(runtimeHome, { recursive: true, force: true });
+  }
+});
+
+test('W2: settled Knowledge replays with no Run, Completion or Review tables; new authority is denied', async () => {
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-w2-runless-replay-'));
+  const projectId = 'w2-runless-project';
+  const runId = 'w2-runless-original';
+  const sourceIdentity = `sha256:${'a'.repeat(64)}`;
+  const store = await openKernelStateStore({ runtimeHome });
+  const originalRecords = [{
+    id: 'w2-runless-fact', projectId, type: 'semantic_fact',
+    statement: 'Knowledge committed while work is active', scope: ['src'],
+    trustTier: 'verified',
+  }];
+  try {
+    store.createRun({ runId, projectId, objective: 'settle knowledge before discarding work', sourceIdentity });
+    store.recordCompletionDecision(runId, {
+      decision: 'accepted', sourceIdentity, mutationRevision: 0,
+      evidenceDigest: `sha256:${'b'.repeat(64)}`, decisionJson: { decision: 'accepted' },
+    });
+    const committed = store.commitKnowledgeTransaction({
+      transactionId: 'w2-runless-tx', runId, projectId, expectedRevision: 1,
+      records: originalRecords, provenance: { runId },
+    });
+    assert.equal(committed.status, 'committed');
+    assert.equal(store.getProjectKnowledgeRevision(projectId), 2);
+    store.createRun({ runId: 'w2-runless-empty', projectId, objective: 'no new Knowledge', sourceIdentity });
+    store.recordCompletionDecision('w2-runless-empty', {
+      decision: 'accepted', sourceIdentity, mutationRevision: 0,
+      evidenceDigest: `sha256:${'c'.repeat(64)}`, decisionJson: { decision: 'accepted' },
+    });
+    const empty = store.commitKnowledgeTransaction({
+      transactionId: 'w2-no-change-tx', runId: 'w2-runless-empty',
+      projectId, expectedRevision: 2, records: [], noChange: true,
+    });
+    assert.equal(empty.status, 'no_change');
+  } finally {
+    store.close();
+  }
+
+  const sourceDb = path.join(runtimeHome, 'state', 'runtime-state.sqlite');
+  const isolated = await openSqliteDb(':memory:');
+  try {
+    const original = await openSqliteDb(sourceDb);
+    try {
+      const row = original.prepare(
+        'SELECT COUNT(*) AS count FROM knowledge_transactions WHERE run_id=?',
+      ).get('w2-runless-empty') as { count: number };
+      assert.equal(row.count, 0);
+    } finally {
+      original.close();
+    }
+    // Only copy the independent Knowledge tables. No runs, completion_decisions,
+    // or knowledge_review_receipts tables exist in this database at all.
+    isolated.exec(`ATTACH DATABASE '${sourceDb.replaceAll("'", "''")}' AS source;`);
+    for (const table of ['knowledge_transactions', 'knowledge_records', 'knowledge_revisions']) {
+      isolated.exec(`CREATE TABLE ${table} AS SELECT * FROM source.${table};`);
+    }
+    isolated.exec('DETACH DATABASE source');
+    assert.equal(
+      (isolated.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='runs'").get() as { count: number }).count,
+      0,
+    );
+    const readOnlyAuthority = createKnowledgeLifecycleStore({
+      db: isolated,
+      getRun: () => { throw new Error('NEW_KNOWLEDGE_REQUIRES_ACTIVE_RUN'); },
+      getCompletionDecision: () => { throw new Error('COMPLETION_UNAVAILABLE'); },
+    });
+    const committed = readOnlyAuthority.commitKnowledgeTransaction({
+      transactionId: 'w2-runless-tx', runId, projectId,
+    });
+    assert.equal(committed.status, 'committed');
+    assert.equal(committed.replayed, true);
+    assert.equal(committed.revisionBefore, '1');
+    assert.equal(committed.revisionAfter, '2');
+    assert.equal(readOnlyAuthority.listKnowledgeRecords({ projectId, statuses: ['committed'] }).length, 1);
+    assert.equal(readOnlyAuthority.getProjectKnowledgeRevision(projectId), 2);
+
+    assert.throws(() => readOnlyAuthority.commitKnowledgeTransaction({
+      transactionId: 'w2-runless-tx', runId, projectId,
+      records: [{ id: 'unapproved', type: 'semantic_fact', statement: 'forged content' }],
+    }), /KNOWLEDGE_TRANSACTION_REPLAY_PAYLOAD_MISMATCH/);
+    assert.throws(() => readOnlyAuthority.commitKnowledgeTransaction({
+      transactionId: 'w2-runless-tx', runId, projectId: 'other-project',
+    }), /KNOWLEDGE_TRANSACTION_IDENTITY_MISMATCH/);
+    assert.throws(() => readOnlyAuthority.commitKnowledgeTransaction({
+      transactionId: 'w2-runless-tx', runId, projectId, expectedRevision: 99,
+    }), /KNOWLEDGE_TRANSACTION_REPLAY_REVISION_MISMATCH/);
+    assert.throws(() => readOnlyAuthority.commitKnowledgeTransaction({
+      transactionId: 'w2-unsettled-tx', runId, projectId,
+      records: originalRecords,
+    }), /NEW_KNOWLEDGE_REQUIRES_ACTIVE_RUN/);
+    assert.equal(readOnlyAuthority.getProjectKnowledgeRevision(projectId), 2);
+    assert.equal(readOnlyAuthority.listKnowledgeRecords({ projectId, statuses: ['committed'] }).length, 1);
+  } finally {
+    isolated.close();
     await rm(runtimeHome, { recursive: true, force: true });
   }
 });

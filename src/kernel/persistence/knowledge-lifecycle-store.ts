@@ -947,7 +947,7 @@ export const createKnowledgeLifecycleStore = ({
     listKnowledgeRecords,
 
     commitKnowledgeTransaction(input) {
-      const transactionId = String(input.transactionId || '');
+      const transactionId = String(input.transactionId || randomUUID());
       const runId = String(input.runId || '');
       const projectId = String(input.projectId || '');
       const expectedRevision = input.expectedRevision ?? null;
@@ -961,8 +961,44 @@ export const createKnowledgeLifecycleStore = ({
           ? null
           : [];
 
+      // The FK-free Knowledge ledger is authoritative for completed retries.
+      // A retry may read its settled result after Run cleanup; new writes
+      // still require the live Run and Completion trust checks below.
+      const requestDigest = 'sha256:' + createHash('sha256').update(serialize({
+        records: declaredRecords, supersessions, noChange,
+      })).digest('hex');
       db.exec('BEGIN IMMEDIATE TRANSACTION');
       try {
+        const prior = db.prepare(
+          'SELECT project_id AS projectId, run_id AS runId, expected_revision AS expectedRevision, status, transaction_json AS transactionJson FROM knowledge_transactions WHERE transaction_id=?',
+        ).get(transactionId) as UnknownRecord | undefined;
+        if (prior) {
+          if (prior.projectId !== projectId || prior.runId !== runId) {
+            throw new Error('KNOWLEDGE_TRANSACTION_IDENTITY_MISMATCH');
+          }
+          if (prior.status !== 'completed') throw new Error('KNOWLEDGE_TRANSACTION_NOT_SETTLED');
+          const saved = asRecord(parseJson(prior.transactionJson, {}));
+          if (!saved.requestDigest || !asRecord(saved.outcome).status) {
+            throw new Error('KNOWLEDGE_TRANSACTION_REPLAY_UNVERIFIED');
+          }
+          if (
+            (input.records !== undefined || input.supersessions !== undefined || input.noChange !== undefined)
+            && saved.requestDigest !== requestDigest
+          ) {
+            throw new Error('KNOWLEDGE_TRANSACTION_REPLAY_PAYLOAD_MISMATCH');
+          }
+          if (expectedRevision !== null && Number(expectedRevision) !== Number(prior.expectedRevision)) {
+            throw new Error('KNOWLEDGE_TRANSACTION_REPLAY_REVISION_MISMATCH');
+          }
+          db.exec('COMMIT');
+          const outcome = asRecord(saved.outcome);
+          return {
+            ...outcome,
+            revisionBefore: String(outcome.revisionBefore),
+            revisionAfter: String(outcome.revisionAfter),
+            replayed: true,
+          };
+        }
         const run = getRun(runId);
         if (!run) throw new Error(`RUN_NOT_FOUND: Run ${runId} not found`);
         const completion = getCompletionDecision(runId);
@@ -1158,6 +1194,17 @@ export const createKnowledgeLifecycleStore = ({
           );
         }
 
+        const receipt = {
+          runId,
+          projectId,
+          revisionBefore: String(currentRev),
+          revisionAfter: String(nextRev),
+          status: 'committed',
+          committedCount: (recordsToCommit || []).length,
+          verifiedAuthority: commitAuthority,
+          completionDecisionRef: completion.evidenceDigest || null,
+          knowledgeReviewRef: reviewReceipt?.reviewDigest || null,
+        };
         const transactionJson = serialize({
           transactionId,
           runId,
@@ -1167,6 +1214,11 @@ export const createKnowledgeLifecycleStore = ({
           recordsCount: (recordsToCommit || []).length,
           provenance,
           verifiedAuthority: commitAuthority,
+          requestDigest,
+          outcome: {
+            revisionBefore: String(currentRev), revisionAfter: String(nextRev),
+            status: 'committed', receipt,
+          },
         });
         db.prepare(`
           INSERT INTO knowledge_transactions(
@@ -1188,17 +1240,6 @@ export const createKnowledgeLifecycleStore = ({
           now(),
         );
 
-        const receipt = {
-          runId,
-          projectId,
-          revisionBefore: String(currentRev),
-          revisionAfter: String(nextRev),
-          status: 'committed',
-          committedCount: (recordsToCommit || []).length,
-          verifiedAuthority: commitAuthority,
-          completionDecisionRef: completion.evidenceDigest || null,
-          knowledgeReviewRef: reviewReceipt?.reviewDigest || null,
-        };
         db.prepare(`
           INSERT INTO knowledge_commit_receipts(
             run_id, project_id, revision_before, revision_after, status, receipt_json, created_at

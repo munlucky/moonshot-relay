@@ -23,7 +23,7 @@
 | --- | --- | --- |
 | **W0** | 38개 테이블/인덱스/FK·writer/reader·권위/수명 전수조사, Windows/Mac/MCP 소유 경계, 현재 상태의 위험 | 근거가 있는 목록과 미검증 구간, 계약 변경 목록, 후속 테스트 매트릭스 |
 | **W1** | Agent/Host 세션 복구 및 MCP 인계 실험. 영구 Run 제거 금지 | 정상/크래시/인계에서 재개 정확성, 무단 writer 0; 미지원은 명시 |
-| **W2** | `knowledge-lifecycle-store`의 영구 Run·Completion·Review 행 의존 제거 | 검증된 Knowledge Commit/Read/CAS/Supersede가 Run 영구 조회 없이 동작; 허위 출처·stale Revision 거부 |
+| **W2** | 활성 Run에서 검증된 Knowledge Commit을 정리 전에 완료하고, 확정된 Knowledge의 영구 Run 조회 의존 제거 | 완료 Knowledge의 Read/CAS/Supersede·동일 트랜잭션 재조회가 Run 없이 동작; 신규 Commit은 기존 Trust 검증 유지, 허위 출처·stale Revision 거부 |
 | **W3** | Trust·Completion·Git closeout의 **정착 전** 최소 상태만 유지 | 중복 commit/push 0, Reviewer/Proof/승인 우회 0, required Knowledge 누락 시 false done 0 |
 | **W4** | 일반 단일 Step부터 Ephemeral Work로 이전하고 활성 체크포인트만 유지 | 완료 뒤 영구 Run 누적 0; crash/retry/owner conflict에도 무단 변경 및 허위 PASS 0 |
 | **W5** | FK 소비자 제거 확인 후 파생 Receipt/Context/Telemetry 및 구형 Run 저장 축소 | 운영 기록은 일관 백업 보존, Knowledge 출처/Revision 보존; 기존 운영 데이터 삭제 별도 승인 |
@@ -31,6 +31,12 @@
 | **W7** | Windows native / WSL2 MCP / Mac native / Mac MCP 기준선 대비 통합 수용 | 실제 Host E2E, Git/Knowledge/Owner 무결성, 복구율·DB write·지연 개선; 미실행은 PARTIAL |
 
 **순서:** W0 필수 선행. W1과 W2의 격리 분석은 병행 가능하지만, W2 지식 독립성과 W3 완료 정착이 증명되기 전에 W4/W5 영구 Run을 삭제할 수 없다. 각 Wave는 하나의 독립적 검증·판정·한국어 상세 커밋/푸시 단위다.
+
+## W2 실행 계약 조정 (2026-10-31 실측 후)
+
+초기 W2의 'Run 없이 신규 Knowledge를 승인·커밋'하는 해석은 독립적인 새 승인 Authority 또는 준비 상태를 요구하며, DB 의존성 축소와 Trust 보존 목표에 반한다. **새로운 지식은 검증된 활성 Run에서 정리 전 Commit 완료**가 필수다. 그 후 Run/Completion/Review 기록이 정리되어도 **완료된 지식의 조회·CAS·Supersession 및 동일 트랜잭션 결과 재조회**는 FK가 없는 Knowledge 표면으로 수행한다. 미완료된 새 Commit은 자동 승인하지 않는다.
+
+이 해석은 W3 정착 확인과 W5 FK 소비자 분리 전 **운영 Run 삭제를 허용하지 않는다**. W2의 구현 회귀와 전체 시스템 수용은 구분한다. 근거와 변경 범위는 [W2_RESULT.md](W2_RESULT.md) 참조.
 
 ## W0 기준선/관찰 방법
 
