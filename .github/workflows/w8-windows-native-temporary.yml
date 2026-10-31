@@ -19,6 +19,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Build and validate canonical TypeScript
+        id: build
         shell: pwsh
         run: |
           npm run typecheck
@@ -38,6 +39,7 @@ jobs:
           node --test --test-concurrency=1 tests/kernel-project-identity.test.mjs tests/kernel-managed-runtime.test.mjs tests/kernel-session-binding.test.mjs tests/kernel-review-host-bridge.test.mjs tests/kernel-review-cross-process.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Real Windows native isolated account installation and CLI smoke
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: pwsh
         run: |
           $root = Join-Path $env:RUNNER_TEMP ("w8-kernel-" + [System.Guid]::NewGuid().ToString("N"))
