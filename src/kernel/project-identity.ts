@@ -307,7 +307,7 @@ export function resolveKernelProjectIdentity({
       },
     );
     if (result.status === 0 && result.stdout?.trim()) {
-      gitCommonDir = fs.realpathSync(
+      gitCommonDir = fs.realpathSync.native(
         path.resolve(projectRoot, result.stdout.trim()),
       );
     }

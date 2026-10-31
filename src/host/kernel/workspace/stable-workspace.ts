@@ -34,7 +34,7 @@ export const resolveStableWorkspaceIdentity: ResolveStableWorkspaceIdentity = ({
   const gitCommonRaw = gitPath(canonicalRoot, '--git-common-dir');
   const gitDirRaw = gitPath(canonicalRoot, '--git-dir');
   const resolveGitPath = (value: string | null): string | null => (
-    value ? realpathSync(path.resolve(canonicalRoot, value)) : null
+    value ? realpathSync.native(path.resolve(canonicalRoot, value)) : null
   );
   const gitCommonDir = resolveGitPath(gitCommonRaw);
   const gitWorktreeDir = resolveGitPath(gitDirRaw);

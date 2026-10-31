@@ -45,7 +45,7 @@ jobs:
           $root = Join-Path $env:RUNNER_TEMP ("w8-kernel-" + [System.Guid]::NewGuid().ToString("N"))
           $runtime = Join-Path $root "runtime"
           $profile = Join-Path $root "codex"
-          node bin/moon-relay-kernel.mjs install --target-root $runtime --source-root $env:GITHUB_WORKSPACE
+          node bin/moon-relay-kernel.mjs install --target-root $runtime --track-home $runtime --source-root $env:GITHUB_WORKSPACE
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node bin/moon-relay-kernel.mjs profile-install --runtime codex --account-root --target-root $profile --source-root $env:GITHUB_WORKSPACE --runtime-home $runtime
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

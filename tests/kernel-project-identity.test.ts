@@ -350,6 +350,11 @@ test('linked worktree identity preflight reuses the proven logical project ident
     runGit(repository, ['commit', '-m', 'fixture']);
     runGit(repository, ['worktree', 'add', '-b', 'linked', linkedWorktree, 'HEAD']);
 
+    const firstGitCommonDir = resolveKernelProjectIdentity({ cwd: repository, env: { MOON_RELAY_KERNEL_HOME: runtimeHome } }).gitCommonDir;
+    const linkedGitCommonDir = resolveKernelProjectIdentity({ cwd: linkedWorktree, env: { MOON_RELAY_KERNEL_HOME: runtimeHome } }).gitCommonDir;
+    assert.ok(firstGitCommonDir && linkedGitCommonDir);
+    assert.equal(firstGitCommonDir.toLowerCase(), linkedGitCommonDir.toLowerCase(), 'same Git common-dir must have one native physical spelling');
+
     const primary = await bootstrapKernelProjectIdentity({ projectRoot: repository, runtimeHome, policy: 'isolate' });
     const linked = await inspectKernelProjectIdentity({ projectRoot: linkedWorktree, runtimeHome });
 
