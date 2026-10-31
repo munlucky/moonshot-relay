@@ -3,7 +3,7 @@
 - 기준: `main / c53bcd63`, 시작 시 clean
 - 조사일: 2026-10-31, WSL2 Moonremote / Windows Runtime 공유 경로
 - 범위: W0 정적 스키마 및 소스 분석, 기존 Native/격리 시험 증거 대조
-- 판정: **W0 PARTIAL — 정적 목록 완료, runtime 실측·4개 Host 인계 검증 미완료**
+- 최종 판정: **W0 PARTIAL — 정적 목록과 격리 SQL 비용 실측 완료, 실제 병렬 writer·작업 인계 E2E 미검증**. 후속 결과는 §9 참조.
 - 저장소 변경: 실행 계약 및 조사 문서만. 제품 코드, SQLite 스키마, 운영 DB, 계정 설치, Active Agent/Kernel Session 미변경
 - 관련 문서: [실행 계약](PLAN.md), [38개 테이블 + 전체 인덱스/FK 목록](W0_STORAGE_INVENTORY.md)
 
@@ -93,7 +93,7 @@ Windows와 WSL2가 같은 파일을 직접 열 수 있다는 사실은 확인됐
 
 기존 검증 기준: `tests/kernel-session-run-lifecycle.test.mjs`, `kernel-run-locator-fail-soft.test.mjs`, `kernel-knowledge-revision.test.mjs`, `kernel-knowledge-lifecycle-e2e.test.mjs`, `kernel-report-replay.test.mjs`, `kernel-finalization-knowledge-nonblocking.test.mjs`, `kernel-owner-mutation-recovery.test.mjs`, `kernel-concurrent-commit.test.mjs`, `kernel-git-closeout-retry.test.mjs`, `kernel-bridge-mcp.test.mjs`, `kernel-review-receipt-completion.test.mjs` 등.
 
-## 6. W0에서 아직 실행되지 않은 실측
+## 6. 최초 작성 당시 미실행 항목 (후속 실측은 §9에서 갱신)
 
 - 격리 Runtime에서 `next` 신규/재개, `report` 검증/재시도, `done`, Git closeout, Knowledge required/optional의 SQL write 횟수·DB bytes/Run·latency p50/p95 (같은 HEAD, 양 arm).
 - 4개 Host의 native/MCP 세션을 모두 포함한 실제 동시 사용, 프로세스 중단·인계/재시작 연속성.
@@ -101,7 +101,7 @@ Windows와 WSL2가 같은 파일을 직접 열 수 있다는 사실은 확인됐
 
 기존 v2 W9의 stable `next` p50 11.154ms / p95 18.661ms와 이전 282/282 Reliability 통과는 **역사적 참고값**이다. 현재 W0의 동일 조건 신규 실측이나 새 아키텍처 효과의 증거가 아니다.
 
-## 7. 판정과 다음 행동
+## 7. 최초 판정과 다음 행동 (작성 당시 기록)
 
 **W0 PARTIAL**: 정적 38/56/28 인벤토리와 구조적 결합, 안전성 반례, 유지/제거 후보, 이전 검증 근거는 작성했다. 단, Host 실제 인계와 단위 실행별 SQL writes·latency가 누락돼 아직 W0 PASS가 아니다.
 
@@ -125,3 +125,15 @@ node --test --test-concurrency=1 \
 - 범위: optional vs required Knowledge, Knowledge Revision CAS, Git 보고 재실행/중복 방지, locator stale/new-task 안전성.
 - 한계: 테스트는 **기존 SQLite 기반 구현의 회귀 기준선**을 검증했다. Ephemeral Work 전환의 성능·개선 또는 실제 Windows/Mac/MCP 인계 성공을 입증하지 않는다.
 - 실행 추적: MCP 작업 `a90ce9d1-b759-4888-a6f2-30acc3657898`, operation `b61c0fc8-8f7e-410f-93d9-0a654e2f5107`.
+
+## 9. W0 Native/MCP 경로 및 SQL 실행 비용 후속 실측 (2026-10-31)
+
+새 근거: [W0_RUNTIME_MEASUREMENT.md](W0_RUNTIME_MEASUREMENT.md).
+
+- **Windows Native**: 현재 Host 실행이 가능해 직접 확인했다. 운영 DB는 `C:\Users\moon\.moon-relay-kernel\state\runtime-state.sqlite`(228,564,992 B). WSL2의 `/root/.moon-relay-kernel`은 같은 Windows 홈을 `9p` 공유 경로로 사용한다.
+- **Mac Native**: `/Users/seokgimoon/.moon-relay-kernel/state/runtime-state.sqlite`(48,054,272 B). **Mac MCP Linux VM**의 `/root/.moon-relay-kernel/state/runtime-state.sqlite`는 `virtiofs` Host 공유 볼륨이며 파일 크기·mtime이 동일하다. Mac MCP에는 0 B WAL / 32 KiB SHM 파일이 관측되었다.
+- **반복 SQLite 오픈:** 기존 격리 DB 재연결 4회에서 매회 `DatabaseSync.exec` 156회, SQL 텍스트의 `CREATE` 70개·`ALTER TABLE` 143개가 기록됐다. 이는 SQL 성공/물리적 쓰기 수가 아니라 **시도된 SQL 구문 수**다.
+- **실제 Control Plane:** 재시작 시 `exec` 162회, `CREATE` 70개·`ALTER` 143개. `startRun`과 두 `report`에서 다수 DML 기록, `next`/재시작 후 `next`에서는 이 fixture의 DML 0. Run은 `implement` → `in-progress` → `completed/done` → 재시작 `done`으로 정상 진행.
+- **지연 기준선:** 동일 격리 Runtime에서 안정 `next` 20회 p50 10.38ms/p95 15.22ms, Control Plane reopen 20회 p50 29.39ms/p95 36.46ms. 아직 최적화 전후 비교는 없다.
+- **W0 판정:** 정적 목록과 Native/MCP 공유 경로 조사, 격리 Store/Control Plane 호출·지연 기준선은 확보했다. 실제 양 OS의 SQLite 동시 writer, 강제 중단, 인계/복구 E2E는 미실행이므로 **통합 W0 PARTIAL**을 유지한다. 해당 위험 검증은 W1/W7의 필수 항목으로 인계한다.
+- 운영 SQLite/WAL, 사용자 Codex 세션, 제품 소스와 기존 체크포인트의 권위를 수정하지 않았다.
