@@ -6,7 +6,7 @@ permissions:
 jobs:
   native-windows:
     name: Windows native Kernel / Node 22
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 40
     steps:
       - name: Checkout canonical source
