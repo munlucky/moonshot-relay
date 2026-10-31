@@ -37,3 +37,13 @@
 - 소유권 정책은 state-store의 `registerProjectIdentity`에서 유지하고, control-plane의 **이미 저장된 정확한 root에만** 원격 alias 등록을 필터링하도록 정리했다. 정확한 root는 `getProjectIdentity({ canonicalRoot })` 조회로 입증하며, shared remote URL만 같은 신규 저장소는 기존대로 차단한다. 다른 namespace/Run/Knowledge의 병합은 없다.
 - 별도 hash authority·특정 프로젝트 경로·일시적 우회 허용·DB schema/fallback 없음. TypeScript 7 타입 검사 및 Runtime/Test 빌드 통과. 신규 exact-root/새 root 반례 1/1, 전체 Project Identity·Runtime Ownership·Report Identity Migration **63/63 PASS**.
 - 해당 수정이 포함된 canonical 코드 커밋 후에만 Mac **격리된 최신 소스**와 계정 설치본 사이의 승인된 동기화를 검토한다. 계정 설치와 Windows native 여부는 별도 증거 없이는 PASS로 승격하지 않는다.
+
+## 2026-10-31 Mac 계정 설치 완료 및 검증
+
+- Mac native canonical source를 clean `main`에서 **`e047f1820f444c49a2f43c548f8e58f50f9f85a7`로 fast-forward**, TypeScript 7.0.2 Runtime 생성(308 files/841 edges) 및 `build:check` PASS. 변경된 Identity source는 Mac 격리 테스트 **69/69 PASS**.
+- 실제 프로필 변경 전 설치된 공식 `profile-doctor`의 소유권 검사: `ready`, 22/22 검사 PASS. AGENTS/config/hooks의 전체 SHA 차이는 각각 `managed-section`/`json-paths` 검사로 정상 확인. 계정 파일 복제 예행연습에서 canonical 프로필 28개 파일로 재설치하고 기존 22개 파일 Manifest로 **profile rollback PASS**를 검증했다.
+- 계정 Runtime 설치 Manifest 1,143개 파일 전수 SHA: 기존 **1,142 MATCH / 1 modified**. 수정된 `control-plane.js`가 canonical로 회수·검증된 후에만 원본 수정 파일/설치 Manifest/계정 AGENTS·config·hooks를 별도 보존했다. 설치기는 `install --sync`의 공식 백업을 생성한 뒤 최신 소스를 적용했다. Runtime 백업: `~/.moon-relay-kernel/.moon-relay/backups/backup-1793406371412`.
+- 설치 결과 `status: installed`, Manifest 1,143개. **설치 후 1,143/1,143 SHA MATCH (modified 0, missing 0)**. 설치된 `control-plane.js` SHA와 canonical 생성 JS SHA 일치. 새 프로세스의 `~/.moon-relay-kernel/bin/kernel --version --json` 응답 확인.
+- 계정 Codex 프로필은 **`--sync` 없이** `profile-install --account-root`로 재설치. `status: reinstalled`, 관리 22개 파일, `retiredRelaySkills: []`, 사용자 전용 `codebase-master-guide` 보존. 기존 `AGENTS.md`/`config.toml`/`hooks.json`은 관리 섹션·JSON 소유권으로 병합하며 설치기 백업을 생성했다. 프로필 백업: `~/.codex/.moon-relay-kernel-backups/account-root-1793406397570-93985`.
+- 설치 후 공식 `profile-doctor`: **`status: ready`, `effective: kernel`, `managedFileCount: 22`**. Runtime CLI 정상 시작, native canonical source Git 작업 트리 clean. 실제 기존 Codex app-server 프로세스를 강제로 종료하거나 다시 시작하지 않았다.
+- **판정:** Mac canonical source/계정 Runtime SHA/관리 프로필/새 Kernel CLI 시작 검증 PASS. 이미 실행 중이던 Codex 세션의 동작 중 재시작·Recovery E2E는 강제 실행하지 않았으므로 별도 범위. Windows native Host 접근 불가와 선택적 Qwen/ADE 전체 CLI Smoke timeout도 별도 미확인이다. 통합 **PARTIAL** 유지.

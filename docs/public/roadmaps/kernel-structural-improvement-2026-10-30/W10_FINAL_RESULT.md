@@ -48,3 +48,7 @@ W10 문서 커밋은 최종 SHA가 기록되는 Git 로그를 권위로 사용�
 ## 2026-10-31 W8 native Host 후속 확인
 
 Mac ARM64에서 같은 HEAD `edbefb26`의 focused native Host/Reviewer/Session 62/62, Native Resolver 1/1, TypeScript7/BuildCheck가 통과했다. 그러나 계정 설치 시점이 오래되고 canonical과 다른 소스 파일 해시가 확인되어 **계정 설치 parity는 미충족**. Windows native도 NOT_TESTED. Linux 전체 회귀 PASS는 보존하며 통합 **PARTIAL**을 유지한다. 자세한 결과는 `W8_NATIVE_FOLLOWUP_2026-10-31.md`를 따른다.
+
+## 2026-10-31 Mac 운영 계정 동기화 확인
+
+Mac 원본 소스 최신 `e047f182`의 격리 ARM64 회귀 69/69, 운영 계정 Runtime Manifest 1,143/1,143 SHA, Codex Profile doctor `ready` 및 Kernel CLI 재시작 테스트 PASS. 강제 진행 중 Codex 세션 재시작은 수행하지 않음. Windows native는 실행기가 없어 NOT_TESTED. 전체 W0~W10 **PARTIAL** 유지. 자세한 백업·롤백과 운영 검증은 `W8_NATIVE_FOLLOWUP_2026-10-31.md`.

@@ -18,3 +18,7 @@
 ## 현지 수정 회수 및 후속 재현
 
 Mac의 관리 Runtime에 별도 수정된 Identity alias 충돌 코드가 존재함을 확인했고, 정확한 기존 root의 재시작 중단 반례를 canonical에서 재현했다. `control-plane.ts`는 정확한 root를 저장 권위에서 확인한 경우에만 타 저장소 소유 remote alias 재등록을 생략한다. 신규 root의 소유권 검증·상태스토어 엄격한 경계는 변경하지 않는다. TypeScript7/빌드 및 63/63 Identity 회귀 PASS. 상세 내용 `W8_NATIVE_FOLLOWUP_2026-10-31.md`.
+
+## Mac 계정 적용 완료
+
+canonical `e047f182` Mac native TypeScript7/BuildCheck 및 focused 69/69 PASS 후 운영 Mac 계정 Kernel Runtime을 공식 설치 백업과 함께 동기화했다. 설치 Manifest **1,143/1,143 SHA MATCH**, Codex 프로필 관리 **22개, doctor `ready`**, 사용자 전용 skill 보존 및 별도 rollback 예행연습 PASS. 강제 세션 재시작 없이 새 Kernel CLI 실행만 확인. Windows native 및 활성 Codex 세션 E2E는 검증 불가로 남는다. `W8_NATIVE_FOLLOWUP_2026-10-31.md` 참조.
