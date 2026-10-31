@@ -26,3 +26,7 @@ canonical `e047f182` Mac native TypeScript7/BuildCheck 및 focused 69/69 PASS �
 ## Windows 계정 읽기 전용 검증
 
 Windows `C:\dev\moonshot-relay`가 최신 `dbc63831`/clean이며 설치 Runtime 소유 파일 SHA 1,147/1,147, source 대 installed Payload 1,144/1,144, Codex Profile Linux 읽기 전용 ownership 5/5 PASS를 확인했다. 단 `powershell.exe`/`cmd.exe` 및 Windows native 실행 권한 없음. WSL에서 Windows Node를 호출하자 vsock 오류 발생했고 GitHub Actions `enabled=false`로 native CI 실행도 불가했다. 설치를 무작정 반복하지 않고 **native NOT_TESTED** 유지. 자세한 결과: `W8_WINDOWS_READONLY_2026-10-31.md`.
+
+## 2026-10-31 Windows native CI 최종 검증
+
+기존 Windows 계정 파일 정적 무결성 1,147/1,147 및 1,144/1,144를 보존한 상태에서, 별도 GitHub-hosted Windows Server 2022/Node22 runner에서 실제 npm ci, TS7/Boundaries/BuildCheck, Project Identity·Managed Runtime·Session·Review 102 PASS/0 FAIL/1 POSIX-only SKIP, 임시 Kernel·Codex 설치/Profile Doctor ready/CLI 실행을 PASS했다. Git common-dir 8.3(short) vs long path 불일치를 `realpathSync.native`로 교정한 결과다. 최종 성공 run 41158554174, 상세 `W8_WINDOWS_NATIVE_CI_2026-10-31.md`. 기존 Windows 계정 세션을 강제 재시작하지 않았으므로 active in-flight Recovery E2E는 미확인으로 분리한다.

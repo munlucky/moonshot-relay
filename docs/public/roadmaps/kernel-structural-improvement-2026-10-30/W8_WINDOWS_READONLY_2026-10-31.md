@@ -37,3 +37,7 @@ Windows native CLI 실행과 managed runtime node/Reviewer 테스트 통과 증�
 ## 결론
 
 Windows 설치 상태가 손상됐다는 증거는 없다. 현재 canonical 소스와 관리 Payload의 정적 동일성이 확인됐으므로 **계정 설치를 다시 실행할 필요가 있다는 근거도 없다**. 부족한 것은 Windows **native 실행 권한/실행기**다. 새 Provider 예외, Windows 전용 fallback, 중복 실행 권위, 자동 승인 절차는 추가하지 않는다. Windows native 테스트 전까지 통합 `COMPLETE`를 선언하지 않는다.
+
+## 2026-10-31 후속: 실제 native Windows 검증 확보
+
+본 문서 작성 시점에는 native 실행기가 없었지만, 이후 GitHub-hosted `windows-2022` runner에서 단독 검증을 수행했다. 소스 빌드 및 Identity/Reviewer/Session 102 PASS/0 FAIL/1 POSIX-only SKIP, 격리 계정 설치·Profile Doctor·CLI 검증이 전체 성공했다(run 41158554174). **단, 실제 사용자 계정의 진행 중 Codex 세션 복구 검증은 별도 미완료**. 상세 기록은 `W8_WINDOWS_NATIVE_CI_2026-10-31.md`.
