@@ -22,3 +22,7 @@ Mac의 관리 Runtime에 별도 수정된 Identity alias 충돌 코드가 존재
 ## Mac 계정 적용 완료
 
 canonical `e047f182` Mac native TypeScript7/BuildCheck 및 focused 69/69 PASS 후 운영 Mac 계정 Kernel Runtime을 공식 설치 백업과 함께 동기화했다. 설치 Manifest **1,143/1,143 SHA MATCH**, Codex 프로필 관리 **22개, doctor `ready`**, 사용자 전용 skill 보존 및 별도 rollback 예행연습 PASS. 강제 세션 재시작 없이 새 Kernel CLI 실행만 확인. Windows native 및 활성 Codex 세션 E2E는 검증 불가로 남는다. `W8_NATIVE_FOLLOWUP_2026-10-31.md` 참조.
+
+## Windows 계정 읽기 전용 검증
+
+Windows `C:\dev\moonshot-relay`가 최신 `dbc63831`/clean이며 설치 Runtime 소유 파일 SHA 1,147/1,147, source 대 installed Payload 1,144/1,144, Codex Profile Linux 읽기 전용 ownership 5/5 PASS를 확인했다. 단 `powershell.exe`/`cmd.exe` 및 Windows native 실행 권한 없음. WSL에서 Windows Node를 호출하자 vsock 오류 발생했고 GitHub Actions `enabled=false`로 native CI 실행도 불가했다. 설치를 무작정 반복하지 않고 **native NOT_TESTED** 유지. 자세한 결과: `W8_WINDOWS_READONLY_2026-10-31.md`.

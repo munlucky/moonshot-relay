@@ -52,3 +52,7 @@ Mac ARM64에서 같은 HEAD `edbefb26`의 focused native Host/Reviewer/Session 6
 ## 2026-10-31 Mac 운영 계정 동기화 확인
 
 Mac 원본 소스 최신 `e047f182`의 격리 ARM64 회귀 69/69, 운영 계정 Runtime Manifest 1,143/1,143 SHA, Codex Profile doctor `ready` 및 Kernel CLI 재시작 테스트 PASS. 강제 진행 중 Codex 세션 재시작은 수행하지 않음. Windows native는 실행기가 없어 NOT_TESTED. 전체 W0~W10 **PARTIAL** 유지. 자세한 백업·롤백과 운영 검증은 `W8_NATIVE_FOLLOWUP_2026-10-31.md`.
+
+## 2026-10-31 Windows 설치 파일 정적 검증
+
+Windows 계정 Manifest SHA 1,147/1,147, 소스 Payload 1,144/1,144, Codex 프로필 읽기 전용 ownership 5/5 PASS. 기존 W8 Linux·Mac native 검증은 유지한다. Windows 프로세스/Reviewer/Session restart 테스트는 Windows 실행기 부재 및 GitHub Actions `enabled=false`로 **미실행**이다. `W8_WINDOWS_READONLY_2026-10-31.md`를 근거로 통합 PARTIAL을 유지한다.
