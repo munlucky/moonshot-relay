@@ -593,3 +593,95 @@ type TestControlPlane = Awaited<ReturnType<typeof import('../src/host/kernel/con
 type TestStateStore = Awaited<ReturnType<typeof import('../src/kernel/state-store.js').openKernelStateStore>>;
 
 type ResolverFixtureRun = NonNullable<ReturnType<NonNullable<NonNullable<Parameters<typeof resolveBoundInvocation>[0]>["stateStore"]>["getRun"]>>;
+
+test('session-tagged Kernel CLI rejects a foreign report without completing or stealing an owned Run', async () => {
+  const fixture = await makeProject('kernel-session-report-owner');
+  const ownerSessionId = 'codex:w1-report-owner';
+  const foreignSessionId = 'codex:w1-foreign-session';
+  const contractPath = path.join(fixture.projectRoot, 'contract.json');
+  const reportPath = path.join(fixture.projectRoot, 'report.json');
+  try {
+    await writeFile(path.join(fixture.projectRoot, 'app.mjs'), 'export const value = 1;\n');
+    await writeFile(contractPath, JSON.stringify({
+      objective: 'preserve the existing work owner',
+      allowedPaths: ['app.mjs'],
+      acceptance: ['verification succeeds'],
+    }));
+    await writeFile(reportPath, JSON.stringify({
+      stepId: 'step-1-1',
+      summary: 'verify without claiming a new work owner',
+      changedPaths: [],
+      verifications: [{
+        obligationId: 'default',
+        commandRef: 'test',
+        acceptanceCoverage: ['AC-1'],
+      }],
+    }));
+    const started = invokeNext({ ...fixture, sessionId: ownerSessionId, contractPath });
+    assert.equal(started.status, 0, started.stderr || started.stdout);
+    const runId = assertTestString(parseCliJson(started).runId);
+    const report = (sessionId: string) => spawnSync(process.execPath, [
+      kernelCli,
+      'report',
+      runId,
+      '--report-json',
+      reportPath,
+      '--session-id',
+      sessionId,
+      '--provider',
+      'codex',
+      '--project-root',
+      fixture.projectRoot,
+      '--runtime-home',
+      fixture.runtimeHome,
+      '--json',
+    ], {
+      cwd: fixture.projectRoot,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        MOON_RELAY_KERNEL_REEXEC: '1',
+        MOON_RELAY_KERNEL_RUN_ID: '',
+        MOON_RELAY_KERNEL_SESSION_ID: '',
+        MOON_RELAY_KERNEL_PROJECT_ID: '',
+        MOON_RELAY_KERNEL_WORKSPACE_ID: '',
+        CODEX_THREAD_ID: '',
+      },
+    });
+
+    const denied = report(foreignSessionId);
+    const rejected = parseCliJson(denied);
+    assert.equal(rejected.errorCode, 'host_binding_missing');
+    assert.equal(rejected.status, 'error');
+
+    const store = await openKernelStateStore({ runtimeHome: fixture.runtimeHome });
+    try {
+      const run = assertTestPresent(store.getRun(runId));
+      assert.equal(run.status, 'active');
+      assert.equal(run.mutationRevision, 0);
+      assert.equal(store.getVerifications(runId).length, 0);
+      assert.equal(store.getCompletionDecision(runId), null);
+      assert.equal(
+        assertTestPresent(store.getActiveOwnerBinding({
+          projectId: assertTestString(run.projectId),
+          sessionId: ownerSessionId,
+        })).runId,
+        runId,
+      );
+      assert.equal(store.getActiveRunBinding({
+        projectId: assertTestString(run.projectId),
+        sessionId: foreignSessionId,
+        runId,
+      }), null);
+    } finally {
+      store.close();
+    }
+
+    const accepted = report(ownerSessionId);
+    assert.equal(accepted.status, 0, accepted.stderr || accepted.stdout);
+    assert.equal(parseCliJson(accepted).status, 'completed');
+  } finally {
+    await rm(fixture.projectRoot, { recursive: true, force: true });
+    await rm(fixture.runtimeHome, { recursive: true, force: true });
+  }
+});

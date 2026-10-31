@@ -318,7 +318,9 @@ const openControlPlane = async (): Promise<KernelControlPlane> => {
     runtimeHome: effectiveRuntimeHome || undefined,
     projectRoot,
     env: kernelEnv,
-    requireHostBinding: false,
+    // A declared Host session must not inherit a foreign Run's mutation rights.
+    // Sessionless local CLI use retains its existing trusted-console behavior.
+    requireHostBinding: Boolean(sessionId),
   });
   return activeControlPlane;
 };
