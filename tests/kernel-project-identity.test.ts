@@ -2989,3 +2989,59 @@ test('persisted same-repository identity splits become operator-gated repair can
 
 type TestControlPlane = Awaited<ReturnType<typeof import('../src/host/kernel/control-plane-runtime.js').createKernelControlPlane>>;
 type TestStateStore = Awaited<ReturnType<typeof import('../src/kernel/state-store.js').openKernelStateStore>>;
+
+test('an existing exact-root identity resumes across a conflicting remote without adopting another checkout', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'kernel-identity-shared-remote-restart-'));
+  const runtimeHome = path.join(tmp, 'runtime');
+  const firstRoot = path.join(tmp, 'first');
+  const secondRoot = path.join(tmp, 'second');
+  const newRoot = path.join(tmp, 'new');
+  const remote = 'https://example.invalid/shared-origin/repository.git';
+  const open = async (projectRoot: string) => {
+    const cp = await createKernelControlPlane({ runtimeHome, projectRoot, requireHostBinding: false });
+    await cp.close();
+  };
+  try {
+    for (const root of [firstRoot, secondRoot, newRoot]) {
+      await mkdir(root, { recursive: true });
+      runGit(root, ['init', '-q']);
+    }
+    // The first root was registered before it discovered the shared origin.
+    await open(firstRoot);
+    runGit(secondRoot, ['remote', 'add', 'origin', remote]);
+    await open(secondRoot);
+
+    const storeBefore = await openKernelStateStore({ runtimeHome });
+    const first = assertTestPresent(storeBefore.getProjectIdentity({ canonicalRoot: firstRoot }));
+    const second = assertTestPresent(storeBefore.getProjectIdentity({ canonicalRoot: secondRoot }));
+    storeBefore.close();
+    assert.notEqual(first.projectId, second.projectId);
+
+    runGit(firstRoot, ['remote', 'add', 'origin', remote]);
+    await open(firstRoot);
+    const after = await openKernelStateStore({ runtimeHome });
+    try {
+      assert.equal(assertTestPresent(after.getProjectIdentity({ canonicalRoot: firstRoot })).projectId, first.projectId);
+      assert.equal(assertTestPresent(after.getProjectIdentity({ canonicalRoot: secondRoot })).projectId, second.projectId);
+      assert.equal(assertTestPresent(after.getProjectIdentity({ alias: remote.replace(/\.git$/, '') })).projectId, second.projectId);
+    } finally {
+      after.close();
+    }
+
+    // A new root with that remote has no exact-root proof and must still fail.
+    runGit(newRoot, ['remote', 'add', 'origin', remote]);
+    await assert.rejects(open(newRoot), (error: unknown) => (
+      ['project_identity_alias_ownership_unproven', 'project_identity_git_common_dir_unverified', 'project_identity_alias_conflict']
+        .includes(String(assertTestRecord(error).code))
+    ));
+    const finalStore = await openKernelStateStore({ runtimeHome });
+    try {
+      assert.equal(finalStore.getProjectIdentity({ canonicalRoot: newRoot }), null);
+      assert.equal(assertTestPresent(finalStore.getProjectIdentity({ alias: remote.replace(/\.git$/, '') })).projectId, second.projectId);
+    } finally {
+      finalStore.close();
+    }
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});

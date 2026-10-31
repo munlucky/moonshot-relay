@@ -407,8 +407,20 @@ export const createKernelControlPlane = async ({
       },
     });
   }
+  // An already registered exact root remains usable when an unrelated
+  // checkout later claims the same remote URL. The remote alias keeps its
+  // existing owner; it must not merge either project's Run or Knowledge.
+  // Newly observed roots still go through strict alias admission unchanged.
+  const exactRootIdentity = store.getProjectIdentity({ canonicalRoot: currentProject.canonicalRoot });
+  const registrationAliases = exactRootIdentity && identityState.currentIdentity?.projectId === exactRootIdentity.projectId
+    ? currentProject.aliases.filter((alias) => {
+        const owner = store.getProjectIdentity({ alias });
+        return !owner || owner.projectId === exactRootIdentity.projectId;
+      })
+    : currentProject.aliases;
   const persistedIdentity = store.registerProjectIdentity({
     ...currentProject,
+    aliases: registrationAliases,
     projectId: identityState.currentIdentity?.projectId || currentProject.projectId,
   });
   currentProject = {

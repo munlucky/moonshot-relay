@@ -23,3 +23,4 @@
 - W10: `W10_FINAL_RESULT.md`. Recovery 24/24, Lifecycle 66/66, 격리 정상 빌드 Unification 13/13, TS7/Boundaries/BuildCheck PASS. 광역 Reliability 격리 279 PASS/2 FAIL/1 SKIP, 개별 실패 2/2 원본 Git 재검증 PASS이나 전체 PASS 미확정. 전체 PARTIAL.
 - W10 Reliability 추가 검증: Git metadata가 있는 독립 Linux checkout, 동일 HEAD/native 의존성, Runtime·Test build 후 **282/282 PASS (skip 0)**. 이전 Git 없는 archive 2 FAIL/1 SKIP은 재현 경계 차이로 분리. 통합은 native/계정 검증 부족으로 PARTIAL 유지.
 - W8 native follow-up (2026-10-31): `W8_NATIVE_FOLLOWUP_2026-10-31.md`. Mac ARM64 canonical `edbefb26` 격리 집중 회귀 62/62, Resolver 1/1, TypeScript7/BuildCheck PASS. 전체 optional CLI Smoke Qwen/ADE timeout, Mac 계정 설치 파일 SHA 불일치, Windows native 미확인. **전체 PARTIAL 유지**.
+- W8 Mac 계정 영속 코드 보호: 설치 Manifest 전체 1,143개 중 1,142 MATCH/1 modified(`control-plane.js` 별도 정확한 root 복구 처리). 두 독립 저장소의 동일 원격 alias 반례를 canonical에서 재현·수정해 Identity 관련 63/63 통과. 계정 강제 동기화는 변경된 파일 보호/복원 증거에 따라 수행한다.

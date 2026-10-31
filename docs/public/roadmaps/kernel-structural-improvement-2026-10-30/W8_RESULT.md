@@ -14,3 +14,7 @@
 ## 2026-10-31 native macOS follow-up
 
 실제 macOS ARM64에 canonical `edbefb26`을 별도 checkout하여 Codex 관련 native 테스트 **62/62 PASS**, TypeScript7/Boundaries/BuildCheck PASS를 검증했다. Mac 계정 설치 소스는 이전 버전이고 실제 생성 파일 2개의 SHA가 달라 설치 parity는 실패한다. 선택적 Qwen/ADE CLI Smoke도 timeout으로 전체 PASS가 아니다. 자세한 증거와 소유권 보호 판단: `W8_NATIVE_FOLLOWUP_2026-10-31.md`. 최종 판정은 **source verified / native account PARTIAL**을 유지한다.
+
+## 현지 수정 회수 및 후속 재현
+
+Mac의 관리 Runtime에 별도 수정된 Identity alias 충돌 코드가 존재함을 확인했고, 정확한 기존 root의 재시작 중단 반례를 canonical에서 재현했다. `control-plane.ts`는 정확한 root를 저장 권위에서 확인한 경우에만 타 저장소 소유 remote alias 재등록을 생략한다. 신규 root의 소유권 검증·상태스토어 엄격한 경계는 변경하지 않는다. TypeScript7/빌드 및 63/63 Identity 회귀 PASS. 상세 내용 `W8_NATIVE_FOLLOWUP_2026-10-31.md`.

@@ -29,3 +29,11 @@
 - 남은 필수 검증: (1) 실제 Windows native 지원 경계·계정 설치/재시작, (2) Mac 계정 managed-section 소유 경계를 보호한 **최신 canonical 설치 및 SHA parity/재시작**, (3) 필요 시 선택적 Qwen/ADE 버전 검사 환경 조사. Qwen/ADE의 실패 때문에 Codex 구현에 특별 규칙·Provider 하드코딩·새 fallback을 추가하지 않는다.
 
 **통합 최종 판정은 PARTIAL 유지.** 읽기 전용 Mac 소스 검증을 마쳤지만 계정 설치 검증과 Windows native 검증이 빠졌으므로 `COMPLETE`는 불가하다.
+
+## 2026-10-31 후속 — 운영 설치본의 별도 Identity 코드와 canonical 수렴
+
+- Mac 계정 설치 Manifest 1,143개 소유 파일 전체 해시 검사 결과 **1,142 MATCH / 1 modified**. 변경은 `kernel-payload/scripts/kernel/control-plane.js`이며 기존 설치(2026-10-29) 이후 추가된 `exactRootIdentity` 별칭 충돌 처리 12줄이다. 이력만 보고 임의로 `--sync` 덮어쓰기 하지 않았다.
+- 동일 remote URL을 가진 물리적으로 독립된 저장소 A/B에서 **A의 기존 정확한 root Identity가 이미 저장된 상태**로 A에 remote가 추가되면 기존 canonical control-plane은 `project_identity_alias_conflict`로 재시작을 중단함을 격리 재현했다. B의 remote alias는 B 소유로 남아 있었다.
+- 소유권 정책은 state-store의 `registerProjectIdentity`에서 유지하고, control-plane의 **이미 저장된 정확한 root에만** 원격 alias 등록을 필터링하도록 정리했다. 정확한 root는 `getProjectIdentity({ canonicalRoot })` 조회로 입증하며, shared remote URL만 같은 신규 저장소는 기존대로 차단한다. 다른 namespace/Run/Knowledge의 병합은 없다.
+- 별도 hash authority·특정 프로젝트 경로·일시적 우회 허용·DB schema/fallback 없음. TypeScript 7 타입 검사 및 Runtime/Test 빌드 통과. 신규 exact-root/새 root 반례 1/1, 전체 Project Identity·Runtime Ownership·Report Identity Migration **63/63 PASS**.
+- 해당 수정이 포함된 canonical 코드 커밋 후에만 Mac **격리된 최신 소스**와 계정 설치본 사이의 승인된 동기화를 검토한다. 계정 설치와 Windows native 여부는 별도 증거 없이는 PASS로 승격하지 않는다.
