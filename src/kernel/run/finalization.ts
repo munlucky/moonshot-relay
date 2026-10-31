@@ -111,6 +111,70 @@ interface PersistableCandidate extends ReviewKnowledgeCandidate {
 
 type FinalizationStore = Pick<Awaited<ReturnType<typeof import('../state-store.js').openKernelStateStore>>, "getRun" | "listKnowledgeRecords" | "getKnowledgeApproval" | "ensureRunObligation" | "getRunObligations" | "getVerifications" | "recordCandidateEvidenceBinding" | "getProjectKnowledgeRevision" | "commitKnowledgeTransaction" | "getCompletionDecision" | "getMutationProvenance" | "observeWorkspaceIdentity" | "recordGitCloseoutReceipt" | "getGitCloseoutReceipt" | "recordKnowledgeReviewReceipt" | "recordKnowledgeCandidate" | "setKnowledgeStatus" | "recordFinalizationReceipt" | "setFinalizationStatus" | "getFinalizationReceipt" | "getWaivers" | "listReviewReceipts" | "getLatestEvidencePack" | "recordKnowledgeApproval" | "transition" | "persistCompletionDecision" | "getProjectRunSignals" | "getKnowledgeCandidates" | "recordKnowledgeCommitReceipt" | "getKnowledgeCommitReceipt" | "getDeferredKnowledgeRuns">;
 
+type SettlementStore = Pick<FinalizationStore,
+  'getRun' | 'getFinalizationReceipt' | 'getCompletionDecision'
+  | 'getKnowledgeCommitReceipt' | 'getGitCloseoutReceipt'
+> & {
+  getSettledKnowledgeTransaction(runId: string, projectId: string, targetRevision: string): UnknownRecord | null;
+};
+
+// W3: readiness to retire transient work is stricter than accepted code.
+// This is an observation only. A future cleanup must recheck under its own
+// transaction before deleting any Run-foreign-key records.
+export const assessRunSettlement = (store: SettlementStore, runId: string) => {
+  const run = store.getRun(runId);
+  const finalization = store.getFinalizationReceipt(runId);
+  const receipt = asRecord(finalization?.receiptJson);
+  const decision = store.getCompletionDecision(runId);
+  const blockers: string[] = [];
+  if (!run || !run.projectId || run.status !== 'completed' || run.finalizationStatus !== 'completed'
+    || finalization?.finalizationStatus !== 'completed'
+    || receipt.finalizationStatus !== 'completed' || receipt.completionStatus !== 'accepted') {
+    blockers.push('finalization_unsettled');
+  }
+  if (!run || !decision || decision.decision !== 'accepted'
+    || !decision.evidenceDigest
+    || decision.sourceIdentity !== run.sourceIdentity
+    || Number(decision.mutationRevision) !== Number(run.mutationRevision)) {
+    blockers.push('completion_authority_unsettled');
+  }
+
+  const knowledge = store.getKnowledgeCommitReceipt(runId);
+  const knowledgeStatus = receipt.knowledgeStatus;
+  if (knowledgeStatus !== 'committed' && knowledgeStatus !== 'no_change') {
+    blockers.push('knowledge_unsettled');
+  } else if (!run || !knowledge || knowledge.status !== knowledgeStatus
+    || knowledge.projectId !== run.projectId) {
+    blockers.push('knowledge_receipt_unsettled');
+  } else if (knowledgeStatus === 'committed') {
+    const transaction = store.getSettledKnowledgeTransaction(
+      runId, String(run.projectId), String(knowledge.revisionAfter),
+    );
+    const authority = asRecord(transaction?.verifiedAuthority);
+    const outcome = asRecord(transaction?.outcome);
+    if (authority.runId !== runId || authority.projectId !== run.projectId
+      || authority.sourceIdentity !== run.sourceIdentity
+      || authority.completionDecisionRef !== decision?.evidenceDigest
+      || outcome.status !== 'committed'
+      || String(outcome.revisionAfter) !== String(knowledge.revisionAfter)) {
+      blockers.push('knowledge_ledger_unsettled');
+    }
+  }
+
+  const requested = asRecord(receipt.gitCloseoutRequest).requested === true;
+  if (requested) {
+    const git = store.getGitCloseoutReceipt(runId);
+    if (!run || receipt.gitCloseoutStatus !== 'completed' || !git
+      || git.status !== 'completed' || git.projectId !== run.projectId
+      || !git.commitSha) {
+      blockers.push('git_closeout_unsettled');
+    }
+  } else if (receipt.gitCloseoutStatus !== 'skipped') {
+    blockers.push('git_closeout_unsettled');
+  }
+  return { settled: blockers.length === 0, blockers };
+};
+
 type ObserveWorkspaceIdentity = (input: { projectRoot: string }) => { identity: string };
 type ObserveScopedWorkspaceIdentity = (input: {
   projectRoot: string;

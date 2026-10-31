@@ -115,6 +115,7 @@ export interface KnowledgeLifecycleStore {
   getKnowledgeReviewReceipt(runId: string): UnknownRecord | null;
   recordKnowledgeCommitReceipt(runId: string, input: UnknownRecord): void;
   getKnowledgeCommitReceipt(runId: string): UnknownRecord | null;
+  getSettledKnowledgeTransaction(runId: string, projectId: string, targetRevision: string): UnknownRecord | null;
   listKnowledgeRecords(input?: { projectId?: string | null | undefined; statuses?: string[] }): UnknownRecord[];
   commitKnowledgeTransaction(input: UnknownRecord): UnknownRecord & { revisionBefore: string; revisionAfter: string };
   getProjectKnowledgeRevision(projectId: string): number;
@@ -945,6 +946,18 @@ export const createKnowledgeLifecycleStore = ({
     },
 
     listKnowledgeRecords,
+
+    // Read-only: completed Knowledge is recorded outside the Run FK graph.
+    // The finalization cleanup gate uses this only as settlement evidence.
+    getSettledKnowledgeTransaction(runId, projectId, targetRevision) {
+      const row = db.prepare(`
+        SELECT transaction_json AS transactionJson
+        FROM knowledge_transactions
+        WHERE run_id=? AND project_id=? AND target_revision=? AND status='completed'
+        ORDER BY completed_at DESC LIMIT 1
+      `).get(runId, projectId, targetRevision) as { transactionJson: string } | undefined;
+      return row ? parseJson<UnknownRecord | null>(row.transactionJson, null) : null;
+    },
 
     commitKnowledgeTransaction(input) {
       const transactionId = String(input.transactionId || randomUUID());

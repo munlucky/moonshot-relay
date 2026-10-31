@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
+import { assessRunSettlement } from '../src/kernel/run/finalization.js';
 
 const setup = async () => {
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'krn-fin-kn-home-'));
@@ -169,6 +170,9 @@ test('Finalization Wave 5: Knowledge conflict does not fail accepted code delive
       assert.equal(assertTestRecord(deferredReceipt).completionStatus, 'accepted', 'Code delivery must remain accepted');
       assert.equal(assertTestRecord(deferredReceipt).knowledgeStatus, 'deferred', 'Knowledge status should be marked deferred');
       assert.equal(assertTestRecord(deferredReceipt).gitCloseoutStatus, 'completed', 'Git closeout must complete successfully despite deferred knowledge');
+      const unsettled = assessRunSettlement(store, deferredRunId);
+      assert.equal(unsettled.settled, false, 'Accepted code and completed Git cannot release an outstanding Knowledge retry');
+      assert.ok(unsettled.blockers.includes('knowledge_unsettled'));
       assert.ok(assertTestRecord(deferredReceipt).gitCloseoutReceipt, 'Git closeout receipt must exist');
       assert.ok(assertTestString(assertTestRecord(assertTestRecord(deferredReceipt).gitCloseoutReceipt).commitSha), 'Git closeout commitSha must exist');
 
@@ -315,6 +319,10 @@ test('S-18: required Knowledge can keep Task finalization incomplete without era
     assert.equal(assertTestRecord(receipt).finalizationStatus, 'partial');
     assert.equal(assertTestRecord(receipt).reason, 'required_knowledge_incomplete');
     assert.equal(assertTestPresent(cp.stateStore.getRun(runId)).finalizationStatus, 'partial');
+    const requiredUnsettled = assessRunSettlement(cp.stateStore, runId);
+    assert.equal(requiredUnsettled.settled, false);
+    assert.ok(requiredUnsettled.blockers.includes('finalization_unsettled'));
+    assert.ok(requiredUnsettled.blockers.includes('knowledge_unsettled'));
   } finally {
     await cp.close();
     await cleanup(fixture);

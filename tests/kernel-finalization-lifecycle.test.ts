@@ -5,6 +5,7 @@ import os from 'node:os';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { runGit } from '../src/shared/git-safe.js';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
+import { assessRunSettlement } from '../src/kernel/run/finalization.js';
 
 test('Kernel finalization orchestration (finalizeRun) executes full accepted lifecycle', async () => {
   const tmpHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-fin-test-'));
@@ -57,6 +58,35 @@ test('Kernel finalization orchestration (finalizeRun) executes full accepted lif
   assert.ok(finalizationReceipt.knowledgeCommitReceipt);
   assert.ok(finalizationReceipt.knowledgeCommitReceipt && typeof finalizationReceipt.knowledgeCommitReceipt === 'object' && 'status' in finalizationReceipt.knowledgeCommitReceipt);
   assert.equal(finalizationReceipt.knowledgeCommitReceipt.status, 'committed');
+
+  const settled = assessRunSettlement(cp.stateStore, runId);
+  assert.deepEqual(settled, { settled: true, blockers: [] });
+  const missingProof = assessRunSettlement({
+    ...cp.stateStore, getCompletionDecision: () => null,
+  }, runId);
+  assert.equal(missingProof.settled, false);
+  assert.ok(missingProof.blockers.includes('completion_authority_unsettled'));
+  const missingKnowledge = assessRunSettlement({
+    ...cp.stateStore, getSettledKnowledgeTransaction: () => null,
+  }, runId);
+  assert.equal(missingKnowledge.settled, false);
+  assert.ok(missingKnowledge.blockers.includes('knowledge_ledger_unsettled'));
+  const alteredCloseout = assessRunSettlement({
+    ...cp.stateStore,
+    getFinalizationReceipt: () => {
+      const original = cp.stateStore.getFinalizationReceipt(runId)!;
+      return {
+        ...original,
+        receiptJson: {
+          ...(original.receiptJson as Record<string, unknown>),
+          gitCloseoutRequest: { requested: true },
+          gitCloseoutStatus: 'completed',
+        },
+      };
+    },
+  }, runId);
+  assert.equal(alteredCloseout.settled, false);
+  assert.ok(alteredCloseout.blockers.includes('git_closeout_unsettled'));
 
   await cp.close();
 });
@@ -175,6 +205,9 @@ test('partial Git finalization retry reuses the Kernel commit without creating a
     assert.ok(retried.finalization && typeof retried.finalization === 'object' && 'gitCloseoutReceipt' in retried.finalization);
     assert.ok(retried.finalization.gitCloseoutReceipt && typeof retried.finalization.gitCloseoutReceipt === 'object' && 'commitSha' in retried.finalization.gitCloseoutReceipt);
     assert.equal(retried.finalization.gitCloseoutReceipt.commitSha, commitSha);
+    const deliveredSettlement = assessRunSettlement(cp.stateStore, runId);
+    assert.deepEqual(deliveredSettlement, { settled: true, blockers: [] },
+      'A completed Git retry with settled Knowledge can retire transient work after later atomic checks');
     assert.equal(String(runGit(repoRoot, ['rev-parse', 'HEAD']).stdout).trim(), commitSha);
     assert.equal(String(runGit(repoRoot, ['status', '--porcelain']).stdout).trim(), '');
   } finally {

@@ -38,6 +38,12 @@
 
 이 해석은 W3 정착 확인과 W5 FK 소비자 분리 전 **운영 Run 삭제를 허용하지 않는다**. W2의 구현 회귀와 전체 시스템 수용은 구분한다. 근거와 변경 범위는 [W2_RESULT.md](W2_RESULT.md) 참조.
 
+## W3 정착 검증 결과 (2026-10-31)
+
+`finalizationStatus=completed`는 코드 전달 판정이다. 선택적 Knowledge가 `deferred`일 때도 이 값은 완료일 수 있으므로 Run 삭제 허가로 사용하지 않는다. 이번 W3에서 기존 영수증을 재사용하는 읽기 전용 `assessRunSettlement()`을 추가했다. **새로운 상태 저장·새 권한·새 Runtime 필수 실행 단계 없이** Completion/Knowledge/요청된 Git Closeout이 확정됐는지 진단한다.
+
+이 함수의 결과는 삭제 승인이 아니라 **W4/W5가 원자적 재검증을 구현할 때의 입력 경계**다. Run의 소유권·리뷰·증거 및 FK 소비자 정리까지 확인하기 전에는 운영 Run 삭제를 금지한다. 근거는 [W3_RESULT.md](W3_RESULT.md).
+
 ## W0 기준선/관찰 방법
 
 - **코드:** `src/kernel/state-store.ts`, `src/kernel/persistence/*.ts`, `src/kernel/control-plane.ts`, `src/kernel/run/*.ts`, `src/host/kernel/*.ts`, `src/application/kernel-cli/main.ts`의 실소비자 확인.
