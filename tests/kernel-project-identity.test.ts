@@ -354,7 +354,7 @@ test('linked worktree identity preflight reuses the proven logical project ident
     const linked = await inspectKernelProjectIdentity({ projectRoot: linkedWorktree, runtimeHome });
 
     assert.equal(linked.status, 'ready', JSON.stringify({
-      primary: { projectId: primary.projectId, canonicalRoot: primary.canonicalRoot, gitCommonDir: primary.gitCommonDir },
+      primary: { projectId: primary.projectId, canonicalRoot: primary.canonicalRoot },
       linked: { status: linked.status, projectId: linked.projectId, resolvedProjectId: linked.resolvedProjectId, canonicalRoot: linked.canonicalRoot, legacyCandidates: linked.legacyCandidates },
       linkedResolution: resolveKernelProjectIdentity({ cwd: linkedWorktree, env: { MOON_RELAY_KERNEL_HOME: runtimeHome } }),
     }));
