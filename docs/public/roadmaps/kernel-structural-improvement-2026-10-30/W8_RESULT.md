@@ -30,3 +30,7 @@ Windows `C:\dev\moonshot-relay`가 최신 `dbc63831`/clean이며 설치 Runtime 
 ## 2026-10-31 Windows native CI 최종 검증
 
 기존 Windows 계정 파일 정적 무결성 1,147/1,147 및 1,144/1,144를 보존한 상태에서, 별도 GitHub-hosted Windows Server 2022/Node22 runner에서 실제 npm ci, TS7/Boundaries/BuildCheck, Project Identity·Managed Runtime·Session·Review 102 PASS/0 FAIL/1 POSIX-only SKIP, 임시 Kernel·Codex 설치/Profile Doctor ready/CLI 실행을 PASS했다. Git common-dir 8.3(short) vs long path 불일치를 `realpathSync.native`로 교정한 결과다. 최종 성공 run 41158554174, 상세 `W8_WINDOWS_NATIVE_CI_2026-10-31.md`. 기존 Windows 계정 세션을 강제 재시작하지 않았으므로 active in-flight Recovery E2E는 미확인으로 분리한다.
+
+## Mac 운영 Runtime 최신 Windows Identity 수정 반영
+
+`685c7534`를 macOS ARM64 원본 Git 소스와 계정 Runtime에 반영했다. 업데이트 전 Manifest 1,143/1,143 무결성 확인, 최신 Git 경로 정규화 두 파일의 SHA 차이 확인 후 공식 백업과 `--sync` 적용. 설치 후 Manifest 1,143/1,143 및 두 파일의 source/install SHA 일치, `profile-doctor ready`, Kernel CLI 정상. 격리 native Identity/Runtime/Session 65/65와 복구·Review 32/32 PASS. 기존 Codex 실행 중 세션 종료/재기동은 하지 않았다. `W8_MAC_POST_WINDOWS_FIX_2026-10-31.md` 참조.

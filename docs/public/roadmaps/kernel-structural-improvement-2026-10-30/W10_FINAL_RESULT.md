@@ -60,3 +60,7 @@ Windows 계정 Manifest SHA 1,147/1,147, 소스 Payload 1,144/1,144, Codex 프�
 ## 2026-10-31 Windows native 검증 최종 이행
 
 실제 Windows runner `windows-2022/Node22`에서 소스 타입·경계·빌드 검증과 Identity·Runtime·Session·Reviewer 테스트 **102 PASS / 0 FAIL / 1 POSIX-only SKIP**, 임시 계정 설치/Doctor ready/Kernel CLI 실행을 완료했다(GitHub Actions run **41158554174 SUCCESS**). 실결함 Git common-dir 8.3 경로 별칭 정규화를 canonical에 반영했고, 프로덕션 fallback·별도 권위 추가는 없었다. 기존 Windows 설치 파일 정적 SHA 1,147/1,147 및 Mac 계정 검증 결과는 유지한다. 기존 Windows/Mac **진행 중 Codex 세션**을 강제로 재시작하지 않아 그 복구 E2E는 미검증이다. GitHub Actions는 기존 disabled 상태로 복원했고 임시 workflow도 제거했다. W0~W10 source 및 새 세션 native 표면 검증은 PASS, **운영 in-flight 복구 통합 최종 판정은 PARTIAL**이다. 상세 `W8_WINDOWS_NATIVE_CI_2026-10-31.md`.
+
+## 2026-10-31 마지막 Mac 운영 소스·Runtime 정합화
+
+최종 HEAD `685c7534`에서 Mac 원본 main clean, native Identity/Runtime/Session 65/65, 격리 Run·Reviewer·Owner 복구 32/32 PASS, 공식 Mac 계정 Runtime 설치 SHA 1,143/1,143, Profile Doctor ready 및 CLI 실행 PASS를 확인했다. 이전 Windows Server native run 41158554174와 Linux 전체 테스트 성공도 보존한다. **현재 작업의 소스/테스트/새 프로세스 및 Mac 계정 배포 검증은 완료**됐으나 사용자 진행 중 실제 Codex 세션 강제 재시작 E2E와 Windows 개인 계정 native 세션 E2E는 미검증이다. 이 부분은 기존 사용자 작업 보호를 위해 실행하지 않았다. 전체 W0~W10 통합 결론 PARTIAL 유지. 근거는 `W8_MAC_POST_WINDOWS_FIX_2026-10-31.md`.
