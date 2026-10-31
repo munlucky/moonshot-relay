@@ -969,6 +969,15 @@ export const createKnowledgeLifecycleStore = ({
         if (!completion || completion.decision !== 'accepted') {
           throw new Error('COMPLETION_NOT_ACCEPTED: Transaction commit requires accepted completion decision');
         }
+        if (String(completion.sourceIdentity || '') !== String(run.sourceIdentity || '')) {
+          throw new Error('SOURCE_IDENTITY_MISMATCH: Completion source must match the active Run');
+        }
+        if (Number(completion.mutationRevision) !== Number(run.mutationRevision)) {
+          throw new Error('STALE_COMPLETION_DECISION: Completion revision must match the active Run');
+        }
+        if (!completion.evidenceDigest) {
+          throw new Error('COMPLETION_EVIDENCE_REQUIRED: Accepted completion must have a proof digest');
+        }
         if (run.projectId !== projectId) {
           throw new Error(`PROJECT_ID_MISMATCH: Run project ${run.projectId} != ${projectId}`);
         }
@@ -980,6 +989,20 @@ export const createKnowledgeLifecycleStore = ({
           );
         }
 
+        if (reviewReceipt && reviewReceipt.projectId !== projectId) {
+          throw new Error('KNOWLEDGE_REVIEW_PROJECT_MISMATCH');
+        }
+
+        // Keep the verified settlement with Knowledge, independently of the
+        // mutable Run/Completion/Review rows used to authorize this commit.
+        const commitAuthority = {
+          runId,
+          projectId,
+          sourceIdentity: String(run.sourceIdentity),
+          mutationRevision: Number(run.mutationRevision),
+          completionDecisionRef: String(completion.evidenceDigest),
+          knowledgeReviewRef: reviewReceipt?.reviewDigest || null,
+        };
         const currentRev = getProjectKnowledgeRevision(projectId);
         if (
           expectedRevision !== null
@@ -1049,6 +1072,7 @@ export const createKnowledgeLifecycleStore = ({
             revisionAfter: String(currentRev),
             status: 'no_change',
             committedCount: 0,
+            verifiedAuthority: commitAuthority,
             completionDecisionRef: completion.evidenceDigest || null,
             knowledgeReviewRef: reviewReceipt?.reviewDigest || null,
           };
@@ -1087,7 +1111,16 @@ export const createKnowledgeLifecycleStore = ({
         for (const record of recordsToCommit || []) {
           const recordId = String(record.id || record.candidateId || '');
           const recordType = String(record.type || record.proposedType || 'semantic_fact');
-          const payload = { ...record, status: 'committed', revision: nextRev };
+          const canonicalRecord: UnknownRecord = { ...record, projectId, status: 'committed', revision: nextRev };
+          // Never persist caller-declared authority as an accepted proof.
+          delete canonicalRecord.knowledgeAuthority;
+          const payload = {
+            ...canonicalRecord,
+            knowledgeAuthority: {
+              ...commitAuthority,
+              contentDigest: `sha256:${createHash('sha256').update(serialize(canonicalRecord)).digest('hex')}`,
+            },
+          };
           db.prepare(`
             INSERT INTO knowledge_records(
               project_id, record_id, record_type, status, trust_tier,
@@ -1133,6 +1166,7 @@ export const createKnowledgeLifecycleStore = ({
           targetRevision: nextRev,
           recordsCount: (recordsToCommit || []).length,
           provenance,
+          verifiedAuthority: commitAuthority,
         });
         db.prepare(`
           INSERT INTO knowledge_transactions(
@@ -1161,6 +1195,7 @@ export const createKnowledgeLifecycleStore = ({
           revisionAfter: String(nextRev),
           status: 'committed',
           committedCount: (recordsToCommit || []).length,
+          verifiedAuthority: commitAuthority,
           completionDecisionRef: completion.evidenceDigest || null,
           knowledgeReviewRef: reviewReceipt?.reviewDigest || null,
         };

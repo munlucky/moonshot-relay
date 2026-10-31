@@ -87,7 +87,8 @@ test('Finalization Wave 5: Knowledge conflict does not fail accepted code delive
     store.recordCompletionDecision('r-bg-advance', {
       decision: 'accepted',
       sourceIdentity: assertTestPresent(run).sourceIdentity,
-      mutationRevision: 1,
+      // This fixture verifies CAS retries, not a stale completion decision.
+      mutationRevision: assertTestPresent(store.getRun('r-bg-advance')).mutationRevision,
       evidenceDigest: `sha256:${'c'.repeat(64)}`,
       decisionJson: { decision: 'accepted' },
     });
