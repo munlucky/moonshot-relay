@@ -208,7 +208,7 @@ test('runtime identity registration is immutable, aliases are idempotent, and le
   }
 });
 
-test('POSIX canonical roots preserve meaningful surrounding whitespace', async () => {
+test('POSIX canonical roots preserve meaningful surrounding whitespace', { skip: process.platform === 'win32' ? 'POSIX-only absolute-root semantics' : false }, async () => {
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-identity-posix-whitespace-'));
   const root = path.join(runtimeHome, 'repo');
   const spacedRoot = `${root} `;
@@ -353,7 +353,11 @@ test('linked worktree identity preflight reuses the proven logical project ident
     const primary = await bootstrapKernelProjectIdentity({ projectRoot: repository, runtimeHome, policy: 'isolate' });
     const linked = await inspectKernelProjectIdentity({ projectRoot: linkedWorktree, runtimeHome });
 
-    assert.equal(linked.status, 'ready');
+    assert.equal(linked.status, 'ready', JSON.stringify({
+      primary: { projectId: primary.projectId, canonicalRoot: primary.canonicalRoot, gitCommonDir: primary.gitCommonDir },
+      linked: { status: linked.status, projectId: linked.projectId, resolvedProjectId: linked.resolvedProjectId, canonicalRoot: linked.canonicalRoot, legacyCandidates: linked.legacyCandidates },
+      linkedResolution: resolveKernelProjectIdentity({ cwd: linkedWorktree, env: { MOON_RELAY_KERNEL_HOME: runtimeHome } }),
+    }));
     assert.equal(linked.projectId, primary.projectId);
     assert.equal(assertTestPresent(linked.identity).projectId, primary.projectId);
     assert.equal(assertTestPresent(linked.identity).canonicalRoot, canonicalTestRoot(repository));
@@ -2831,7 +2835,9 @@ test('identity-only canonical-root split remains operator-gated and approvable',
         VALUES(?, ?, ?, ?, '[]', ?, ?)
       `).run(
         legacyProjectId,
-        `${currentIdentity.canonicalRoot}/identity-only/..`,
+        process.platform === 'win32'
+          ? currentIdentity.canonicalRoot.toUpperCase()
+          : `${currentIdentity.canonicalRoot}/identity-only/..`,
         'workspace_root',
         'digest-identity-only-legacy',
         timestamp,
