@@ -70,6 +70,12 @@ W3 정착 판정만으로 Run을 자동 삭제하지 않는다. 이번 파일럿
 
 기본 Runtime의 경로 확인 및 Linux/Windows Native 격리 복구는 PASS. Mac native 저장소 최신 소스 테스트, shared WAL 동시 Writer 0, 실제 Codex 세션 복구·next/report 성능 및 자동 Cleanup 수용은 미검증이므로 W6 통합 PARTIAL이다. 새 영구 Host Lock/Coordinator는 추가하지 않았다. [W6B_RESULT.md](W6B_RESULT.md) 참조.
 
+## W6 네 Host 통합 검증 (2026-11-01)
+
+Windows Native, Windows 측 Linux MCP, Mac Native, Mac 측 Linux MCP에서 최신 a5577baa 격리 W6-A/B 4/4, Kernel next/report·Host Session/Owner E2E 51/51을 통과했다. Mac는 임시 clone을 사용하여 기존 계정 저장소를 건드리지 않았다.
+
+Windows Native가 임시 SQLite WAL에 트랜잭션을 보유한 동안 Linux MCP가 같은 물리 /c 경로를 써서 SQLITE_IOERR_SHMLOCK(4618)을 재현했다. 이 경로는 안전한 공유 Writer로 지원하지 않으며 Host-local Runtime을 유지한다. 사용자 in-flight 세션 재시작과 자동 Cleanup/운영 이전은 미검증이므로 전체 PARTIAL. 상세 증거는 W6B_RESULT.md에 보존한다.
+
 ## W0 기준선/관찰 방법
 
 - **코드:** `src/kernel/state-store.ts`, `src/kernel/persistence/*.ts`, `src/kernel/control-plane.ts`, `src/kernel/run/*.ts`, `src/host/kernel/*.ts`, `src/application/kernel-cli/main.ts`의 실소비자 확인.

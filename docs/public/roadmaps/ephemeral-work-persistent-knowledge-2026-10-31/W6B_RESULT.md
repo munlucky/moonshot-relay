@@ -43,9 +43,19 @@ Linux(WSL2)와 Windows Native에서 W6-A 빠른 Open 회귀와 함께 검증했�
 - W6-B bounded BUSY 오류 분류 및 잠금 해제 후 쓰기: **PASS**.
 - 최신 W6-A schema fast-open 회귀 유지: **PASS**.
 - Linux 집중 W6-A/W6-B 회귀 **4/4 PASS**; Windows Native 동일 **4/4 PASS**. Runtime/Test 빌드, 생성물 정합성 및 Boundary 검사도 검증했다.
-- Mac Native 최신 W6 코드 검증: **DEFER** (체크아웃 구형). 계정 설치본/세션 강제 재시작은 수행하지 않았다.
-- Windows↔WSL 또는 Mac↔Linux 간 동일 물리 SQLite/WAL 파일에 대한 동시 Writer 0: **미검증**, 경로 분리 관측만 완료.
-- `next/report` 실제 Host 재시작/성능 개선 비교와 Codex 앱 서버 연속성: **미검증**.
+- Mac Native 최신 W6 코드 검증: **4/4 PASS (별도 임시 clone a5577baa)**. 사용자 계정 체크아웃·설치본·활성 세션은 변경하지 않았다.
+- Mac 측 Linux MCP 최신 W6 코드 검증: **4/4 PASS (별도 임시 clone a5577baa)**.
+- Windows Native ↔ Linux MCP의 동일 물리 임시 SQLite/WAL 파일 동시 접근: **호환성 실패 재현**. Windows의 BEGIN IMMEDIATE 동안 Linux의 /c 경로 INSERT에서 code=ERR_SQLITE_ERROR, errcode=4618 (SQLITE_IOERR_SHMLOCK), disk I/O error가 발생했다. Windows 커밋 후 integrity_check=ok, Linux 읽기도 성공했다. 따라서 공유 WAL 경로는 교차 Host Writer로 승인하지 않는다.
+- Kernel next/report 및 Host Session/Owner E2E 회귀: 네 Host 환경 모두 51/51 PASS. 실제 사용자 Codex 앱 서버 강제 재시작·인계 및 개선 전·후 지연의 인과 비교는 미검증.
 - W4/W5 자동 Cleanup, 운영 Runtime DB 이관/정리: **비활성 유지**.
 
 다음에는 별도의 임시 작업 Runtime과 사용자가 승인한 Host 인계 세션으로 소유권·재시작·정착 영수증을 검증해야 한다. 기존 계정의 활성 작업을 중단하거나, 복구를 가장하는 임의 폴백을 추가하지 않는다.
+
+## 추가 통합 검증 결과 (2026-11-01)
+
+- PASS: Windows 측 Linux MCP, Windows Native, Mac 측 Linux MCP, Mac Native의 최신 a5577baa W6-A/B 집중 회귀 4/4씩, Kernel next/report·MCP·Session/Owner E2E 51/51씩.
+- UNSUPPORTED (실측): Windows ↔ Linux의 같은 물리 DB를 공유 마운트로 여는 WAL 동시 Writer. 확장 오류 4618(SQLITE_IOERR_SHMLOCK)로 실패했고, 정상 커밋 뒤 무결성은 통과했다. 정상 Host-local Runtime 분리를 유지한다.
+- PARTIAL: 실제 사용자 Codex 프로세스의 in-flight 세션 강제 재시작·복구, 모든 사용자 지정 공유 경로의 자동 차단, W4/W5 자동 Cleanup 및 운영 DB 이관.
+- 성능: W6-A 일반 Open의 DDL/DML 쓰기 0은 측정됐으나, next/report 개선 전·후 지연은 비교하지 않았으므로 수치상 개선을 단정하지 않는다.
+
+이번 단계는 테스트와 경계 확인이며 추가 Host 잠금 DB, OS별 폴백, 공유 WAL 호환 모듈을 구현하지 않았다.
