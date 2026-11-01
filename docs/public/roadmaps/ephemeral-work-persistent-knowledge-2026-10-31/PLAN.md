@@ -58,6 +58,12 @@ W3 정착 판정만으로 Run을 자동 삭제하지 않는다. 이번 파일럿
 
 이 변경은 자동 Cleanup을 켠 것이 아니며, 과거 실행 분석은 정리 이후 DB 이력을 읽을 수 없다. 또한 Run ID 재사용의 전 Host idempotence, 장기 실행과 다른 Session의 인계, Mac Native/MCP, 운영 백업·롤백은 미검증이다. W5 전체 수용은 PARTIAL로 보존한다. [W5_RESULT.md](W5_RESULT.md) 참조.
 
+## W6 SQLite Hot Open 경량화 (2026-11-01)
+
+매 일반 Open에 반복되던 전체 DDL, 레거시 데이터 UPDATE 및 Knowledge migration-table introspection을 제거했다. SQLite 기본 user_version을 단일 스키마 Revision Authority로 사용하여 최초/구형 DB에만 기존 이관을 수행하며, 정상 Open에는 연결별 PRAGMA와 파일시스템 복구 확인만 남긴다. 미래 스키마를 오래된 바이너리로 열면 쓰기 없이 거부한다. 신규 Migration에는 Revision 증가가 필수이며 별도 Migration 엔진이나 Shadow DB를 추가하지 않았다.
+
+격리 DB에서 두 번 Open만으로 발생한 schema_version 153→157, data_version 2→3을 변경 후 153→153, 2→2로 낮췄다. Linux 구형 DB Migration/FS 복구 및 Windows Native 회귀는 통과했다. 현재 Linux MCP와 Windows Native Runtime Home은 별도이지만 Mac/임의 공유 경로의 cross-OS writer 0과 실제 사용자 세션 재시작은 미검증이다. W6-A PASS, W6 전체 PARTIAL. 자세한 근거는 W6_RESULT.md를 참조한다.
+
 ## W0 기준선/관찰 방법
 
 - **코드:** `src/kernel/state-store.ts`, `src/kernel/persistence/*.ts`, `src/kernel/control-plane.ts`, `src/kernel/run/*.ts`, `src/host/kernel/*.ts`, `src/application/kernel-cli/main.ts`의 실소비자 확인.

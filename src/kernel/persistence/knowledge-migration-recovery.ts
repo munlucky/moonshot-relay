@@ -13,7 +13,9 @@ export const recoverKnowledgeMigrations = (db: SqliteDatabase, runtimeHome: stri
       return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
     };
     const quoteRecoveryIdentifier = (value: string) => `"${String(value).replaceAll('"', '""')}"`;
-    const recoveryProjectScopedTables = (db.prepare(`
+    // Build identity witnesses only when a pending migration journal exists.
+    let projectScopedTables: string[] | null = null;
+    const recoveryProjectScopedTables = () => projectScopedTables ??= (db.prepare(`
       SELECT name FROM sqlite_master
       WHERE type='table' AND name NOT LIKE 'sqlite_%'
     `).all() as Array<{ name: string }> )
@@ -21,7 +23,7 @@ export const recoverKnowledgeMigrations = (db: SqliteDatabase, runtimeHome: stri
       .filter((name) => name !== 'project_identities')
       .filter((name) => (db.prepare(`PRAGMA table_info(${quoteRecoveryIdentifier(name)})`).all() as Array<{ name: string }> )
         .some((column) => column.name === 'project_id'));
-    const hasRecoveryProjectState = (projectId: string) => recoveryProjectScopedTables.some((table) => (
+    const hasRecoveryProjectState = (projectId: string) => recoveryProjectScopedTables().some((table) => (
       Number((db.prepare(`SELECT COUNT(*) AS count FROM ${quoteRecoveryIdentifier(table)} WHERE project_id=?`).get(projectId) as { count: number } | undefined)?.count || 0) > 0
     ));
 

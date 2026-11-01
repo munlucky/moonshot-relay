@@ -76,6 +76,10 @@ const insertAttempt = async (runtimeHome: string, {
       reportPayloadDigest,
       reportResultJson,
     );
+    // This fixture emulates a DB written before report-identity migration.
+    // The modern seed helper normally stamps it as current; reset only the
+    // fixture version so reopening exercises the real legacy-upgrade path.
+    db.exec('PRAGMA user_version=0');
   } finally {
     db.close?.();
   }

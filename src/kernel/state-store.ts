@@ -65,8 +65,8 @@ import {
 } from './knowledge/store.js';
 import { buildKernelDurableStateView } from './persistence/durable-state.js';
 import { createRunJournalPersistence, ensureRunJournalRetentionGuard, runJournalSchema } from './persistence/run-journal.js';
-import { initializeKernelSchema } from './persistence/schema.js';
-import { migrateKernelSchema } from './persistence/schema-migrations.js';
+import { configureKernelSqliteConnection, initializeKernelSchema } from './persistence/schema.js';
+import { KERNEL_SCHEMA_REVISION, migrateKernelSchema } from './persistence/schema-migrations.js';
 import { recoverKnowledgeMigrations } from './persistence/knowledge-migration-recovery.js';
 import { createWorkStepStore } from './persistence/work-store.js';
 import { createWorkAttemptStore } from './persistence/work-attempt-store.js';
@@ -114,16 +114,36 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
   // Release that connection on every schema/migration failure, including
   // uniqueness failures, so recovery can reopen or remove the database.
   try {
-  initializeKernelSchema(db);
-
-
-  migrateKernelSchema(db);
-
+  configureKernelSqliteConnection(db);
+  const schemaVersion = Number(
+    (db.prepare('PRAGMA user_version').get() as { user_version: number } | undefined)?.user_version,
+  );
+  if (!Number.isInteger(schemaVersion) || schemaVersion < 0 || schemaVersion > KERNEL_SCHEMA_REVISION) {
+    throw new Error('KERNEL_SQLITE_SCHEMA_REVISION_UNSUPPORTED');
+  }
+  if (schemaVersion < KERNEL_SCHEMA_REVISION) {
+    // A legacy DB without a version must complete the existing migrations
+    // before the version is recorded. On failure it will retry on next open.
+    initializeKernelSchema(db);
+    migrateKernelSchema(db);
+    db.exec(runJournalSchema());
+    ensureRunJournalRetentionGuard(db);
+  } else {
+    const journalMode = String(
+      (db.prepare('PRAGMA journal_mode').get() as { journal_mode: string } | undefined)?.journal_mode || '',
+    ).toLowerCase();
+    if (journalMode !== 'wal') {
+      throw new Error('KERNEL_SQLITE_JOURNAL_MODE_UNEXPECTED');
+    }
+    // Validate the append-only guard on every open, without replaying DDL.
+    ensureRunJournalRetentionGuard(db);
+  }
+  // Filesystem recovery remains mandatory even for a current schema.
   recoverKnowledgeMigrations(db, runtimeHome);
-
+  if (schemaVersion < KERNEL_SCHEMA_REVISION) {
+    db.exec('PRAGMA user_version=' + KERNEL_SCHEMA_REVISION);
+  }
   const now = () => new Date().toISOString();
-  db.exec(runJournalSchema());
-  ensureRunJournalRetentionGuard(db);
 
   function safeJsonParse(str: unknown): string[];
   function safeJsonParse<T>(str: unknown, fallback: T): T;

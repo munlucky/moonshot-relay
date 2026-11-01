@@ -1,6 +1,11 @@
 import type { SqliteDatabase } from '../sqlite-adapter.js';
 import { deriveKernelWorktreeId } from '../../contracts/worktree-authority.js';
 
+// Bump this revision whenever initializeKernelSchema, migrateKernelSchema,
+// or runJournalSchema changes. Existing DBs upgrade once; ordinary opens do
+// not replay schema DDL and historical data backfills.
+export const KERNEL_SCHEMA_REVISION = 1 as const;
+
 // Additive runtime migrations use the same open connection and transaction runner.
 export const migrateKernelSchema = (db: SqliteDatabase): void => {
   const hasColumn = (table: string, column: string) => (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).some((entry) => entry.name === column);

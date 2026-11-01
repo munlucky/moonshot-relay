@@ -1,11 +1,14 @@
 import type { SqliteDatabase } from '../sqlite-adapter.js';
 
+// Connection settings are not durable schema state. Apply to each new
+// connection even when its persistent schema needs no migration.
+export const configureKernelSqliteConnection = (db: SqliteDatabase): void => {
+  db.exec('PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL;');
+};
+
 export const initializeKernelSchema = (db: SqliteDatabase) => {
   db.exec(`
     PRAGMA journal_mode=WAL;
-    PRAGMA synchronous=NORMAL;
-    PRAGMA busy_timeout=5000;
-    PRAGMA foreign_keys=ON;
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS runs (
       run_id TEXT PRIMARY KEY,
