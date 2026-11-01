@@ -72,10 +72,38 @@ Windows Native의 독립 임시 DB에서 `BEGIN IMMEDIATE`를 유지한 상태�
 
 ## 5. 미완료 수용 조건
 
-- **W7 Host 사용자 세션:** Mac 및 Windows Native의 실제 사용자 Codex in-flight 작업을 강제 종료하거나 계정 설치본을 변경하지 않았다. 활성 세션 보호를 우선해 사용자 계정 재시작 증거는 없음.
-- **Mac 계정 설치 동기화(후속 완료):** Mac 원본 main을 580272b4로 Fast-forward하고 공식 install --sync로 Kernel 계정 설치를 갱신했다. 이전·이후 Manifest 1,143/1,143 SHA PASS, 백업 backup-1793537222034, CLI v0.1.0, Profile Doctor ready/관리 22개를 확인했다. 활성 Codex app-server는 재시작하지 않아 실제 사용자 in-flight 세션 수용은 PARTIAL.
+- **W7 Host 사용자 세션:** Mac와 Windows의 원본 Source 및 공식 계정 Kernel 설치본을 모두 cc3e1e6d로 동기화했다. 설치·관리 파일 무결성과 Native CLI를 검증했다. 사용자 Codex 프로세스·실행 중인 작업을 강제 종료하는 실제 in-flight 세션 재시작/원격 인계는 수행하지 않았으므로 이 항목은 PARTIAL이다.
+- **Mac 계정 설치 동기화:** 최종 main cc3e1e6d Fast-forward, 공식 install --sync 백업 backup-1793538910033, 설치 전·후 Manifest 1,143/1,143 SHA PASS, Runtime 소스 해시 일치, CLI v0.1.0, Codex Profile Doctor ready/관리 파일 22개. 실제 설치본의 별도 프로세스 next→report와 SQLite integrity_check=ok PASS.
 - **공유 DB:** 물리 공유 WAL의 호환성 실패는 확인했다. 임의 사용자 지정 UNC/네트워크 저장소를 Kernel이 자동 거부하는 포괄적 보장은 없다.
 - **W4/W5:** 단일-Step 수동 Retire의 Run ID 재사용·정리 재시도 경계는 새 소스 회귀로 보호한다. 그러나 과거 마커 없는 Run, 외부 Historical Consumer, 운영 DB 백업·복구 승인 조건은 미완료이므로 자동 Cleanup을 켜지 않는다.
 - **성능:** CLI 벽시계 지연 개선 미입증. 순차 측정은 지연 증가를, 교차 측정은 유사한 지연을 관측했다. 차후 충분한 표본과 일정한 Host 부하에서 병목을 분리해야 한다. 새 지침/폴백을 추가하지 않는다.
 
-**다음 운영 단계:** Mac 계정 소스/Kernel 설치 동기화는 완료됐으므로 실제 사용 중인 Codex 세션 재시작·Owner 인계 수용과 자동 Cleanup의 Historical Consumer 검증을 별도로 수행한다. 동일 물리 DB의 Host 간 직접 공유는 하지 않는다. SQLite의 일반 Open 스키마 쓰기 0은 유지한다.
+**다음 운영 단계:** 실제 Codex in-flight 사용자 세션의 제어된 재시작·Host 인계와 historical-replans 실행 이력 소비 전 자동 Cleanup 보존 정책은 별도 수용이 필요하다. 현재 일반 next/report 동작과 운영 데이터에는 자동 삭제를 연결하지 않는다. 동일 물리 DB의 Host 간 공유 WAL Writer는 지원하지 않는다.
+
+## 6. Native 계정 설치 및 실제 설치본 CLI 수용 (2026-11-01 추가)
+
+소스 기준점: main cc3e1e6d5c6ca437e4a9a598167c21c7c5d00fbb. W7의 앞선 소규모 성능 비교는 6931c5a6과 W6 직전 c29a5fc5의 비교로 그대로 보존한다. 이번 단계의 Run ID Retire marker 변경은 일반 CLI 성능 개선을 입증하지 않는다.
+
+| 검증 | Mac Native | Windows Native |
+| --- | --- | --- |
+| Canonical Source main | cc3e1e6d / clean | cc3e1e6d / clean |
+| 공식 Kernel 계정 install --sync | PASS | PASS |
+| 설치 전 Manifest 무결성 | 1,143/1,143 | 1,147/1,147 |
+| 설치 후 Manifest 무결성 | 1,143/1,143 | 1,147/1,147 |
+| 계정 설치 Runtime source SHA | 핵심 3개 포함 일치 | 핵심 3개 포함 일치 |
+| 설치 백업 | backup-1793538910033 | backup-1793539242939 |
+| 계정 Kernel CLI | v0.1.0, 정상 | v0.1.0, 정상 |
+| Codex Profile Doctor | ready / effective kernel / 관리 22개 | ready / effective kernel / 관리 5개 |
+| 실제 설치본 별도 프로세스 next→report | PASS, 같은 Run completed | PASS, 같은 Run completed |
+| 분리 프로세스 PID 확인 | PASS | PASS |
+| 격리 SQLite integrity_check | ok | ok |
+
+두 계정의 설치 작업은 기존 Manifest 100% 일치 여부를 먼저 확인한 뒤 공식 설치기의 백업·동기화 경로로 수행했다. 테스트는 os.tmpdir 기반 새 프로젝트·새 Runtime과 별도 Node 프로세스를 사용했고 종료 시 임시 프로젝트/DB를 제거했다. Windows의 기존 Codex 프로세스 2개가 설치 후에도 관측됐다. 사용자 계정의 실제 기존 Run/DB를 reset·vacuum·삭제하지 않았고 진행 중인 Codex 세션을 강제 종료하지 않았다.
+
+이번 결과는 **실제 Native 계정에 설치된 Kernel CLI의 프로세스 사이 재개와 무결성 수용 PASS**다. Codex 앱 서버에서 실제 작업 도중 프로세스를 강제 종료하고 사용자 세션을 복원한 결과라고 해석하지 않는다.
+
+### 남은 구조적 승인 제한
+
+- W5 마커로 새로운 수동 Retire의 동일 Run ID 재사용과 정리 재시도를 방지한다. 마커는 기존 meta의 최소 식별자이며 새 실행 이력 저장이 아니다.
+- 과거 마커 없는 Retire는 소급해서 완전히 탐지할 수 없다. historical-replans는 정리 대상 run_journal을 직접 소비한다. 자동 삭제를 설정하면 과거 개선 분석의 입력을 잃을 수 있으므로 **자동 Cleanup 비활성**을 유지한다.
+- Mac/Windows 사용자 Codex in-flight 앱 서버 강제 재시작·상호 Host Owner 인계와 개선 전후 안정적 latency 유의미성 판정은 아직 수용되지 않았다. 전체 전략 결과는 PARTIAL.

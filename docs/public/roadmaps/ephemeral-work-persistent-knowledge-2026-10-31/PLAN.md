@@ -88,6 +88,12 @@ Mac 원본 main을 580272b4로 Fast-forward하고 공식 Kernel install --sync�
 
 W5 정리된 Run의 ID 재사용을 막기 위해 기존 SQLite meta에 최소 Run ID/Project/Revision 마커를 원자적으로 남기고 영구 Knowledge 출처를 가장하는 정리 후 재생성을 차단한다. 인덱스가 없는 영구 Ledger 전수 조회는 만들지 않는다. 이 소스 변경은 계정 설치 업데이트와 별도 범위이며 검증된 후에만 다시 설치한다. 역사적 이벤트 저널 소비자 영향과 자동 Cleanup은 계속 PARTIAL이다. W5_RESULT.md와 W7_RESULT.md 참조.
 
+## W7 Native 계정 원본·설치 동기화 및 프로세스 수용 (2026-11-01)
+
+Mac과 Windows 원본 main 및 공식 Kernel 계정 설치본을 최종 cc3e1e6d까지 동기화했다. 공식 백업을 만들고 설치 전·후 Manifest SHA를 전수 확인했다(Mac 1,143/1,143, Windows 1,147/1,147). 양쪽 계정의 Kernel CLI v0.1.0, Codex Profile Doctor ready, 설치본 별도 프로세스 next→report 동일 Run 완료, 격리 SQLite integrity_check ok를 확인했다. 사용자 Codex 세션을 종료하지 않았고 실제 사용자 DB를 삭제하지 않았다.
+
+W5 수동 Retire의 메타 식별 마커와 멱등 재실행은 회귀 PASS다. 하지만 과거 마커 없는 Retire, historical-replans가 참조하는 raw journal, 사용자 앱 서버 in-flight 복구는 아직 수용되지 않았다. W4/W5 자동 Cleanup은 비활성으로 유지하고 전체 W7 PARTIAL을 보존한다. 자세한 증거는 W7_RESULT.md에 기록했다.
+
 ## W0 기준선/관찰 방법
 
 - **코드:** `src/kernel/state-store.ts`, `src/kernel/persistence/*.ts`, `src/kernel/control-plane.ts`, `src/kernel/run/*.ts`, `src/host/kernel/*.ts`, `src/application/kernel-cli/main.ts`의 실소비자 확인.
