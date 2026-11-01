@@ -64,6 +64,12 @@ W3 정착 판정만으로 Run을 자동 삭제하지 않는다. 이번 파일럿
 
 격리 DB에서 두 번 Open만으로 발생한 schema_version 153→157, data_version 2→3을 변경 후 153→153, 2→2로 낮췄다. Linux 구형 DB Migration/FS 복구 및 Windows Native 회귀는 통과했다. 현재 Linux MCP와 Windows Native Runtime Home은 별도이지만 Mac/임의 공유 경로의 cross-OS writer 0과 실제 사용자 세션 재시작은 미검증이다. W6-A PASS, W6 전체 PARTIAL. 자세한 근거는 W6_RESULT.md를 참조한다.
 
+## W6-B Host Writer·SQLite 장애 복구 (2026-11-01)
+
+현재 Windows Native, Windows 측 Linux MCP, Mac Native, Mac 측 Linux MCP의 기본 Runtime 경로가 분리된 것을 관측했다. 이 사실은 공유 경로 override나 다중 Host의 같은 물리 파일 접근까지 보장하지 않는다. node:sqlite의 SQLite_BUSY=5를 ERR_SQLITE_ERROR로만 노출하던 분류 불일치를 숫자 결과 코드 기반으로 정규화했다. 격리 Runtime에서 프로세스 미커밋 종료 후 재Open, integrity_check, SQLite writer 충돌의 bounded retry 실패 및 잠금 해제 후 정상 기록을 회귀로 고정했다.
+
+기본 Runtime의 경로 확인 및 Linux/Windows Native 격리 복구는 PASS. Mac native 저장소 최신 소스 테스트, shared WAL 동시 Writer 0, 실제 Codex 세션 복구·next/report 성능 및 자동 Cleanup 수용은 미검증이므로 W6 통합 PARTIAL이다. 새 영구 Host Lock/Coordinator는 추가하지 않았다. [W6B_RESULT.md](W6B_RESULT.md) 참조.
+
 ## W0 기준선/관찰 방법
 
 - **코드:** `src/kernel/state-store.ts`, `src/kernel/persistence/*.ts`, `src/kernel/control-plane.ts`, `src/kernel/run/*.ts`, `src/host/kernel/*.ts`, `src/application/kernel-cli/main.ts`의 실소비자 확인.

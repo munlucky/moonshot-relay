@@ -25,6 +25,7 @@ interface RawDatabase {
 
 interface ErrorLike extends Error {
   code?: string;
+  errcode?: number;
 }
 
 const sleepSync = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -35,7 +36,14 @@ const asError = (error: unknown): ErrorLike => (
 
 const normalizeError = (error: unknown): ErrorLike => {
   const normalized = asError(error);
-  if (/constraint/i.test(String(normalized.code || normalized.message))) {
+  // node:sqlite exposes SQLite's numeric result code while its top-level
+  // code is the generic ERR_SQLITE_ERROR. Preserve a stable busy category
+  // across both supported backends without concealing other SQLite errors.
+  if (normalized.errcode === 5 || normalized.code === 'SQLITE_BUSY') {
+    normalized.code = 'SQLITE_BUSY';
+  } else if (normalized.errcode === 6 || normalized.code === 'SQLITE_LOCKED') {
+    normalized.code = 'SQLITE_LOCKED';
+  } else if (/constraint/i.test(String(normalized.code || normalized.message))) {
     normalized.code = normalized.code || 'SQLITE_CONSTRAINT';
   }
   return normalized;
@@ -49,6 +57,7 @@ const withBusyRetry = <T>(operation: () => T, { retries = 3 }: { retries?: numbe
     } catch (error) {
       const normalized = asError(error);
       const busy = normalized.code === 'SQLITE_BUSY'
+        || normalized.errcode === 5
         || /database is (?:locked|busy)/i.test(normalized.message);
       if (!busy || attempt >= retries) throw normalizeError(normalized);
       sleepSync([10, 25, 50][attempt] || 50);
