@@ -1,5 +1,9 @@
 import type { SqliteDatabase } from '../sqlite-adapter.js';
 
+// A compact identity marker survives pruning of transient Run evidence.
+// Reuse the existing meta table rather than retaining the whole Run graph.
+export const retiredRunMarkerKey = (runId: string): string => 'retired-run:' + runId;
+
 export interface PersistedRunLease {
   runId: string;
   holder: string;
@@ -868,6 +872,11 @@ export const createWorkLifecyclePersistence = ({
     getRunInitializationIdentity,
 
     insertRun(input) {
+      // A retired Run may have no row in runs. Its ID must not be
+      // reassigned after transient receipts and execution history are pruned.
+      if (db.prepare('SELECT 1 FROM meta WHERE key=?').get(retiredRunMarkerKey(input.runId))) {
+        throw Object.assign(new Error('EPHEMERAL_RUN_ID_RETIRED'), { code: 'EPHEMERAL_RUN_ID_RETIRED' });
+      }
       db.prepare(`
         INSERT INTO runs(
           run_id, objective, state, status, revision, mutation_revision,
@@ -965,9 +974,14 @@ export const createWorkLifecyclePersistence = ({
       // SQLite BEGIN IMMEDIATE transaction. Refuse unsafe direct calls before
       // removing a single child row.
       const eligible = db.prepare(
-        "SELECT 1 FROM runs WHERE run_id=? AND status='completed' AND finalization_status='completed'",
-      ).get(runId);
-      if (!eligible) return false;
+        "SELECT project_id,mutation_revision FROM runs WHERE run_id=? AND status='completed' AND finalization_status='completed'",
+      ).get(runId) as { project_id: string; mutation_revision: number } | undefined;
+      if (!eligible || !eligible.project_id) return false;
+      // Marker and deletion commit/roll back together under BEGIN IMMEDIATE.
+      db.prepare('INSERT INTO meta(key,value) VALUES(?,?)').run(
+        retiredRunMarkerKey(runId),
+        JSON.stringify({ projectId: eligible.project_id, mutationRevision: Number(eligible.mutation_revision) }),
+      );
       // The journal's active-work immutability is lifted only by this
       // uncommitted transient state, under the caller's BEGIN IMMEDIATE lock.
       const marked = db.prepare(

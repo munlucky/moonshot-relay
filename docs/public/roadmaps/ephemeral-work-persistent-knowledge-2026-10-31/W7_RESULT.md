@@ -73,9 +73,9 @@ Windows Native의 독립 임시 DB에서 `BEGIN IMMEDIATE`를 유지한 상태�
 ## 5. 미완료 수용 조건
 
 - **W7 Host 사용자 세션:** Mac 및 Windows Native의 실제 사용자 Codex in-flight 작업을 강제 종료하거나 계정 설치본을 변경하지 않았다. 활성 세션 보호를 우선해 사용자 계정 재시작 증거는 없음.
-- **Mac 계정 설치 동기화:** 최신 코드는 Mac의 별도 임시 clone에서 통과했으나 사용 중인 로컬 작업 디렉터리·실행 중인 Codex app-server를 변경하지 않았다. 운영 설치 검증은 미완료.
+- **Mac 계정 설치 동기화(후속 완료):** Mac 원본 main을 580272b4로 Fast-forward하고 공식 install --sync로 Kernel 계정 설치를 갱신했다. 이전·이후 Manifest 1,143/1,143 SHA PASS, 백업 backup-1793537222034, CLI v0.1.0, Profile Doctor ready/관리 22개를 확인했다. 활성 Codex app-server는 재시작하지 않아 실제 사용자 in-flight 세션 수용은 PARTIAL.
 - **공유 DB:** 물리 공유 WAL의 호환성 실패는 확인했다. 임의 사용자 지정 UNC/네트워크 저장소를 Kernel이 자동 거부하는 포괄적 보장은 없다.
-- **W4/W5:** 단일-Step 수동 Retire 파일럿은 검증됐지만 Run ID 재사용, 외부 Historical Consumer, 운영 DB 백업·복구 승인 없이 자동 Cleanup을 켜지 않는다.
+- **W4/W5:** 단일-Step 수동 Retire의 Run ID 재사용·정리 재시도 경계는 새 소스 회귀로 보호한다. 그러나 과거 마커 없는 Run, 외부 Historical Consumer, 운영 DB 백업·복구 승인 조건은 미완료이므로 자동 Cleanup을 켜지 않는다.
 - **성능:** CLI 벽시계 지연 개선 미입증. 순차 측정은 지연 증가를, 교차 측정은 유사한 지연을 관측했다. 차후 충분한 표본과 일정한 Host 부하에서 병목을 분리해야 한다. 새 지침/폴백을 추가하지 않는다.
 
-**다음 운영 단계:** 실제 Codex 사용자 세션이 유휴 상태임을 확인한 제어된 시점에 Mac 계정 설치본 동기화·복구를 수용하고, 동일 물리 DB의 Host 간 직접 공유는 하지 않는다. SQLite의 일반 Open 스키마 쓰기 0이라는 개선은 유지한다.
+**다음 운영 단계:** Mac 계정 소스/Kernel 설치 동기화는 완료됐으므로 실제 사용 중인 Codex 세션 재시작·Owner 인계 수용과 자동 Cleanup의 Historical Consumer 검증을 별도로 수행한다. 동일 물리 DB의 Host 간 직접 공유는 하지 않는다. SQLite의 일반 Open 스키마 쓰기 0은 유지한다.

@@ -70,7 +70,7 @@ import { KERNEL_SCHEMA_REVISION, migrateKernelSchema } from './persistence/schem
 import { recoverKnowledgeMigrations } from './persistence/knowledge-migration-recovery.js';
 import { createWorkStepStore } from './persistence/work-store.js';
 import { createWorkAttemptStore } from './persistence/work-attempt-store.js';
-import { createWorkLifecyclePersistence } from './persistence/work-lifecycle-store.js';
+import { createWorkLifecyclePersistence, retiredRunMarkerKey } from './persistence/work-lifecycle-store.js';
 import { createKnowledgeLifecycleStore } from './persistence/knowledge-lifecycle-store.js';
 import { createTrustPersistence } from './persistence/trust-store.js';
 import { createHostExecutionPersistence } from './persistence/host-execution-store.js';
@@ -962,6 +962,21 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
     }: { projectId: string; expectedMutationRevision: number }) {
       return db.transaction(() => {
         const run = this.getRun(runId);
+        if (!run) {
+          const marker = db.prepare('SELECT value FROM meta WHERE key=?')
+            .get(retiredRunMarkerKey(runId)) as { value: string } | undefined;
+          if (marker) {
+            const retired = JSON.parse(marker.value) as { projectId?: string; mutationRevision?: number };
+            if (projectId !== retired.projectId) {
+              throw new Error('EPHEMERAL_RUN_IDENTITY_MISMATCH');
+            }
+            if (!Number.isInteger(expectedMutationRevision)
+              || expectedMutationRevision !== retired.mutationRevision) {
+              throw new Error('EPHEMERAL_MUTATION_REVISION_STALE');
+            }
+            return { status: 'retired', runId, retired: true };
+          }
+        }
         if (!run || !projectId || run.projectId !== projectId) {
           throw new Error('EPHEMERAL_RUN_IDENTITY_MISMATCH');
         }

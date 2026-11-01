@@ -82,6 +82,12 @@ Windows Native가 임시 SQLite WAL에 트랜잭션을 보유한 동안 Linux MC
 
 동일 Linux Host 및 /tmp 소스 checkout에서 W6 직전 c29a5fc5와 6931c5a6을 비교한 결과 report의 스키마 변경은 2회 → 0회로 확인했다. CLI 벽시계 지연은 순차 4회 측정과 교차 3회 측정의 결과가 달라 안정적인 성능 개선 또는 퇴보를 입증하지 못했다. W7 전체는 PARTIAL이며 W7_RESULT.md에 근거와 남은 운영 항목을 기록한다.
 
+## W5/W7 후속 안전성 및 Mac 계정 동기화 (2026-11-01)
+
+Mac 원본 main을 580272b4로 Fast-forward하고 공식 Kernel install --sync를 수행했다. 이전·이후 관리 Manifest 1,143/1,143 SHA 일치, 핵심 5개 Runtime 산출물 소스 해시 일치, Profile Doctor ready/관리 22개 및 CLI 정상 실행을 확인했다. 활성 Codex app-server·사용자 DB는 건드리지 않았다.
+
+W5 정리된 Run의 ID 재사용을 막기 위해 기존 SQLite meta에 최소 Run ID/Project/Revision 마커를 원자적으로 남기고 영구 Knowledge 출처를 가장하는 정리 후 재생성을 차단한다. 인덱스가 없는 영구 Ledger 전수 조회는 만들지 않는다. 이 소스 변경은 계정 설치 업데이트와 별도 범위이며 검증된 후에만 다시 설치한다. 역사적 이벤트 저널 소비자 영향과 자동 Cleanup은 계속 PARTIAL이다. W5_RESULT.md와 W7_RESULT.md 참조.
+
 ## W0 기준선/관찰 방법
 
 - **코드:** `src/kernel/state-store.ts`, `src/kernel/persistence/*.ts`, `src/kernel/control-plane.ts`, `src/kernel/run/*.ts`, `src/host/kernel/*.ts`, `src/application/kernel-cli/main.ts`의 실소비자 확인.

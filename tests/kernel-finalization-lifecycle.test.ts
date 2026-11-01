@@ -151,6 +151,11 @@ test('Kernel finalization orchestration (finalizeRun) executes full accepted lif
   assert.ok(store.getRun(runId), 'SQL transaction must restore Run on failed deletion');
   assert.ok(store.getCompletionDecision(runId), 'SQL rollback must restore Trust receipts');
   assert.deepEqual(store.getRunJournal(runId), journalBefore, 'journal deletion must roll back with Run deletion');
+  const rollbackDb = await openSqliteDb(kernelDbPath(tmpHome));
+  try {
+    assert.equal(rollbackDb.prepare('SELECT value FROM meta WHERE key=?').get('retired-run:' + runId), undefined,
+      'failed retirement must not leave an identity marker');
+  } finally { rollbackDb.close(); }
   assert.equal(store.listKnowledgeRecords({ projectId, statuses: ['committed'] }).length, knowledgeBefore.length);
 
   const cleanDb = await openSqliteDb(kernelDbPath(tmpHome));
@@ -174,11 +179,35 @@ test('Kernel finalization orchestration (finalizeRun) executes full accepted lif
   assert.deepEqual(store.getRunJournal(runId), [], 'settled Run leaves no permanent execution journal');
   assert.deepEqual(store.getRunJournal(otherRun), otherJournal, 'other active Run journal remains immutable');
   assert.ok(store.getRun(otherRun), 'unrelated active Run survives');
-  assert.throws(() => store.retireSettledSingleStepRun(runId, {
+  // Retry of the same successful retirement is idempotent, including across
+  // new SQLite connections. Reusing its Run ID must never impersonate
+  // the immutable Knowledge provenance that survives the cleanup.
+  assert.deepEqual(store.retireSettledSingleStepRun(runId, {
     projectId, expectedMutationRevision: revision,
+  }), retirement);
+  assert.throws(() => store.retireSettledSingleStepRun(runId, {
+    projectId, expectedMutationRevision: revision + 1,
+  }), /EPHEMERAL_MUTATION_REVISION_STALE/);
+  assert.throws(() => store.retireSettledSingleStepRun(runId, {
+    projectId: 'foreign-project', expectedMutationRevision: revision,
   }), /EPHEMERAL_RUN_IDENTITY_MISMATCH/);
+  assert.throws(() => store.createRun({
+    runId, projectId, objective: 'wrongly reuse a retired identity',
+    sourceIdentity: before.sourceIdentity,
+  }), /EPHEMERAL_RUN_ID_RETIRED/);
 
   await cp.close();
+  const reopened = await (await import('../src/kernel/state-store.js')).openKernelStateStore({ runtimeHome: tmpHome });
+  try {
+    assert.equal(reopened.getRun(runId), null);
+    assert.deepEqual(reopened.retireSettledSingleStepRun(runId, {
+      projectId, expectedMutationRevision: revision,
+    }), retirement);
+    assert.throws(() => reopened.createRun({
+      runId, projectId, objective: 'reuse after restart',
+      sourceIdentity: before.sourceIdentity,
+    }), /EPHEMERAL_RUN_ID_RETIRED/);
+  } finally { reopened.close(); }
 });
 
 test('evidence-failed finalization cannot commit or close out Git', async () => {

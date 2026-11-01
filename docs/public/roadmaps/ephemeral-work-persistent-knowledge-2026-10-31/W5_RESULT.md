@@ -47,3 +47,18 @@ W0 조사에서 `runs`를 참조하는 외래 키 28개가 확인됐다. 해당 
 - 트리거 SQL 단일화 최종 리팩터링 후 Linux Runtime build/build:check/Boundary PASS, Finalization·Step·구형 Journal 업그레이드 집중 3/3 PASS. 새 DB/구형 DB 경로가 동일한 SQL 상수를 재사용한다.
 
 **판정:** 이번 W5 Step 정착과 원자적 저널 정리 범위는 측정된 집중 회귀 기준 PASS. 자동 정리 활성화, 전체 FK/Host 소비자의 전방 호환, 과거 이력 사용성, Run ID 재사용 정책, 실제 운영 데이터 정리 및 모든 Host E2E는 아직 PARTIAL이다.
+
+
+## W5 후속: 정리된 Run ID 재사용과 멱등적 수동 Retire (2026-11-01)
+
+기존 수동 Retire는 활성 runs/영수증/저널을 삭제했다. 이후 동일 Run ID를 재사용하면 영구 Knowledge 출처를 가장할 위험이 있고, 정리 재시도는 not found로 실패했다.
+
+최소 변경:
+- 기존 SQLite meta(key,value)에 retired-run ID 식별자와 projectId/mutationRevision을 기록한다. 새 테이블·DB·이벤트 이력은 추가하지 않는다. 이는 상세 Run 이력이 아니라 최소 재사용 방지 식별 정보다.
+- 기존 W4/W5 정리의 BEGIN IMMEDIATE 트랜잭션 안에서 마커와 저널·FK 자식·Run 삭제를 함께 처리한다. 하나라도 실패하면 모두 롤백한다.
+- insertRun은 기존 meta 기본 키에서 정리된 Run ID가 존재하는지만 확인하고 해당 ID의 재생성을 거부한다. 인덱스가 없는 영구 Knowledge Ledger 전체 검색은 추가하지 않는다.
+- 동일 프로젝트·Mutation Revision의 Retire 재시도는 기존 마커를 확인해 retired를 재조회한다. 다른 프로젝트/Revision은 거부한다.
+
+**트레이드오프:** Retire된 Run당 최소 식별 마커 한 행이 영속한다. 이는 실행 이벤트 이력과 구분해야 한다. 구형 수동 Retire에 마커가 없는 경우 해당 Run ID의 소급 재사용 차단까지 보장할 수 없다. historical-replans 소비자는 삭제된 저널을 조회할 수 없으므로 자동 Cleanup은 계속 비활성이다.
+
+**검증:** 삭제 실패 시 마커·저널·Run 동시 롤백, 정리 재실행의 멱등성, 프로젝트/Revision 경계, Run ID 재생성 거부, 프로세스 재Open 후 식별 유지.
