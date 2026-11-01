@@ -1,5 +1,14 @@
 import type { SqliteDatabase } from '../sqlite-adapter.js';
 
+const RUN_JOURNAL_RETENTION_GUARD_SQL = `
+    CREATE TRIGGER IF NOT EXISTS run_journal_no_delete BEFORE DELETE ON run_journal
+    WHEN NOT EXISTS (
+      SELECT 1 FROM runs
+      WHERE run_id=OLD.run_id AND status='completed' AND finalization_status='retiring'
+    )
+    BEGIN SELECT RAISE(ABORT, 'run_journal_append_only'); END;
+`;
+
 export interface RunJournalEntry {
   id: number;
   runId: string;
@@ -32,8 +41,7 @@ export const runJournalSchema = () => {
     CREATE INDEX IF NOT EXISTS idx_run_journal_run ON run_journal(run_id, id);
     CREATE TRIGGER IF NOT EXISTS run_journal_no_update BEFORE UPDATE ON run_journal
     BEGIN SELECT RAISE(ABORT, 'run_journal_append_only'); END;
-    CREATE TRIGGER IF NOT EXISTS run_journal_no_delete BEFORE DELETE ON run_journal
-    BEGIN SELECT RAISE(ABORT, 'run_journal_append_only'); END;
+${RUN_JOURNAL_RETENTION_GUARD_SQL}
     CREATE TRIGGER IF NOT EXISTS journal_task_created AFTER INSERT ON runs
     BEGIN ${fact('task-created')} END;
     CREATE TRIGGER IF NOT EXISTS journal_contract_revised AFTER UPDATE OF contract_revision ON runs
@@ -64,6 +72,20 @@ export const runJournalSchema = () => {
     WHEN NEW.status='committed' AND (NEW.revision_after IS NOT OLD.revision_after OR OLD.status != NEW.status)
     BEGIN ${fact('knowledge-committed', 'CAST(NEW.revision_after AS TEXT)')} END;
   `;
+};
+
+// Old installations carry the unconditional delete guard. Upgrade only when
+// necessary; do not run DDL on every normal open. A Run can enter 'retiring'
+// only inside a validated cleanup transaction, never as durable state.
+export const ensureRunJournalRetentionGuard = (db: SqliteDatabase): void => {
+  const guard = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='run_journal_no_delete'",
+  ).get() as { sql: string } | undefined;
+  if (guard?.sql?.includes("finalization_status='retiring'")) return;
+  db.transaction(() => {
+    db.exec('DROP TRIGGER IF EXISTS run_journal_no_delete');
+    db.exec(RUN_JOURNAL_RETENTION_GUARD_SQL);
+  })();
 };
 
 export const createRunJournalPersistence = ({

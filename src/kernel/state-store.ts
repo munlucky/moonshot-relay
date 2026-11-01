@@ -64,7 +64,7 @@ import {
   projectKnowledgeNamespaceHasData,
 } from './knowledge/store.js';
 import { buildKernelDurableStateView } from './persistence/durable-state.js';
-import { createRunJournalPersistence, runJournalSchema } from './persistence/run-journal.js';
+import { createRunJournalPersistence, ensureRunJournalRetentionGuard, runJournalSchema } from './persistence/run-journal.js';
 import { initializeKernelSchema } from './persistence/schema.js';
 import { migrateKernelSchema } from './persistence/schema-migrations.js';
 import { recoverKnowledgeMigrations } from './persistence/knowledge-migration-recovery.js';
@@ -123,6 +123,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
 
   const now = () => new Date().toISOString();
   db.exec(runJournalSchema());
+  ensureRunJournalRetentionGuard(db);
 
   function safeJsonParse(str: unknown): string[];
   function safeJsonParse<T>(str: unknown, fallback: T): T;
@@ -953,7 +954,13 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
           throw new Error('EPHEMERAL_NOT_SETTLED: ' + settlement.blockers.join(','));
         }
         const steps = this.getRunSteps(runId);
-        if (steps.length !== 1 || steps[0]?.state !== 'passed') {
+        const step = steps[0];
+        const untouchedCancelled = step?.state === 'cancelled'
+          && step.blockedReason === 'completion_accepted_without_step_execution'
+          && !db.prepare(
+            'SELECT 1 FROM run_step_attempts WHERE run_id=? AND step_id=? LIMIT 1',
+          ).get(runId, step.stepId);
+        if (steps.length !== 1 || (step?.state !== 'passed' && !untouchedCancelled)) {
           throw new Error('EPHEMERAL_SINGLE_STEP_ONLY');
         }
         if (workLifecyclePersistence.getLease(runId)
@@ -4287,6 +4294,21 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
           status: decision === 'accepted' ? 'completed' : 'blocked',
           incrementRevision: true,
         });
+        if (decision === 'accepted') {
+          // Accepted delivery cannot prove that never-started work executed.
+          // Cancel only untouched planned steps, retaining attempted work.
+          db.prepare(`
+            UPDATE run_steps
+            SET state='cancelled',
+                blocked_reason='completion_accepted_without_step_execution',
+                completed_at=?, updated_at=?
+            WHERE run_id=? AND state IN ('planned', 'ready')
+              AND NOT EXISTS (
+                SELECT 1 FROM run_step_attempts AS a
+                WHERE a.run_id=run_steps.run_id AND a.step_id=run_steps.step_id
+              )
+          `).run(now(), now(), runId);
+        }
 
         reconcileTerminalLifecycleInTransaction({ projectId: run.projectId, runId });
 

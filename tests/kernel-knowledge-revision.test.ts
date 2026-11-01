@@ -258,3 +258,50 @@ test('W2: settled Knowledge replays with no Run, Completion or Review tables; ne
     await rm(runtimeHome, { recursive: true, force: true });
   }
 });
+
+test('W5: existing unconditional journal guard upgrades once and still protects active Run history', async () => {
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-w5-journal-migration-'));
+  const dbPath = path.join(runtimeHome, 'state', 'runtime-state.sqlite');
+  const runId = 'w5-legacy-guard-run';
+  try {
+    let store = await openKernelStateStore({ runtimeHome });
+    try {
+      store.createRun({
+        runId, projectId: 'w5-retention-project',
+        objective: 'retain active-work journal history',
+        sourceIdentity: 'sha256:' + 'e'.repeat(64),
+      });
+      assert.ok(store.getRunJournal(runId).length > 0);
+    } finally {
+      store.close();
+    }
+    const legacy = await openSqliteDb(dbPath);
+    try {
+      legacy.exec('DROP TRIGGER run_journal_no_delete');
+      legacy.exec(
+        "CREATE TRIGGER run_journal_no_delete BEFORE DELETE ON run_journal " +
+        "BEGIN SELECT RAISE(ABORT, 'run_journal_append_only'); END;",
+      );
+    } finally {
+      legacy.close();
+    }
+    store = await openKernelStateStore({ runtimeHome });
+    try {
+      const db = await openSqliteDb(dbPath);
+      try {
+        const guard = db.prepare(
+          "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='run_journal_no_delete'",
+        ).get() as { sql: string };
+        assert.match(guard.sql, /finalization_status='retiring'/);
+        assert.throws(() => db.prepare('DELETE FROM run_journal WHERE run_id=?').run(runId), /run_journal_append_only/);
+      } finally {
+        db.close();
+      }
+      assert.ok(store.getRunJournal(runId).length > 0);
+    } finally {
+      store.close();
+    }
+  } finally {
+    await rm(runtimeHome, { recursive: true, force: true });
+  }
+});

@@ -96,7 +96,8 @@ test('Kernel finalization orchestration (finalizeRun) executes full accepted lif
   const before = store.getRun(runId)!;
   const steps = store.getRunSteps(runId);
   assert.equal(steps.length, 1);
-  assert.equal(steps[0]?.state, 'ready', 'legacy Finalization accepts code before Step is marked passed');
+  assert.equal(steps[0]?.state, 'cancelled', 'accepted output cancels never-executed Step without fabricating a passed Step');
+  assert.equal(steps[0]?.blockedReason, 'completion_accepted_without_step_execution');
   const projectId = before.projectId!;
   const revision = before.mutationRevision;
   const knowledgeBefore = store.listKnowledgeRecords({ projectId, statuses: ['committed'] });
@@ -115,13 +116,18 @@ test('Kernel finalization orchestration (finalizeRun) executes full accepted lif
   assert.throws(() => store.retireSettledSingleStepRun(runId, {
     projectId: 'unrelated-project', expectedMutationRevision: revision,
   }), /EPHEMERAL_RUN_IDENTITY_MISMATCH/);
-  assert.throws(() => store.retireSettledSingleStepRun(runId, {
-    projectId, expectedMutationRevision: revision,
-  }), /EPHEMERAL_SINGLE_STEP_ONLY/);
-  // This isolated fixture explicitly settles the already accepted Step.
-  // The runtime does not auto-promote an incomplete Step during retirement.
-  store.updateRunStep(runId, steps[0]!.stepId, { state: 'passed' });
-  const settledJournal = store.getRunJournal(runId);
+  const otherRun = 'w5-other-active-run';
+  store.createRun({ runId: otherRun, projectId, objective: 'unrelated live work', sourceIdentity: before.sourceIdentity });
+  const otherJournal = store.getRunJournal(otherRun);
+  assert.ok(otherJournal.length > 0);
+  // The append-only guard must still reject deletes outside atomic retirement.
+  const protectedDb = await openSqliteDb(kernelDbPath(tmpHome));
+  try {
+    assert.throws(() => protectedDb.prepare('DELETE FROM run_journal WHERE run_id=?').run(runId), /run_journal_append_only/);
+    assert.throws(() => protectedDb.prepare('DELETE FROM run_journal WHERE run_id=?').run(otherRun), /run_journal_append_only/);
+  } finally {
+    protectedDb.close();
+  }
 
   store.recordLease(runId, {
     holder: 'w4-owner', expiresAt: new Date(Date.now() + 60000).toISOString(),
@@ -144,6 +150,7 @@ test('Kernel finalization orchestration (finalizeRun) executes full accepted lif
   }), /w4_injected_failure/);
   assert.ok(store.getRun(runId), 'SQL transaction must restore Run on failed deletion');
   assert.ok(store.getCompletionDecision(runId), 'SQL rollback must restore Trust receipts');
+  assert.deepEqual(store.getRunJournal(runId), journalBefore, 'journal deletion must roll back with Run deletion');
   assert.equal(store.listKnowledgeRecords({ projectId, statuses: ['committed'] }).length, knowledgeBefore.length);
 
   const cleanDb = await openSqliteDb(kernelDbPath(tmpHome));
@@ -164,8 +171,9 @@ test('Kernel finalization orchestration (finalizeRun) executes full accepted lif
   assert.deepEqual(store.getSettledKnowledgeTransaction(
     runId, projectId, String(commitReceipt.revisionAfter),
   ), ledgerBefore, 'FK-free settled Knowledge transaction survives Run retirement');
-  assert.ok(settledJournal.length > journalBefore.length);
-  assert.deepEqual(store.getRunJournal(runId), settledJournal, 'append-only Run journal remains until W5');
+  assert.deepEqual(store.getRunJournal(runId), [], 'settled Run leaves no permanent execution journal');
+  assert.deepEqual(store.getRunJournal(otherRun), otherJournal, 'other active Run journal remains immutable');
+  assert.ok(store.getRun(otherRun), 'unrelated active Run survives');
   assert.throws(() => store.retireSettledSingleStepRun(runId, {
     projectId, expectedMutationRevision: revision,
   }), /EPHEMERAL_RUN_IDENTITY_MISMATCH/);
@@ -297,5 +305,49 @@ test('partial Git finalization retry reuses the Kernel commit without creating a
     await rm(repoRoot, { recursive: true, force: true });
     await rm(runtimeHome, { recursive: true, force: true });
     await rm(originRoot, { recursive: true, force: true });
+  }
+});
+
+test('W5: accepted Completion cancels only never-started Steps and retains attempted work', async () => {
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-w5-step-settlement-'));
+  const store = await (await import('../src/kernel/state-store.js')).openKernelStateStore({ runtimeHome });
+  const projectId = 'w5-step-project';
+  const sourceIdentity = 'sha256:' + 'a'.repeat(64);
+  const start = (runId: string) => {
+    store.createRun({ runId, projectId, objective: 'check step settlement authority', sourceIdentity });
+    store.createRunSteps(runId, [{
+      stepId: 'step-1', sequence: 1, planRevision: 1, state: 'ready',
+      dependencyIds: [], acceptanceIds: [], obligationIds: [],
+      allowedPaths: ['src'], forbiddenPaths: [], expectedOutputs: [],
+    }]);
+  };
+  try {
+    start('w5-untouched');
+    store.persistCompletionDecision('w5-untouched', {
+      decision: 'accepted', digest: 'sha256:' + 'b'.repeat(64),
+      run: store.getRun('w5-untouched')!, decisionPayload: {},
+    });
+    const cancelled = store.getRunSteps('w5-untouched')[0]!;
+    assert.equal(cancelled.state, 'cancelled');
+    assert.equal(cancelled.blockedReason, 'completion_accepted_without_step_execution');
+
+    start('w5-attempted');
+    const db = await openSqliteDb(kernelDbPath(runtimeHome));
+    try {
+      db.prepare(
+        'INSERT INTO run_step_attempts(run_id,step_id,attempt_number,status,started_at) VALUES(?,?,?,?,?)',
+      ).run('w5-attempted', 'step-1', 1, 'started', new Date().toISOString());
+    } finally {
+      db.close();
+    }
+    store.persistCompletionDecision('w5-attempted', {
+      decision: 'accepted', digest: 'sha256:' + 'c'.repeat(64),
+      run: store.getRun('w5-attempted')!, decisionPayload: {},
+    });
+    assert.equal(store.getRunSteps('w5-attempted')[0]?.state, 'ready',
+      'any real Step attempt prevents fabrication of terminal Step state');
+  } finally {
+    store.close();
+    await rm(runtimeHome, { recursive: true, force: true });
   }
 });

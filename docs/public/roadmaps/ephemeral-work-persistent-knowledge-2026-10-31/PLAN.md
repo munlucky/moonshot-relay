@@ -50,6 +50,14 @@ W3 정착 판정만으로 Run을 자동 삭제하지 않는다. 이번 파일럿
 
 기존 Finalization이 완료 Run의 Step을 `ready`로 남길 수 있음을 확인했다. 이 작업은 정리 불가다. 또한 `run_journal`의 append-only 트리거와 역사적 소비자가 남아 있으므로, 정리 성공도 `W4 완료 후 실행 이력 누적 0` 증거는 아니다. **W4 통합 PARTIAL**로 유지하고 W5의 소비자 정리·복구 계약 후 자동 적용 여부를 재판정한다. [W4_RESULT.md](W4_RESULT.md) 참조.
 
+## W5 Step 정착 및 작업 저널 축소 (2026-11-01)
+
+기존 Completion 승인과 미실행 Step의 ready 상태 불일치를 해소했다. 실제 Attempt가 전혀 없던 planned/ready Step만 같은 SQLite 트랜잭션에서 cancelled로 정착시키고, 실행된 것처럼 passed로 승격하지 않는다. Attempt가 있는 Step은 기존 상태를 유지한다.
+
+완료된 단일-Step Run의 수동 정리에서는 W3 Settlement/Owner/Lease/Revision 검증 후 트랜잭션 내부의 일시적인 retiring 상태에서 해당 Run의 run_journal만 삭제한다. 다른 Run의 활성 로그는 수정·삭제 불가하다. 기존 DB에는 구형 트리거가 있을 때만 일회성 교체를 실행하고 영구 Knowledge/Project Identity는 그대로 보존한다.
+
+이 변경은 자동 Cleanup을 켠 것이 아니며, 과거 실행 분석은 정리 이후 DB 이력을 읽을 수 없다. 또한 Run ID 재사용의 전 Host idempotence, 장기 실행과 다른 Session의 인계, Mac Native/MCP, 운영 백업·롤백은 미검증이다. W5 전체 수용은 PARTIAL로 보존한다. [W5_RESULT.md](W5_RESULT.md) 참조.
+
 ## W0 기준선/관찰 방법
 
 - **코드:** `src/kernel/state-store.ts`, `src/kernel/persistence/*.ts`, `src/kernel/control-plane.ts`, `src/kernel/run/*.ts`, `src/host/kernel/*.ts`, `src/application/kernel-cli/main.ts`의 실소비자 확인.

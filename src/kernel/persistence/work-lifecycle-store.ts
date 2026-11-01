@@ -968,9 +968,16 @@ export const createWorkLifecyclePersistence = ({
         "SELECT 1 FROM runs WHERE run_id=? AND status='completed' AND finalization_status='completed'",
       ).get(runId);
       if (!eligible) return false;
+      // The journal's active-work immutability is lifted only by this
+      // uncommitted transient state, under the caller's BEGIN IMMEDIATE lock.
+      const marked = db.prepare(
+        "UPDATE runs SET finalization_status='retiring' WHERE run_id=? AND status='completed' AND finalization_status='completed'",
+      ).run(runId) as ChangeResult;
+      if (Number(marked.changes || 0) !== 1) return false;
+      db.prepare('DELETE FROM run_journal WHERE run_id=?').run(runId);
       purgeRunChildRows(runId);
       const changed = db.prepare(
-        "DELETE FROM runs WHERE run_id=? AND status='completed' AND finalization_status='completed'",
+        "DELETE FROM runs WHERE run_id=? AND status='completed' AND finalization_status='retiring'",
       ).run(runId) as ChangeResult;
       return Number(changed.changes || 0) === 1;
     },
