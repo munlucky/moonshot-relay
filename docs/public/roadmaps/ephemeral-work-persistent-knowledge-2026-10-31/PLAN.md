@@ -76,6 +76,12 @@ Windows Native, Windows 측 Linux MCP, Mac Native, Mac 측 Linux MCP에서 최�
 
 Windows Native가 임시 SQLite WAL에 트랜잭션을 보유한 동안 Linux MCP가 같은 물리 /c 경로를 써서 SQLITE_IOERR_SHMLOCK(4618)을 재현했다. 이 경로는 안전한 공유 Writer로 지원하지 않으며 Host-local Runtime을 유지한다. 사용자 in-flight 세션 재시작과 자동 Cleanup/운영 이전은 미검증이므로 전체 PARTIAL. 상세 증거는 W6B_RESULT.md에 보존한다.
 
+## W7 격리 통합 수용 및 성능 비교 (2026-11-01)
+
+최신 6931c5a6 기준으로 네 Host의 W6-A/B 4/4 및 CLI·MCP next/report·Owner/Session E2E 51/51씩 통과했다. 별도 CLI Node 프로세스 next → 종료 → 새로운 프로세스 report 완료를 실측했다. 하지만 실제 사용자 Codex app-server의 강제 재시작과 계정 설치본 동기화는 안전하게 보류했고, 자동 Cleanup도 활성화하지 않았다.
+
+동일 Linux Host 및 /tmp 소스 checkout에서 W6 직전 c29a5fc5와 6931c5a6을 비교한 결과 report의 스키마 변경은 2회 → 0회로 확인했다. CLI 벽시계 지연은 순차 4회 측정과 교차 3회 측정의 결과가 달라 안정적인 성능 개선 또는 퇴보를 입증하지 못했다. W7 전체는 PARTIAL이며 W7_RESULT.md에 근거와 남은 운영 항목을 기록한다.
+
 ## W0 기준선/관찰 방법
 
 - **코드:** `src/kernel/state-store.ts`, `src/kernel/persistence/*.ts`, `src/kernel/control-plane.ts`, `src/kernel/run/*.ts`, `src/host/kernel/*.ts`, `src/application/kernel-cli/main.ts`의 실소비자 확인.
