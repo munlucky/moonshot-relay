@@ -86,3 +86,12 @@ Lease 만료·CAS mismatch만으로 A가 OS level에서 파일 쓰기를 멈췄�
 - **미확인:** Main/MCP 종료 후 실제 Worker 생존; Native App Server thread start/status/signal/reconnect; Compaction 원본 접근; Goals 사용·기존 자동 loop와의 이중 실행; 실제 old Writer 종료·복구.
 - **권고:** Mac/Windows Native 격리 probe 및 실명세의 status/reconnect 제어가 보이기 전에는 Worker persistence 구조 구현을 시작하지 않는다. 가능한 경우 먼저 Node 프로세스 외부 Worker가 아니라 **기존 Host의 최소 launch/status handle**로 실험한다.
 - **선택 유예:** 확인된 API 없이 `spawn_agent`를 감싸서 “세션 독립”이라고 표기하거나, 영수증 status를 live PID status 대신 쓰는 것은 금지.
+
+
+## W0 후속 — Delivery 패치 기한과 범용 Worker 제어 구분
+
+`src/host/kernel/parallel-dispatcher.ts`는 **Delivery 패치 적용 경로에 한정하여**, Lease 갱신 후 실행 기한을 계산하고 `git apply`에 `killSignal: 'SIGTERM'`을 전달한다. 기존 구현을 W1에서 중복해서는 안 된다.
+
+반면 `src/host/kernel/process-observation.ts`의 `process.kill(pid, 0)`은 PID 존재 확인일 뿐이다. Native Codex Worker의 OS process group 종료, 실행 중 command 재연결, old Writer의 파일 변경 차단을 증명하지 않는다.
+
+또한 실제 Mac Native 시험에서 `thread/shellCommand` RPC 응답 `result: {}`와 `thread/backgroundTerminals/list`의 빈 목록만 관측됐으며, App Server가 Responses WebSocket에 연결하려다 `401 Unauthorized`를 기록했다. [Native 후속 검증](W0_NATIVE_FOLLOWUP_2026-11-03.md) 참조. **G0는 PARTIAL**이며 실제 OS Writer를 관측할 수 있기 전까지 새로운 범용 Worker 관리 계층을 추가하지 않는다.

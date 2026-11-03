@@ -70,3 +70,19 @@ Mac Native Host의 실제 바이너리는 `/opt/homebrew/bin/codex`이며 `codex
 G0의 Native 잔여 조건은 (1) 정상적인 실제 Turn(격리된 별도 계정/예산/Provider 설정 포함) 시작·중단·진행 상태 재조회, (2) Main 프로세스 종료 후 다른 OS 프로세스에서 동일 진행 상태 관측, (3) 사용자 승인 대기 및 취소 시점, (4) old Writer의 파일 쓰기 중지/unknown 명령 정착, (5) Windows Native의 별도 실행기 연결 검증이다.
 
 안전한 비용 없는 preflight가 더 없다면 G0를 PARTIAL로 유지하고 **W1 코드 구현을 억지로 진행하지 않는다**. 기존 Kernel Work/Trust/Knowledge와 owner-direct 실행은 계속 사용한다.
+
+
+## 7. 추가 G0 비모델 명령 경계 관찰 (2026-11-03 후속)
+
+Mac Native Codex 0.162.1이 **생성한 JSON Schema**에는 `thread/shellCommand`, `thread/backgroundTerminals/list`, `thread/backgroundTerminals/terminate`가 있다. `InitializeCapabilities.experimentalApi=true`가 있어야 `backgroundTerminals/list`를 호출할 수 있다. Background terminal 응답은 `processId`와 선택적 `osPid`를 표현할 수 있으나, 실제 목록에 프로세스가 존재한다는 증거는 아니다.
+
+임시 `CODEX_HOME`/`HOME`/Workspace를 각각 분리하고 사용자 인증 정보를 환경변수에서 전달하지 않은 시험용 App Server에서 두 차례 검증했다.
+
+- 첫 검증에서 `thread/start`는 성공했다. `thread/shellCommand`로 `printf W0_SAFE_CMD_OK`를 요청하면 `result: {}`가 반환됐다. Experimental API를 활성화하지 않은 `backgroundTerminals/list`는 `requires experimentalApi capability`를 반환했다. **빈 RPC result를 명령 실행/출력 성공으로 해석하지 않는다.**
+- 다음에는 `experimentalApi=true`로 시작하고 5초짜리 격리 Python sleep 명령을 `thread/shellCommand`로 요청한 뒤 WebSocket 클라이언트를 닫았다. 연결 종료 전후에 해당 Python 명령 PID를 관측하지 못했다. 새 클라이언트의 `thread/read(includeTurns=false)`는 같은 Thread ID로 성공했고, `backgroundTerminals/list`는 빈 배열을 반환했다. **실제 명령 생존·재연결·취소는 검증되지 않았다.**
+- 같은 App Server 실행의 stderr에는 `codex_api::endpoint::responses_websocket` 연결의 `401 Unauthorized`가 기록됐다. 이 실행 경로를 무료 로컬 셸 실행으로 간주할 수 없다. 오류의 인과나 모든 버전의 동작은 단정하지 않는다.
+- 실험 전용 App Server/프로세스는 정지했고 임시 데이터는 정리했다. 사용자 운영 Codex 세션, 인증·설정, 사용자 프로세스는 변경하지 않았다.
+
+**G0 판정 유지:** 실제 실행 중 Turn/Command 생성·상태·중단·재연결·old Writer의 물리적 차단은 `NOT VERIFIED`. 실제 실행 Pilot은 격리 Credential·비용 상한·승인 정책이 확정되기 전에는 실행하지 않는다.
+
+**MCP 영수증:** Schema `c0d96ae6-18ee-45e9-8fe2-753234f89a33`, `6b407eaa-b1ba-4d8d-9540-5c23ad1aa293`; 첫 셸 명령 요청 `1d7c2d1b-86f4-4d2d-9eb9-f050e558a3ca`; 5초 프로세스와 연결 교체 시험 `10d531a6-a220-4118-a3c9-b89df7eb8aef`; Windows Native heartbeat 오류 `d5ebc95b-355b-4fd7-a448-a9594483bbab`.

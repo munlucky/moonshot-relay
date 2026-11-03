@@ -26,7 +26,7 @@
 - 코드/테스트 변경: `src/kernel/context-build.ts`, `tests/kernel-context-compiler.test.ts`, `tests/kernel-context-policy-authority.test.ts`. 새 public API/DB/스킬 없이 필수 Context silent truncation 방지.
 - W0 결과 문서: [W0_CODE_MAP](W0_CODE_MAP.md) · [W0_CAPABILITY_MATRIX](W0_CAPABILITY_MATRIX.md) · [W0_BASELINE](W0_BASELINE.md) · [W0_RESULT](W0_RESULT.md).
 - 격리 Linux TypeScript 7.0.2 빌드·타입·경계·focused 17/17 PASS. 전체 `test:source-runtime`은 16개 subtest `ok` 뒤 240초 timeout. 이후 **실행되지 않았던 세 번째 suite만 별도로 4/4 PASS**. 전체 단일 명령 종료는 미확인.
-- Native Windows executor heartbeat stale. Mac Native Codex 0.162.1의 격리 App Server 시작, WebSocket handshake, Thread 시작·새 연결의 메타데이터 재조회 PASS. `thread/resume` 및 이력 포함 조회는 실패/미증명. 자세한 조건은 [Native 후속 검증](W0_NATIVE_FOLLOWUP_2026-11-03.md). 기존 사용자 계정 세션·DB 변경 없음.
+- Native Windows executor heartbeat stale. Mac Native Codex 0.162.1의 격리 App Server 시작, WebSocket handshake, Thread 시작·새 연결의 메타데이터 재조회 PASS. `thread/resume` 및 이력 포함 조회는 실패/미증명. 추가 격리 `thread/shellCommand` 시험에서는 실제 명령 PID를 관측하지 못했고 Provider Responses WebSocket의 `401 Unauthorized`가 기록됨. [Native 후속 검증](W0_NATIVE_FOLLOWUP_2026-11-03.md) 7절 참조. 기존 사용자 세션·DB 변경 없음.
 - G0 PARTIAL이므로 W1 구현을 임의로 시작하지 않음.
 
 ## 다음 세션의 정확한 재개 지점
@@ -34,7 +34,7 @@
 1. `get_work_context(cwd="/shared/moonshot-relay", format="full")`를 먼저 실행해 active task/마지막 영수증/현재 Git 상태를 대조.
 2. `W0_START.md`의 "0. 입장 조건" 수행. 완료된 분석·명령은 반복하지 않음.
 3. **완료한 T23 재현·수정·집중 테스트 및 Mac CLI 기본 WebSocket handshake를 반복하지 않음.** G0 미완료인 실제 Turn start/status/interrupt 및 연결 독립성, Windows executor heartbeat 복구부터 안전한 격리 probe 재개. 기존 사용자 세션 종료 금지.
-4. [Native 후속 검증](W0_NATIVE_FOLLOWUP_2026-11-03.md)을 읽고 전혀 시험하지 않은 실제 in-flight Worker·old Writer 물리 차단과 실사용 위험만 검증. 전체 Runtime 세 suite의 개별 16+4 PASS 증거를 보존하고 재실행하지 않음. 새로운 Worker DB/Queue/Proxy 금지.
+4. [Native 후속 검증](W0_NATIVE_FOLLOWUP_2026-11-03.md) 7절의 `thread/shellCommand` 결과(실행 PID 미관측·401)를 보존하고 인증 없는 같은 시험은 반복하지 않음. 실제 in-flight Worker/old Writer 물리 차단은 격리된 Credential·비용 한도·승인 조건을 고정한 뒤 검증. Source Runtime의 분리 16+4 PASS를 보존하고 재실행하지 않음. 새로운 Worker DB/Queue/Proxy 금지.
 5. G0 종료 판단 전 W1 구현/기본값 전환 금지. Wave별 별도 검증·한국어 상세 커밋·푸시.
 
 ## 변경 범위 원칙
