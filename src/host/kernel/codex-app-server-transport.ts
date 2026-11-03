@@ -5,7 +5,7 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
-import type { NativeStartedTurn } from './adapter-dispatch.js';
+import { bindNativeCommandEvent, type NativeExecutionOwner, type NativeExecutionObserver } from './adapter-dispatch.js';
 
 type RecordValue = Record<string, unknown>;
 type ServerMessage = RecordValue & { id?: unknown; method?: unknown; params?: unknown };
@@ -21,7 +21,8 @@ export interface CodexAppServerTurn {
   model: string;
   effort: string;
   timeoutMs?: number;
-  onEvent?: ((event: unknown, startedTurn: NativeStartedTurn) => void) | null;
+  executionOwner?: NativeExecutionOwner | null;
+  onNativeExecution?: NativeExecutionObserver | null;
 }
 
 export interface CodexAppServerTurnResult {
@@ -201,11 +202,14 @@ export async function createCodexAppServerTransport({
   }
 
   return {
-    async runTurn({ cwd: requestedCwd, prompt, model, effort, timeoutMs: turnTimeout, onEvent = null }) {
+    async runTurn({ cwd: requestedCwd, prompt, model, effort, timeoutMs: turnTimeout, executionOwner = null, onNativeExecution = null }) {
       if (closed || poisoned || exited) throw error('codex_app_server_unavailable');
       if (active) throw error('codex_app_server_turn_already_running');
       if (!name(prompt) || !name(model) || !name(effort) || !name(requestedCwd)) {
         throw error('codex_app_server_turn_input_invalid');
+      }
+      if (Boolean(executionOwner) !== Boolean(onNativeExecution)) {
+        throw error('codex_app_server_observation_owner_required');
       }
       const effectiveTimeout = timeBudget(turnTimeout, DEFAULT_TURN_TIMEOUT_MS);
       // Reserve before the first await so concurrent callers cannot both
@@ -221,7 +225,7 @@ export async function createCodexAppServerTransport({
         active = false;
         throw cause;
       }
-      let startedTurn: NativeStartedTurn | null = null;
+      let startedTurn: { threadId: string; turnId: string } | null = null;
       let buffered: ServerMessage[] = [];
       let completionResolve: ((status: CodexAppServerTurnResult['turnStatus']) => void) | null = null;
       let completionReject: ((e: Error) => void) | null = null;
@@ -247,11 +251,11 @@ export async function createCodexAppServerTransport({
           : name(params?.turnId);
         if (params?.threadId !== startedTurn.threadId || observedTurnId !== startedTurn.turnId) return;
         if (message.method === 'item/started' || message.method === 'item/completed') {
-          if (onEvent) {
-            try {
-              onEvent(message, startedTurn);
-            } catch {
-              fail('codex_app_server_observer_failed');
+          if (executionOwner && onNativeExecution) {
+            const observation = bindNativeCommandEvent(executionOwner, message, startedTurn);
+            if (observation) {
+              try { onNativeExecution(observation); }
+              catch { fail('codex_app_server_observer_failed'); }
             }
           }
         } else if (message.method === 'turn/completed') {

@@ -122,3 +122,7 @@ Lease 만료·CAS mismatch만으로 A가 OS level에서 파일 쓰기를 멈췄�
 ## T25 Host-owned App Server stdio 연결 (선택형/읽기 전용)
 
 [실행·검증 보고서](W0_T25_HOST_OWNED_APP_SERVER_READONLY_TRANSPORT_2026-11-03.md): `src/host/kernel/codex-app-server-transport.ts`는 Codex App Server를 **Host 자식 프로세스**로 한 번 생성하고 표준 입출력의 `initialize`, `thread/start`, `turn/start`를 처리한다. Turn 조기 이벤트를 시작 응답의 `threadId`·`turnId`로 한정한 뒤 기존 `bindNativeCommandEvent`에 전달할 수 있는 `onEvent` 포트를 제공한다. 기존 `spawn_agent`/기본 `createCodexAdapter`는 그대로 둔다. 하나의 연결 안에서만 Workspace 재사용을 차단하고 Turn 완료를 물리 Writer 종료로 보지 않는다. 실제 모델 Turn·Writer Gate를 수용한 상태가 아니며 G0 PARTIAL이다.
+
+## T25 실제 Native 모델·명령 관측과 Canonical Attempt 통합 범위
+
+[실제 모델/Kernel 통합 검증](W0_T25_REAL_MODEL_AND_KERNEL_ATTEMPT_LINK_2026-11-03.md): Mac 별도 인증 W0 App Server에서 실제 모델 응답 Turn 및 읽기 전용 `pwd` Command `item/started` → `item/completed` → `turn/completed` 수명을 확인했다. Linux 코드에서는 `src/host/kernel/codex-app-server-transport.ts`가 raw `onEvent` 대신 Canonical `executionOwner` + `onNativeExecution`만 선택적으로 받아 기존 `bindNativeCommandEvent`로 검증한 소유권·명령 식별자만 전달한다. `tests/kernel-codex-app-server-transport.test.ts`에 실제 Kernel Run/Attempt→격리 모의 App Server 이벤트 연결, Turn 완료 후 Attempt `started` 유지, 관측 콜백 오류 시 Fail-close를 검증했다. **Mac 실제 모델 Turn과 Kernel 런타임을 하나의 실제 E2E로 결합하지 않았으며, Host 간 동일 Workspace Writer Gate는 여전히 미구현이다.**

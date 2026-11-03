@@ -72,7 +72,7 @@
 | Mac/Windows Native Worker life/status/reconnect | **Mac Turn-level PARTIAL / Windows DEFER** | Host 연결 유지 시 inProgress 재조회·원격 interrupt PASS; 실제 Main/Host lifecycle·OS Writer·Windows executor 미검증 |
 | T24 Goals/loop 이중 실행 위험 | **PARTIAL / 코드 관찰만** | 앱/Host 실제 실행 경로 검증 |
 | T26 Main/MCP/App Server/Host 종료 후 상태 | **PARTIAL (Native 모의 클라이언트 및 이력 재조회)** | 시작 WS 해제 시 interrupted, Host WS 유지 시 다른 클라이언트 종료·재조회 가능, 새 App Server에서 기록 조회. 실제 Main/MCP/OS command 연속성은 미검증 |
-| T25 OS Writer 실질 차단 | **interrupt-only FAIL / Owner CAS PASS / Native 관측+Host stdio 연결 PASS(격리) / 전역 Writer Gate 미구현** | [Host-owned App Server 읽기 전용 연결](W0_T25_HOST_OWNED_APP_SERVER_READONLY_TRANSPORT_2026-11-03.md): 실제 App Server initialize/thread/start smoke PASS, 모의 모델 Turn JSON-RPC·이벤트·연결 손실·unknown 안전 차단 58/58 관련 회귀 PASS. 실제 모델 Turn E2E·Host 간 Workspace Writer 중복 차단은 미검증 |
+| T25 OS Writer 실질 차단 | **interrupt-only FAIL / Owner CAS PASS / 실제 Native Model·Command Turn PASS / Kernel Attempt 통합 PASS(fixture) / 전역 Writer Gate 미구현** | [실제 Native 모델·Attempt 연동 검증](W0_T25_REAL_MODEL_AND_KERNEL_ATTEMPT_LINK_2026-11-03.md): 실제 Mac model/command 이벤트 수명 PASS. Linux 격리 Canonical Attempt→Host Transport 명령 관측 및 완료 권위 분리 60/60 회귀 PASS. **Mac Native+Kernel 단일 E2E·물리 Writer 종료 및 Host 간 재할당 차단 미검증** |
 | G0 전체 | **PARTIAL** | **W1 live worker 구현 중단**, 미완료 Native 실험부터 계속 |
 
 **다음 단계 (이미 결정된 경로):** 정상 동작하는 Native Host에서 격리 프로세스/Thread를 만들어 (1) start handle (2) 상태 재조회 (3) Main 독립성 (4) cancel/approval (5) old writer 안전 정지를 입증한다. Live Worker가 안 되지만 안전 중단·새 Thread 재개만 가능하다면 원래 계획의 B가 아니라 **degraded-safe-resume 별도 제한 채택**으로 분류한다. 원래 `E` authority-only resume을 먼저 검증하고, `C` Handoff는 추가 효용 입증 전 도입하지 않는다.

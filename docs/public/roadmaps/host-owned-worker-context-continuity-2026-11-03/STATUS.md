@@ -12,7 +12,7 @@
 | Mac-side MCP canonical checkout | 조회 완료 | 문서 편입 전 양쪽 `main / 3797c60f`, 별개 Runtime·DB·세션 |
 | 기존 사용자 작업 간섭 | 없음 (준비 작업 범위) | 사용자 Runtime/DB·Codex 세션 종료·설치·마이그레이션 없음 |
 | 프로젝트 로드맵 문서 정착 | **완료** | 2026-11-03 초기 문서와 W0-Fix를 `main`에 커밋·푸시 확인 |
-| W0 — Capability/기준선 | **G0 PARTIAL** | [T25 Host-owned App Server 연결](W0_T25_HOST_OWNED_APP_SERVER_READONLY_TRANSPORT_2026-11-03.md): 별도 stdio JSON-RPC 연결을 읽기 전용/명시적 선택 경계로 구현, 격리 회귀 58/58 PASS 및 Mac 실제 initialize/thread/start smoke PASS. 실제 모델 Turn·same Workspace 전역 Writer Gate 미구현 |
+| W0 — Capability/기준선 | **G0 PARTIAL** | [T25 실제 모델·Attempt 연결 검증](W0_T25_REAL_MODEL_AND_KERNEL_ATTEMPT_LINK_2026-11-03.md): Mac 실제 Model Turn·read-only 명령 Turn PASS, Linux MCP Canonical Attempt↔Host Transport 이벤트 결합 및 소유권 필터 60/60 PASS(모의 App Server). 실제 Mac+Kernel 한 경로의 E2E·전역 Writer Gate 미완료 |
 | W0-Fix — ContextReceipt | **SOURCE PASS** | T23 재현 → 최소 수정, focused 17/17, typecheck/build/boundaries PASS. 확장 test:source-runtime timeout |
 | W1 — Host-owned Worker | **DEFER / 실제 Attempt-Writer Gate 대기** | Host 소유 Native commandExecution handle과 격리 Worktree/기존 Owner CAS를 연결해 종료·격리 증거 확인 전 같은 Workspace 재할당 금지 필요 |
 | W2 — status/signal/reconnect | NOT STARTED | W1 생존·Owner 경계 필요 |
@@ -35,7 +35,7 @@
 2. `W0_START.md`의 "0. 입장 조건" 수행. 완료된 분석·명령은 반복하지 않음.
 3. **완료한 T23 수정·인증·실제 Turn 완료·Native WebSocket 수명 비교·Turn-level interrupt·재시작 이력 조회를 반복하지 않음.** 다음에는 실제 Moonshot Relay의 Main/Host 실행 연결 분리, OS Writer 물리 중단·중복 실행 금지, Windows Native executor heartbeat 복구부터 시작. 기존 사용자 세션 종료 금지.
 4. [T25 추가 음성 검증](W0_T25_ADDITIONAL_NEGATIVE_VERIFICATION_2026-11-03.md)에서 실제 A Writer가 살아 있는 상태로 동일 Workspace Lock 재획득/추가 쓰기 5회와 별도 Worktree A/B 물리 격리 PASS를 확보. **Main/Host 연결 해제 중 Native Handle 회수는 이번 모델 시험에서 Writer 미생성으로 미검증.** 다음은 Attempt↔Native 실행 스트림 결합, 같은 Workspace Writer 재허가 Gate 및 실제 Delivery CAS 통합 검증. 완료된 시험 반복·새 DB/Queue/Provider별 하드코딩 금지.
-5. [T25 Host-owned App Server 읽기 전용 연결](W0_T25_HOST_OWNED_APP_SERVER_READONLY_TRANSPORT_2026-11-03.md) 및 기존 Native Attempt 관측 경계를 보존. 다음은 **실제 모델 Turn의 이벤트 스트림 수용과 Host/Attempt 연결 실증**, 그리고 **서로 다른 Host 인스턴스 간 동일 물리 Workspace old Writer alive/unknown 시 B 실행 거부** 검증. 기존 Owner CAS·기완료 fixture를 반복하지 않음. G0 판단 전 W1 기본값 전환 금지.
+5. [T25 실제 모델 및 Kernel Attempt 별도 검증](W0_T25_REAL_MODEL_AND_KERNEL_ATTEMPT_LINK_2026-11-03.md)을 보존한다. Mac에서 실제 Model/Command 이벤트와 Turn 완료를 확인했고, Linux 격리 Kernel Run/Attempt가 Host-owned Transport의 명령 ID를 받아도 완료 권위가 변하지 않음을 검증했다. 다음은 **실제 Native Host↔Kernel Attempt 단일 E2E**, **서로 다른 Host 간 동일 물리 Workspace old Writer alive/unknown 시 B 시작 차단**이다. 기존 Owner CAS·기완료 fixture 반복 금지, G0 수용 전 W1 기본값 전환 금지.
 
 ## 변경 범위 원칙
 
