@@ -29,7 +29,7 @@
 | 승인/취소 신호와 적용 시점 | NOT_TESTED | DEFER | NOT_TESTED | 다른 연결의 `turn/interrupt` 후 interrupted 상태 PASS; 승인·후손 OS 프로세스 종료 UNKNOWN |
 | 원본 transcript/terminal event 직접 접근·digest | NOT_TESTED | DEFER | NOT_TESTED | App Server 재시작 후 `thread/read(includeTurns=true)` 기록 조회 PASS; 원본 event digest/lossless·in-flight 명령 복구 UNKNOWN |
 | Native `spawn_agent` 실제 사용 가능 | 코드 wrapper만 확인 | DEFER | 코드 wrapper만 확인 | UNKNOWN |
-| old Worker에 대한 물리 쓰기 차단 | NOT_TESTED | DEFER | NOT_TESTED | **turn/interrupt-only FAIL**: 실제 Codex child가 1.8초 동안 9회 추가 쓰기. 독립 OS process group 종료 fixture PASS, Kernel fencing 미검증 |
+| old Worker에 대한 물리 쓰기 차단 | NOT_TESTED | DEFER | NOT_TESTED | **turn/interrupt-only FAIL**. 특정 모델 도구의 Background Terminal terminate 후 OS PID 종료·late write 0 PASS. 일반 OS Writer 종료/Kernel Attempt 재할당 Gate는 여전히 미검증 |
 
 ## 관련 소스 경계
 

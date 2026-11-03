@@ -12,9 +12,9 @@
 | Mac-side MCP canonical checkout | 조회 완료 | 문서 편입 전 양쪽 `main / 3797c60f`, 별개 Runtime·DB·세션 |
 | 기존 사용자 작업 간섭 | 없음 (준비 작업 범위) | 사용자 Runtime/DB·Codex 세션 종료·설치·마이그레이션 없음 |
 | 프로젝트 로드맵 문서 정착 | **완료** | 2026-11-03 초기 문서와 W0-Fix를 `main`에 커밋·푸시 확인 |
-| W0 — Capability/기준선 | **SOURCE PASS / G0 PARTIAL (T25 interrupt-only FAIL)** | [T25 실제 OS Writer 반례](W0_T25_OS_WRITER_FENCING_2026-11-03.md): 실제 Codex Turn interrupt 후에도 child가 1.8초간 9회 추가 쓰기. 격리 OS process group 종료 fixture만 PASS. Kernel Writer Gate·제품 통합 미검증 |
+| W0 — Capability/기준선 | **G0 PARTIAL** | [T25 실제 Native 제어·Kernel Attempt 후속 검증](W0_T25_NATIVE_OWNER_ATTEMPT_FOLLOWUP_2026-11-03.md): Turn interrupt-only Writer 종료 FAIL, Background Terminal 종료 실험 PASS, Kernel 잠금 만료 후 미정착 Attempt의 신규 세션 Lock 허가 재현. 제품 Writer Gate 미구현 |
 | W0-Fix — ContextReceipt | **SOURCE PASS** | T23 재현 → 최소 수정, focused 17/17, typecheck/build/boundaries PASS. 확장 test:source-runtime timeout |
-| W1 — Host-owned Worker | **DEFER / T25 Writer 물리 차단 필수** | Turn-level interrupt만으로 Writer 중단 보장 불가. 실제 관리 범위의 child/process group 종료·증거 확인·unknown reconciliation 필요 |
+| W1 — Host-owned Worker | **DEFER / 실제 Attempt-Writer Gate 대기** | Host 소유 Native commandExecution handle과 격리 Worktree/기존 Owner CAS를 연결해 종료·격리 증거 확인 전 같은 Workspace 재할당 금지 필요 |
 | W2 — status/signal/reconnect | NOT STARTED | W1 생존·Owner 경계 필요 |
 | W3 — Kernel loop 결합 | NOT STARTED | 기존 Dispatcher/Goals 중복 먼저 확인 |
 | W4 — E/C/D Continuity | NOT STARTED | E(요약 없는 Resume) 먼저 |
@@ -34,7 +34,7 @@
 1. `get_work_context(cwd="/shared/moonshot-relay", format="full")`를 먼저 실행해 active task/마지막 영수증/현재 Git 상태를 대조.
 2. `W0_START.md`의 "0. 입장 조건" 수행. 완료된 분석·명령은 반복하지 않음.
 3. **완료한 T23 수정·인증·실제 Turn 완료·Native WebSocket 수명 비교·Turn-level interrupt·재시작 이력 조회를 반복하지 않음.** 다음에는 실제 Moonshot Relay의 Main/Host 실행 연결 분리, OS Writer 물리 중단·중복 실행 금지, Windows Native executor heartbeat 복구부터 시작. 기존 사용자 세션 종료 금지.
-4. [T25 Writer 차단 반례](W0_T25_OS_WRITER_FENCING_2026-11-03.md)의 실제 PID/PGID 및 interrupt 이후 9회 추가 쓰기 실패를 보존. 다음에는 관리 중인 Codex tool process group의 정확한 소유권·실제 종료 증거·동일 Workspace 새 Writer 허가 금지 Gate를 검증. 기완료 테스트는 반복하지 않고 DB/Queue/Proxy/하드코딩 폴백 추가 금지.
+4. [T25 Native 실행 핸들·Kernel Attempt 후속](W0_T25_NATIVE_OWNER_ATTEMPT_FOLLOWUP_2026-11-03.md)의 실제 itemId/processId→Background Terminal 종료, OS 종료·쓰기 정착 및 미정착 Attempt의 Lock 재획득 반례를 보존. 다음은 **Host-owned 실행 스트림과 기존 Attempt 결합**, 같은 Workspace Writer 재허가 Gate와 격리 Worktree 대조 검증. 기완료 시험 반복·새 DB/Queue/Provider별 하드코딩 금지.
 5. G0 종료 판단 전 W1 구현/기본값 전환 금지. Wave별 별도 검증·한국어 상세 커밋·푸시.
 
 ## 변경 범위 원칙

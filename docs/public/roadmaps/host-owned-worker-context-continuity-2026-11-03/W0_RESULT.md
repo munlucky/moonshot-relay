@@ -72,7 +72,7 @@
 | Mac/Windows Native Worker life/status/reconnect | **Mac Turn-level PARTIAL / Windows DEFER** | Host 연결 유지 시 inProgress 재조회·원격 interrupt PASS; 실제 Main/Host lifecycle·OS Writer·Windows executor 미검증 |
 | T24 Goals/loop 이중 실행 위험 | **PARTIAL / 코드 관찰만** | 앱/Host 실제 실행 경로 검증 |
 | T26 Main/MCP/App Server/Host 종료 후 상태 | **PARTIAL (Native 모의 클라이언트 및 이력 재조회)** | 시작 WS 해제 시 interrupted, Host WS 유지 시 다른 클라이언트 종료·재조회 가능, 새 App Server에서 기록 조회. 실제 Main/MCP/OS command 연속성은 미검증 |
-| T25 OS Writer 실질 차단 | **interrupt-only FAIL / 그룹 종료 독립 fixture PASS** | [T25 실측](W0_T25_OS_WRITER_FENCING_2026-11-03.md): Codex 도구 자식 PID 생존·interrupt 뒤 추가 append 9회. 실제 Kernel Worker Gate/OS group 소유권은 미검증 |
+| T25 OS Writer 실질 차단 | **interrupt-only FAIL / Native 관리 명령 격리 PASS / Kernel Gate 미구현** | [Native 명령·Kernel Attempt 후속](W0_T25_NATIVE_OWNER_ATTEMPT_FOLLOWUP_2026-11-03.md): Background Terminal terminate 후 OS PID 종료·late write 0, direct command owner terminate PASS. 그러나 만료 잠금이 started Attempt 상태에서 다른 세션에 재발급됨 |
 | G0 전체 | **PARTIAL** | **W1 live worker 구현 중단**, 미완료 Native 실험부터 계속 |
 
 **다음 단계 (이미 결정된 경로):** 정상 동작하는 Native Host에서 격리 프로세스/Thread를 만들어 (1) start handle (2) 상태 재조회 (3) Main 독립성 (4) cancel/approval (5) old writer 안전 정지를 입증한다. Live Worker가 안 되지만 안전 중단·새 Thread 재개만 가능하다면 원래 계획의 B가 아니라 **degraded-safe-resume 별도 제한 채택**으로 분류한다. 원래 `E` authority-only resume을 먼저 검증하고, `C` Handoff는 추가 효용 입증 전 도입하지 않는다.
