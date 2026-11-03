@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, realpath, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import {
@@ -36,6 +36,10 @@ interface PrepareExecutionWorkspacesInput extends WorktreeCoordinates {
   steps?: StepLike[];
 }
 
+interface PrepareHostWriterAttemptWorktreeInput extends PrepareWorktreeInput {
+  attemptId?: string;
+}
+
 interface CreateStepResultCommitInput {
   workspaceRoot?: string;
   runId?: string;
@@ -62,6 +66,10 @@ export interface PreparedExecutionWorkspace {
   reused: boolean;
   baseCommitSha: string;
   baseWorkspaceIdentity: string;
+}
+
+export interface PreparedHostWriterAttemptWorkspace extends PreparedExecutionWorkspace {
+  attemptId: string;
 }
 
 export interface GitWorkspaceInspection {
@@ -286,6 +294,71 @@ export const prepareStepWorktree = async ({
   return {
     kind: 'step',
     stepId: activeStepId,
+    workspaceRoot: target,
+    reused: prepared.reused,
+    baseCommitSha: activeBaseCommit,
+    baseWorkspaceIdentity: identity.identity,
+  };
+};
+
+
+// Opt-in Native Writable Worker allocation. A new canonical Attempt receives a
+// separate physical Worktree even when its Run and Step are unchanged.
+// This directory is deliberately NOT a child of executionRoot(): the existing
+// parallel-run cleanup cannot delete an old, possibly still-writing Attempt.
+// Same-Attempt recovery can inspect an intact Worktree; the independent Host
+// reservation still denies another Writer if the previous Turn is unknown.
+// Do not remove these worktrees until the Writer and descendants are proven
+// unable to mutate them.
+export const prepareHostWriterAttemptWorktree = async ({
+  repoRoot,
+  baseCommit,
+  runId,
+  stepId,
+  attemptId,
+  projectId,
+  runtimeHome = null,
+}: PrepareHostWriterAttemptWorktreeInput = {}): Promise<PreparedHostWriterAttemptWorkspace> => {
+  const activeRepoRoot = requiredString(repoRoot, 'repoRoot');
+  const activeBaseCommit = requiredString(baseCommit, 'baseCommit');
+  const activeRunId = requiredString(runId, 'runId');
+  const activeStepId = requiredString(stepId, 'stepId');
+  const activeAttemptId = requiredString(attemptId, 'attemptId');
+  const activeProjectId = requiredString(projectId, 'projectId');
+  const home = requiredString(runtimeHome || undefined, 'runtimeHome');
+  // Do not silently create a Host runtime under the Owner repository.
+  const canonicalOwnerRoot = await realpath(activeRepoRoot);
+  const canonicalHome = await realpath(home);
+  const root = path.join(
+    canonicalHome,
+    'host-writer-attempt-worktrees',
+    'p-' + shortExecutionToken(activeProjectId, 16),
+    'r-' + shortExecutionToken(activeRunId, 16),
+  );
+  const target = path.join(
+    root,
+    'a-' + createHash('sha256')
+      .update(JSON.stringify([activeStepId, activeAttemptId]))
+      .digest('hex'),
+  );
+  // The Host runtime must not put writable Worker Worktrees under the Owner.
+  const relative = path.relative(canonicalOwnerRoot, target);
+  if (!relative || (!relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative))) {
+    throw Object.assign(new Error('host writer attempt Worktree must be outside owner repository'), {
+      code: 'WORKTREE_HOST_WRITER_OWNER_OVERLAP',
+    });
+  }
+  const prepared = await addOrReuseWorktree({
+    repoRoot: activeRepoRoot,
+    target,
+    baseCommit: activeBaseCommit,
+    containmentRoot: root,
+  });
+  const identity = observeWorkspaceIdentity({ projectRoot: target });
+  return {
+    kind: 'step',
+    stepId: activeStepId,
+    attemptId: activeAttemptId,
     workspaceRoot: target,
     reused: prepared.reused,
     baseCommitSha: activeBaseCommit,

@@ -1,5 +1,7 @@
 # W0 T25 — Host 외부 Writer 예약 및 Native Writable Turn 진입 검증
 
+> 당시에는 동일 Run·Step의 재시도 Worktree 문제가 미완료였다. [후속 Attempt별 Worktree 격리](W0_T25_ATTEMPT_ISOLATED_WORKTREE_2026-11-03.md)에서 선택적 물리 경로 분리를 검증했다. 자동 정리·종료 증명과 기본 실행기 연결은 여전히 미완료다.
+
 - 기준: 2026-11-03, main / c1178ebd3fe39bac11f52dc7930f158e50c530c3
 - 판정: **겸용 파일시스템의 협력적 Host 중복 예약 차단 및 명시적 Writable Turn 진입 테스트 PASS. G0 PARTIAL / W1 DEFER.**
 - 변경: `workspace-writer-reservation.ts`, `codex-app-server-transport.ts` 및 해당 테스트 2개. 기본 `spawn_agent`·Owner-direct·Parallel Dispatcher는 변경하지 않는다.

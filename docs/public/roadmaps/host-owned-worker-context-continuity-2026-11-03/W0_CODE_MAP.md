@@ -135,3 +135,8 @@ Lease 만료·CAS mismatch만으로 A가 OS level에서 파일 쓰기를 멈췄�
 ## T25 Host 외부 예약 + 선택형 Writable Turn 진입 Gate
 
 [후속 구현·검증](W0_T25_EXTERNAL_WRITER_ADMISSION_2026-11-03.md): 예약 파일을 Worker Worktree 바깥의 Host `reservationRoot`로 이동했다. `reserveHostWorkspaceWriter`는 Workspace의 `realpath`에 기반한 SHA-256 파일 키와 원자적 `open('wx')`를 사용한다. `codex-app-server-transport.ts`의 기존 `runTurn`은 `writableWorker: { reservationRoot }`가 명시된 경우에만 Canonical `executionOwner`·`onNativeExecution`을 필수로 검사하고, **Native thread/start/turn/start 전에** Host 예약을 수행한다. 성공한 경우에만 실제 CLI schema의 `workspace-write`/`workspaceWrite`를 사용한다. 기본 `readOnly` Turn·기존 `spawn_agent`·Parallel Dispatcher는 변경하지 않았다. 기존 `prepareStepWorktree`는 Run·Step 경로를 재사용하므로 이 single-use 예약을 무조건 연결하면 정상 재시도를 막을 수 있다. 후속 단계에서 Attempt별 새 Worktree 또는 물리 종료가 검증된 정리·재생성 경계를 확정해야 한다. **현재 G0 PARTIAL, W1 DEFER.**
+
+
+## T25 Host-managed Writable Attempt별 물리 Worktree 격리
+
+[검증 보고서](W0_T25_ATTEMPT_ISOLATED_WORKTREE_2026-11-03.md): `src/host/kernel/workspace/physical-worktree.ts`에 선택형 `prepareHostWriterAttemptWorktree`를 추가했다. 기존 Kernel이 발급한 Run·Step·Attempt 식별자를 사용하고 `runtimeHome/host-writer-attempt-worktrees` 아래에 **새 Attempt마다 별도 물리 Git Worktree**를 준비한다. 동일 Attempt의 깨끗한 Worktree는 기존 `reuseWorktree` 검사로 재조회할 수 있으나, 기존 Host 외부 Writer 예약은 중복 Writer 시작을 거부한다. 이 전용 Worktree는 일반 `executionRoot`와 물리적으로 분리되어 기존 Run 자동 정리에서 살아 있는 A Writer의 경로가 삭제되지 않는다. Kernel에서 A Attempt를 실패 처리해도 실제 A OS Writer가 계속 기록하는 중, 새 Canonical B Attempt의 별도 Worktree 준비·쓰기와 기존 Run 정리 후 A/B 보존을 Linux 격리 테스트로 확인했다. **운영 Native/Parallel Dispatcher 강제 적용이나 물리 Writer·후손 종료, 폐기 책임은 아직 미완료이며 G0 PARTIAL/W1 DEFER다.**

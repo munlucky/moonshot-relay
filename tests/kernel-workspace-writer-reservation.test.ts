@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { readFile, readdir, mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { readFile, readdir, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { reserveHostWorkspaceWriter } from '../src/host/kernel/workspace-writer-reservation.js';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
+import { prepareHostWriterAttemptWorktree, prepareStepWorktree, cleanupExecutionWorkspaces } from '../src/host/kernel/workspace/physical-worktree.js';
 
 const git = (cwd: string, ...args: string[]) => {
   const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
@@ -144,6 +145,125 @@ test('A failed or unknown old Host cannot silently clear a single-use Workspace 
     });
     // No release or TTL expiry API exists; only disposing the verified-safe,
     // isolated Worktree may remove the marker.
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+
+test('A failed Kernel Attempt keeps its live OS Writer isolated while the next Attempt gets a distinct Worktree', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'host-attempt-worktrees-'));
+  const repoRoot = path.join(root, 'owner');
+  const runtimeHome = path.join(root, 'runtime');
+  const reservationRoot = path.join(root, 'host-reservations');
+  let cp: Awaited<ReturnType<typeof createKernelControlPlane>> | null = null;
+  let writer: ReturnType<typeof spawn> | null = null;
+  const worktrees: string[] = [];
+  try {
+    await mkdir(repoRoot);
+    await mkdir(reservationRoot);
+    git(repoRoot, 'init');
+    git(repoRoot, 'config', 'user.name', 'Attempt Fixture');
+    git(repoRoot, 'config', 'user.email', 'attempt@example.invalid');
+    await writeFile(path.join(repoRoot, 'package.json'), '{"name":"attempt-fixture"}');
+    git(repoRoot, 'add', '--all');
+    git(repoRoot, 'commit', '-m', 'baseline');
+    const baseCommit = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' }).stdout.trim();
+    const runId = 'run-attempt-isolation';
+    cp = await createKernelControlPlane({ runtimeHome, projectRoot: repoRoot });
+    await cp.startRun({ runId, objective: 'isolate physical attempts during retry' });
+    const run = await cp.getRun(runId);
+    const a = cp.beginAttempt(runId);
+    assert.ok(run?.projectId && run.workspaceId && a?.attemptId && a.stepId);
+    const args = { repoRoot, runtimeHome, baseCommit, projectId: run.projectId, runId, stepId: a.stepId };
+    const wa = await prepareHostWriterAttemptWorktree({ ...args, attemptId: a.attemptId });
+    worktrees.push(wa.workspaceRoot);
+    assert.equal(wa.reused, false);
+    const resumed = await prepareHostWriterAttemptWorktree({ ...args, attemptId: a.attemptId });
+    assert.equal(resumed.workspaceRoot, wa.workspaceRoot);
+    assert.equal(resumed.reused, true, 'same Attempt reuses only its own Worktree');
+    await reserveHostWorkspaceWriter({
+      workspaceRoot: wa.workspaceRoot, reservationRoot, runId, attemptId: a.attemptId, workspaceId: run.workspaceId,
+    });
+    assert.equal(attemptFromAnotherHostProcess(wa.workspaceRoot, reservationRoot), 29, 'same Attempt does not spawn a second Writer');
+
+    const log = path.join(wa.workspaceRoot, 'writer-a.log');
+    const script = "const fs=require('node:fs');let n=0;setInterval(()=>fs.appendFileSync(process.argv[1],String(++n)+'\\n'),25)";
+    writer = spawn(process.execPath, ['-e', script, log], { cwd: wa.workspaceRoot, stdio: 'ignore' });
+    let count = 0;
+    const deadline = Date.now() + 4000;
+    while (count < 3 && Date.now() < deadline) {
+      await sleep(35);
+      try { count = (await readFile(log, 'utf8')).trim().split('\n').length; } catch { /* first write pending */ }
+    }
+    assert.ok(count >= 3, 'A must be physically writing');
+    cp.failStepAttempt(runId, a.stepId, { code: 'writer_exit_unknown' });
+    assert.equal(cp.stateStore.getStepAttempts(runId)[0]?.status, 'failed');
+    assert.equal(writer.exitCode, null, 'Kernel failure does not stop the OS writer');
+
+    const b = cp.beginAttempt(runId, { stepId: a.stepId, retryReason: 'writer_exit_unknown' });
+    assert.ok(b?.attemptId && b.attemptId !== a.attemptId);
+    const wb = await prepareHostWriterAttemptWorktree({ ...args, attemptId: b.attemptId });
+    worktrees.push(wb.workspaceRoot);
+    assert.equal(wb.reused, false);
+    assert.notEqual(wb.workspaceRoot, wa.workspaceRoot);
+    assert.equal(attemptFromAnotherHostProcess(wb.workspaceRoot, reservationRoot), 0);
+    await writeFile(path.join(wb.workspaceRoot, 'result-b.txt'), 'B:only\n');
+    const before = (await readFile(log, 'utf8')).trim().split('\n').length;
+    await sleep(140);
+    assert.ok((await readFile(log, 'utf8')).trim().split('\n').length > before);
+    assert.equal((await readdir(repoRoot)).some(x => x === 'writer-a.log' || x === 'result-b.txt'), false);
+
+    await prepareStepWorktree(args);
+    await cleanupExecutionWorkspaces({ ...args, retain: false });
+    assert.ok((await readFile(log, 'utf8')).length > 0);
+    assert.equal(await readFile(path.join(wb.workspaceRoot, 'result-b.txt'), 'utf8'), 'B:only\n');
+  } finally {
+    if (writer && writer.exitCode === null && writer.signalCode === null) {
+      writer.kill('SIGTERM');
+      await Promise.race([once(writer, 'exit'), sleep(2000)]);
+      if (writer.exitCode === null && writer.signalCode === null) {
+        writer.kill('SIGKILL');
+        await Promise.race([once(writer, 'exit'), sleep(1000)]);
+      }
+    }
+    // Test-only teardown after Writer A has exited; no product release API.
+    for (const workspace of worktrees.reverse()) {
+      const result = spawnSync('git', ['worktree', 'remove', '--force', workspace], {
+        cwd: repoRoot, encoding: 'utf8', timeout: 10000,
+      });
+      assert.equal(result.status, 0, result.stderr);
+    }
+    await cp?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+
+test('Host Writer Attempt Worktrees cannot be placed inside the Owner repository', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'host-attempt-overlap-'));
+  const repoRoot = path.join(root, 'owner');
+  const runtimeHome = path.join(repoRoot, 'host-runtime');
+  try {
+    await mkdir(repoRoot);
+    git(repoRoot, 'init');
+    git(repoRoot, 'config', 'user.name', 'Attempt Fixture');
+    git(repoRoot, 'config', 'user.email', 'attempt@example.invalid');
+    await writeFile(path.join(repoRoot, 'package.json'), '{"name":"overlap-fixture"}');
+    git(repoRoot, 'add', '--all');
+    git(repoRoot, 'commit', '-m', 'baseline');
+    await mkdir(runtimeHome);
+    const baseCommit = spawnSync('git', ['rev-parse', 'HEAD'], {
+      cwd: repoRoot, encoding: 'utf8',
+    }).stdout.trim();
+    await assert.rejects(
+      prepareHostWriterAttemptWorktree({
+        repoRoot, runtimeHome, baseCommit, runId: 'run', stepId: 'step',
+        attemptId: 'attempt', projectId: 'project',
+      }),
+      { code: 'WORKTREE_HOST_WRITER_OWNER_OVERLAP' },
+    );
+    assert.deepEqual(await readdir(runtimeHome), [], 'rejected allocation creates no Writer Worktree');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
