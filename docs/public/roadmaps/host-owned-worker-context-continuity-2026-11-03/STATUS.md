@@ -12,9 +12,9 @@
 | Mac-side MCP canonical checkout | 조회 완료 | 문서 편입 전 양쪽 `main / 3797c60f`, 별개 Runtime·DB·세션 |
 | 기존 사용자 작업 간섭 | 없음 (준비 작업 범위) | 사용자 Runtime/DB·Codex 세션 종료·설치·마이그레이션 없음 |
 | 프로젝트 로드맵 문서 정착 | **완료** | 2026-11-03 초기 문서와 W0-Fix를 `main`에 커밋·푸시 확인 |
-| W0 — Capability/기준선 | **SOURCE PASS / G0 PARTIAL** | [Native in-flight 수명 검증](W0_INFLIGHT_CONNECTION_LIFECYCLE_2026-11-03.md): 시작 연결 해제 시 interrupted, Host 연결 유지 시 별도 클라이언트 재조회·interrupt PASS, 새 App Server에서 이력 조회 PASS. 실제 OS Writer·Moonshot Relay 통합 미검증 |
+| W0 — Capability/기준선 | **SOURCE PASS / G0 PARTIAL (T25 interrupt-only FAIL)** | [T25 실제 OS Writer 반례](W0_T25_OS_WRITER_FENCING_2026-11-03.md): 실제 Codex Turn interrupt 후에도 child가 1.8초간 9회 추가 쓰기. 격리 OS process group 종료 fixture만 PASS. Kernel Writer Gate·제품 통합 미검증 |
 | W0-Fix — ContextReceipt | **SOURCE PASS** | T23 재현 → 최소 수정, focused 17/17, typecheck/build/boundaries PASS. 확장 test:source-runtime timeout |
-| W1 — Host-owned Worker | **DEFER / G0 Native capability 대기** | 실제 독립 start/status/reconnect와 old Writer 차단 검증 후 기술 선택 |
+| W1 — Host-owned Worker | **DEFER / T25 Writer 물리 차단 필수** | Turn-level interrupt만으로 Writer 중단 보장 불가. 실제 관리 범위의 child/process group 종료·증거 확인·unknown reconciliation 필요 |
 | W2 — status/signal/reconnect | NOT STARTED | W1 생존·Owner 경계 필요 |
 | W3 — Kernel loop 결합 | NOT STARTED | 기존 Dispatcher/Goals 중복 먼저 확인 |
 | W4 — E/C/D Continuity | NOT STARTED | E(요약 없는 Resume) 먼저 |
@@ -27,14 +27,14 @@
 - W0 결과 문서: [W0_CODE_MAP](W0_CODE_MAP.md) · [W0_CAPABILITY_MATRIX](W0_CAPABILITY_MATRIX.md) · [W0_BASELINE](W0_BASELINE.md) · [W0_RESULT](W0_RESULT.md).
 - 격리 Linux TypeScript 7.0.2 빌드·타입·경계·focused 17/17 PASS. 전체 `test:source-runtime`은 16개 subtest `ok` 뒤 240초 timeout. 이후 **실행되지 않았던 세 번째 suite만 별도로 4/4 PASS**. 전체 단일 명령 종료는 미확인.
 - Native Windows executor heartbeat stale. Mac Native 미인증·빈 Thread에서 `thread/resume`와 이력 읽기가 실패하고 `shellCommand` 경로가 401을 기록했던 것은 [이전 Native 실험](W0_NATIVE_FOLLOWUP_2026-11-03.md)의 결과다. **이후 사용자 승인으로 분리 CODEX_HOME 인증을 확보**, 실제 단일 Turn `completed` 및 새 클라이언트의 `thread/read(includeTurns=true)`를 PASS 확인했다. [새 인증 검증](W0_AUTH_TURN_RESULT_2026-11-03.md). 실제 in-flight 연결 교체와 프로세스 차단은 여전히 미검증. 사용자 운영 세션·DB 변경 없음.
-- [Native in-flight 추가 검증](W0_INFLIGHT_CONNECTION_LIFECYCLE_2026-11-03.md): 시작 WebSocket 자체를 닫으면 Turn이 재조회 시 `interrupted` 상태였다. 시작 WebSocket을 Host 역할로 유지하면 다른 클라이언트 연결 종료 후 새 연결에서 Turn `inProgress` 재조회 및 `turn/interrupt`→`interrupted` 확인. App Server 완전 재시작 후 보존된 중단 Turn 이력 조회 PASS(3개 Thread). 실제 Codex 도구 OS 프로세스·Writer/명령 재개는 미관측. G0 PARTIAL 유지, W1 미착수.
+- [Native in-flight 추가 검증](W0_INFLIGHT_CONNECTION_LIFECYCLE_2026-11-03.md): Host 역할 WebSocket 유지 시 별도 클라이언트에서 Turn 재조회·중단 PASS. App Server 재시작 뒤 중단 Turn 이력 조회 PASS. **이후 [T25 실제 OS Writer 시험](W0_T25_OS_WRITER_FENCING_2026-11-03.md)에서 중단 RPC 뒤 자식 Python Writer가 살아 있었고 1.8초 사이 추가 쓰기 9회 발생.** OS group 종료/정착 독립 fixture는 PASS. G0 PARTIAL, W1 미착수.
 
 ## 다음 세션의 정확한 재개 지점
 
 1. `get_work_context(cwd="/shared/moonshot-relay", format="full")`를 먼저 실행해 active task/마지막 영수증/현재 Git 상태를 대조.
 2. `W0_START.md`의 "0. 입장 조건" 수행. 완료된 분석·명령은 반복하지 않음.
 3. **완료한 T23 수정·인증·실제 Turn 완료·Native WebSocket 수명 비교·Turn-level interrupt·재시작 이력 조회를 반복하지 않음.** 다음에는 실제 Moonshot Relay의 Main/Host 실행 연결 분리, OS Writer 물리 중단·중복 실행 금지, Windows Native executor heartbeat 복구부터 시작. 기존 사용자 세션 종료 금지.
-4. [in-flight 수명 검증](W0_INFLIGHT_CONNECTION_LIFECYCLE_2026-11-03.md)의 연결 소유권·interrupted 상태 반례를 반영하고, 실제 Writer PID와 중간 명령의 정착/차단 증거를 확보한 뒤에만 W1 기술 선택. ContextReceipt/source runtime 기완료 검증은 반복하지 않음. 불필요한 Worker DB/Queue/Proxy/하드코딩 폴백 금지.
+4. [T25 Writer 차단 반례](W0_T25_OS_WRITER_FENCING_2026-11-03.md)의 실제 PID/PGID 및 interrupt 이후 9회 추가 쓰기 실패를 보존. 다음에는 관리 중인 Codex tool process group의 정확한 소유권·실제 종료 증거·동일 Workspace 새 Writer 허가 금지 Gate를 검증. 기완료 테스트는 반복하지 않고 DB/Queue/Proxy/하드코딩 폴백 추가 금지.
 5. G0 종료 판단 전 W1 구현/기본값 전환 금지. Wave별 별도 검증·한국어 상세 커밋·푸시.
 
 ## 변경 범위 원칙

@@ -104,3 +104,12 @@ Lease 만료·CAS mismatch만으로 A가 OS level에서 파일 쓰기를 멈췄�
 **설계 후보:** 연결 소유권은 Main/MCP 요청 수명에 묶지 않고 기존 Host 수명에 귀속한다. 모델-visible 인터페이스는 기존 `Kernel next/report`를 유지하고, App Server에 대한 지속적인 연결과 이를 조회하는 외부 Control 요청의 책임만 분리한다. 코어 Run/Step/Attempt·Evidence/Trust·Knowledge 권위는 절대 복제하지 않는다.
 
 **중요한 한계:** 실제 Moonshot Relay Runtime에서 Main이 종료돼도 Host가 해당 WebSocket을 유지하는지, OS 후손 프로세스를 실제 중단해 재할당 전 이중 파일 쓰기를 막는지는 **검증되지 않았다**. Host 유지 연결 자체의 재접속/장애 복구 정책을 새 DB와 별도 Queue로 과잉 일반화하지 않는다.
+
+
+## T25 직접 관측: Turn 종료와 실제 파일 Writer 종료는 별도
+
+[W0 T25 격리 실제 Writer 실험](W0_T25_OS_WRITER_FENCING_2026-11-03.md)에서 Codex가 실행한 `heartbeat.py`의 OS PID/PGID는 둘 다 22813이었다. 다른 WebSocket 연결의 `turn/interrupt` RPC 성공 뒤에도 프로세스는 1.8초 동안 9회 더 파일을 append하고 그 뒤에도 살아 있었다. 해당 fixture를 별도로 종료한 뒤 잔여 프로세스/디렉터리가 없음을 확인했다.
+
+`process-observation.ts`의 PID alive, `parallel-dispatcher.ts`의 Delivery-only patch apply `SIGTERM`, Codex `turn/interrupt`는 **서로 다른 제어 경계**다. Native 도구 프로세스의 실제 관리 주체·PGID와 Workspace/Attempt를 일치시킬 수 있기 전에는 새로운 Writer 허가를 금지해야 한다. 전용 group을 정확히 소유한 **독립 OS fixture**에서는 killpg(SIGTERM)→종료 확인→700ms 추가 쓰기 0→Writer B append 순서를 검증했다. 이 독립 fixture PASS는 Codex 도구 후손 프로세스 통제 PASS가 아니다.
+
+**최소 향후 변경 후보:** 기존 Host 실행 경계에서 생성한 프로세스/도구에 한해 실제 소유권·종료 증거를 연계하고, Kernel의 `running/unknown` 시 새 Writer를 막는다. 신규 범용 프로세스 DB, Provider 특정 버전 예외, 일괄 강제 종료 정책을 추가하지 않는다.
