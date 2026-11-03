@@ -12,7 +12,7 @@
 | Mac-side MCP canonical checkout | 조회 완료 | 문서 편입 전 양쪽 `main / 3797c60f`, 별개 Runtime·DB·세션 |
 | 기존 사용자 작업 간섭 | 없음 (준비 작업 범위) | 사용자 Runtime/DB·Codex 세션 종료·설치·마이그레이션 없음 |
 | 프로젝트 로드맵 문서 정착 | **완료** | 2026-11-03 초기 문서와 W0-Fix를 `main`에 커밋·푸시 확인 |
-| W0 — Capability/기준선 | **G0 PARTIAL** | [T25 추가 검증](W0_T25_ADDITIONAL_NEGATIVE_VERIFICATION_2026-11-03.md): 실제 A Writer가 계속 쓰는 동안 Lock TTL 만료 후 B 재획득 가능, 격리 Worktree에서는 A가 살아 있어도 Owner 직접 쓰기 없음. Native 연결 해제 중 Handle 회수는 미검증. 제품 Writer Gate 미구현 |
+| W0 — Capability/기준선 | **G0 PARTIAL** | [T25 Owner CAS 통합 회귀](W0_T25_OWNER_CAS_INTEGRATION_TEST_2026-11-03.md): 실제 A Writer 활성 중 별도 Worktree B의 기존 Kernel Owner Fence/CAS Delivery 및 stale 재적용 거부 PASS(격리). 동일 Workspace B Dispatch Gate·Native 실행 핸들↔Attempt 결합 미구현 |
 | W0-Fix — ContextReceipt | **SOURCE PASS** | T23 재현 → 최소 수정, focused 17/17, typecheck/build/boundaries PASS. 확장 test:source-runtime timeout |
 | W1 — Host-owned Worker | **DEFER / 실제 Attempt-Writer Gate 대기** | Host 소유 Native commandExecution handle과 격리 Worktree/기존 Owner CAS를 연결해 종료·격리 증거 확인 전 같은 Workspace 재할당 금지 필요 |
 | W2 — status/signal/reconnect | NOT STARTED | W1 생존·Owner 경계 필요 |
@@ -35,7 +35,7 @@
 2. `W0_START.md`의 "0. 입장 조건" 수행. 완료된 분석·명령은 반복하지 않음.
 3. **완료한 T23 수정·인증·실제 Turn 완료·Native WebSocket 수명 비교·Turn-level interrupt·재시작 이력 조회를 반복하지 않음.** 다음에는 실제 Moonshot Relay의 Main/Host 실행 연결 분리, OS Writer 물리 중단·중복 실행 금지, Windows Native executor heartbeat 복구부터 시작. 기존 사용자 세션 종료 금지.
 4. [T25 추가 음성 검증](W0_T25_ADDITIONAL_NEGATIVE_VERIFICATION_2026-11-03.md)에서 실제 A Writer가 살아 있는 상태로 동일 Workspace Lock 재획득/추가 쓰기 5회와 별도 Worktree A/B 물리 격리 PASS를 확보. **Main/Host 연결 해제 중 Native Handle 회수는 이번 모델 시험에서 Writer 미생성으로 미검증.** 다음은 Attempt↔Native 실행 스트림 결합, 같은 Workspace Writer 재허가 Gate 및 실제 Delivery CAS 통합 검증. 완료된 시험 반복·새 DB/Queue/Provider별 하드코딩 금지.
-5. G0 종료 판단 전 W1 구현/기본값 전환 금지. Wave별 별도 검증·한국어 상세 커밋·푸시.
+5. [T25 Owner CAS 통합 회귀](W0_T25_OWNER_CAS_INTEGRATION_TEST_2026-11-03.md)의 실제 A Writer와 기존 Kernel Owner CAS 테스트(9/9), 관련 Lock·Dispatch·Resume(14/14), TypeScript·경계 PASS를 보존. 다음 작업은 **실제 Native 실행 핸들→기존 Attempt 결합**과 **같은 물리 Workspace의 unknown Writer 재할당 거부** 경계 검증이다. G0 판단 전 W1 기능/기본값 전환 금지. Wave별 별도 검증·한국어 상세 커밋·푸시.
 
 ## 변경 범위 원칙
 

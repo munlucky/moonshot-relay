@@ -2,6 +2,9 @@ import { assertTestPresent, assertTestRecord, assertTestString } from './helpers
 import { prepareTestHostTurn } from './helpers/kernel-host-test-api.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -394,3 +397,125 @@ test('owner Delivery rejects negative integration identity parity before revisio
 
 type TestControlPlane = Awaited<ReturnType<typeof import('../src/host/kernel/control-plane-runtime.js').createKernelControlPlane>>;
 type TestStateStore = Awaited<ReturnType<typeof import('../src/kernel/state-store.js').openKernelStateStore>>;
+
+
+test('an isolated old Writer stays alive during Owner Delivery without bypassing the mutation CAS', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kernel-owner-live-writer-isolation-'));
+  const runtimeHome = path.join(tmpDir, 'runtime');
+  const projectRoot = path.join(tmpDir, 'project');
+  const workerA = path.join(tmpDir, 'worker-a');
+  const workerB = path.join(tmpDir, 'worker-b');
+  fs.mkdirSync(projectRoot, { recursive: true });
+  runGit(projectRoot, ['init', '-b', 'main']);
+  runGit(projectRoot, ['config', 'user.name', 'Kernel Live Writer Test']);
+  runGit(projectRoot, ['config', 'user.email', 'kernel-writer@example.invalid']);
+  fs.writeFileSync(path.join(projectRoot, 'package.json'), JSON.stringify({
+    name: 'kernel-live-writer-fixture', scripts: { 'test:ok': 'node --version' },
+  }));
+  fs.writeFileSync(path.join(projectRoot, 'shared.txt'), 'base\n');
+  runGit(projectRoot, ['add', '--all']);
+  runGit(projectRoot, ['commit', '-m', 'fixture']);
+  const baseCommit = String(runGit(projectRoot, ['rev-parse', 'HEAD']).stdout).trim();
+  runGit(projectRoot, ['worktree', 'add', '--detach', workerA, baseCommit]);
+  runGit(projectRoot, ['worktree', 'add', '--detach', workerB, baseCommit]);
+
+  let controlPlane: Awaited<ReturnType<typeof createKernelControlPlane>> | null = null;
+  let writer: import('node:child_process').ChildProcess | null = null;
+  const runId = 'run-isolated-live-writer';
+  const writerFile = path.join(workerA, 'shared.txt');
+  const readWriterLines = () => fs.readFileSync(writerFile, 'utf8').trimEnd().split('\n').length;
+  try {
+    controlPlane = await createKernelControlPlane({ runtimeHome, projectRoot });
+    await controlPlane.startRun({ runId, objective: 'isolated worker owner delivery' });
+    const activeAttempt = assertTestPresent(controlPlane.beginAttempt(runId));
+    assert.ok(activeAttempt.attemptId, 'the old Writer has a canonical Attempt');
+    const initial = assertTestPresent(await controlPlane.getRun(runId));
+    const snapshot = {
+      expectedMutationRevision: initial.mutationRevision,
+      expectedWorkspaceIdentity: assertTestString(initial.currentWorkspaceIdentity),
+      expectedHeadCommitSha: baseCommit,
+      expectedProjectId: initial.projectId,
+      expectedWorktreeId: initial.worktreeId,
+      expectedWorkspaceId: initial.workspaceId,
+    };
+    const script = [
+      "const fs = require('node:fs');",
+      "const file = process.argv[1];",
+      "let count = 0;",
+      "setInterval(() => {",
+      "  const fd = fs.openSync(file, 'a');",
+      "  try { fs.writeSync(fd, 'A:' + (count++) + '\\n'); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }",
+      "}, 50);",
+      "setTimeout(() => process.exit(0), 30000);",
+    ].join('\n');
+    writer = spawn(process.execPath, ['-e', script, writerFile], { cwd: workerA, stdio: 'ignore' });
+    const deadline = Date.now() + 5000;
+    while (readWriterLines() < 5 && Date.now() < deadline) await delay(50);
+    assert.ok(readWriterLines() >= 5, 'old Writer must actually write before Delivery');
+    assert.equal(writer.exitCode, null, 'old Writer must remain active');
+
+    fs.writeFileSync(path.join(workerB, 'shared.txt'), 'B:only\n');
+    const patch = String(runGit(workerB, ['diff', '--binary', '--', 'shared.txt']).stdout);
+    assert.ok(patch.includes('B:only'));
+    const integrationIdentity = observeWorkspaceIdentity({ projectRoot: workerB }).identity;
+    const patchDigest = 'sha256:' + 'c'.repeat(64);
+    const ownerFence = controlPlane.acquireOwnerWorkspaceMutationFence(runId, snapshot);
+    const check = runGit(projectRoot, ['apply', '--check', '--binary', '-'], { input: patch });
+    assert.equal(check.status, 0);
+    controlPlane.assertOwnerWorkspaceMutationReady(runId, {
+      ...snapshot,
+      fencingToken: ownerFence.lock.fencingToken,
+      sessionToken: ownerFence.lock.sessionToken,
+      integrationWorkspaceIdentity: integrationIdentity,
+      changedPaths: ['shared.txt'],
+      patchDigest,
+    });
+    const apply = runGit(projectRoot, ['apply', '--binary', '-'], { input: patch });
+    assert.equal(apply.status, 0);
+
+    const integrated = observeWorkspaceIdentity({ projectRoot }).identity;
+    const committed = controlPlane.recordOwnerWorkspaceMutation(runId, {
+      ...snapshot,
+      fencingToken: ownerFence.lock.fencingToken,
+      sessionToken: ownerFence.lock.sessionToken,
+      integrationWorkspaceIdentity: integrated,
+      changedPaths: ['shared.txt'],
+      patchDigest,
+    });
+    assert.equal(committed.status, 'applied');
+    assert.equal(Number(committed.mutationRevision), Number(snapshot.expectedMutationRevision) + 1);
+
+    const aBefore = readWriterLines();
+    await delay(200);
+    assert.equal(writer.exitCode, null, 'Worker A remains alive after B Delivery');
+    assert.ok(readWriterLines() > aBefore, 'Worker A continues writing only its own Worktree');
+    assert.equal(fs.readFileSync(path.join(projectRoot, 'shared.txt'), 'utf8'), 'B:only\n');
+    assert.throws(
+      () => controlPlane!.recordOwnerWorkspaceMutation(runId, {
+        ...snapshot,
+        fencingToken: ownerFence.lock.fencingToken,
+        sessionToken: ownerFence.lock.sessionToken,
+        integrationWorkspaceIdentity: integrated,
+        changedPaths: ['shared.txt'],
+        patchDigest: 'sha256:' + 'd'.repeat(64),
+      }),
+      (error) => assertTestRecord(error).code === 'delivery_mutation_revision_stale',
+      'a late result from the old baseline must not advance Owner mutation revision',
+    );
+    controlPlane.releaseOwnerWorkspaceMutationFence(runId, {
+      workspaceId: ownerFence.lock.workspaceId,
+      fencingToken: ownerFence.lock.fencingToken,
+      sessionToken: ownerFence.lock.sessionToken,
+    });
+  } finally {
+    if (writer && writer.exitCode === null) {
+      writer.kill('SIGTERM');
+      await Promise.race([once(writer, 'exit'), delay(3000)]);
+      if (writer.exitCode === null) writer.kill('SIGKILL');
+    }
+    if (controlPlane) await controlPlane.close();
+    runGit(projectRoot, ['worktree', 'remove', '--force', workerA]);
+    runGit(projectRoot, ['worktree', 'remove', '--force', workerB]);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
