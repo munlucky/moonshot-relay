@@ -11,23 +11,23 @@
 | Windows-side Linux MCP (`/shared/moonshot-relay`) | Node v22.23.4, `main/77b55f52`, `codex` 명령 없음. `NODE_ENV=production` 때문에 dev TypeScript optional 플랫폼 패키지 설치 누락. 격리 `/tmp` checkout에서 개발 의존성 설치 후 TypeScript 테스트 실행 | **CLI native Codex Worker 실험 불가.** Model adapter unit/E2E fixture만 가능 |
 | Windows Native (Moonremote host executor) | `exec_command(executionTarget=host)` 호출이 `persistence_unavailable` / `Native host executor heartbeat is stale` 오류로 실행 전 거절 | **DEFER.** 기존 사용자의 native 실행기를 임의로 재시작하지 않음 |
 | Mac-side Linux MCP (`/shared/moonshot-relay`) | Mac 연결의 Linux MCP checkout `main/3797c60f`, clean, 실행 중 Moonremote task 없음. Windows-side와 서로 다른 workspace/Host | Source baseline 다름. Native 세션 생존 증거가 아님; 이 checkout에는 write하지 않음 |
-| Mac Native (Moonremote-Mac host executor) | `Darwin 25.5.0 arm64`, `codex-cli 0.162.1`, App Server CLI와 생성 프로토콜 확인. 격리 WebSocket의 `initialize`, `thread/start`, 클라이언트 연결 종료 후 같은 Thread `thread/read(includeTurns=false)` PASS ([상세](W0_NATIVE_FOLLOWUP_2026-11-03.md)) | **일부 OBSERVED.** 진행 중 Turn·App Server 재시작·완전한 `thread/resume`는 미검증. 사용자 Daemon socket은 없음 |
+| Mac Native (Moonremote-Mac host executor) | `Darwin 25.5.0 arm64`, `codex-cli 0.162.1`. 격리 인증 후 실제 Turn 시작/완료·이력 조회 PASS. [in-flight 연결 시험](W0_INFLIGHT_CONNECTION_LIFECYCLE_2026-11-03.md)에서 시작 연결 해제→interrupted, 시작 연결 유지→다른 연결에서 inProgress 재조회/interrupt PASS, 새 App Server에서 중단 이력 조회 PASS | **연결·이력·Turn-level 제어만 부분 PASS**. 실제 Codex OS Writer·진행 중 command 복구·사용자 Main 세션 분리·Windows 교차 검증 미실행 |
 
-**주의:** Mac의 Thread 메타데이터 연결 교체 PASS는 진행 중 모델 Worker 생존/복구의 PASS가 아니다. 실제 `thread/read(includeTurns=true)`는 `list_turns is not supported yet`, 빈 Thread의 `thread/resume(excludeTurns=true)`는 `no rollout found`였다. Windows Native stale heartbeat도 기능 부재의 증거는 아니다.
+**주의:** 이전 미인증·빈 Thread의 `list_turns is not supported yet`/`no rollout found`는 그 시험 조건의 결과다. 이후 인증·실제 완료/중단 Turn의 이력 읽기가 성공했다. Host 연결을 유지한 모의 Main 클라이언트 교체 성공은 실제 사용자 Main→Host 통합이나 OS Writer 생존·복구의 증거가 아니다. Windows Native stale heartbeat도 기능 부재의 증거는 아니다.
 
 ## T26 — 연결/프로세스 종료별 독립 시험
 
 | 관측 항목 | Windows-side MCP | Windows Native | Mac-side MCP | Mac Native |
 | --- | --- | --- | --- | --- |
-| Main 연결 종료 후 실제 Worker 생존 | NOT_TESTED | DEFER | NOT_TESTED | UNKNOWN |
+| Main 연결 종료 후 실제 Worker 생존 | NOT_TESTED | DEFER | NOT_TESTED | **모의 비소유 클라이언트 연결 종료 후 Turn inProgress 재조회 PASS**, 실제 Main 세션 종료는 NOT_TESTED |
 | MCP 연결 종료 후 실제 Worker 생존 | NOT_TESTED | DEFER | NOT_TESTED | UNKNOWN |
-| App Server 종료 후 실제 Worker 생존/안전 정지 | NOT_TESTED | DEFER | NOT_TESTED | DEFER (실사용 세션 보호) |
+| App Server 종료 후 실제 Worker 생존/안전 정지 | NOT_TESTED | DEFER | NOT_TESTED | 새 App Server에서 중단 Turn의 이력 read PASS, **in-flight command 재개 NOT_TESTED** |
 | Host 프로세스 종료 후 생존/재개 | NOT_TESTED | DEFER | NOT_TESTED | DEFER (실사용 세션 보호) |
-| 독립 Thread ID 및 Turn ID 관측 | NOT_TESTED | DEFER | NOT_TESTED | **Thread ID PASS / Turn ID NOT_TESTED** |
+| 독립 Thread ID 및 Turn ID 관측 | NOT_TESTED | DEFER | NOT_TESTED | **Thread ID·Turn ID PASS** (격리 실제 Turn 3회) |
 | 현재 실행 중 command의 idempotent 재연결 | NOT_TESTED | DEFER | NOT_TESTED | UNKNOWN |
-| status 재조회 | NOT_TESTED | DEFER | NOT_TESTED | **완료된 실제 Turn의 Thread metadata·이력 조회 PASS**, *in-flight* status UNKNOWN. 미인증 실험용 `backgroundTerminals/list`는 빈 배열 |
-| 승인/취소 신호와 적용 시점 | NOT_TESTED | DEFER | NOT_TESTED | UNKNOWN |
-| 원본 transcript/terminal event 직접 접근·digest | NOT_TESTED | DEFER | NOT_TESTED | UNKNOWN |
+| status 재조회 | NOT_TESTED | DEFER | NOT_TESTED | **Host 연결 유지 조건의 inProgress 재조회 PASS**, 시작 연결 종료 시 interrupted 재조회. OS command status UNKNOWN |
+| 승인/취소 신호와 적용 시점 | NOT_TESTED | DEFER | NOT_TESTED | 다른 연결의 `turn/interrupt` 후 interrupted 상태 PASS; 승인·후손 OS 프로세스 종료 UNKNOWN |
+| 원본 transcript/terminal event 직접 접근·digest | NOT_TESTED | DEFER | NOT_TESTED | App Server 재시작 후 `thread/read(includeTurns=true)` 기록 조회 PASS; 원본 event digest/lossless·in-flight 명령 복구 UNKNOWN |
 | Native `spawn_agent` 실제 사용 가능 | 코드 wrapper만 확인 | DEFER | 코드 wrapper만 확인 | UNKNOWN |
 | old Worker에 대한 물리 쓰기 차단 | NOT_TESTED | DEFER | NOT_TESTED | UNKNOWN |
 

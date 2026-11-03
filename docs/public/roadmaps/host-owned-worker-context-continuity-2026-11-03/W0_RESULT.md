@@ -3,9 +3,9 @@
 - 작성: 2026-11-03
 - 시작 소스: `main / 77b55f52c7035f570532078424bf28c1567625fe`, 초기 작업 트리 clean
 - **T23 함수-level 수정: SOURCE PASS**
-- **G0 통합 수용: PARTIAL** — 실제 Host-owned 독립 Worker 생존·재연결을 Native에서 입증하지 못함
+- **G0 통합 수용: PARTIAL** — Native App Server에서 Host 연결 유지 조건의 in-flight Turn 재조회·다른 연결의 interrupt는 확인했으나, 실제 Moonshot Relay Main/Host 통합·OS Writer 중단·명령 재개는 미검증
 - W1: **DEFER / 미착수**. Host capability 검증 전 Controller·Worker DB·새 Scheduler를 구현하지 않음.
-- 세부: [W0_CODE_MAP](W0_CODE_MAP.md) · [W0_CAPABILITY_MATRIX](W0_CAPABILITY_MATRIX.md) · [W0_BASELINE](W0_BASELINE.md) · [Native 후속 검증](W0_NATIVE_FOLLOWUP_2026-11-03.md) · [VERIFICATION](VERIFICATION.md)
+- 세부: [W0_CODE_MAP](W0_CODE_MAP.md) · [W0_CAPABILITY_MATRIX](W0_CAPABILITY_MATRIX.md) · [W0_BASELINE](W0_BASELINE.md) · [인증 및 완료 Turn 검증](W0_AUTH_TURN_RESULT_2026-11-03.md) · [in-flight 수명 검증](W0_INFLIGHT_CONNECTION_LIFECYCLE_2026-11-03.md) · [VERIFICATION](VERIFICATION.md)
 
 ## 1. 확인된 문제 (관측)와 불명확한 문제 (가설)
 
@@ -56,7 +56,7 @@
 ## 4. W0.1 Capability / W0.2 실행 중복 조사
 
 - Windows Native Moonremote executor는 stale heartbeat (`persistence_unavailable`)로 읽기 전용 Host probe가 시작되지 않았다.
-- Mac Native의 **초기 미인증·빈 Thread** 실험에서는 이력 읽기/`thread/resume` 실패와 격리 `shellCommand` 시 PID 미관측·Responses WebSocket `401 Unauthorized`가 있었다([기존 Native 결과](W0_NATIVE_FOLLOWUP_2026-11-03.md)). **후속 격리 기기 인증** 후 실제 단일 Turn `completed`와 새로운 WebSocket 연결에서 `thread/read(includeTurns=true)`가 성공했다([인증·Turn 검증](W0_AUTH_TURN_RESULT_2026-11-03.md)). 그러나 **실행 중 Turn의 연결 교체·취소·old Writer 차단은 계속 미검증**이다.
+- Mac Native의 **초기 미인증·빈 Thread** 실험에서는 이력 읽기/`thread/resume` 실패와 격리 `shellCommand` 시 PID 미관측·Responses WebSocket `401 Unauthorized`가 있었다([기존 Native 결과](W0_NATIVE_FOLLOWUP_2026-11-03.md)). **후속 격리 기기 인증** 후 실제 단일 Turn `completed`와 새로운 WebSocket 연결에서 `thread/read(includeTurns=true)`가 성공했다([인증·Turn 검증](W0_AUTH_TURN_RESULT_2026-11-03.md)). 이후 [in-flight 수명 검증](W0_INFLIGHT_CONNECTION_LIFECYCLE_2026-11-03.md)에서 실제 Turn을 시작한 WebSocket을 닫으면 중단된 상태로 재조회됐으나, 시작 연결을 Host 역할로 유지하면 다른 클라이언트 종료 후 새 연결에서 inProgress 조회·interrupt→interrupted가 가능했다. 새 App Server 프로세스에서도 중단된 Turn의 이력 조회가 성공했다. **실제 Moonshot Relay Main/Host 수명 분리·실행 중 command 재개·old Writer 물리 차단은 미검증**이다.
 - Linux MCP 표면에는 `codex` CLI가 없다. Linux 측에서 Codex Native Worker 생존을 시험할 수 없는 것이지 사용자 Native Host의 기능 부재를 뜻하지 않는다.
 - Mac MCP checkout은 초기 기준보다 한 커밋 뒤처져 있으므로 같은 소스 E2E가 아니며 변경하지 않았다.
 - Source 검색에서 자동 Goals loop 구현 및 실제 App Server thread-control API를 확인하지 못했다. 모델/Tool 기능은 설치된 Native에서 별도로 측정해야 한다.
@@ -69,9 +69,9 @@
 | ContextReceipt T23 원인·수정·focused test | **SOURCE PASS** | 수정 유지·회귀 테스트 보호 |
 | W0 코드 호출 그래프 및 소유권 | **SOURCE PASS** | W1 재사용 경계 보존 |
 | W0.4 A/B/E/C/D 사전 등록 | **PLAN COMPLETE** | Native 기술 가능성 입증 후 실험 |
-| Mac/Windows Native Worker life/status/reconnect | **DEFER/UNKNOWN** | Host executor 정상화 후 **격리 새 테스트 Thread**로 재측정 |
+| Mac/Windows Native Worker life/status/reconnect | **Mac Turn-level PARTIAL / Windows DEFER** | Host 연결 유지 시 inProgress 재조회·원격 interrupt PASS; 실제 Main/Host lifecycle·OS Writer·Windows executor 미검증 |
 | T24 Goals/loop 이중 실행 위험 | **PARTIAL / 코드 관찰만** | 앱/Host 실제 실행 경로 검증 |
-| T26 Main/MCP/App Server/Host 종료 후 상태 | **NOT TESTED** | 기존 사용자 세션 비파괴 조건에서 별도 실행 |
+| T26 Main/MCP/App Server/Host 종료 후 상태 | **PARTIAL (Native 모의 클라이언트 및 이력 재조회)** | 시작 WS 해제 시 interrupted, Host WS 유지 시 다른 클라이언트 종료·재조회 가능, 새 App Server에서 기록 조회. 실제 Main/MCP/OS command 연속성은 미검증 |
 | T25 OS Writer 실질 차단 | **NOT TESTED** | G1/G4 선행. CAS/Lease만으로 PASS 금지 |
 | G0 전체 | **PARTIAL** | **W1 live worker 구현 중단**, 미완료 Native 실험부터 계속 |
 

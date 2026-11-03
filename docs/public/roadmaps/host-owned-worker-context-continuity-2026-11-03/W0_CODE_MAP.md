@@ -95,3 +95,12 @@ Lease 만료·CAS mismatch만으로 A가 OS level에서 파일 쓰기를 멈췄�
 반면 `src/host/kernel/process-observation.ts`의 `process.kill(pid, 0)`은 PID 존재 확인일 뿐이다. Native Codex Worker의 OS process group 종료, 실행 중 command 재연결, old Writer의 파일 변경 차단을 증명하지 않는다.
 
 또한 실제 Mac Native 시험에서 `thread/shellCommand` RPC 응답 `result: {}`와 `thread/backgroundTerminals/list`의 빈 목록만 관측됐으며, App Server가 Responses WebSocket에 연결하려다 `401 Unauthorized`를 기록했다. [Native 후속 검증](W0_NATIVE_FOLLOWUP_2026-11-03.md) 참조. **G0는 PARTIAL**이며 실제 OS Writer를 관측할 수 있기 전까지 새로운 범용 Worker 관리 계층을 추가하지 않는다.
+
+
+## W0 Native in-flight 실측으로 좁혀진 소유권 경계
+
+[실제 Native in-flight 검증](W0_INFLIGHT_CONNECTION_LIFECYCLE_2026-11-03.md)에서는 `turn/start`를 호출한 WebSocket을 종료하자 동일 Thread의 Turn이 `interrupted`로 조회됐다. 반면 그 연결을 **Host 역할로 계속 유지**하고 다른 클라이언트만 종료하면 새 클라이언트에서 해당 Turn의 `inProgress`를 재조회하고 `turn/interrupt` 이후 `interrupted`까지 확인했다. 모두 Mac Native Codex `0.162.1`의 격리된 App Server에서 수행한 결과다.
+
+**설계 후보:** 연결 소유권은 Main/MCP 요청 수명에 묶지 않고 기존 Host 수명에 귀속한다. 모델-visible 인터페이스는 기존 `Kernel next/report`를 유지하고, App Server에 대한 지속적인 연결과 이를 조회하는 외부 Control 요청의 책임만 분리한다. 코어 Run/Step/Attempt·Evidence/Trust·Knowledge 권위는 절대 복제하지 않는다.
+
+**중요한 한계:** 실제 Moonshot Relay Runtime에서 Main이 종료돼도 Host가 해당 WebSocket을 유지하는지, OS 후손 프로세스를 실제 중단해 재할당 전 이중 파일 쓰기를 막는지는 **검증되지 않았다**. Host 유지 연결 자체의 재접속/장애 복구 정책을 새 DB와 별도 Queue로 과잉 일반화하지 않는다.
