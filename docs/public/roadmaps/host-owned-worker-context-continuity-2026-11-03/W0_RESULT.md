@@ -72,7 +72,7 @@
 | Mac/Windows Native Worker life/status/reconnect | **Mac Turn-level PARTIAL / Windows DEFER** | Host 연결 유지 시 inProgress 재조회·원격 interrupt PASS; 실제 Main/Host lifecycle·OS Writer·Windows executor 미검증 |
 | T24 Goals/loop 이중 실행 위험 | **PARTIAL / 코드 관찰만** | 앱/Host 실제 실행 경로 검증 |
 | T26 Main/MCP/App Server/Host 종료 후 상태 | **PARTIAL (Native 모의 클라이언트 및 이력 재조회)** | 시작 WS 해제 시 interrupted, Host WS 유지 시 다른 클라이언트 종료·재조회 가능, 새 App Server에서 기록 조회. 실제 Main/MCP/OS command 연속성은 미검증 |
-| T25 OS Writer 실질 차단 | **interrupt-only FAIL / Owner CAS PASS / 협력적 다중 프로세스 단일 Workspace 예약 PASS / 전역 강제 Gate 미구현** | [T25 물리 Workspace 예약 실측](W0_T25_PHYSICAL_WORKSPACE_WRITER_RESERVATION_2026-11-03.md): 실제 A Writer 중 Kernel Lock TTL 만료 후에도 독립 B 프로세스의 같은 물리 Workspace 재예약 거부, 별도 Worktree B 허용. 확장 64/64 PASS. 단, 예약 파일 직접 삭제·비공유 Host·Native Writer/Kernel 실제 E2E/후손 종료는 미검증 |
+| T25 OS Writer 실질 차단 | **interrupt-only FAIL / Owner CAS PASS / Host 외부 예약 및 선택형 Writable 시작 Gate PASS(격리) / 운영 강제 Gate 미구현** | [T25 외부 예약·Native Gate 검증](W0_T25_EXTERNAL_WRITER_ADMISSION_2026-11-03.md): 실제 A Writer/다중 프로세스 예약과 모의 App Server Writable Turn의 시작 전 거부, Canonical Attempt 이벤트 연결을 67/67 회귀로 검증. 실제 운영 App Server/Kernel 일체형 Writer 종료·재시도·후손·다른 머신의 접근 제어는 미검증 |
 | G0 전체 | **PARTIAL** | **W1 live worker 구현 중단**, 미완료 Native 실험부터 계속 |
 
 **다음 단계 (이미 결정된 경로):** 정상 동작하는 Native Host에서 격리 프로세스/Thread를 만들어 (1) start handle (2) 상태 재조회 (3) Main 독립성 (4) cancel/approval (5) old writer 안전 정지를 입증한다. Live Worker가 안 되지만 안전 중단·새 Thread 재개만 가능하다면 원래 계획의 B가 아니라 **degraded-safe-resume 별도 제한 채택**으로 분류한다. 원래 `E` authority-only resume을 먼저 검증하고, `C` Handoff는 추가 효용 입증 전 도입하지 않는다.

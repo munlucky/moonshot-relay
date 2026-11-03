@@ -1,5 +1,7 @@
 # W0 T25 — 물리 Workspace Writer 중복 예약 실측과 신뢰 경계
 
+> 이 문서는 당시의 Workspace 내부 예약 검증을 보존한다. [후속 외부 예약 및 Native Writable 시작 Gate](W0_T25_EXTERNAL_WRITER_ADMISSION_2026-11-03.md)에서 예약 파일을 Host 전용 경로로 이동했다.
+
 - 검증: 2026-11-03 (KST)
 - 기준: `main / f9a8f7635ae869cf199c65fc0c21f10b6b43ff3a`
 - 변경: `src/host/kernel/workspace-writer-reservation.ts`, `tests/kernel-workspace-writer-reservation.test.ts` 및 W0 문서

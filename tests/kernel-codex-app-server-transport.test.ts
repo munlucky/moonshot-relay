@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createCodexAppServerTransport } from '../src/host/kernel/codex-app-server-transport.js';
@@ -10,6 +10,8 @@ import { createKernelControlPlane } from '../src/host/kernel/control-plane-runti
 
 const fakeServer = String.raw`
 const readline = require('node:readline');
+const fs = require('node:fs');
+const path = require('node:path');
 let serial = 0;
 const send = (message) => process.stdout.write(JSON.stringify(message) + '\n');
 const input = readline.createInterface({ input: process.stdin });
@@ -19,7 +21,8 @@ input.on('line', (line) => {
   if (message.method === 'initialize') {
     if (process.env.TEST_MODE !== 'stall-initialize') send({ id, result: { userAgent: 'fixture' } });
   } else if (message.method === 'thread/start') {
-    if (message.params.sandbox !== 'read-only' || message.params.approvalPolicy !== 'never') {
+    const expectedSandbox = process.env.TEST_MODE === 'writable' ? 'workspace-write' : 'read-only';
+    if (message.params.sandbox !== expectedSandbox || message.params.approvalPolicy !== 'never') {
       send({ id, error: { code: -1, message: 'unsafe launch' } });
     } else {
       send({ id, result: { thread: { id: 'thr-' + (++serial) } } });
@@ -28,9 +31,23 @@ input.on('line', (line) => {
     if (process.env.TEST_MODE === 'disconnect') process.exit(0);
     const threadId = message.params.threadId;
     const turnId = 'turn-' + serial;
-    if (message.params.sandboxPolicy?.type !== 'readOnly' || !message.params.model || !message.params.effort) {
+    const policy = message.params.sandboxPolicy;
+    const workspaceWrite = process.env.TEST_MODE === 'writable';
+    const allowed = workspaceWrite
+      ? policy?.type === 'workspaceWrite'
+        && policy?.networkAccess === false
+        && policy?.excludeSlashTmp === true
+        && policy?.excludeTmpdirEnvVar === true
+        && Array.isArray(policy?.writableRoots)
+        && policy.writableRoots.length === 1
+        && policy.writableRoots[0] === message.params.cwd
+      : policy?.type === 'readOnly';
+    if (!allowed || !message.params.model || !message.params.effort) {
       send({ id, error: { code: -1, message: 'unsafe turn' } });
       return;
+    }
+    if (process.env.TEST_MODE === 'writable') {
+      fs.writeFileSync(path.join(message.params.cwd, 'mock-writer-started.txt'), 'started');
     }
     if (process.env.TEST_MODE === 'stall-turn') {
       send({ id, result: { turn: { id: turnId, status: 'inProgress' } } });
@@ -52,17 +69,19 @@ input.on('line', (line) => {
 `;
 
 const withFixture = async <T>(
-  fn: (input: { workspace: string; alternative: string; server: string }) => Promise<T>,
+  fn: (input: { workspace: string; alternative: string; server: string; reservationRoot: string }) => Promise<T>,
 ): Promise<T> => {
   const root = await mkdtemp(path.join(tmpdir(), 'codex-app-server-fixture-'));
   try {
     const workspace = path.join(root, 'first');
     const alternative = path.join(root, 'second');
     const server = path.join(root, 'mock-app-server.cjs');
+    const reservationRoot = path.join(root, 'host-reservations');
     await mkdir(workspace);
     await mkdir(alternative);
+    await mkdir(reservationRoot);
     await writeFile(server, fakeServer);
-    return await fn({ workspace, alternative, server });
+    return await fn({ workspace, alternative, server, reservationRoot });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -235,6 +254,134 @@ test('A Host observer exception poisons the Native connection instead of produci
     } finally {
       const closed = await transport.close();
       assert.equal(closed.writerExitVerified, false);
+    }
+  });
+});
+
+
+test('Opt-in writable Host Turn requires a protected external reservation before starting a Native RPC', async () => {
+  await withFixture(async ({ workspace, alternative, server, reservationRoot }) => {
+    const options = {
+      executable: process.execPath, args: [server], requestTimeoutMs: 1500,
+      env: { ...process.env, TEST_MODE: 'writable' },
+    };
+    const owner = { runId: 'run-a', stepId: 'step-a', attemptId: 'attempt-a', workspaceId: 'workspace-a' };
+    const a = await createCodexAppServerTransport(options);
+    const b = await createCodexAppServerTransport(options);
+    const seen: NativeExecutionObservation[] = [];
+    const writable = (cwd: string) => ({
+      ...turn(cwd), executionOwner: owner,
+      onNativeExecution: (item: NativeExecutionObservation) => { seen.push(item); },
+      writableWorker: { reservationRoot },
+    });
+    try {
+      await assert.rejects(a.runTurn({ ...turn(workspace), writableWorker: { reservationRoot } }), {
+        code: 'codex_app_server_observation_owner_required',
+      });
+      assert.deepEqual(await readdir(reservationRoot), [], 'invalid ownership must not reserve a Workspace');
+
+      const first = a.runTurn(writable(workspace));
+      const firstResult = await first;
+      assert.equal(firstResult.turnStatus, 'completed');
+      assert.equal(firstResult.writerExitVerified, false);
+      assert.equal(await readFile(path.join(workspace, 'mock-writer-started.txt'), 'utf8'), 'started');
+      assert.ok(seen.length >= 2 && seen.every(item => item.attemptId === owner.attemptId));
+      assert.equal((await readdir(reservationRoot)).length, 1);
+      assert.equal((await readdir(workspace)).some(entry => entry.startsWith('writer-')), false);
+
+      await assert.rejects(b.runTurn(writable(workspace)), {
+        code: 'host_writer_workspace_already_reserved',
+      });
+      await assert.rejects(b.runTurn(writable(path.join(workspace, '..', 'first'))), {
+        code: 'host_writer_workspace_already_reserved',
+      });
+      // B did not even call thread/start for a denied Workspace.
+      const second = await b.runTurn(writable(alternative));
+      assert.equal(second.threadId, 'thr-1');
+      assert.equal(second.turnStatus, 'completed');
+      assert.equal((await readdir(reservationRoot)).length, 2);
+
+      const aClosed = await a.close();
+      assert.equal(aClosed.writerExitVerified, false);
+      const restartedHost = await createCodexAppServerTransport(options);
+      try {
+        await assert.rejects(restartedHost.runTurn(writable(workspace)), {
+          code: 'host_writer_workspace_already_reserved',
+        });
+      } finally {
+        await restartedHost.close();
+      }
+    } finally {
+      await a.close();
+      await b.close();
+    }
+  });
+});
+
+test('Writable admission refuses a reservation directory inside the Worker Workspace', async () => {
+  await withFixture(async ({ workspace, server }) => {
+    const transport = await createCodexAppServerTransport({
+      executable: process.execPath, args: [server], requestTimeoutMs: 1500,
+      env: { ...process.env, TEST_MODE: 'writable' },
+    });
+    const owner = { runId: 'run-a', stepId: 'step-a', attemptId: 'attempt-a', workspaceId: 'workspace-a' };
+    try {
+      await assert.rejects(transport.runTurn({
+        ...turn(workspace), executionOwner: owner,
+        onNativeExecution: () => undefined,
+        writableWorker: { reservationRoot: workspace },
+      }), { code: 'host_writer_reservation_root_inside_workspace' });
+      assert.equal((await readdir(workspace)).length, 0, 'failed admission must not write into the Workspace');
+    } finally {
+      await transport.close();
+    }
+  });
+});
+
+
+test('A Canonical Kernel Attempt owns an opt-in writable Turn without granting Kernel completion', async () => {
+  await withFixture(async ({ workspace, server, reservationRoot }) => {
+    const initialized = spawnSync('git', ['init'], { cwd: workspace, encoding: 'utf8' });
+    assert.equal(initialized.status, 0, initialized.stderr);
+    await writeFile(path.join(workspace, 'package.json'), JSON.stringify({
+      name: 'writable-attempt-fixture', scripts: { 'test:fixture': 'node --version' },
+    }));
+    const cp = await createKernelControlPlane({
+      runtimeHome: path.join(path.dirname(workspace), 'kernel-state'),
+      projectRoot: workspace,
+    });
+    let transport: Awaited<ReturnType<typeof createCodexAppServerTransport>> | null = null;
+    try {
+      const runId = 'run-isolated-writable-attempt';
+      await cp.startRun({ runId, objective: 'writable test only with existing Kernel Attempt' });
+      const attempt = cp.beginAttempt(runId);
+      const run = await cp.getRun(runId);
+      assert.ok(attempt?.attemptId && attempt.stepId && run?.workspaceId);
+      const owner = {
+        runId, stepId: attempt.stepId, attemptId: attempt.attemptId, workspaceId: run.workspaceId,
+      };
+      const seen: NativeExecutionObservation[] = [];
+      transport = await createCodexAppServerTransport({
+        executable: process.execPath, args: [server], requestTimeoutMs: 1500,
+        env: { ...process.env, TEST_MODE: 'writable' },
+      });
+      const result = await transport.runTurn({
+        ...turn(workspace), executionOwner: owner,
+        onNativeExecution: (event) => { seen.push(event); },
+        writableWorker: { reservationRoot },
+      });
+      assert.equal(result.turnStatus, 'completed');
+      assert.equal(result.writerExitVerified, false);
+      assert.equal((await readdir(reservationRoot)).length, 1);
+      assert.ok(seen.length >= 2 && seen.every(event =>
+        event.runId === runId && event.stepId === attempt.stepId
+        && event.attemptId === attempt.attemptId && event.workspaceId === run.workspaceId));
+      assert.equal(cp.stateStore.getActiveStepAttempt(runId, { stepId: attempt.stepId })?.status, 'started');
+      assert.equal((await transport.close()).writerExitVerified, false);
+      assert.equal(cp.stateStore.getActiveStepAttempt(runId, { stepId: attempt.stepId })?.status, 'started');
+    } finally {
+      await transport?.close();
+      await cp.close();
     }
   });
 });

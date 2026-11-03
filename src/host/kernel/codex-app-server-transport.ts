@@ -6,6 +6,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 import { bindNativeCommandEvent, type NativeExecutionOwner, type NativeExecutionObserver } from './adapter-dispatch.js';
+import { reserveHostWorkspaceWriter } from './workspace-writer-reservation.js';
 
 type RecordValue = Record<string, unknown>;
 type ServerMessage = RecordValue & { id?: unknown; method?: unknown; params?: unknown };
@@ -23,6 +24,9 @@ export interface CodexAppServerTurn {
   timeoutMs?: number;
   executionOwner?: NativeExecutionOwner | null;
   onNativeExecution?: NativeExecutionObserver | null;
+  // Explicit Host-only opt-in. The reservation root must be inaccessible to
+  // the Worker sandbox; this does not change the default read-only transport.
+  writableWorker?: { reservationRoot: string } | null;
 }
 
 export interface CodexAppServerTurnResult {
@@ -202,13 +206,14 @@ export async function createCodexAppServerTransport({
   }
 
   return {
-    async runTurn({ cwd: requestedCwd, prompt, model, effort, timeoutMs: turnTimeout, executionOwner = null, onNativeExecution = null }) {
+    async runTurn({ cwd: requestedCwd, prompt, model, effort, timeoutMs: turnTimeout, executionOwner = null, onNativeExecution = null, writableWorker = null }) {
       if (closed || poisoned || exited) throw error('codex_app_server_unavailable');
       if (active) throw error('codex_app_server_turn_already_running');
       if (!name(prompt) || !name(model) || !name(effort) || !name(requestedCwd)) {
         throw error('codex_app_server_turn_input_invalid');
       }
-      if (Boolean(executionOwner) !== Boolean(onNativeExecution)) {
+      if (Boolean(executionOwner) !== Boolean(onNativeExecution)
+        || (writableWorker !== null && (!executionOwner || !onNativeExecution))) {
         throw error('codex_app_server_observation_owner_required');
       }
       const effectiveTimeout = timeBudget(turnTimeout, DEFAULT_TURN_TIMEOUT_MS);
@@ -220,6 +225,17 @@ export async function createCodexAppServerTransport({
         workspace = await realpath(requestedCwd);
         if (attemptedWorkspaces.has(workspace)) {
           throw error('codex_app_server_workspace_reuse_unverified');
+        }
+        if (writableWorker) {
+          // This is admission before any thread/start or turn/start RPC.
+          // Unknown/failed admission never invokes a writable model Turn.
+          await reserveHostWorkspaceWriter({
+            workspaceRoot: workspace,
+            reservationRoot: writableWorker.reservationRoot,
+            runId: executionOwner!.runId,
+            attemptId: executionOwner!.attemptId,
+            workspaceId: executionOwner!.workspaceId,
+          });
         }
       } catch (cause) {
         active = false;
@@ -270,7 +286,8 @@ export async function createCodexAppServerTransport({
       let settled = false;
       try {
         const thread = await rpc('thread/start', {
-          cwd: workspace, sandbox: 'read-only', approvalPolicy: 'never', ephemeral: true,
+          cwd: workspace, sandbox: writableWorker ? 'workspace-write' : 'read-only',
+          approvalPolicy: 'never', ephemeral: true,
         });
         const threadId = name(object(thread.thread)?.id);
         if (!threadId) throw error('codex_app_server_thread_missing');
@@ -279,7 +296,11 @@ export async function createCodexAppServerTransport({
         attemptedWorkspaces.add(workspace);
         const turn = await rpc('turn/start', {
           threadId, input: [{ type: 'text', text: prompt }],
-          model, effort, cwd: workspace, sandboxPolicy: { type: 'readOnly' },
+          model, effort, cwd: workspace,
+          sandboxPolicy: writableWorker
+            ? { type: 'workspaceWrite', writableRoots: [workspace], networkAccess: false,
+              excludeSlashTmp: true, excludeTmpdirEnvVar: true }
+            : { type: 'readOnly' },
         });
         const turnId = name(object(turn.turn)?.id);
         if (!turnId) throw error('codex_app_server_turn_missing');

@@ -1,5 +1,7 @@
 # W0 T25 — Host-owned Codex App Server 읽기 전용 연결 수명 검증
 
+> 최초 읽기 전용 경로의 검증 문서이다. [후속 변경](W0_T25_EXTERNAL_WRITER_ADMISSION_2026-11-03.md)으로 선택형 Writable Turn 시작 Gate가 추가됐다. 기본 읽기 전용 실행은 유지한다.
+
 - 일자: 2026-11-03 (KST)
 - 기준: `main / 4078ef688f78e81194b18d5009b6ef1dc6b2df57`
 - 변경: `src/host/kernel/codex-app-server-transport.ts`, `tests/kernel-codex-app-server-transport.test.ts`.

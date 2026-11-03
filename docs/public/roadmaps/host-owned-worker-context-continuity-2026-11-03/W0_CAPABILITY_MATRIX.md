@@ -29,7 +29,7 @@
 | 승인/취소 신호와 적용 시점 | NOT_TESTED | DEFER | NOT_TESTED | 다른 연결의 `turn/interrupt` 후 interrupted 상태 PASS; 승인·후손 OS 프로세스 종료 UNKNOWN |
 | 원본 transcript/terminal event 직접 접근·digest | NOT_TESTED | DEFER | NOT_TESTED | App Server 재시작 후 `thread/read(includeTurns=true)` 기록 조회 PASS; 원본 event digest/lossless·in-flight 명령 복구 UNKNOWN |
 | Native `spawn_agent` 실제 사용 가능 | 코드 wrapper만 확인 | DEFER | 코드 wrapper만 확인 | UNKNOWN |
-| old Worker에 대한 물리 쓰기 차단 | **MCP Linux 반례: TTL 만료 후 A 실제 Writer 생존·추가 쓰기. 후속 격리 실험에서 Host B 예약 거부 PASS** | DEFER | NOT_TESTED | **turn/interrupt-only FAIL**. [T25 물리 Workspace 예약](W0_T25_PHYSICAL_WORKSPACE_WRITER_RESERVATION_2026-11-03.md): 독립 Node 프로세스끼리 같은 물리 Workspace의 single-use 예약 재획득 거부, 별도 Worktree 허용. **Worker가 예약을 삭제할 수 있는 보안 한계, Native Host 자동 적용·후손 종료·다른 OS 머신 미검증** |
+| old Worker에 대한 물리 쓰기 차단 | **MCP Linux 반례: TTL 만료 후 A 실제 Writer 생존. 후속 Host 외부 예약으로 B 시작 전 차단 PASS(격리)** | DEFER | NOT_TESTED | **turn/interrupt-only FAIL**. [T25 외부 예약·Writable 시작 Gate](W0_T25_EXTERNAL_WRITER_ADMISSION_2026-11-03.md): Workspace 외부 경로의 예약과 Opt-in App Server Writable 시작 전 Gate, 67/67 PASS. **Native 실제 Worker 강제 OS Sandbox/권한, 동일 Step 재시도/Worktree 재사용, 후손 종료·다른 OS 머신 미검증** |
 
 ## 관련 소스 경계
 

@@ -12,7 +12,7 @@
 | Mac-side MCP canonical checkout | 조회 완료 | 문서 편입 전 양쪽 `main / 3797c60f`, 별개 Runtime·DB·세션 |
 | 기존 사용자 작업 간섭 | 없음 (준비 작업 범위) | 사용자 Runtime/DB·Codex 세션 종료·설치·마이그레이션 없음 |
 | 프로젝트 로드맵 문서 정착 | **완료** | 2026-11-03 초기 문서와 W0-Fix를 `main`에 커밋·푸시 확인 |
-| W0 — Capability/기준선 | **G0 PARTIAL** | [T25 물리 Workspace 중복 예약](W0_T25_PHYSICAL_WORKSPACE_WRITER_RESERVATION_2026-11-03.md): Linux MCP의 실제 OS Writer A·다른 Node Host B가 같은 물리 Workspace에 중복 예약하는 것을 거부 PASS. Kernel TTL 만료 후에도 예약 유지. 확장 회귀 64/64 PASS. **Cooperative Host 한정, 예약 파일 삭제·다른 머신·생산 Dispatcher 자동 Gate 미검증** |
+| W0 — Capability/기준선 | **G0 PARTIAL** | [T25 Host 외부 예약·Writable Turn Gate](W0_T25_EXTERNAL_WRITER_ADMISSION_2026-11-03.md): 예약을 Worker Workspace 외부 Host 경로로 분리하고 Opt-in App Server Writable Turn에 시작 전 예약 Gate 적용. Linux 격리 67/67 PASS. 실제 운영 Host 강제 격리·Native Worker Outcome·동일 Host E2E 미검증 |
 | W0-Fix — ContextReceipt | **SOURCE PASS** | T23 재현 → 최소 수정, focused 17/17, typecheck/build/boundaries PASS. 확장 test:source-runtime timeout |
 | W1 — Host-owned Worker | **DEFER / 실제 Attempt-Writer Gate 대기** | Host 소유 Native commandExecution handle과 격리 Worktree/기존 Owner CAS를 연결해 종료·격리 증거 확인 전 같은 Workspace 재할당 금지 필요 |
 | W2 — status/signal/reconnect | NOT STARTED | W1 생존·Owner 경계 필요 |
@@ -35,10 +35,10 @@
 2. `W0_START.md`의 "0. 입장 조건" 수행. 완료된 분석·명령은 반복하지 않음.
 3. **완료한 T23 수정·인증·실제 Turn 완료·Native WebSocket 수명 비교·Turn-level interrupt·재시작 이력 조회를 반복하지 않음.** 다음에는 실제 Moonshot Relay의 Main/Host 실행 연결 분리, OS Writer 물리 중단·중복 실행 금지, Windows Native executor heartbeat 복구부터 시작. 기존 사용자 세션 종료 금지.
 4. [T25 추가 음성 검증](W0_T25_ADDITIONAL_NEGATIVE_VERIFICATION_2026-11-03.md)에서 실제 A Writer가 살아 있는 상태로 동일 Workspace Lock 재획득/추가 쓰기 5회와 별도 Worktree A/B 물리 격리 PASS를 확보. **Main/Host 연결 해제 중 Native Handle 회수는 이번 모델 시험에서 Writer 미생성으로 미검증.** 다음은 Attempt↔Native 실행 스트림 결합, 같은 Workspace Writer 재허가 Gate 및 실제 Delivery CAS 통합 검증. 완료된 시험 반복·새 DB/Queue/Provider별 하드코딩 금지.
-5. [T25 물리 Workspace 중복 예약 실측](W0_T25_PHYSICAL_WORKSPACE_WRITER_RESERVATION_2026-11-03.md)에서 실제 A Writer 생존·Kernel TTL 만료 뒤 별도 B Host 프로세스의 **같은 디렉터리 예약 거부**와 별도 Worktree 허용을 검증. 다음 단계는 **Host-managed Writable Worker의 모든 실행 진입에 예약을 강제 적용**, **예약 파일이 Worker에게 삭제되지 않도록 신뢰 경계 확인**, **Native Host·Kernel Attempt와 실제 Writer 종료 증명 단일 E2E**다. 이것은 아직 운영 Writer fencing PASS가 아니다. 기존 Owner CAS·기완료 fixture 반복 금지, G0 수용 전 W1 기본값 전환 금지.
+5. [T25 Host 외부 예약·Opt-in Writable Gate](W0_T25_EXTERNAL_WRITER_ADMISSION_2026-11-03.md)의 관련 회귀 67/67 PASS를 보존한다. **기본 Native/Parallel Dispatcher에는 아직 강제 적용하지 않았다.** 다음은 기존 Run·Step 재시도 Worktree 재사용 문제(Attempt별 격리 또는 안전 정리), 예약 경로 OS 권한 증명, 실제 Native Writer의 후손 종료 및 Kernel Report/Owner CAS 통합 E2E다. Turn 완료만으로 Writer 종료를 인정하지 않으며 G0 수용 전 W1 기본값 전환 금지.
 
 ## 변경 범위 원칙
 
-초기 준비 커밋은 문서만 변경했다. 후속 W0-Fix는 `src/kernel/context-build.ts` 및 2개 canonical 테스트를 수정했다. T25 후속에서는 기존 Owner CAS 회귀 테스트, **Native 이벤트↔Attempt 관측 경계**, 내부 선택형 **Host-owned App Server 읽기 전용 stdio 연결** 및 **물리 Workspace single-use Writer 예약**을 추가했다. 예약은 격리 Writable Worker 후보가 명시적으로 사용할 수 있는 보조 경계이며 운영 기본 경로에 자동 적용되지 않는다. 제품 기본 실행 경로·생성 Runtime·계정 설치·사용자 앱 서버·DB 스키마는 수정하지 않는다.
+초기 준비 커밋은 문서만 변경했다. 후속 W0-Fix는 `src/kernel/context-build.ts` 및 2개 canonical 테스트를 수정했다. T25 후속에서는 기존 Owner CAS 회귀 테스트, **Native 이벤트↔Attempt 관측 경계**, 내부 선택형 **Host-owned App Server 읽기 전용 stdio 연결** 및 **Host 외부 single-use Writer 예약 + 선택형 Native Writable Turn 시작 전 Gate**를 추가했다. 예약은 Host가 명시적으로 사용하는 보조 경계이며 제품 기본 실행기·Parallel Dispatcher에는 자동 적용되지 않는다. 제품 기본 실행 경로·생성 Runtime·계정 설치·사용자 앱 서버·DB 스키마는 수정하지 않는다.
 
 기존 [Ephemeral Work W7 결과](../ephemeral-work-persistent-knowledge-2026-10-31/W7_RESULT.md)는 실제 Codex in-flight 사용자 세션 재시작 및 Host 간 인계가 미수용임을 명시한다. 이 미검증을 다음 Worker 기능의 PASS로 옮기지 않는다.

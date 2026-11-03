@@ -1,22 +1,16 @@
 // Opt-in physical Workspace admission for a Host-managed writable Worker.
-//
-// This is intentionally NOT a replacement for the Kernel mutation lock or
-// Owner Delivery CAS. The marker lives *in the physical Workspace* so another
-// process using that same directory sees it even when the Kernel lease expires.
-// There is no TTL, PID inference, automatic unlock or cross-Workspace fallback.
-// An unverified exit must not cause a second writer to be admitted.
-//
-// Once a Worker has been admitted, its Workspace is single-use. The existing
-// isolated Worktree teardown may remove the entire Workspace only after it has
-// verified that the original Writer and descendants can no longer mutate it.
-// Do not expose an independent "release this marker" API.
+// The single-use reservation is stored in a Host-owned directory OUTSIDE the
+// Worker Worktree. It is not a Kernel mutation fence or an OS writer-exit proof.
+// The Host must keep reservationRoot outside all Worker writable/sandbox roots;
+// no release, TTL, PID probe, or automatic retry is provided.
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { open, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 export interface WorkspaceWriterReservationInput {
   workspaceRoot: string;
+  reservationRoot: string;
   runId: string;
   attemptId: string;
   workspaceId: string;
@@ -30,28 +24,32 @@ export interface WorkspaceWriterReservation {
   reservationId: string;
 }
 
-const MARKER = '.moon-relay-host-writer-reservation';
-
 const required = (value: unknown): value is string => (
   typeof value === 'string' && value.trim().length > 0
 );
-
 const admissionError = (code: string): Error & { code: string } => (
   Object.assign(new Error(code), { code })
 );
 
 export async function reserveHostWorkspaceWriter({
   workspaceRoot,
+  reservationRoot,
   runId,
   attemptId,
   workspaceId,
 }: WorkspaceWriterReservationInput): Promise<WorkspaceWriterReservation> {
-  if (![workspaceRoot, runId, attemptId, workspaceId].every(required)) {
+  if (![workspaceRoot, reservationRoot, runId, attemptId, workspaceId].every(required)) {
     throw admissionError('host_writer_reservation_identity_missing');
   }
-  // Physical canonical root rather than lexical path: ../ and symlink aliases
-  // cannot reserve the same physical Workspace twice on one filesystem.
   const canonicalRoot = await realpath(workspaceRoot);
+  const hostRoot = await realpath(reservationRoot);
+  const relative = path.relative(canonicalRoot, hostRoot);
+  if (!relative || (relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative))) {
+    throw admissionError('host_writer_reservation_root_inside_workspace');
+  }
+  // A key derived from the canonical physical path prevents a second Host
+  // using an alias of that same directory from getting another reservation.
+  const key = createHash('sha256').update(canonicalRoot).digest('hex');
   const reservation: WorkspaceWriterReservation = {
     workspaceRoot: canonicalRoot,
     runId,
@@ -59,11 +57,11 @@ export async function reserveHostWorkspaceWriter({
     workspaceId,
     reservationId: randomUUID(),
   };
-  // open('wx') is an exclusive *filesystem* creation, not an expiring lease.
-  // An empty marker after a crash is also a denial, never a free Workspace.
   let fd;
   try {
-    fd = await open(path.join(canonicalRoot, MARKER), 'wx', 0o600);
+    // Atomic creation is shared by cooperating Host processes that use
+    // the SAME reservationRoot on a filesystem supporting exclusive create.
+    fd = await open(path.join(hostRoot, 'writer-' + key + '.json'), 'wx', 0o600);
   } catch (cause) {
     if ((cause as NodeJS.ErrnoException).code === 'EEXIST') {
       throw admissionError('host_writer_workspace_already_reserved');
@@ -73,9 +71,9 @@ export async function reserveHostWorkspaceWriter({
   try {
     await fd.writeFile(JSON.stringify({
       schema: 1,
-      runId: reservation.runId,
-      attemptId: reservation.attemptId,
-      workspaceId: reservation.workspaceId,
+      runId,
+      attemptId,
+      workspaceId,
       reservationId: reservation.reservationId,
     }) + '\n');
     await fd.sync();

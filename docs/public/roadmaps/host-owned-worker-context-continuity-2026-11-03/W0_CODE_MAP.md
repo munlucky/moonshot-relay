@@ -121,7 +121,7 @@ Lease 만료·CAS mismatch만으로 A가 OS level에서 파일 쓰기를 멈췄�
 
 ## T25 Host-owned App Server stdio 연결 (선택형/읽기 전용)
 
-[실행·검증 보고서](W0_T25_HOST_OWNED_APP_SERVER_READONLY_TRANSPORT_2026-11-03.md): `src/host/kernel/codex-app-server-transport.ts`는 Codex App Server를 **Host 자식 프로세스**로 한 번 생성하고 표준 입출력의 `initialize`, `thread/start`, `turn/start`를 처리한다. Turn 조기 이벤트를 시작 응답의 `threadId`·`turnId`로 한정한 뒤 기존 `bindNativeCommandEvent`에 전달할 수 있는 `onEvent` 포트를 제공한다. 기존 `spawn_agent`/기본 `createCodexAdapter`는 그대로 둔다. 하나의 연결 안에서만 Workspace 재사용을 차단하고 Turn 완료를 물리 Writer 종료로 보지 않는다. 실제 모델 Turn·Writer Gate를 수용한 상태가 아니며 G0 PARTIAL이다.
+[실행·검증 보고서](W0_T25_HOST_OWNED_APP_SERVER_READONLY_TRANSPORT_2026-11-03.md): `src/host/kernel/codex-app-server-transport.ts`는 Codex App Server를 **Host 자식 프로세스**로 한 번 생성하고 표준 입출력의 `initialize`, `thread/start`, `turn/start`를 처리한다. Turn 조기 이벤트를 시작 응답의 `threadId`·`turnId`로 한정한 뒤 기존 `bindNativeCommandEvent`로 검증한 결과만 Host `onNativeExecution`에 전달한다. 기존 `spawn_agent`/기본 `createCodexAdapter`는 그대로 둔다. 하나의 연결 안에서만 Workspace 재사용을 차단하고 Turn 완료를 물리 Writer 종료로 보지 않는다. 실제 모델 Turn·Writer Gate를 수용한 상태가 아니며 G0 PARTIAL이다.
 
 ## T25 실제 Native 모델·명령 관측과 Canonical Attempt 통합 범위
 
@@ -130,3 +130,8 @@ Lease 만료·CAS mismatch만으로 A가 OS level에서 파일 쓰기를 멈췄�
 ## T25 협력적 다중 프로세스 물리 Workspace 예약 경계
 
 [실측 및 설계 검증](W0_T25_PHYSICAL_WORKSPACE_WRITER_RESERVATION_2026-11-03.md): `src/host/kernel/workspace-writer-reservation.ts`는 **명시적으로 예약을 요청한 Writable Host Worker 후보**에 한해 `realpath(workspaceRoot)` 아래 `.moon-relay-host-writer-reservation`을 `open('wx')`으로 원자적으로 생성한다. 기존 Kernel `Run/Attempt/Workspace`만 사용하며 TTL/자동 해제/API 추가 완료 판정 없이 다른 OS 프로세스의 재예약을 거부한다. `tests/kernel-workspace-writer-reservation.test.ts`는 실제 Writer A의 append/fsync 중 Kernel Lock TTL 만료·B 재획득 허용과 물리 Workspace 중복 예약 B 거부, 새 Worktree B 허용을 검증한다. **현재 이 모듈은 실제 Native Writable Worker Dispatcher에 아직 연결되지 않았고, 파일 삭제 가능한 Worker에 대한 강제 격리나 다른 머신/비공유 볼륨의 Host 간 보장을 제공하지 않는다. G0 PARTIAL 유지.**
+
+
+## T25 Host 외부 예약 + 선택형 Writable Turn 진입 Gate
+
+[후속 구현·검증](W0_T25_EXTERNAL_WRITER_ADMISSION_2026-11-03.md): 예약 파일을 Worker Worktree 바깥의 Host `reservationRoot`로 이동했다. `reserveHostWorkspaceWriter`는 Workspace의 `realpath`에 기반한 SHA-256 파일 키와 원자적 `open('wx')`를 사용한다. `codex-app-server-transport.ts`의 기존 `runTurn`은 `writableWorker: { reservationRoot }`가 명시된 경우에만 Canonical `executionOwner`·`onNativeExecution`을 필수로 검사하고, **Native thread/start/turn/start 전에** Host 예약을 수행한다. 성공한 경우에만 실제 CLI schema의 `workspace-write`/`workspaceWrite`를 사용한다. 기본 `readOnly` Turn·기존 `spawn_agent`·Parallel Dispatcher는 변경하지 않았다. 기존 `prepareStepWorktree`는 Run·Step 경로를 재사용하므로 이 single-use 예약을 무조건 연결하면 정상 재시도를 막을 수 있다. 후속 단계에서 Attempt별 새 Worktree 또는 물리 종료가 검증된 정리·재생성 경계를 확정해야 한다. **현재 G0 PARTIAL, W1 DEFER.**
