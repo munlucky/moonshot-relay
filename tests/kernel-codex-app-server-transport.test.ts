@@ -7,6 +7,7 @@ import path from 'node:path';
 import { createCodexAppServerTransport } from '../src/host/kernel/codex-app-server-transport.js';
 import { type NativeExecutionObservation } from '../src/host/kernel/adapter-dispatch.js';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
+import { runHostOwnedWritableAttempt } from '../src/host/kernel/host-owned-writable-attempt.js';
 
 const fakeServer = String.raw`
 const readline = require('node:readline');
@@ -381,6 +382,105 @@ test('A Canonical Kernel Attempt owns an opt-in writable Turn without granting K
       assert.equal(cp.stateStore.getActiveStepAttempt(runId, { stepId: attempt.stepId })?.status, 'started');
     } finally {
       await transport?.close();
+      await cp.close();
+    }
+  });
+});
+
+
+test('Explicit Host-owned Writable runner binds a real Kernel Attempt and a separate physical Worktree without creating a completion Receipt', async () => {
+  await withFixture(async ({ workspace, alternative, server, reservationRoot }) => {
+    const git = (...args: string[]) => {
+      const result = spawnSync('git', args, { cwd: workspace, encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr);
+      return result.stdout.trim();
+    };
+    git('init');
+    git('config', 'user.name', 'Kernel Host Writer Fixture');
+    git('config', 'user.email', 'host-writer@example.invalid');
+    await writeFile(path.join(workspace, 'package.json'), '{"name":"host-owned-writable-fixture"}');
+    git('add', '--all');
+    git('commit', '-m', 'baseline');
+    const baseCommit = git('rev-parse', 'HEAD');
+    const runtimeHome = path.join(path.dirname(workspace), 'kernel-runtime');
+    const cp = await createKernelControlPlane({ runtimeHome, projectRoot: workspace });
+    const runId = 'run-canonical-host-writable';
+    const ownedWorktrees: string[] = [];
+    const seen: NativeExecutionObservation[] = [];
+    const input = {
+      controlPlane: cp,
+      repoRoot: workspace,
+      runtimeHome,
+      reservationRoot,
+      baseCommit,
+      runId,
+      prompt: 'fixture command only',
+      model: 'test-model',
+      effort: 'high',
+      turnTimeoutMs: 3000,
+      onNativeExecution: (item: NativeExecutionObservation) => { seen.push(item); },
+      transportOptions: {
+        executable: process.execPath, args: [server], requestTimeoutMs: 1500,
+        env: { ...process.env, TEST_MODE: 'writable' },
+      },
+    };
+    try {
+      await cp.startRun({ runId, objective: 'canonical Host-owned writable attempt test' });
+      const a = cp.beginAttempt(runId);
+      assert.ok(a?.attemptId && a.stepId);
+      const first = await runHostOwnedWritableAttempt({ ...input, stepId: a.stepId, attemptId: a.attemptId });
+      ownedWorktrees.push(first.workspaceRoot);
+      assert.equal(first.nativeTurn.turnStatus, 'completed');
+      assert.equal(first.reportAuthority, 'none');
+      assert.equal(first.writerExitVerified, false);
+      assert.equal(first.nativeTurn.writerExitVerified, false);
+      assert.notEqual(first.workspaceRoot, workspace);
+      assert.equal(first.commandEvents.length, 2);
+      assert.ok(first.commandEvents.every(item => item.runId === runId
+        && item.attemptId === a.attemptId && item.workspaceId === first.workspaceId));
+      assert.ok(seen.length === 2);
+      assert.equal(cp.getAttemptById(runId, a.attemptId)?.workspaceId, first.workspaceId);
+      assert.equal(cp.getAttemptById(runId, a.attemptId)?.status, 'started');
+      assert.equal((await readdir(reservationRoot)).length, 1);
+      assert.equal(git('status', '--porcelain'), '', 'the Owner may not be modified by a Writable Worker');
+
+      await assert.rejects(runHostOwnedWritableAttempt({
+        ...input, stepId: a.stepId, attemptId: a.attemptId,
+      }), { code: 'WORKTREE_REUSE_FAILED' });
+      await assert.rejects(runHostOwnedWritableAttempt({
+        ...input, repoRoot: alternative, stepId: a.stepId, attemptId: a.attemptId,
+      }), { code: 'host_writable_attempt_owner_mismatch' });
+      await assert.rejects(runHostOwnedWritableAttempt({
+        ...input, reservationRoot: workspace, stepId: a.stepId, attemptId: a.attemptId,
+      }), { code: 'host_writable_attempt_reservation_owner_overlap' });
+
+      cp.failStepAttempt(runId, a.stepId, { code: 'unknown_old_writer' });
+      assert.equal(cp.getAttemptById(runId, a.attemptId)?.status, 'failed');
+      await assert.rejects(runHostOwnedWritableAttempt({
+        ...input, stepId: a.stepId, attemptId: a.attemptId,
+      }), { code: 'host_writable_attempt_canonical_owner_missing' });
+      const b = cp.beginAttempt(runId, { stepId: a.stepId, retryReason: 'unknown_old_writer' });
+      assert.ok(b?.attemptId && b.attemptId !== a.attemptId);
+      const second = await runHostOwnedWritableAttempt({ ...input, stepId: b.stepId, attemptId: b.attemptId });
+      ownedWorktrees.push(second.workspaceRoot);
+      assert.notEqual(second.workspaceRoot, first.workspaceRoot);
+      assert.notEqual(second.workspaceId, first.workspaceId);
+      assert.equal(second.nativeTurn.turnStatus, 'completed');
+      assert.equal(second.reportAuthority, 'none');
+      assert.equal(cp.getAttemptById(runId, b.attemptId)?.status, 'started');
+      assert.equal(cp.getAttemptById(runId, a.attemptId)?.status, 'failed');
+      assert.equal((await readdir(reservationRoot)).length, 2);
+      assert.equal(await readFile(path.join(first.workspaceRoot, 'mock-writer-started.txt'), 'utf8'), 'started');
+      assert.equal(await readFile(path.join(second.workspaceRoot, 'mock-writer-started.txt'), 'utf8'), 'started');
+      assert.equal(git('status', '--porcelain'), '');
+    } finally {
+      // Test-only teardown, no real OS Writer descendants in this fake server.
+      for (const root of ownedWorktrees.reverse()) {
+        const removed = spawnSync('git', ['worktree', 'remove', '--force', root], {
+          cwd: workspace, encoding: 'utf8', timeout: 10000,
+        });
+        assert.equal(removed.status, 0, removed.stderr);
+      }
       await cp.close();
     }
   });

@@ -29,7 +29,7 @@
 | 승인/취소 신호와 적용 시점 | NOT_TESTED | DEFER | NOT_TESTED | 다른 연결의 `turn/interrupt` 후 interrupted 상태 PASS; 승인·후손 OS 프로세스 종료 UNKNOWN |
 | 원본 transcript/terminal event 직접 접근·digest | NOT_TESTED | DEFER | NOT_TESTED | App Server 재시작 후 `thread/read(includeTurns=true)` 기록 조회 PASS; 원본 event digest/lossless·in-flight 명령 복구 UNKNOWN |
 | Native `spawn_agent` 실제 사용 가능 | 코드 wrapper만 확인 | DEFER | 코드 wrapper만 확인 | UNKNOWN |
-| old Worker에 대한 물리 쓰기 차단 | **MCP Linux 반례: A Writer 생존 상태의 Kernel 실패/Lock 만료. 후속 Attempt B 별도 Worktree 격리 PASS(격리)** | DEFER | NOT_TESTED | **turn/interrupt-only FAIL**. [T25 Attempt별 물리 Worktree 검증](W0_T25_ATTEMPT_ISOLATED_WORKTREE_2026-11-03.md): 기존 Host 외부 예약·선택형 Writable 시작 Gate와 별도로 A 실패·생존 중 B의 물리 디렉터리 격리, 기본 Run 정리의 Attempt 보존 40/40 PASS. **운영 Native 실제 Writer 종료·안전 폐기·OS 보호/다른 머신 미검증** |
+| old Worker에 대한 물리 쓰기 차단 | **MCP Linux 반례: A Writer 생존 상태의 Kernel 실패/Lock 만료. 후속 선택형 Native Attempt 경계 86/86 PASS(격리)** | DEFER | NOT_TESTED | **turn/interrupt-only FAIL**. [T25 Host-owned Writable Attempt 통합](W0_T25_HOST_OWNED_WRITABLE_ATTEMPT_INTEGRATION_2026-11-04.md): 실제 Canonical Kernel Attempt가 물리 Worktree·Workspace 등록·Host 예약·모의 Native Turn 관측을 소유한다. **모의 App Server, 실제 Mac 모델·OS 후손 종료/보안·Owner CAS Delivery·운영 Dispatcher 적용은 미검증** |
 
 ## 관련 소스 경계
 

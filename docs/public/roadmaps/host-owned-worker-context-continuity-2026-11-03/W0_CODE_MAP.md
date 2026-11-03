@@ -140,3 +140,8 @@ Lease 만료·CAS mismatch만으로 A가 OS level에서 파일 쓰기를 멈췄�
 ## T25 Host-managed Writable Attempt별 물리 Worktree 격리
 
 [검증 보고서](W0_T25_ATTEMPT_ISOLATED_WORKTREE_2026-11-03.md): `src/host/kernel/workspace/physical-worktree.ts`에 선택형 `prepareHostWriterAttemptWorktree`를 추가했다. 기존 Kernel이 발급한 Run·Step·Attempt 식별자를 사용하고 `runtimeHome/host-writer-attempt-worktrees` 아래에 **새 Attempt마다 별도 물리 Git Worktree**를 준비한다. 동일 Attempt의 깨끗한 Worktree는 기존 `reuseWorktree` 검사로 재조회할 수 있으나, 기존 Host 외부 Writer 예약은 중복 Writer 시작을 거부한다. 이 전용 Worktree는 일반 `executionRoot`와 물리적으로 분리되어 기존 Run 자동 정리에서 살아 있는 A Writer의 경로가 삭제되지 않는다. Kernel에서 A Attempt를 실패 처리해도 실제 A OS Writer가 계속 기록하는 중, 새 Canonical B Attempt의 별도 Worktree 준비·쓰기와 기존 Run 정리 후 A/B 보존을 Linux 격리 테스트로 확인했다. **운영 Native/Parallel Dispatcher 강제 적용이나 물리 Writer·후손 종료, 폐기 책임은 아직 미완료이며 G0 PARTIAL/W1 DEFER다.**
+
+
+## T25 Canonical Attempt와 Host-owned Writable Turn의 선택형 실행 결합 (2026-11-04)
+
+[통합 구현 및 검증](W0_T25_HOST_OWNED_WRITABLE_ATTEMPT_INTEGRATION_2026-11-04.md): `src/host/kernel/host-owned-writable-attempt.ts`의 `runHostOwnedWritableAttempt`는 **실제 Kernel Run/started Attempt 확인 → Attempt별 물리 Worktree 준비 → 기존 `registerExecutionWorkspace` 및 `updateStepAttempt`로 불변 Workspace ID 정착 → 선택적 Native `workspace-write` Turn 시작 전 외부 Writer 예약 → 검증된 Command 이벤트 관측**을 하나의 명시적 Host 진입 함수에서 연결한다. 모의 Native App Server와 실제 Kernel State Store 통합 86/86 테스트 PASS. 반면 **Native Turn 완료 시에도 Kernel Report/Owner Delivery 권위를 만들지 않으며 `writerExitVerified=false`, `reportAuthority=none`**으로 남긴다. 기본 `spawn_agent`/Parallel Dispatcher는 미변경이고 실제 Mac 모델·OS Writer 후손 종료·안전 폐기·Host 중단 복구는 아직 미검증이다. **G0 PARTIAL, W1 DEFER.**
