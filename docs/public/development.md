@@ -86,3 +86,7 @@ installer는 원본과 출력 hash가 다르면 `runtime_build_stale`로 중단�
 `npm run dev:kernel -- --help`와 `npm run dev:standalone -- --help`는 먼저 빌드한다. sourcemap은 `dist/debug/`에 생성된다. 설치 runtime에는 source text를 넣지 않는다. `dist/runtime-build.json`은 시간과 절대 경로 없이 원본·도구·출력 hash를 기록한다.
 
 [현재 원본 폐쇄집합](roadmaps/typed-authority-architecture/CURRENT_SOURCE_CLOSURE.md)을 기준으로 변경 위치를 확인한다. 과거 계획의 파일 경로는 역사 기록으로 유지한다. runtime state와 provider home은 원본 및 package payload 밖에 둔다.
+
+## Host-owned Worker / Context Continuity 개발 로드맵
+
+독립 Worker 수명·세션 교체·압축 후 재개의 구현은 [코드 실행계획](roadmaps/host-owned-worker-context-continuity-2026-11-03/PLAN.md)을 따른다. 첫 작업은 [W0 착수 지침](roadmaps/host-owned-worker-context-continuity-2026-11-03/W0_START.md), 검증 기준은 [I01~I12/T01~T27](roadmaps/host-owned-worker-context-continuity-2026-11-03/VERIFICATION.md), 현재 상태는 [STATUS](roadmaps/host-owned-worker-context-continuity-2026-11-03/STATUS.md)에 기록한다. 이 계획의 채택 이전에는 기존 owner-direct와 Kernel Work/Trust/Knowledge 권위를 유지한다.
