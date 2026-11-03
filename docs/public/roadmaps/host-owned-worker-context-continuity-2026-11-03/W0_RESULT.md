@@ -5,7 +5,7 @@
 - **T23 함수-level 수정: SOURCE PASS**
 - **G0 통합 수용: PARTIAL** — 실제 Host-owned 독립 Worker 생존·재연결을 Native에서 입증하지 못함
 - W1: **DEFER / 미착수**. Host capability 검증 전 Controller·Worker DB·새 Scheduler를 구현하지 않음.
-- 세부: [W0_CODE_MAP](W0_CODE_MAP.md) · [W0_CAPABILITY_MATRIX](W0_CAPABILITY_MATRIX.md) · [W0_BASELINE](W0_BASELINE.md) · [VERIFICATION](VERIFICATION.md)
+- 세부: [W0_CODE_MAP](W0_CODE_MAP.md) · [W0_CAPABILITY_MATRIX](W0_CAPABILITY_MATRIX.md) · [W0_BASELINE](W0_BASELINE.md) · [Native 후속 검증](W0_NATIVE_FOLLOWUP_2026-11-03.md) · [VERIFICATION](VERIFICATION.md)
 
 ## 1. 확인된 문제 (관측)와 불명확한 문제 (가설)
 
@@ -37,7 +37,7 @@
 | 5개 Context 집중 suite | 동일 격리 checkout | **17/17 PASS**, fail 0, skipped 0 |
 | `check:boundaries` | 동일 격리 checkout | **PASS** |
 | `build:check` | 동일 격리 checkout | **PASS** |
-| `test:source-runtime` | 동일 격리 checkout | **PARTIAL / TIMEOUT (240초, SIGTERM)**. 개별 하위 테스트 16/16의 `ok` 기록, Runner 정상 종료·전체 PASS 없음 |
+| `test:source-runtime` | 동일 격리 checkout | **단일 명령 PARTIAL / TIMEOUT (240초, SIGTERM)**. 앞의 두 suite 16/16 `ok` 기록. 세 번째 suite만 별도 실행 **4/4 PASS**. 세 suite를 합친 단일 Runner 완료는 미확인 |
 | Windows/Mac native 실제 Worker E2E | 실제 사용자 세션 영향 방지 | **NOT VERIFIED / DEFER** |
 
 **환경 장애는 별도 분류:** Windows-side Linux MCP 본 작업 트리의 `NODE_ENV=production` 때문에 `npm config get omit=dev`이고, 개발용 `typescript` 플랫폼 패키지가 없어 일반 `npm run typecheck`가 시작 전 실패했다. 소스 결함이라고 분류하지 않는다. **격리된 Git archive 테스트 사본에서만** `env -u NODE_ENV npm ci --include=dev`를 수행하여 통과했다. 소스 저장소 `node_modules`/사용자 전역 npm 설정은 수정하지 않았다.
@@ -49,14 +49,14 @@
 - 격리 npm 개발 의존성/타입/테스트/경계/빌드 PASS: `279b0776-e83e-4f3f-9d43-bc3fd7cf61d6`
 - 확장 source-runtime 시험: `4666f22a-2320-4ec1-a1fd-46a4f58c5f1b`
 
-확장 회귀 `test:source-runtime`은 16개 subtest `ok` 뒤 전체 Runner가 끝나지 않아 240초 제한으로 강제 종료됐다. 현재 로그에 실패가 없다는 사실만 확인했고 timeout 원인과 전체 성공 여부는 미확정이다. 재실행/새 fallback은 이번 W0에서 하지 않았고, 테스트 후 남은 자식 프로세스는 관측되지 않았다.
+확장 회귀 `test:source-runtime`은 **세 파일을 `--test-concurrency=1`로 직렬 실행**하며, 앞의 두 suite 16개 테스트가 완료되는 동안 240초 예산을 거의 소진했다. 실행되지 못했던 `tests/typed-owner-change-scenarios.test.mjs`만 독립 실행해 4/4 PASS(약 219초)를 얻었다. 따라서 두 실행의 분리된 증거는 16+4개 테스트 성공을 보이지만, 전체 단일 Runner의 정상 종료와 동일한 판정은 아니다. 새로운 타임아웃 폴백이나 코드 규칙은 추가하지 않았다.
 
 격리 개발 테스트는 W0 판단을 위한 실행 증거이며 사용자 계정의 실제 설치/Native 경로 PASS와 구분한다.
 
 ## 4. W0.1 Capability / W0.2 실행 중복 조사
 
 - Windows Native Moonremote executor는 stale heartbeat (`persistence_unavailable`)로 읽기 전용 Host probe가 시작되지 않았다.
-- Mac Native는 Darwin arm64와 Codex binary path를 관측했으나, 버전/help/후속 결과 stdout을 얻지 못해 API 지원을 판정할 수 없다.
+- Mac Native에서 Codex 0.162.1 실제 CLI/프로토콜을 확인하고 격리 App Server의 새 WebSocket 연결에서 같은 Thread ID 메타데이터 조회에 성공했다. 그러나 이력 포함 조회/기본 `thread/resume`는 `list_turns is not supported yet`, 빈 Thread의 이력 제외 Resume은 rollout 부재로 실패했다. 실제 실행 중 Turn은 시작하지 않았다. [Native 후속 검증](W0_NATIVE_FOLLOWUP_2026-11-03.md) 참조.
 - Linux MCP 표면에는 `codex` CLI가 없다. Linux 측에서 Codex Native Worker 생존을 시험할 수 없는 것이지 사용자 Native Host의 기능 부재를 뜻하지 않는다.
 - Mac MCP checkout은 초기 기준보다 한 커밋 뒤처져 있으므로 같은 소스 E2E가 아니며 변경하지 않았다.
 - Source 검색에서 자동 Goals loop 구현 및 실제 App Server thread-control API를 확인하지 못했다. 모델/Tool 기능은 설치된 Native에서 별도로 측정해야 한다.

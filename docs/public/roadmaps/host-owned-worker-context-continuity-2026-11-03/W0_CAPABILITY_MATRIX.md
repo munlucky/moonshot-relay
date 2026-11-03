@@ -11,9 +11,9 @@
 | Windows-side Linux MCP (`/shared/moonshot-relay`) | Node v22.23.4, `main/77b55f52`, `codex` 명령 없음. `NODE_ENV=production` 때문에 dev TypeScript optional 플랫폼 패키지 설치 누락. 격리 `/tmp` checkout에서 개발 의존성 설치 후 TypeScript 테스트 실행 | **CLI native Codex Worker 실험 불가.** Model adapter unit/E2E fixture만 가능 |
 | Windows Native (Moonremote host executor) | `exec_command(executionTarget=host)` 호출이 `persistence_unavailable` / `Native host executor heartbeat is stale` 오류로 실행 전 거절 | **DEFER.** 기존 사용자의 native 실행기를 임의로 재시작하지 않음 |
 | Mac-side Linux MCP (`/shared/moonshot-relay`) | Mac 연결의 Linux MCP checkout `main/3797c60f`, clean, 실행 중 Moonremote task 없음. Windows-side와 서로 다른 workspace/Host | Source baseline 다름. Native 세션 생존 증거가 아님; 이 checkout에는 write하지 않음 |
-| Mac Native (Moonremote-Mac host executor) | `uname` → `Darwin 25.5.0 arm64`, `command -v codex` → `/opt/homebrew/bin/codex`. 이후 읽기 전용 `codex --version`/`codex app-server --help` 및 `ls/file/echo` 시도는 exit 0이지만 stdout이 비어 있는 응답이 돌아왔음 | **UNKNOWN.** CLI 버전/Server 지원/worker action을 증명할 출력이 없음. stdout 소실 원인은 확정 불가 |
+| Mac Native (Moonremote-Mac host executor) | `Darwin 25.5.0 arm64`, `codex-cli 0.162.1`, App Server CLI와 생성 프로토콜 확인. 격리 WebSocket의 `initialize`, `thread/start`, 클라이언트 연결 종료 후 같은 Thread `thread/read(includeTurns=false)` PASS ([상세](W0_NATIVE_FOLLOWUP_2026-11-03.md)) | **일부 OBSERVED.** 진행 중 Turn·App Server 재시작·완전한 `thread/resume`는 미검증. 사용자 Daemon socket은 없음 |
 
-**주의:** Mac Host에서 exit 0만으로 실제 `codex app-server` 지원 또는 Thread 생존을 PASS로 분류하지 않는다. Windows Native stale heartbeat는 테스트 시작 불가이지 해당 Host가 기능을 지원하지 않는다는 확증이 아니다.
+**주의:** Mac의 Thread 메타데이터 연결 교체 PASS는 진행 중 모델 Worker 생존/복구의 PASS가 아니다. 실제 `thread/read(includeTurns=true)`는 `list_turns is not supported yet`, 빈 Thread의 `thread/resume(excludeTurns=true)`는 `no rollout found`였다. Windows Native stale heartbeat도 기능 부재의 증거는 아니다.
 
 ## T26 — 연결/프로세스 종료별 독립 시험
 
@@ -23,9 +23,9 @@
 | MCP 연결 종료 후 실제 Worker 생존 | NOT_TESTED | DEFER | NOT_TESTED | UNKNOWN |
 | App Server 종료 후 실제 Worker 생존/안전 정지 | NOT_TESTED | DEFER | NOT_TESTED | DEFER (실사용 세션 보호) |
 | Host 프로세스 종료 후 생존/재개 | NOT_TESTED | DEFER | NOT_TESTED | DEFER (실사용 세션 보호) |
-| 독립 Thread ID 및 Turn ID 관측 | NOT_TESTED | DEFER | NOT_TESTED | UNKNOWN |
+| 독립 Thread ID 및 Turn ID 관측 | NOT_TESTED | DEFER | NOT_TESTED | **Thread ID PASS / Turn ID NOT_TESTED** |
 | 현재 실행 중 command의 idempotent 재연결 | NOT_TESTED | DEFER | NOT_TESTED | UNKNOWN |
-| status 재조회 | NOT_TESTED | DEFER | NOT_TESTED | UNKNOWN |
+| status 재조회 | NOT_TESTED | DEFER | NOT_TESTED | **Thread metadata PASS / live Turn UNKNOWN** |
 | 승인/취소 신호와 적용 시점 | NOT_TESTED | DEFER | NOT_TESTED | UNKNOWN |
 | 원본 transcript/terminal event 직접 접근·digest | NOT_TESTED | DEFER | NOT_TESTED | UNKNOWN |
 | Native `spawn_agent` 실제 사용 가능 | 코드 wrapper만 확인 | DEFER | 코드 wrapper만 확인 | UNKNOWN |
@@ -51,6 +51,6 @@
 
 - Windows Native `operationId=8ad5ed25-d440-4029-9bcd-700707f80cb4`: executor stale heartbeat, 도구 수준 미시작.
 - Mac Native `operationId=c8d67563-2dc4-45e3-9a11-1ad993de13b6`: Darwin/`codex` PATH 확인; 출력 뒤쪽 불완전.
-- Mac Native `operationId=ae443193-e21f-47b9-be3c-65c1cb1d2199` 및 `2252de2c-e2d1-47c9-bfd1-4f1b9607d74d`: 실행 종료로 보고됐으나 capability 명령의 stdout 획득 불가.
+- Mac Native `operationId=ae443193-e21f-47b9-be3c-65c1cb1d2199` 및 `2252de2c-e2d1-47c9-bfd1-4f1b9607d74d`: 최초 빠른 명령의 stdout 획득 불가. `561fd7cf-fbb1-4d4e-802c-e5a27c8c4536`에서 실제 CLI 출력 확인. 추가 WebSocket 실험의 영수증은 [후속 문서](W0_NATIVE_FOLLOWUP_2026-11-03.md) 참조.
 - Windows-side Linux MCP `operationId=42b57a86-fd4b-4fcb-820d-1e6f21b91846`: `codex` not found.
 - 연결별 Workspace SHA 비교는 `get_work_context`의 읽기 전용 관측이며, 동일 물리 Run 저장소를 공유한다는 의미가 아니다.
