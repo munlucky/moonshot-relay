@@ -12,7 +12,7 @@
 | Mac-side MCP canonical checkout | 조회 완료 | 문서 편입 전 양쪽 `main / 3797c60f`, 별개 Runtime·DB·세션 |
 | 기존 사용자 작업 간섭 | 없음 (준비 작업 범위) | 사용자 Runtime/DB·Codex 세션 종료·설치·마이그레이션 없음 |
 | 프로젝트 로드맵 문서 정착 | **완료** | 2026-11-03 초기 문서와 W0-Fix를 `main`에 커밋·푸시 확인 |
-| W0 — Capability/기준선 | **G0 PARTIAL** | [T25 Owner CAS 통합 회귀](W0_T25_OWNER_CAS_INTEGRATION_TEST_2026-11-03.md): 실제 A Writer 활성 중 별도 Worktree B의 기존 Kernel Owner Fence/CAS Delivery 및 stale 재적용 거부 PASS(격리). 동일 Workspace B Dispatch Gate·Native 실행 핸들↔Attempt 결합 미구현 |
+| W0 — Capability/기준선 | **G0 PARTIAL** | [T25 Native Attempt 이벤트 경계](W0_T25_NATIVE_ATTEMPT_EVENT_SEAM_2026-11-03.md): 기존 Attempt ID와 Host 제공 Native 이벤트의 시작 Thread·Turn ID를 결합하는 선택적 관측 경계 구현. 격리 회귀 66/66 PASS. 실제 App Server 스트림·same Workspace Writer Gate 미구현 |
 | W0-Fix — ContextReceipt | **SOURCE PASS** | T23 재현 → 최소 수정, focused 17/17, typecheck/build/boundaries PASS. 확장 test:source-runtime timeout |
 | W1 — Host-owned Worker | **DEFER / 실제 Attempt-Writer Gate 대기** | Host 소유 Native commandExecution handle과 격리 Worktree/기존 Owner CAS를 연결해 종료·격리 증거 확인 전 같은 Workspace 재할당 금지 필요 |
 | W2 — status/signal/reconnect | NOT STARTED | W1 생존·Owner 경계 필요 |
@@ -35,10 +35,10 @@
 2. `W0_START.md`의 "0. 입장 조건" 수행. 완료된 분석·명령은 반복하지 않음.
 3. **완료한 T23 수정·인증·실제 Turn 완료·Native WebSocket 수명 비교·Turn-level interrupt·재시작 이력 조회를 반복하지 않음.** 다음에는 실제 Moonshot Relay의 Main/Host 실행 연결 분리, OS Writer 물리 중단·중복 실행 금지, Windows Native executor heartbeat 복구부터 시작. 기존 사용자 세션 종료 금지.
 4. [T25 추가 음성 검증](W0_T25_ADDITIONAL_NEGATIVE_VERIFICATION_2026-11-03.md)에서 실제 A Writer가 살아 있는 상태로 동일 Workspace Lock 재획득/추가 쓰기 5회와 별도 Worktree A/B 물리 격리 PASS를 확보. **Main/Host 연결 해제 중 Native Handle 회수는 이번 모델 시험에서 Writer 미생성으로 미검증.** 다음은 Attempt↔Native 실행 스트림 결합, 같은 Workspace Writer 재허가 Gate 및 실제 Delivery CAS 통합 검증. 완료된 시험 반복·새 DB/Queue/Provider별 하드코딩 금지.
-5. [T25 Owner CAS 통합 회귀](W0_T25_OWNER_CAS_INTEGRATION_TEST_2026-11-03.md)의 실제 A Writer와 기존 Kernel Owner CAS 테스트(9/9), 관련 Lock·Dispatch·Resume(14/14), TypeScript·경계 PASS를 보존. 다음 작업은 **실제 Native 실행 핸들→기존 Attempt 결합**과 **같은 물리 Workspace의 unknown Writer 재할당 거부** 경계 검증이다. G0 판단 전 W1 기능/기본값 전환 금지. Wave별 별도 검증·한국어 상세 커밋·푸시.
+5. [T25 선택적 Native 이벤트↔Attempt 관측](W0_T25_NATIVE_ATTEMPT_EVENT_SEAM_2026-11-03.md) 경계와 TypeScript·정규 build·관련 회귀 66/66·경계 검증 PASS를 보존. 다음은 **실제 Host-owned App Server 연결의 시작 Thread·Turn/이벤트 구독**과 **동일 물리 Workspace old Writer alive/unknown 시 B 실행 거부** 검증. 기존 Owner CAS 회귀는 반복하지 않음. G0 판단 전 W1 기능/기본값 전환 금지.
 
 ## 변경 범위 원칙
 
-초기 준비 커밋은 문서만 변경했다. 후속 W0-Fix는 `src/kernel/context-build.ts` 및 2개 canonical 테스트 파일을 수정·검증·커밋했다. **이번 Native capability 후속 검증은 문서만 변경하며 생성 Runtime·계정 설치·사용자 앱 서버·DB를 수정하지 않는다.**
+초기 준비 커밋은 문서만 변경했다. 후속 W0-Fix는 `src/kernel/context-build.ts` 및 2개 canonical 테스트를 수정했다. T25 후속에서는 기존 Owner CAS 회귀 테스트와 **Host Dispatcher/Codex Adapter의 선택적 Native 이벤트 관측 경계**를 추가했다. 생성 Runtime·계정 설치·사용자 앱 서버·DB 스키마는 수정하지 않는다.
 
 기존 [Ephemeral Work W7 결과](../ephemeral-work-persistent-knowledge-2026-10-31/W7_RESULT.md)는 실제 Codex in-flight 사용자 세션 재시작 및 Host 간 인계가 미수용임을 명시한다. 이 미검증을 다음 Worker 기능의 PASS로 옮기지 않는다.

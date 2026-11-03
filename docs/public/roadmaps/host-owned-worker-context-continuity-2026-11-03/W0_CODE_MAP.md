@@ -113,3 +113,8 @@ Lease 만료·CAS mismatch만으로 A가 OS level에서 파일 쓰기를 멈췄�
 `process-observation.ts`의 PID alive, `parallel-dispatcher.ts`의 Delivery-only patch apply `SIGTERM`, Codex `turn/interrupt`는 **서로 다른 제어 경계**다. Native 도구 프로세스의 실제 관리 주체·PGID와 Workspace/Attempt를 일치시킬 수 있기 전에는 새로운 Writer 허가를 금지해야 한다. 전용 group을 정확히 소유한 **독립 OS fixture**에서는 killpg(SIGTERM)→종료 확인→700ms 추가 쓰기 0→Writer B append 순서를 검증했다. 이 독립 fixture PASS는 Codex 도구 후손 프로세스 통제 PASS가 아니다.
 
 **최소 향후 변경 후보:** 기존 Host 실행 경계에서 생성한 프로세스/도구에 한해 실제 소유권·종료 증거를 연계하고, Kernel의 `running/unknown` 시 새 Writer를 막는다. 신규 범용 프로세스 DB, Provider 특정 버전 예외, 일괄 강제 종료 정책을 추가하지 않는다.
+
+
+## T25 선택적 Host Native 이벤트 관측 접점
+
+[검증 보고서](W0_T25_NATIVE_ATTEMPT_EVENT_SEAM_2026-11-03.md): `adapter-dispatch.ts`의 `bindNativeCommandEvent`는 기존 Kernel Attempt 소유권과 **실제 Native 시작 응답 Thread·Turn ID**를 명령 이벤트에 일치시킨다. `turn-dispatcher.ts`의 선택적 `onNativeExecution`을 통해 Host가 등록한 이벤트만 받으며, `adapters/codex.ts`는 Host 전용 관측 정보를 **주입된 Native 실행 함수**에만 전달한다. 기본 `spawn_agent` Provider payload는 해당 정보를 받지 않는다. 이는 App Server 지속 연결·상태 복구·Writer 종료 증명이 아니다. 서로 다른 Thread 이벤트나 OS PID를 잘못 결합하지 않는 회귀를 추가했고 G0 PARTIAL을 유지한다.

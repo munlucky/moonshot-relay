@@ -228,6 +228,8 @@ test('the production native launcher sends explicit model and effort and observe
     workingDirectory: '/workspace/worker',
     concurrencyGroup: 'run-1',
     childSession: { canDelegate: false, canCommit: false },
+    executionOwner: { runId: 'r-native', stepId: 'step-native', attemptId: 'attempt-native', workspaceId: 'workspace-native' },
+    observeNativeExecutionEvent: () => { throw new Error('spawn_agent does not own the App Server event stream'); },
     executionMode: 'native-subagent', delegationRequested: true,
   });
   assert.deepEqual(parentPhases, ['before', 'after']);
@@ -237,6 +239,8 @@ test('the production native launcher sends explicit model and effort and observe
   assert.equal(assertTestRecord(request).working_directory, '/workspace/worker');
   assert.equal(assertTestRecord(request).concurrency_group, 'run-1');
   assert.deepEqual(assertTestRecord(request).child_session, { canDelegate: false, canCommit: false });
+  assert.equal(assertTestRecord(request).executionOwner, undefined, 'Kernel Attempt identity must not enter the spawn_agent provider payload');
+  assert.equal(assertTestRecord(request).observeNativeExecutionEvent, undefined, 'Host event callbacks must not cross the provider boundary');
   assert.equal(dispatch.dispatchMechanism, 'native-subagent');
   assert.equal(dispatch.status, 'completed');
   assert.equal(dispatch.enforcementStatus, 'enforced');

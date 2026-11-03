@@ -17,6 +17,7 @@ import { buildNextPayload } from '../src/kernel/run/run-loop.js';
 import { createModelRegistry } from '../src/host/kernel/model-registry.js';
 import { createClaudeAdapter } from '../src/host/kernel/adapters/claude.js';
 import { createCodexAdapter } from '../src/host/kernel/adapters/codex.js';
+import { bindNativeCommandEvent, type NativeExecutionObservation } from '../src/host/kernel/adapter-dispatch.js';
 import { createFableAdapter } from '../src/host/kernel/adapters/fable.js';
 import { MODEL_VISIBLE_PROMPT_FIELDS } from '../src/host/kernel/model-capsule-view.js';
 
@@ -397,3 +398,96 @@ test('Correction 3: baseline-required recalculates modelInput via additional nex
 
 type TestControlPlane = Awaited<ReturnType<typeof import('../src/host/kernel/control-plane-runtime.js').createKernelControlPlane>>;
 type TestStateStore = Awaited<ReturnType<typeof import('../src/kernel/state-store.js').openKernelStateStore>>;
+
+
+test('Native command events bind to the Canonical Attempt without treating a handle as an OS PID', () => {
+  const owner = { runId: 'run-a', stepId: 'step-a', attemptId: 'attempt-a', workspaceId: 'workspace-a' };
+  const startedTurn = { threadId: 'thread-a', turnId: 'turn-a' };
+  const valid = bindNativeCommandEvent(owner, {
+    method: 'item/started',
+    params: {
+      threadId: 'thread-a',
+      turnId: 'turn-a',
+      item: { type: 'commandExecution', id: 'item-a', processId: 1454 },
+      owner: { attemptId: 'forged-attempt', workspaceId: 'forged-workspace' },
+    },
+  }, startedTurn);
+  assert.deepEqual(valid, { ...owner, method: 'item/started', threadId: 'thread-a', turnId: 'turn-a', itemId: 'item-a', processId: '1454' });
+  assert.equal(bindNativeCommandEvent(owner, { method: 'item/started', params: { threadId: 'thread-a', turnId: 'turn-a', item: { type: 'reasoning', id: 'item-a', processId: 1454 } } }, startedTurn), null);
+  assert.equal(bindNativeCommandEvent(owner, { method: 'item/started', params: { threadId: 'thread-a', item: { type: 'commandExecution', id: 'item-a', processId: 1454 } } }, startedTurn), null);
+  assert.equal(bindNativeCommandEvent(owner, { method: 'turn/completed', params: { threadId: 'thread-a', turnId: 'turn-a', item: { type: 'commandExecution', id: 'item-a', processId: 1454 } } }, startedTurn), null);
+  assert.equal(bindNativeCommandEvent(owner, { method: 'item/completed', params: { threadId: 'thread-a', turnId: 'turn-a', item: { type: 'commandExecution', id: 'item-a', processId: -1 } } }, startedTurn)?.processId, null);
+  assert.equal(bindNativeCommandEvent(owner, { method: 'item/started', params: { threadId: 'other-thread', turnId: 'turn-a', item: { type: 'commandExecution', id: 'item-a', processId: 1454 } } }, startedTurn), null);
+  assert.equal(bindNativeCommandEvent(owner, { method: 'item/started', params: { threadId: 'thread-a', turnId: 'other-turn', item: { type: 'commandExecution', id: 'item-a', processId: 1454 } } }, startedTurn), null);
+  assert.equal(bindNativeCommandEvent(owner, { method: 'item/started', params: { threadId: 'thread-a', turnId: 'turn-a', item: { type: 'commandExecution', id: 'item-a', processId: 1454 } } }, null), null);
+});
+
+test('Host-owned Native observation binds live events to the existing Attempt and does not confer termination authority', async () => {
+  await withRun(async (cp: TestControlPlane, runId: string) => {
+    const seen: NativeExecutionObservation[] = [];
+    let dispatchedOwner: Record<string, unknown> | null = null;
+    const adapter = createCodexAdapter({
+      parentSessionObserver: async ({ parentSessionId }) => ({
+        sessionId: parentSessionId, model: 'owner-selected-model', effort: 'high',
+      }),
+      nativeLaunch: async ({ invocation, executionOwner, observeNativeExecutionEvent, message }) => {
+        dispatchedOwner = assertTestRecord(executionOwner);
+        assert.ok(typeof observeNativeExecutionEvent === 'function');
+        const report = observeNativeExecutionEvent as (event: unknown, startedTurn: { threadId: string; turnId: string }) => void;
+        const startedTurn = { threadId: 'native-thread', turnId: 'native-turn' };
+        report({
+          method: 'item/started',
+          params: {
+            threadId: 'native-thread',
+            turnId: 'native-turn',
+            item: { type: 'commandExecution', id: 'native-item', processId: 1454 },
+          },
+        }, startedTurn);
+        // Non-command events and incomplete handles cannot produce a trusted
+        // command owner. The native handle 1454 is not an OS PID.
+        report({ method: 'item/started', params: {
+          threadId: 'native-thread', turnId: 'native-turn',
+          item: { type: 'reasoning', id: 'reasoning-item', processId: 1024 },
+        } }, startedTurn);
+        report({ method: 'item/started', params: {
+          threadId: 'other-thread', turnId: 'native-turn',
+          item: { type: 'commandExecution', id: 'misrouted-item', processId: 2048 },
+        } }, startedTurn);
+        assert.doesNotMatch(String(message), /attemptId|workspaceId|executionOwner/u);
+        const requested = assertTestRecord(invocation);
+        return {
+          resolvedModel: requested.model,
+          resolvedEffort: requested.effort,
+          observedSessionConfig: { model: requested.model, effort: requested.effort },
+          effortObserved: true,
+          sessionId: 'isolated-native-session',
+        };
+      },
+    });
+    const dispatched = await dispatchKernelTurn({
+      controlPlane: cp,
+      runId,
+      adapter,
+      registry: createModelRegistry({ surface: 'codex', env: FRONTIER_ENV }),
+      parentSessionId: 'codex-parent-session',
+      actionContext: { executionMode: 'native-subagent', delegationRequested: true },
+      onNativeExecution: (observation) => { seen.push(observation); },
+    });
+    const actualOwner = assertTestRecord(dispatchedOwner);
+    assert.ok(actualOwner.attemptId, 'the Host must pass a canonical owner to a Native launcher');
+    assert.equal(seen.length, 1, 'only a matching commandExecution event is observable');
+    assert.equal(seen[0].runId, runId);
+    assert.equal(seen[0].attemptId, actualOwner.attemptId);
+    assert.equal(seen[0].stepId, actualOwner.stepId);
+    assert.equal(seen[0].workspaceId, actualOwner.workspaceId);
+    assert.ok(typeof seen[0].attemptId === 'string' && seen[0].attemptId);
+    assert.ok(typeof seen[0].workspaceId === 'string' && seen[0].workspaceId);
+    assert.equal(seen[0].threadId, 'native-thread');
+    assert.equal(seen[0].turnId, 'native-turn');
+    assert.equal(seen[0].itemId, 'native-item');
+    assert.equal(seen[0].processId, '1454');
+    assert.equal('osPid' in seen[0], false);
+    assert.equal('writerTerminated' in seen[0], false);
+    assert.equal('writerFenced' in seen[0], false);
+  });
+});

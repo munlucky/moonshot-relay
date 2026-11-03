@@ -3,6 +3,7 @@
 // implementation turns. Model selection happens per worker invocation only.
 
 import { selectCodexProfileName } from '../codex-model-policy.js';
+import type { NativeExecutionOwner, NativeStartedTurn } from '../adapter-dispatch.js';
 import { isNativeDelegationRequested, resolveCodexActorRoute } from '../codex-actor-router.js';
 import { buildModelVisiblePromptMessage, buildModelVisiblePromptView } from '../model-capsule-view.js';
 import {
@@ -164,6 +165,8 @@ interface AdapterDispatchInput {
   executionMode?: unknown;
   delegationRequested?: boolean;
   requestedTransport?: unknown;
+  executionOwner?: NativeExecutionOwner | null;
+  observeNativeExecutionEvent?: ((event: unknown, startedTurn: NativeStartedTurn) => void) | null;
   actionContext?: UnknownRecord | null;
 }
 
@@ -806,7 +809,7 @@ export const createCodexAdapter = ({
     // concrete owner transport launcher exists; it never decides to retry it.
     supportsOwnerDirectRetry: Boolean(launch),
     nativeDelegationAvailable,
-    async dispatch({ decision, resolution, strategy, executionCapsule = null, modelInput = {}, executionContract, envelope = null, workingDirectory = null, environment = null, parentSessionId = null, parentSessionConfig = defaultParentSessionConfig, parentSessionEnvironment: dispatchParentSessionEnvironment = null, parentEnvironment: dispatchParentEnvironment = null, concurrencyGroup = null, childSession = null, executionMode = null, delegationRequested = false, requestedTransport = null, actionContext = null }: AdapterDispatchInput) {
+    async dispatch({ decision, resolution, strategy, executionCapsule = null, modelInput = {}, executionContract, envelope = null, workingDirectory = null, environment = null, parentSessionId = null, parentSessionConfig = defaultParentSessionConfig, parentSessionEnvironment: dispatchParentSessionEnvironment = null, parentEnvironment: dispatchParentEnvironment = null, concurrencyGroup = null, childSession = null, executionMode = null, delegationRequested = false, requestedTransport = null, actionContext = null, executionOwner = null, observeNativeExecutionEvent = null }: AdapterDispatchInput) {
       const invocation = buildCodexInvocation({ decision, resolution, capabilities: resolved });
       // Reproject at the adapter/provider boundary. A caller-supplied prompt
       // is intentionally not accepted as an authority for provider input.
@@ -964,6 +967,11 @@ export const createCodexAdapter = ({
           parentSessionId: typeof parentSessionId === 'string' ? parentSessionId : null,
           concurrencyGroup: typeof concurrencyGroup === 'string' ? concurrencyGroup : null,
           childSession: providerChildSession(childSession),
+          // An injected Host-owned Native transport can report real-time
+          // command handles. The spawn_agent wrapper projects only its known
+          // provider fields and does not forward this Host authority.
+          ...(selectedDispatchMechanism === 'native-subagent' && executionOwner && observeNativeExecutionEvent
+            ? { executionOwner, observeNativeExecutionEvent } : {}),
         }));
         return { result, dispatchMechanism: selectedDispatchMechanism, fallbackReason: selectedFallbackReason };
       };

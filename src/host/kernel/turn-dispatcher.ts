@@ -1,5 +1,5 @@
 import { matchCapture } from '../../shared/match-capture.js';
-import type { HostAdapterDispatch } from './adapter-dispatch.js';
+import { bindNativeCommandEvent, type HostAdapterDispatch, type NativeExecutionObserver, type NativeStartedTurn } from './adapter-dispatch.js';
 // Host turn dispatcher (§11). Pulls the Kernel's directive, asks the Host
 // adapter to run the turn under the requested model class, and files the
 // receipt. It owns no provider client: `adapter.dispatch` is the only edge.
@@ -259,6 +259,7 @@ interface DispatchKernelTurnAttemptInput {
   suppressOwnerDirect?: boolean;
   suppressParallel?: boolean;
   useHostDirectiveStrategy?: boolean;
+  onNativeExecution?: NativeExecutionObserver | null;
 }
 
 interface DispatchKernelTurnInput extends Omit<DispatchKernelTurnAttemptInput, 'turn' | 'attemptOverride' | 'suppressOwnerDirect' | 'suppressParallel' | 'useHostDirectiveStrategy'> {
@@ -1055,6 +1056,7 @@ const dispatchKernelTurnAttempt = async ({
   suppressOwnerDirect = false,
   suppressParallel = false,
   useHostDirectiveStrategy = true,
+  onNativeExecution = null,
 }: DispatchKernelTurnAttemptInput): Promise<HostRecord> => {
   if (!adapter) throw new Error('dispatchKernelTurn requires a Host adapter');
   const hostCapabilities = adapter.capabilities || {};
@@ -1382,6 +1384,25 @@ const dispatchKernelTurnAttempt = async ({
     || actionContext.transport
     || (actionContext.executionMode === 'native-subagent' ? 'native-subagent' : null);
 
+  // The Kernel Attempt owns the lineage; Native event payloads cannot claim a
+  // different Run, Step, Attempt or Workspace. No OS-exit authority is inferred.
+  const ownerWorkspaceId = boundAttempt?.workspaceId || actionContext.workspaceId || null;
+  const ownerStepId = executionCapsule?.stepId || boundAttempt?.stepId || null;
+  const ownerLineageMatches = (!boundAttempt?.runId || boundAttempt.runId === runId)
+    && (!boundAttempt?.stepId || !executionCapsule?.stepId || boundAttempt.stepId === executionCapsule.stepId)
+    && (!boundAttempt?.workspaceId || !actionContext.workspaceId || boundAttempt.workspaceId === actionContext.workspaceId);
+  const executionOwner = ownerLineageMatches
+    && typeof attemptId === 'string' && attemptId
+    && typeof ownerStepId === 'string' && ownerStepId
+    && typeof ownerWorkspaceId === 'string' && ownerWorkspaceId
+    ? { runId, stepId: ownerStepId, attemptId, workspaceId: ownerWorkspaceId }
+    : null;
+  const observeNativeExecutionEvent = executionOwner && onNativeExecution
+    ? (event: unknown, startedTurn: NativeStartedTurn): void => {
+      const observation = bindNativeCommandEvent(executionOwner, event, startedTurn);
+      if (observation) onNativeExecution(observation);
+    }
+    : null;
   const startedAt = now();
   let dispatch: HostRecord;
   let dispatchError: HostRecord | null = null;
@@ -1394,6 +1415,9 @@ const dispatchKernelTurnAttempt = async ({
       modelInput,
       modelVisiblePrompt,
       executionContract,
+      // Host-only Native observation; never part of the provider prompt.
+      executionOwner,
+      observeNativeExecutionEvent,
       hostExecutionContract: asRecord(hostBoundary.contract),
       envelope,
       workingDirectory: controlPlane.projectRoot || null,
@@ -1491,6 +1515,7 @@ const dispatchKernelTurnAttempt = async ({
       suppressOwnerDirect: true,
       suppressParallel: true,
       useHostDirectiveStrategy,
+      onNativeExecution,
     });
     return {
       ...retry,
@@ -1877,6 +1902,7 @@ export const dispatchKernelTurn = async ({
   permissionPolicy = {},
   economics = {},
   now = () => new Date().toISOString(),
+  onNativeExecution = null,
   reviewFallbacks = [],
   hostAdapters = [],
   reviewTransports = [],
@@ -1929,6 +1955,7 @@ export const dispatchKernelTurn = async ({
       permissionPolicy,
       economics,
       now,
+      onNativeExecution,
     })) as HostRecord;
   }
 
