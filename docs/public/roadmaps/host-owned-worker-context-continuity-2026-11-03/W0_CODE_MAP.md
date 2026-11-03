@@ -126,3 +126,7 @@ Lease 만료·CAS mismatch만으로 A가 OS level에서 파일 쓰기를 멈췄�
 ## T25 실제 Native 모델·명령 관측과 Canonical Attempt 통합 범위
 
 [실제 모델/Kernel 통합 검증](W0_T25_REAL_MODEL_AND_KERNEL_ATTEMPT_LINK_2026-11-03.md): Mac 별도 인증 W0 App Server에서 실제 모델 응답 Turn 및 읽기 전용 `pwd` Command `item/started` → `item/completed` → `turn/completed` 수명을 확인했다. Linux 코드에서는 `src/host/kernel/codex-app-server-transport.ts`가 raw `onEvent` 대신 Canonical `executionOwner` + `onNativeExecution`만 선택적으로 받아 기존 `bindNativeCommandEvent`로 검증한 소유권·명령 식별자만 전달한다. `tests/kernel-codex-app-server-transport.test.ts`에 실제 Kernel Run/Attempt→격리 모의 App Server 이벤트 연결, Turn 완료 후 Attempt `started` 유지, 관측 콜백 오류 시 Fail-close를 검증했다. **Mac 실제 모델 Turn과 Kernel 런타임을 하나의 실제 E2E로 결합하지 않았으며, Host 간 동일 Workspace Writer Gate는 여전히 미구현이다.**
+
+## T25 협력적 다중 프로세스 물리 Workspace 예약 경계
+
+[실측 및 설계 검증](W0_T25_PHYSICAL_WORKSPACE_WRITER_RESERVATION_2026-11-03.md): `src/host/kernel/workspace-writer-reservation.ts`는 **명시적으로 예약을 요청한 Writable Host Worker 후보**에 한해 `realpath(workspaceRoot)` 아래 `.moon-relay-host-writer-reservation`을 `open('wx')`으로 원자적으로 생성한다. 기존 Kernel `Run/Attempt/Workspace`만 사용하며 TTL/자동 해제/API 추가 완료 판정 없이 다른 OS 프로세스의 재예약을 거부한다. `tests/kernel-workspace-writer-reservation.test.ts`는 실제 Writer A의 append/fsync 중 Kernel Lock TTL 만료·B 재획득 허용과 물리 Workspace 중복 예약 B 거부, 새 Worktree B 허용을 검증한다. **현재 이 모듈은 실제 Native Writable Worker Dispatcher에 아직 연결되지 않았고, 파일 삭제 가능한 Worker에 대한 강제 격리나 다른 머신/비공유 볼륨의 Host 간 보장을 제공하지 않는다. G0 PARTIAL 유지.**
