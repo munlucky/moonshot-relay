@@ -52,6 +52,7 @@ interface OmittedContextEntry {
 interface ContextBlock {
   text: string;
   entries: ContextReceiptEntry[];
+  required: boolean;
 }
 
 export interface BuildKernelContextInput {
@@ -183,10 +184,13 @@ export const buildKernelContext = ({
   const addBlock = (
     text: string,
     entries: ContextReceiptEntry[] = [],
+    required = false,
   ): void => {
+    // Never silently truncate the Task Contract or stable principles.
+    // Optional context may be shortened; required context must be complete.
     const maxChars = contextPolicy.stableTokenBudget * 4;
-    if (estimateTokens(text) <= contextPolicy.stableTokenBudget) {
-      blocks.push({ text, entries });
+    if (required || estimateTokens(text) <= contextPolicy.stableTokenBudget) {
+      blocks.push({ text, entries, required });
       return;
     }
 
@@ -197,6 +201,7 @@ export const buildKernelContext = ({
     blocks.push({
       text: `${text.slice(0, maxChars - 24)}\n[TRUNCATED]`,
       entries: truncatedEntries,
+      required,
     });
   };
 
@@ -222,7 +227,7 @@ export const buildKernelContext = ({
       ...(principleSource?.sourceDigest
         ? { sourceDigest: principleSource.sourceDigest }
         : {}),
-    }]);
+    }], true);
   }
 
   if (taskContract) {
@@ -236,7 +241,7 @@ export const buildKernelContext = ({
       layer: 'task-contract',
       revision: effectivePolicyRevision,
       contentDigest: contractDigest,
-    }]);
+    }], true);
   }
 
   const stageEntries: ContextReceiptEntry[] = [];
@@ -290,27 +295,28 @@ export const buildKernelContext = ({
   let promptBlock = blocks.map((block) => block.text).join('\n\n');
   let currentTokens = estimateTokens(promptBlock);
 
-  // Deterministic Truncation Enforcement (KRN-AUD-P1-01).
-  if (currentTokens > contextPolicy.stageTokenBudget) {
-    while (blocks.length > 2 && currentTokens > contextPolicy.stageTokenBudget) {
-      const removedBlock = blocks.pop();
-      if (!removedBlock) break;
-      omitted.push(
-        ...removedBlock.entries.map((entry) => ({
-          id: entry.id,
-          reason: 'context-budget',
-        })),
-      );
-      promptBlock = blocks.map((block) => block.text).join('\n\n');
-      currentTokens = estimateTokens(promptBlock);
+  // Remove optional blocks first. Never cut required content after recording
+  // its full digest as included; an impossible budget is an explicit failure.
+  while (currentTokens > contextPolicy.stageTokenBudget) {
+    let lastOptional = blocks.length - 1;
+    while (lastOptional >= 0 && blocks[lastOptional]?.required === true) {
+      lastOptional -= 1;
     }
-  }
-
-  // Even the two authoritative blocks must honor the declared prompt budget.
-  if (currentTokens > contextPolicy.stageTokenBudget) {
-    const maxChars = contextPolicy.stageTokenBudget * 4;
-    promptBlock = `${promptBlock.slice(0, Math.max(0, maxChars - 24))}\n[TRUNCATED]`;
+    if (lastOptional < 0) break;
+    const [removedBlock] = blocks.splice(lastOptional, 1);
+    if (!removedBlock) break;
+    omitted.push(...removedBlock.entries.map((entry) => ({
+      id: entry.id,
+      reason: 'context-budget',
+    })));
+    promptBlock = blocks.map((block) => block.text).join('\n\n');
     currentTokens = estimateTokens(promptBlock);
+  }
+  if (currentTokens > contextPolicy.stageTokenBudget) {
+    throw new KernelContextRecordError(
+      'kernel_context_required_content_exceeds_budget',
+      'Required context exceeds the declared stage token budget',
+    );
   }
 
   const retainedIds = new Set(

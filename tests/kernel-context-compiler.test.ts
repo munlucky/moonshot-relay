@@ -88,3 +88,56 @@ test('principles pass through text secret sanitization', () => {
   assert.doesNotMatch(ctx.promptBlock, /secret12345/);
   assert.match(ctx.promptBlock, /\[REDACTED\]/);
 });
+
+test('T23: complete Task Contract survives a narrow stable block budget', () => {
+  const forbidden = 'FORBID_REMOVE_PROJECT_DIR';
+  const ctx = buildKernelContext({
+    stage: 'EXECUTE',
+    principles: ['keep-safe'],
+    taskContract: {
+      objective: 'edit files',
+      constraints: ['first', 'middle'.repeat(38), forbidden],
+    },
+    contextPolicy: {
+      revision: 't23', sourceDigest: 'fixture',
+      stableTokenBudget: 45, stageTokenBudget: 320,
+      forbiddenContent: [],
+    },
+  });
+  assert.match(ctx.promptBlock, /FORBID_REMOVE_PROJECT_DIR/);
+  assert.equal(ctx.receipt.included.find((entry) => entry.id === 'task-contract')?.truncated, undefined);
+});
+
+test('T23: required context larger than stage budget fails instead of reporting a partial contract as included', () => {
+  const input = {
+    stage: 'EXECUTE',
+    principles: ['keep-safe'],
+    taskContract: { objective: 'test', constraints: ['first', 'FORBID_REMOVE_PROJECT_DIR'] },
+    contextPolicy: {
+      revision: 't23', sourceDigest: 'fixture',
+      stableTokenBudget: 25, stageTokenBudget: 31,
+      forbiddenContent: [],
+    },
+  };
+  assert.throws(() => buildKernelContext(input), (error: unknown) =>
+    error instanceof Error
+    && 'code' in error
+    && error.code === 'kernel_context_required_content_exceeds_budget');
+});
+
+test('T23: optional context is omitted before cutting authoritative context', () => {
+  const ctx = buildKernelContext({
+    stage: 'EXECUTE',
+    principles: ['keep-safe'],
+    taskContract: { objective: 'test', constraints: ['FORBID_REMOVE_PROJECT_DIR'] },
+    stageRecords: [{ id: 'stage-extra', type: 'stage-context', content: 'large'.repeat(80), revision: '1' }],
+    contextPolicy: {
+      revision: 't23', sourceDigest: 'fixture',
+      stableTokenBudget: 60, stageTokenBudget: 90,
+      forbiddenContent: [],
+    },
+  });
+  assert.match(ctx.promptBlock, /FORBID_REMOVE_PROJECT_DIR/);
+  assert.ok(ctx.receipt.omitted.some((entry) => entry.id === 'stage-extra' && entry.reason === 'context-budget'));
+  assert.ok(!ctx.receipt.included.some((entry) => entry.id === 'stage-extra'));
+});

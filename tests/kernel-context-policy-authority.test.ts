@@ -14,7 +14,7 @@ test('canonical policy exposes explicit 600/1800 authority and receipt digest', 
   assert.match(context.receipt.policyDigest, /^[a-f0-9]{64}$/);
 });
 
-test('fixture budget mutation changes truncation behavior without compiler edits', () => {
+test('fixture budget mutation refuses incomplete authoritative context without compiler edits', () => {
   const narrow = parseContextPolicyText(fixture(40, 50, 'fixture-narrow.v1'));
   const broad = parseContextPolicyText(fixture(120, 500, 'fixture-broad.v1'));
   const input = {
@@ -23,11 +23,11 @@ test('fixture budget mutation changes truncation behavior without compiler edits
     taskContract: { objective: 'x' },
     stageRecords: [{ id: 'stage', type: 'stage-context', content: 'stage '.repeat(100), revision: '1' }],
   };
-  const narrowContext = buildKernelContext({ ...input, contextPolicy: narrow });
+  assert.throws(() => buildKernelContext({ ...input, contextPolicy: narrow }),
+    (error: unknown) => error instanceof Error && 'code' in error && error.code === 'kernel_context_required_content_exceeds_budget');
   const broadContext = buildKernelContext({ ...input, contextPolicy: broad });
-  assert.notEqual(narrowContext.receipt.tokenEstimate, broadContext.receipt.tokenEstimate);
-  assert.equal(narrowContext.receipt.policyRevision, 'fixture-narrow.v1');
   assert.equal(broadContext.receipt.policyRevision, 'fixture-broad.v1');
+  assert.match(broadContext.promptBlock, /stable stable/);
 });
 
 test('fixture forbidden-content mutation changes omission authority', () => {
