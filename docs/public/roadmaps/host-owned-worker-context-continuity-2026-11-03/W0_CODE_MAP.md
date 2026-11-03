@@ -118,3 +118,7 @@ Lease 만료·CAS mismatch만으로 A가 OS level에서 파일 쓰기를 멈췄�
 ## T25 선택적 Host Native 이벤트 관측 접점
 
 [검증 보고서](W0_T25_NATIVE_ATTEMPT_EVENT_SEAM_2026-11-03.md): `adapter-dispatch.ts`의 `bindNativeCommandEvent`는 기존 Kernel Attempt 소유권과 **실제 Native 시작 응답 Thread·Turn ID**를 명령 이벤트에 일치시킨다. `turn-dispatcher.ts`의 선택적 `onNativeExecution`을 통해 Host가 등록한 이벤트만 받으며, `adapters/codex.ts`는 Host 전용 관측 정보를 **주입된 Native 실행 함수**에만 전달한다. 기본 `spawn_agent` Provider payload는 해당 정보를 받지 않는다. 이는 App Server 지속 연결·상태 복구·Writer 종료 증명이 아니다. 서로 다른 Thread 이벤트나 OS PID를 잘못 결합하지 않는 회귀를 추가했고 G0 PARTIAL을 유지한다.
+
+## T25 Host-owned App Server stdio 연결 (선택형/읽기 전용)
+
+[실행·검증 보고서](W0_T25_HOST_OWNED_APP_SERVER_READONLY_TRANSPORT_2026-11-03.md): `src/host/kernel/codex-app-server-transport.ts`는 Codex App Server를 **Host 자식 프로세스**로 한 번 생성하고 표준 입출력의 `initialize`, `thread/start`, `turn/start`를 처리한다. Turn 조기 이벤트를 시작 응답의 `threadId`·`turnId`로 한정한 뒤 기존 `bindNativeCommandEvent`에 전달할 수 있는 `onEvent` 포트를 제공한다. 기존 `spawn_agent`/기본 `createCodexAdapter`는 그대로 둔다. 하나의 연결 안에서만 Workspace 재사용을 차단하고 Turn 완료를 물리 Writer 종료로 보지 않는다. 실제 모델 Turn·Writer Gate를 수용한 상태가 아니며 G0 PARTIAL이다.
