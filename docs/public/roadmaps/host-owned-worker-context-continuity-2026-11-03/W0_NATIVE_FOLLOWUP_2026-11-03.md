@@ -86,3 +86,7 @@ Mac Native Codex 0.162.1이 **생성한 JSON Schema**에는 `thread/shellCommand
 **G0 판정 유지:** 실제 실행 중 Turn/Command 생성·상태·중단·재연결·old Writer의 물리적 차단은 `NOT VERIFIED`. 실제 실행 Pilot은 격리 Credential·비용 상한·승인 정책이 확정되기 전에는 실행하지 않는다.
 
 **MCP 영수증:** Schema `c0d96ae6-18ee-45e9-8fe2-753234f89a33`, `6b407eaa-b1ba-4d8d-9540-5c23ad1aa293`; 첫 셸 명령 요청 `1d7c2d1b-86f4-4d2d-9eb9-f050e558a3ca`; 5초 프로세스와 연결 교체 시험 `10d531a6-a220-4118-a3c9-b89df7eb8aef`; Windows Native heartbeat 오류 `d5ebc95b-355b-4fd7-a448-a9594483bbab`.
+
+## 8. 격리 인증 이후 실제 Turn 검증(후속 결과)
+
+사용자 승인으로 **별도 W0 `CODEX_HOME`의 ChatGPT 기기 로그인을 완료**했다. 인증 후 임시 App Server에서 짧은 모델 Turn 1회를 `read-only`/`approvalPolicy=never`로 실행했으며 `turn/completed(status=completed)`를 수신했다. 첫 연결을 끊고 새 연결에서 동일 Thread의 `thread/read(includeTurns=true)`도 성공했다. 이번 서버 로그에는 Provider `401 Unauthorized`가 없었다. **이전 401·빈 Thread 이력 오류의 인과를 인증 하나로 단정하지 않는다.** 실제 *in-flight* 연결 교체/취소/OS Writer 차단은 여전히 미검증이다. 자세한 실행 증거와 사용 조건은 [W0 인증·실제 Turn 결과](W0_AUTH_TURN_RESULT_2026-11-03.md)를 참조한다.

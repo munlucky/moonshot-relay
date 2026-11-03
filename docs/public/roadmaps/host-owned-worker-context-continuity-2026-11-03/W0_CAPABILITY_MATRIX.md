@@ -25,7 +25,7 @@
 | Host 프로세스 종료 후 생존/재개 | NOT_TESTED | DEFER | NOT_TESTED | DEFER (실사용 세션 보호) |
 | 독립 Thread ID 및 Turn ID 관측 | NOT_TESTED | DEFER | NOT_TESTED | **Thread ID PASS / Turn ID NOT_TESTED** |
 | 현재 실행 중 command의 idempotent 재연결 | NOT_TESTED | DEFER | NOT_TESTED | UNKNOWN |
-| status 재조회 | NOT_TESTED | DEFER | NOT_TESTED | **Thread metadata PASS / live Turn UNKNOWN**. 실험용 `backgroundTerminals/list`는 빈 배열 |
+| status 재조회 | NOT_TESTED | DEFER | NOT_TESTED | **완료된 실제 Turn의 Thread metadata·이력 조회 PASS**, *in-flight* status UNKNOWN. 미인증 실험용 `backgroundTerminals/list`는 빈 배열 |
 | 승인/취소 신호와 적용 시점 | NOT_TESTED | DEFER | NOT_TESTED | UNKNOWN |
 | 원본 transcript/terminal event 직접 접근·digest | NOT_TESTED | DEFER | NOT_TESTED | UNKNOWN |
 | Native `spawn_agent` 실제 사용 가능 | 코드 wrapper만 확인 | DEFER | 코드 wrapper만 확인 | UNKNOWN |

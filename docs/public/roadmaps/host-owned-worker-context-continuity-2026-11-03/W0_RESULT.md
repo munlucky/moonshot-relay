@@ -56,7 +56,7 @@
 ## 4. W0.1 Capability / W0.2 실행 중복 조사
 
 - Windows Native Moonremote executor는 stale heartbeat (`persistence_unavailable`)로 읽기 전용 Host probe가 시작되지 않았다.
-- Mac Native에서 Codex 0.162.1 실제 CLI/프로토콜을 확인하고 격리 App Server의 새 WebSocket 연결에서 같은 Thread ID 메타데이터 조회에 성공했다. 그러나 이력 포함 조회/기본 `thread/resume`는 `list_turns is not supported yet`, 빈 Thread의 이력 제외 Resume은 rollout 부재로 실패했다. 추가 `thread/shellCommand` 격리 시험에서도 실제 명령 PID를 관측하지 못했고 Provider Responses WebSocket의 `401 Unauthorized`가 기록됐다. **실제 실행 중 Turn/명령의 생존은 계속 미검증.** [Native 후속 검증](W0_NATIVE_FOLLOWUP_2026-11-03.md) 참조.
+- Mac Native의 **초기 미인증·빈 Thread** 실험에서는 이력 읽기/`thread/resume` 실패와 격리 `shellCommand` 시 PID 미관측·Responses WebSocket `401 Unauthorized`가 있었다([기존 Native 결과](W0_NATIVE_FOLLOWUP_2026-11-03.md)). **후속 격리 기기 인증** 후 실제 단일 Turn `completed`와 새로운 WebSocket 연결에서 `thread/read(includeTurns=true)`가 성공했다([인증·Turn 검증](W0_AUTH_TURN_RESULT_2026-11-03.md)). 그러나 **실행 중 Turn의 연결 교체·취소·old Writer 차단은 계속 미검증**이다.
 - Linux MCP 표면에는 `codex` CLI가 없다. Linux 측에서 Codex Native Worker 생존을 시험할 수 없는 것이지 사용자 Native Host의 기능 부재를 뜻하지 않는다.
 - Mac MCP checkout은 초기 기준보다 한 커밋 뒤처져 있으므로 같은 소스 E2E가 아니며 변경하지 않았다.
 - Source 검색에서 자동 Goals loop 구현 및 실제 App Server thread-control API를 확인하지 못했다. 모델/Tool 기능은 설치된 Native에서 별도로 측정해야 한다.
