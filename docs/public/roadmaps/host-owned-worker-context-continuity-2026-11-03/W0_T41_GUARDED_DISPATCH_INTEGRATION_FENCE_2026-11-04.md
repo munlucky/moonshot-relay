@@ -46,6 +46,8 @@
 
 이 보정은 새로운 Lock 권위·영속 상태·예외별 폴백을 추가하지 않는다. 이전의 Mac 실패를 PASS로 소급하거나 같은 SHA를 검증했다고 주장하지 않는다. 이후 보정 커밋의 실제 Mac 회귀를 별도로 기록한다.
 
+보정 커밋 `7ddd2e54`의 Mac 재시험에서는 일반 정상 경로가 PASS, 실제 Mac Scoped Proof/T36 격리와 T37 Fence 회귀가 PASS였다. 보호된 정상 경로도 Owner `completed` 및 terminal Fence 해제까지 진행했다. 다만 Crash·Guarded 3건이 공통적으로 **이미 지워진 Step Worktree의 Git metadata를 `realpathSync()`로 읽는 시험 정리 코드**에서 ENOENT로 실패했다. T38 fixture가 **자신의 경로로 확인된 남은 Worktree만** 정리하도록 `path.resolve`와 `existsSync`를 사용하고, 삭제된 경로의 Git 메타데이터는 기존 `git worktree prune`으로 제거한다. 두 번째 Mac 실패 역시 PASS로 소급하지 않는다.
+
 ## 구조·복잡도와 보수적 판정
 
 이 변경은 기존 Kernel Control Plane, Owner Fence, OS Scoped Proof, T36 물리 Worktree, Canonical Attempt/Report API의 조합만 사용한다. 별도 DB/Queue/Service/Provider 전용 retry/fallback, 새로운 Fencing Token 또는 실행 스케줄러를 도입하지 않는다.

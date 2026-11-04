@@ -234,12 +234,19 @@ for (const mode of ['crash', 'normal', 'guarded', 'guarded-crash'] as const) {
       // fixture Workers and their Proof command are known synchronous and
       // terminated, so test-owned generations may now be retired explicitly.
       const all = git(f.projectRoot, ['worktree', 'list', '--porcelain']);
+      const testRoot = realpathSync(f.root);
+      const ownerRoot = realpathSync(f.projectRoot);
       for(const line of all.split('\n')){
         if(!line.startsWith('worktree '))continue;
-        const root=line.slice('worktree '.length).trim();
-        if(realpathSync(root)===realpathSync(f.projectRoot))continue;
-        git(f.projectRoot, ['worktree', 'remove', '--force', root]);
+        // Git records canonical macOS /private/var even when mkdtemp returns
+        // /var. Do not resolve an already-removed Step worktree: its Git
+        // metadata may outlive the physical directory until prune.
+        const root=path.resolve(line.slice('worktree '.length).trim());
+        if(root===ownerRoot)continue;
+        assert.ok(root.startsWith(testRoot+path.sep), 'never clean another Git worktree');
+        if(existsSync(root))git(f.projectRoot, ['worktree', 'remove', '--force', root]);
       }
+      git(f.projectRoot, ['worktree', 'prune', '--expire', 'now']);
       safe = true;
     } finally {
       if (safe) await rm(f.root, { recursive: true, force: true });
