@@ -12,8 +12,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
-import { prepareHostWriterAttemptWorktree } from '../src/host/kernel/workspace/physical-worktree.js';
+import { prepareHostWriterAttemptWorktree, prepareRecoveryIntegrationWorktree } from '../src/host/kernel/workspace/physical-worktree.js';
 import { reserveHostWorkspaceWriter } from '../src/host/kernel/workspace-writer-reservation.js';
+import { observeWorkspaceIdentity } from '../src/host/kernel/workspace/workspace-identity.js';
 import { runHostOwnedWritableAttempt } from '../src/host/kernel/host-owned-writable-attempt.js';
 import { runNativeHostCommand } from './helpers/native-host-disconnect-runner.js';
 
@@ -63,6 +64,7 @@ test('T31 actual Native Host death keeps canonical Attempt/reservation, denies d
   let serverPid:number|null=null;
   let writerPid:number|null=null;
   let launcherPid:number|null=null;
+  let oldFence: ReturnType<Awaited<ReturnType<typeof createKernelControlPlane>>['acquireOwnerWorkspaceMutationFence']> | null=null;
   const testWorktrees:string[]=[];
   let safeToRemove=false;
   try{
@@ -96,13 +98,33 @@ test('T31 actual Native Host death keeps canonical Attempt/reservation, denies d
       return {...workspace,workspaceId:registration.workspaceId};
     };
     const aWorkspace=await register(a);
+    const snapshot={
+      expectedMutationRevision:run.mutationRevision,
+      expectedWorkspaceIdentity:observeWorkspaceIdentity({projectRoot:owner}).identity,
+      expectedHeadCommitSha:baseCommit,
+      expectedProjectId:run.projectId,
+      expectedWorktreeId:run.worktreeId,
+      expectedWorkspaceId:run.workspaceId,
+    };
+    oldFence=cp.acquireOwnerWorkspaceMutationFence(runId,{
+      ...snapshot,sessionToken:'t40-crashed-host',ttlMs:9000,
+    });
     const script=path.join(aWorkspace.workspaceRoot,'write-detached.cjs');
     await writeFile(script,[
       "const fs=require('node:fs');const path=require('node:path');",
       "const base=__dirname;fs.writeFileSync(path.join(base,'writer.pid'),String(process.pid));",
-      "let n=0;const timer=setInterval(()=>{",
+      "let n=0,deniedB=0,deniedRecovery=0,deniedOwner=0,allowedB=0,allowedRecovery=0,allowedOwner=0;const timer=setInterval(()=>{",
       " const fd=fs.openSync(path.join(base,'heartbeat.log'),'a');",
       " try{fs.writeSync(fd,String(++n)+'\\n');fs.fsyncSync(fd)}finally{fs.closeSync(fd)}",
+      " const targets=path.join(base,'late-targets.json');",
+      " if(fs.existsSync(targets)){",
+      "  const {other,recovery,owner}=JSON.parse(fs.readFileSync(targets,'utf8'));",
+      "  const attempt=(target)=>{try{fs.writeFileSync(target,'STALE');return true}catch(e){if(e.code!=='EPERM'&&e.code!=='EACCES')throw e;return false}};",
+      "  if(attempt(path.join(other,'stale-native-writer')))allowedB++;else deniedB++;",
+      "  if(attempt(path.join(recovery,'stale-native-writer')))allowedRecovery++;else deniedRecovery++;",
+      "  if(attempt(path.join(owner,'stale-native-writer')))allowedOwner++;else deniedOwner++;",
+      "  fs.writeFileSync(path.join(base,'late-verdict.json'),JSON.stringify({deniedB,deniedRecovery,deniedOwner,allowedB,allowedRecovery,allowedOwner}));",
+      " }",
       " if(n>=240){clearInterval(timer);process.exit(0)}",
       "},75);",
     ].join('\n')+'\n');
@@ -210,6 +232,26 @@ test('T31 actual Native Host death keeps canonical Attempt/reservation, denies d
     assert.equal(await countLines(path.join(aWorkspace.workspaceRoot,'launch-count.log')),1);
     assert.equal((await readdir(reservationRoot)).filter(x=>x.startsWith('writer-')).length,1);
 
+    // The crash did not transfer the old logical owner lease or retire its
+    // detached Native Writer. A second Control Plane must wait for expiry.
+    assert.ok(oldFence);
+    if(Date.now()<Date.parse(oldFence.lock.expiresAt||'')){
+      assert.throws(()=>cp!.acquireOwnerWorkspaceMutationFence(runId,{
+        ...snapshot,sessionToken:'t40-recovering-host',ttlMs:12000,
+      }),(e:unknown)=>(e as {code?:string}).code==='delivery_mutation_fence_lost');
+    }
+    await waitUntil(async()=>Date.now()>Date.parse(oldFence!.lock.expiresAt||''),
+      'previous_host_fence_expired',16000);
+    assert.ok(processRow(writerPid),'old Native Writer must still exist after Fence expiry');
+    const nextFence=cp.acquireOwnerWorkspaceMutationFence(runId,{
+      ...snapshot,sessionToken:'t40-recovering-host',ttlMs:12000,
+    });
+    assert.ok(nextFence.lock.fencingToken>oldFence.lock.fencingToken);
+    assert.throws(()=>cp!.renewOwnerWorkspaceMutationFence(runId,{
+      ...snapshot,workspaceId:oldFence!.lock.workspaceId,
+      fencingToken:oldFence!.lock.fencingToken,sessionToken:oldFence!.lock.sessionToken,
+    }),(e:unknown)=>(e as {code?:string}).code==='delivery_mutation_fence_lost');
+
     // The kernel can create a distinct successor; only this other physical
     // Workspace may obtain a NEW Host reservation.
     cp.failStepAttempt(runId,a.stepId,{code:'host_native_command_outcome_unknown'});
@@ -219,7 +261,34 @@ test('T31 actual Native Host death keeps canonical Attempt/reservation, denies d
     const bWorkspace=await register(b);
     assert.notEqual(bWorkspace.workspaceId,aWorkspace.workspaceId);
     assert.notEqual(bWorkspace.workspaceRoot,aWorkspace.workspaceRoot);
+    // The recovering Host also gets a fresh T36 integration generation; it
+    // cannot reuse the old Native Attempt's physical directory.
+    const recovery=await prepareRecoveryIntegrationWorktree({
+      repoRoot:owner,runtimeHome,baseCommit,projectId:run.projectId,
+      runId,
+    });
+    testWorktrees.push(recovery.workspaceRoot);
+    assert.notEqual(recovery.workspaceRoot,aWorkspace.workspaceRoot);
+    assert.notEqual(recovery.workspaceRoot,bWorkspace.workspaceRoot);
+    assert.equal(recovery.reused,false);
     assert.ok(processRow(writerPid),'old A physical Writer must still be alive at successor admission');
+    // Feed fresh B/Recovery/Owner targets to the stale Native Writer after B exists.
+    // The OS sandbox must reject writes regardless of new Fence epoch.
+    await writeFile(path.join(aWorkspace.workspaceRoot,'late-targets.json'),JSON.stringify({
+      other:bWorkspace.workspaceRoot,recovery:recovery.workspaceRoot,owner,
+    }));
+    const lateVerdict=path.join(aWorkspace.workspaceRoot,'late-verdict.json');
+    await waitUntil(async()=>{
+      try {return JSON.parse(await readFile(lateVerdict,'utf8')).deniedB>0;}
+      catch {return false;}
+    },'native_old_writer_rejected_new_generation');
+    const refusal=JSON.parse(await readFile(lateVerdict,'utf8')) as {
+      deniedB:number;deniedRecovery:number;deniedOwner:number;
+      allowedB:number;allowedRecovery:number;allowedOwner:number;
+    };
+    assert.ok(refusal.deniedB>0 && refusal.deniedRecovery>0 && refusal.deniedOwner>0);
+    assert.equal(refusal.allowedB,0);assert.equal(refusal.allowedRecovery,0);assert.equal(refusal.allowedOwner,0);
+    assert.equal((await cp.getRun(runId))?.mutationRevision,0);
     const bResult=await runNativeHostCommand({
       runId,attemptId:b.attemptId,workspaceId:bWorkspace.workspaceId,
       workspaceRoot:bWorkspace.workspaceRoot,reservationRoot,
@@ -235,6 +304,10 @@ test('T31 actual Native Host death keeps canonical Attempt/reservation, denies d
     assert.equal((await readdir(reservationRoot)).filter(x=>x.startsWith('writer-')).length,2);
     assert.equal((await cp.getRun(runId))?.mutationRevision,0,'no Provider outcome becomes Owner CAS/Report');
     assert.equal(cp.getAttemptById(runId,b.attemptId)?.status,'started');
+    cp.releaseOwnerWorkspaceMutationFence(runId,{
+      workspaceId:nextFence.lock.workspaceId,
+      fencingToken:nextFence.lock.fencingToken,sessionToken:nextFence.lock.sessionToken,
+    });
 
     // Only this intentionally bounded test Writer is retired. All real W0
     // evidence/unknown ownership elsewhere is untouched.
@@ -245,6 +318,13 @@ test('T31 actual Native Host death keeps canonical Attempt/reservation, denies d
     assert.equal(settled,240);
     assert.equal(await countLines(heartbeat),settled);
     assert.equal(await countLines(path.join(aWorkspace.workspaceRoot,'launch-count.log')),1);
+    const finalRefusal=JSON.parse(await readFile(lateVerdict,'utf8')) as {
+      deniedB:number;deniedRecovery:number;deniedOwner:number;
+      allowedB:number;allowedRecovery:number;allowedOwner:number;
+    };
+    assert.ok(finalRefusal.deniedB>0 && finalRefusal.deniedRecovery>0 && finalRefusal.deniedOwner>0);
+    assert.equal(finalRefusal.allowedB,0);assert.equal(finalRefusal.allowedRecovery,0);assert.equal(finalRefusal.allowedOwner,0);
+    assert.equal((await cp.getRun(runId))?.mutationRevision,0);
     safeToRemove=true;
     console.log(JSON.stringify({
       case:'T31 Native in-flight Host SIGKILL and canonical Attempt recovery',
@@ -257,7 +337,14 @@ test('T31 actual Native Host death keeps canonical Attempt/reservation, denies d
       originalNativeLauncherCount:1,successorNativeExit:bResult.exitCode,
       successorWorkspaceOnly:true,ownerRevision:0,reportAuthority:'none',
       writerExitVerifiedForArbitraryNativeCommand:false,
-      testBoundedWriterSettledLines:settled,result:'PASS',
+      testBoundedWriterSettledLines:settled,
+      t40OldFenceExpired:true,t40NewOwnerFenceEpoch:nextFence.lock.fencingToken,
+      t40OldWriterSurvivedFenceHandoff:true,
+      t40NativeDeniedNewWorktreeWrites:finalRefusal.deniedB,
+      t40NativeDeniedRecoveryIntegrationWrites:finalRefusal.deniedRecovery,
+      t40NativeDeniedOwnerWrites:finalRefusal.deniedOwner,
+      t40NativeAllowedExternalWrites:finalRefusal.allowedB+finalRefusal.allowedRecovery+finalRefusal.allowedOwner,
+      result:'PASS',
     }));
   }finally{
     if(host && host.exitCode===null){
