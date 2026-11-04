@@ -70,10 +70,13 @@ const result=await dispatchKernelParallel({
    if(!process.env.CODEX_HOME)throw Error('isolated CODEX_HOME required for native positive test');
    const attempt=cp.stateStore.getStepAttempts(runId,{stepId:step.stepId}).at(-1);
    if(!attempt?.attemptId)throw Error('missing canonical Attempt');
+   const perAttemptHome=path.join(root,'isolated-codex-home-'+attempt.attemptId);
+   await mkdir(perAttemptHome,{recursive:true});
    const native=await runNativeHostCommand({
     runId,attemptId:attempt.attemptId,workspaceId:workspace.workspaceId,
     workspaceRoot:workspace.workspaceRoot,reservationRoot:path.join(root,'reservations'),
     executable:process.env.T24_CODEX_EXECUTABLE||'codex',
+    env:{...process.env,CODEX_HOME:perAttemptHome},
     argv:[process.execPath,'-e',
      "const fs=require('node:fs');const p=require('node:path');fs.mkdirSync(p.dirname(process.argv[1]),{recursive:true});fs.writeFileSync(process.argv[1],process.argv[2]+'\\n')",
      relative,name],timeoutMs:20000,

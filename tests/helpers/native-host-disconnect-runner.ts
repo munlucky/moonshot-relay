@@ -15,6 +15,7 @@ export interface NativeDisconnectHostInput {
   executable: string;
   argv: string[];
   timeoutMs?: number;
+  env?: NodeJS.ProcessEnv;
 }
 
 type ObjectValue = Record<string, unknown>;
@@ -34,7 +35,7 @@ export const runNativeHostCommand = async (input: NativeDisconnectHostInput): Pr
     workspaceId: input.workspaceId,
   });
   const child: ChildProcessWithoutNullStreams = spawn(input.executable, ['app-server'], {
-    cwd: input.workspaceRoot, env: process.env, stdio: ['pipe', 'pipe', 'pipe'], shell: false,
+    cwd: input.workspaceRoot, env: input.env || process.env, stdio: ['pipe', 'pipe', 'pipe'], shell: false,
   });
   if (!child.pid) throw new Error('native_host_test_server_start_unobserved');
   await writeFile(path.join(input.reservationRoot, 'test-server-' + input.attemptId + '.pid'),
