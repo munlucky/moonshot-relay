@@ -5,6 +5,8 @@ import { runGit } from '../../shared/git-safe.js';
 import { observeWorkspaceIdentity } from './workspace/workspace-identity.js';
 import {
   prepareExecutionWorkspaces,
+  prepareStepWorktree,
+  prepareRecoveryIntegrationWorktree,
   createStepResultCommit,
   canUseExecutionWorkspace,
   cleanupExecutionWorkspaces,
@@ -185,6 +187,7 @@ interface IntegrateParallelResultsInput {
   deliveryWorkspace: { workspaceRoot?: string | null };
   integrationVerification: { commandRef: string };
   executeIntegrationVerification: (input: VerificationRunnerInput) => UnknownRecord | Promise<UnknownRecord>;
+  beforeCherryPick?: (() => Promise<void>) | undefined;
   materializeDelivery: (input: MaterializeDeliveryInput) => UnknownRecord | Promise<UnknownRecord>;
   runtimeHome?: (string | null) | undefined;
   projectRoot: string;
@@ -196,7 +199,7 @@ type RegisteredWorkspace = PreparedWorkspace & UnknownRecord & {
   workspaceId: string;
 };
 interface RegisteredWorkspaces {
-  integration: RegisteredWorkspace;
+  integration: RegisteredWorkspace | null;
   steps: RegisteredWorkspace[];
 }
 
@@ -254,6 +257,9 @@ interface DispatchKernelParallelOptions {
   dispatchStep?: DispatchStepFn | null;
   prepareDispatch?: PrepareDispatchFn | null;
   executeIntegrationVerification?: ((input: VerificationRunnerInput) => UnknownRecord | Promise<UnknownRecord>) | null;
+  // Explicit macOS-only guarded delivery. Does not authorize Native Writer
+  // replay or consumption of an unretired Writer's canonical result.
+  guardedIntegration?: boolean;
 }
 type DispatchKernelParallelInput = DispatchKernelParallelOptions & (
   | { controlPlane: ControlPlaneLike; prepareHost?: undefined }
@@ -613,7 +619,7 @@ const git = (root: string, args: string[], options: RunGitOptions = {}): string 
 
 const stagedPaths = (root: string): string[] => normalizePaths(git(root, ['diff', '--name-only', '--cached', '--']).split(/\r?\n/u).filter(Boolean));
 
-const integrateParallelResults = async ({ run, steps, results, integrationWorkspace, deliveryWorkspace, integrationVerification, executeIntegrationVerification, materializeDelivery, runtimeHome, projectRoot, runId }: IntegrateParallelResultsInput): Promise<IntegrationResult> => {
+const integrateParallelResults = async ({ run, steps, results, integrationWorkspace, deliveryWorkspace, integrationVerification, executeIntegrationVerification, beforeCherryPick, materializeDelivery, runtimeHome, projectRoot, runId }: IntegrateParallelResultsInput): Promise<IntegrationResult> => {
   const ordered = [...results].sort((left, right) => (steps.find((step) => step.stepId === left.stepId)?.sequence || 0) - (steps.find((step) => step.stepId === right.stepId)?.sequence || 0));
   const base = run.baseCommitSha || git(integrationWorkspace.workspaceRoot, ['rev-parse', 'HEAD']).trim();
   const preIntegrationIdentity = observeWorkspaceIdentity({ projectRoot: integrationWorkspace.workspaceRoot }).identity;
@@ -627,6 +633,7 @@ const integrateParallelResults = async ({ run, steps, results, integrationWorksp
           throw new Error(`execution result path is outside Step scope: ${changedPath}`);
         }
       }
+      if (beforeCherryPick) await beforeCherryPick();
       git(integrationWorkspace.workspaceRoot, ['cherry-pick', '--no-commit', result.resultCommitSha]);
     }
     const integratedPaths = stagedPaths(integrationWorkspace.workspaceRoot);
@@ -706,7 +713,14 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
   dispatchStep = null,
   prepareDispatch = null,
   executeIntegrationVerification = null,
+  guardedIntegration = false,
   } = options;
+  // Do not fall back to an uncontained Proof or a caller supplied verifier.
+  // This opt-in is deliberately unavailable on Linux/Windows.
+  if (guardedIntegration && (process.platform !== 'darwin' || executeIntegrationVerification)) {
+    return { schemaVersion: 1, runId, dispatched: false, status: 'failed',
+      failureCode: 'guarded_integration_os_proof_unavailable' };
+  }
   const executable = await controlPlane.getExecutableSteps(runId);
   if ((executable.steps || []).length < 2 || executable.mode !== 'parallel') {
     return fallback({ sequentialDispatcher, reason: String(executable.reason || 'sequential-fast-path'), context: { runId, executable } });
@@ -729,13 +743,19 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
     integrationVerification,
   });
   if (!admission.admitted || !hostSupportsParallel(adapter.capabilities || {})) {
+    if (guardedIntegration) return { schemaVersion: 1, runId, dispatched: false,
+      status: 'failed', failureCode: 'guarded_integration_admission_denied' };
     return fallback({ sequentialDispatcher, reason: admission.reasons[0] || 'parallel-unavailable', context: { runId, executable, admission } });
   }
   if (!runCandidate?.projectId) throw new Error('PROJECT_ID_REQUIRED');
   const run = { ...runCandidate, projectId: runCandidate.projectId };
   const repoRoot = repoRootCandidate as string;
   const base = baseCommit(repoRoot);
-  if (!base) return fallback({ sequentialDispatcher, reason: 'head-unavailable', context: { runId, executable } });
+  if (!base) {
+    if (guardedIntegration) return { schemaVersion: 1, runId, dispatched: false,
+      status: 'failed', failureCode: 'guarded_integration_head_unavailable' };
+    return fallback({ sequentialDispatcher, reason: 'head-unavailable', context: { runId, executable } });
+  }
   const deliveryIdentity = observeWorkspaceIdentity({ projectRoot: repoRoot }).identity;
   const deliverySnapshot = {
     expectedMutationRevision: Number(run?.mutationRevision || 0),
@@ -756,6 +776,8 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
     || !controlPlane.settleParallelResult
     || !controlPlane.blockDeliveryMaterialization
     || !controlPlane.recordStepResult) {
+    if (guardedIntegration) return { schemaVersion: 1, runId, dispatched: false,
+      status: 'failed', failureCode: 'guarded_integration_delivery_authority_unavailable' };
     return fallback({ sequentialDispatcher, reason: 'delivery-authority-unavailable', context: { runId, executable, deliverySnapshot } });
   }
   const acquireOwnerFence = controlPlane.acquireOwnerWorkspaceMutationFence;
@@ -771,14 +793,33 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
 
   let workspaces: RegisteredWorkspaces;
   try {
-    const prepared = await prepareExecutionWorkspaces({
-      repoRoot,
-      baseCommit: base,
-      runId,
-      projectId: run.projectId,
-      runtimeHome,
-      steps: executable.steps,
-    });
+    // Do not touch the reusable `integration` checkout in guarded mode. A
+    // previous Proof's unknown descendants could still write there.
+    let prepared: {
+      integration: PreparedWorkspace | null;
+      steps: PreparedWorkspace[];
+    };
+    if (guardedIntegration) {
+      const steps: PreparedWorkspace[] = [];
+      for (const step of executable.steps) {
+        steps.push(await prepareStepWorktree({
+          repoRoot, baseCommit: base, runId, projectId: run.projectId,
+          runtimeHome, stepId: step.stepId,
+        }));
+      }
+      prepared = { integration: null, steps };
+    } else {
+      prepared = await prepareExecutionWorkspaces({
+        repoRoot, baseCommit: base, runId, projectId: run.projectId,
+        runtimeHome, steps: executable.steps,
+      });
+    }
+    // Without physical Writer-exit evidence, never reuse an existing Step
+    // checkout in this explicit guarded path. The legacy path is unchanged.
+    if (guardedIntegration && prepared.steps.some((step) => step.reused)) {
+      throw Object.assign(new Error('guarded Step workspace could still have a Writer'),
+        { code: 'guarded_step_workspace_reused' });
+    }
     if (!controlPlane.registerExecutionWorkspace) {
       throw Object.assign(new Error('logical workspace registration authority unavailable'), { code: 'workspace_authority_unavailable' });
     }
@@ -788,10 +829,12 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
       ...registerWorkspace(runId, workspace.workspaceRoot),
     }) as RegisteredWorkspace;
     workspaces = {
-      integration: register(prepared.integration),
+      integration: prepared.integration ? register(prepared.integration) : null,
       steps: prepared.steps.map(register),
     };
   } catch (error: unknown) {
+    if (guardedIntegration) return { schemaVersion: 1, runId, dispatched: false,
+      status: 'failed', failureCode: String(errorRecord(error).code || 'guarded_execution_workspace_unavailable') };
     return fallback({ sequentialDispatcher, reason: 'execution-workspace-preparation-failed', context: { runId, executable, error } });
   }
   const workspaceByStep = new Map<string, RegisteredWorkspace>(
@@ -897,6 +940,7 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
         projectRoot: workspaceRoot,
         commandRef,
         evidenceDir: path.join(runtimeHome as string, 'evidence', run.projectId, runId, 'parallel-integration'),
+        ...(guardedIntegration ? { writeScope: workspaceRoot } : {}),
       });
       return {
         status: execution.status,
@@ -913,12 +957,57 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
   // Ordinary worker failures remain eligible for the existing partial-result
   // policy; only the canonical cross-Host claim conflict blocks Delivery.
   const competingStepClaim = dispatchFailures.some((failure) => failure.failureCode === 'STEP_ATTEMPT_ALREADY_CLAIMED');
-  const integration: IntegrationResult = successful.length > 0 && !competingStepClaim
+  const guardedBatchReady = successful.length === executable.steps.length
+    && dispatchFailures.length === 0 && resultProcessingFailures.length === 0;
+  let guardedOwnerFence: OwnerFenceLike | null = null;
+  let guardedFailure: string | null = null;
+  let integrationWorkspace: RegisteredWorkspace | null = workspaces.integration;
+  if (guardedIntegration && guardedBatchReady) {
+    try {
+      // This lock precedes the FIRST integration write, not just Owner CAS.
+      guardedOwnerFence = await acquireOwnerFence(runId, deliverySnapshot);
+      const fresh = await prepareRecoveryIntegrationWorktree({
+        repoRoot, baseCommit: base, runtimeHome,
+        runId, projectId: run.projectId,
+      });
+      const registered = await controlPlane.registerExecutionWorkspace?.(runId, fresh.workspaceRoot);
+      if (!registered?.workspaceId) throw Object.assign(
+        new Error('guarded integration registration unavailable'),
+        { code: 'workspace_authority_unavailable' },
+      );
+      integrationWorkspace = { ...fresh, ...registered } as RegisteredWorkspace;
+    } catch (error: unknown) {
+      guardedFailure = String(errorRecord(error).code || 'guarded_integration_preparation_failed');
+    }
+  }
+  const renewGuardedFence = async (
+    snapshot: typeof deliverySnapshot = deliverySnapshot,
+    phase: 'pre' | 'post-commit' = 'pre',
+  ): Promise<void> => {
+    if (!guardedOwnerFence) return;
+    const renewed = await renewOwnerFence(runId, {
+      ...snapshot,
+      workspaceId: guardedOwnerFence.lock.workspaceId,
+      fencingToken: guardedOwnerFence.lock.fencingToken,
+      sessionToken: guardedOwnerFence.lock.sessionToken,
+      phase,
+    });
+    if (!renewed.lock) throw Object.assign(new Error('guarded Owner fence lost'), { code: 'delivery_mutation_fence_lost' });
+    guardedOwnerFence = { ...renewed, lock: renewed.lock };
+  };
+  const integration: IntegrationResult = guardedIntegration && !guardedBatchReady
+    ? { status: 'failed', failureCode: 'guarded_integration_receipts_incomplete' }
+    : guardedFailure
+      ? { status: 'failed', failureCode: guardedFailure }
+      : !integrationWorkspace
+        ? { status: 'failed', failureCode: 'guarded_integration_workspace_unavailable' }
+        : successful.length > 0 && !competingStepClaim
     ? await integrateParallelResults({
       run: { ...run, baseCommitSha: base },
       steps: executable.steps,
       results: successful,
-      integrationWorkspace: workspaces.integration,
+      integrationWorkspace: integrationWorkspace as RegisteredWorkspace,
+      beforeCherryPick: guardedOwnerFence ? renewGuardedFence : undefined,
       deliveryWorkspace: { workspaceRoot: repoRoot },
       integrationVerification: admittedIntegrationVerification,
       executeIntegrationVerification: integrationRunner,
@@ -930,11 +1019,11 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
         if (path.resolve(repoRoot) !== path.resolve(controlPlane.projectRoot || repoRoot)) {
           throw Object.assign(new Error('delivery_workspace_mismatch'), { code: 'delivery_workspace_mismatch' });
         }
-        let ownerFence: OwnerFenceLike | null = null;
+        let ownerFence: OwnerFenceLike | null = guardedOwnerFence;
         let applyAttempted = false;
         let primaryError: UnknownRecord | null = null;
         try {
-          ownerFence = await acquireOwnerFence(runId, deliverySnapshot);
+          if (!ownerFence) ownerFence = await acquireOwnerFence(runId, deliverySnapshot);
           const check = runGit(repoRoot, ['apply', '--check', '--binary', '-'], { input: patch, maxBuffer: 64 * 1024 * 1024 });
           if (check.error || check.status !== 0) throw Object.assign(new Error(String(check.stderr || '').trim() || 'delivery patch check failed'), { code: 'delivery_patch_check_failed' });
           // The check itself can take long enough for the owner lease to
@@ -998,7 +1087,7 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
           }
           throw error;
         } finally {
-          if (ownerFence) {
+          if (ownerFence && !guardedIntegration) {
             try {
               await releaseOwnerFence(runId, {
                 workspaceId: ownerFence.lock.workspaceId,
@@ -1032,8 +1121,19 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
 
   const reported: Array<IntegrationReceipt & { reportResult: UnknownRecord }> = [];
   const settlementFailures: Array<{ stepId: string; reportResult: UnknownRecord | null }> = [];
+  try {
   if (integration.status === 'integrated') {
     for (const item of successful) {
+      if (guardedOwnerFence) {
+        // After CAS the expected revision and identity must advance. Renew
+        // under the SAME token; never acquire a fresh token after mutation.
+        const current = await controlPlane.getRun(runId);
+        await renewGuardedFence({
+          ...deliverySnapshot,
+          expectedMutationRevision: Number(current?.mutationRevision ?? -1),
+          expectedWorkspaceIdentity: observeWorkspaceIdentity({ projectRoot: repoRoot }).identity,
+        }, 'post-commit');
+      }
       const workerReport = item.outcome.workerReport;
       const reportResult = workerReport
         ? asRecord(await settleParallelResult(runId, {
@@ -1067,11 +1167,42 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
       }
     }
   }
+  } catch (error: unknown) {
+    // Owner CAS might already have committed. An uncertain settlement is a
+    // blocked recovery, never permission to rerun Worker/Owner mutation.
+    if (guardedOwnerFence && integration.status === 'integrated') {
+      await blockDeliveryMaterialization(runId, {
+        reason: 'delivery_materialization_recovery_required',
+        detail: String(errorRecord(error).message || error),
+      });
+    }
+    throw error;
+  } finally {
+    if (guardedOwnerFence) {
+      try {
+        await releaseOwnerFence(runId, {
+          workspaceId: guardedOwnerFence.lock.workspaceId,
+          fencingToken: guardedOwnerFence.lock.fencingToken,
+          sessionToken: guardedOwnerFence.lock.sessionToken,
+        });
+      } catch (error: unknown) {
+        if (integration.status === 'integrated') {
+          await blockDeliveryMaterialization(runId, {
+            reason: 'delivery_materialization_recovery_required',
+            detail: String(errorRecord(error).message || error),
+          });
+        }
+        throw error;
+      }
+    }
+  }
   const failed = dispatchFailures.length + resultProcessingFailures.length + settlementFailures.length;
   const continuation = integration.status === 'integrated' && failed === 0 && controlPlane.prepareNext
     ? asRecord(await controlPlane.prepareNext(runId))
     : null;
-  const cleanup = integration.status === 'integrated' && failed === 0
+  // The guarded OS-scoped Proof may have detached children whose lifetime is
+  // unknown. Never remove its Run/Step worktrees on mere Report success.
+  const cleanup = integration.status === 'integrated' && failed === 0 && !guardedIntegration
     ? await cleanupExecutionWorkspaces({ runtimeHome, projectId: run.projectId, runId, repoRoot, retain: false })
     : await cleanupExecutionWorkspaces({ runtimeHome, projectId: run.projectId, runId, repoRoot, retain: true });
   return {

@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
+import { dispatchKernelParallel } from '../src/host/kernel/parallel-dispatcher.js';
 import { cleanupExecutionWorkspaces } from '../src/host/kernel/workspace/physical-worktree.js';
 import { runGit } from '../src/shared/git-safe.js';
 
@@ -21,15 +22,26 @@ import path from 'node:path';
 const {T38_ROOT:root,T38_REPO:projectRoot,T38_HOME:runtimeHome,T38_RUN:runId,T38_MODE:mode}=process.env;
 const cp=await createKernelControlPlane({projectRoot,runtimeHome});
 try{
- if(mode==='crash'||mode==='normal'){
-  if(mode==='crash'){
+ if(mode==='crash'||mode==='normal'||mode==='guarded'||mode==='guarded-crash'){
+  if(mode==='crash'||mode==='guarded-crash'){
    cp.settleParallelResult=async()=>{
     const revision=cp.stateStore.getRun(runId)?.mutationRevision;
     writeFileSync(path.join(root,'at-cas.json'),JSON.stringify({revision}));
     process.exit(73);
    };
   }
+  if(mode==='guarded'){
+   const original=cp.settleParallelResult.bind(cp);
+   cp.settleParallelResult=async(...args)=>{
+    const current=cp.stateStore.getRun(runId);
+    const lock=cp.stateStore.getWorkspaceMutationLockV2(current.workspaceId);
+    if(!lock||lock.holderRunId!==runId||!lock.fencingToken)throw Error('T41_FENCE_NOT_HELD_DURING_SETTLEMENT');
+    writeFileSync(path.join(root,'guarded-held-at-settlement'),String(lock.fencingToken));
+    return original(...args);
+   };
+  }
   const outcome=await dispatchKernelParallel({
+   guardedIntegration:mode.startsWith('guarded'),
    controlPlane:cp,runId,projectRoot,runtimeHome,parentSessionId:'t38-process-'+mode,
    adapter:{capabilities:{surface:'codex',supportsConcurrentSessions:true,supportsIsolatedWorkingDirectory:true,supportsPerSessionEnvironment:true}},
    actionContext:{integrationVerification:{commandRef:'test:ok'}},
@@ -47,18 +59,20 @@ try{
      verifications:[{obligationId:name+'-proof',commandRef:'test:ok',acceptanceCoverage:['AC-'+name.toUpperCase()]},
       ...(name==='beta'?[{obligationId:'unit-test',commandRef:'test:ok',acceptanceCoverage:[]}]:[])]}};
    },
-   executeIntegrationVerification:({commandRef,workspaceRoot})=>{
+   ...(!mode.startsWith('guarded') ? {executeIntegrationVerification:({commandRef,workspaceRoot})=>{
     const proof=executeTrustedProof({projectRoot:workspaceRoot,commandRef,
      writeScope:process.platform==='darwin'?workspaceRoot:undefined,timeoutMs:12000});
     return {status:proof.status,passed:proof.status==='passed',verificationRef:proof.evidenceRef,
      evidenceRef:proof.evidenceRef,mechanism:proof.writeContainment?.mechanism||null};
-   },
+   }} : {}),
   });
   writeFileSync(path.join(root,'dispatch-result.json'),JSON.stringify({status:outcome.status,
    integration:outcome.integration?.status,settled:outcome.executionResults?.length,
+   verificationMechanism:outcome.integration?.verification?.execution?.writeContainment?.mechanism||null,
    failures:outcome.settlementFailures?.length,revision:cp.stateStore.getRun(runId)?.mutationRevision}));
  }else{
   const before=cp.stateStore.getRun(runId);
+  const heldFence=before?.workspaceId?cp.stateStore.getWorkspaceMutationLockV2(before.workspaceId):null;
   const beforeAttempts=cp.stateStore.getStepAttempts(runId);
   const beforeProv=cp.stateStore.getMutationProvenance(runId);
   const steps=cp.stateStore.getRunSteps(runId);
@@ -69,6 +83,7 @@ try{
   const afterAttempts=cp.stateStore.getStepAttempts(runId);
   writeFileSync(path.join(root,'inspection-'+mode+'.json'),JSON.stringify({
    before:{status:before?.status,revision:before?.mutationRevision},
+   heldFence:{token:heldFence?.fencingToken||0,runId:heldFence?.holderRunId||null},
    after:{status:after?.status,revision:after?.mutationRevision,blockedReason:after?.blockedReason},
    attemptCountBefore:beforeAttempts.length,attemptCountAfter:afterAttempts.length,
    attemptStatuses:afterAttempts.map(a=>a.status),
@@ -135,15 +150,16 @@ const observe = async (root: string, mode: string): Promise<Record<string, unkno
   JSON.parse(await readFile(path.join(root, `inspection-${mode}.json`), 'utf8')) as Record<string, unknown>;
 const isRecord = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 
-for (const mode of ['crash', 'normal'] as const) {
-  test(`T38 two independent Host processes: ${mode === 'crash' ? 'owner CAS crash blocks duplicate settlement' : 'normal Proof settles both canonical Steps once'}`, {
+for (const mode of ['crash', 'normal', 'guarded', 'guarded-crash'] as const) {
+  test(`T38/T41 independent Hosts: ${mode}`, {
+    skip: mode.startsWith('guarded') && process.platform !== 'darwin' && 'requires macOS scoped OS write containment',
     timeout: 95000,
   }, async () => {
     const f = await setup();
     let safe = false;
     try {
       const first = host(mode, f.root, f.projectRoot, f.runtimeHome, f.runId);
-      if (mode === 'crash') {
+      if (mode === 'crash' || mode === 'guarded-crash') {
         assert.equal(first.status, 73, `expected intentional process exit after Owner CAS: ${first.stderr}\n${first.stdout}`);
         assert.equal(isRecord(JSON.parse(await readFile(path.join(f.root, 'at-cas.json'), 'utf8'))).revision, 1);
       } else {
@@ -159,17 +175,28 @@ for (const mode of ['crash', 'normal'] as const) {
       assert.equal(state.attemptCountBefore, 2);
       assert.equal(state.attemptCountAfter, 2);
       assert.equal(state.executableCount, 0);
-      if (mode === 'crash') {
+      if (mode === 'crash' || mode === 'guarded-crash') {
         assert.equal(isRecord(state.recovery).status, 'blocked');
         assert.equal(isRecord(state.after).status, 'blocked');
         assert.equal(isRecord(state.after).blockedReason, 'delivery_materialization_recovery_required');
         assert.deepEqual(state.attemptStatuses, ['started', 'started']);
+        if(mode==='guarded-crash'){
+          assert.equal(isRecord(state.heldFence).runId,f.runId);
+          assert.ok(Number(isRecord(state.heldFence).token)>0);
+        }
       } else {
         assert.equal(isRecord(state.recovery).status, 'none');
         assert.deepEqual(state.attemptStatuses, ['passed', 'passed']);
         const sent = isRecord(JSON.parse(await readFile(path.join(f.root, 'dispatch-result.json'), 'utf8')));
         assert.equal(sent.status, 'passed', JSON.stringify(sent));
         assert.equal(sent.settled, 2);
+        if(mode==='guarded'){
+          assert.ok(existsSync(path.join(f.root,'guarded-held-at-settlement')));
+          assert.equal(sent.verificationMechanism,'macos-seatbelt');
+        }
+      }
+      if(mode.startsWith('guarded')){
+        assert.match(git(f.projectRoot,['worktree','list','--porcelain']),/host-recovery-integration-worktrees/u);
       }
       // A third fresh process cannot re-trigger a Worker or Owner mutation.
       const repeat = host('recheck', f.root, f.projectRoot, f.runtimeHome, f.runId);
@@ -192,6 +219,16 @@ for (const mode of ['crash', 'normal'] as const) {
         runtimeHome: f.runtimeHome, projectId: f.projectId,
         runId: f.runId, repoRoot: f.projectRoot, retain: false,
       });
+      // T36 intentionally retains recovery generations by default. These
+      // fixture Workers and their Proof command are known synchronous and
+      // terminated, so test-owned generations may now be retired explicitly.
+      const all = git(f.projectRoot, ['worktree', 'list', '--porcelain']);
+      for(const line of all.split('\n')){
+        if(!line.startsWith('worktree '))continue;
+        const root=line.slice('worktree '.length).trim();
+        if(root===f.projectRoot)continue;
+        git(f.projectRoot, ['worktree', 'remove', '--force', root]);
+      }
       safe = true;
     } finally {
       if (safe) await rm(f.root, { recursive: true, force: true });
@@ -199,3 +236,32 @@ for (const mode of ['crash', 'normal'] as const) {
     }
   });
 }
+
+// A guarded request must refuse unsupported Host OS rather than silently
+// using the previous uncontained proof or a sequential provider fallback.
+test('T41 explicit guarded integration refuses unsupported OS before Writer admission', {
+  skip: process.platform === 'darwin' && 'Darwin provides the real OS-scoped guarded path',
+}, async () => {
+  const f = await setup();
+  const cp = await createKernelControlPlane({ projectRoot: f.projectRoot, runtimeHome: f.runtimeHome });
+  try {
+    const result = await dispatchKernelParallel({
+      controlPlane: cp, runId: f.runId, projectRoot: f.projectRoot, runtimeHome: f.runtimeHome,
+      guardedIntegration: true,
+      adapter: { capabilities: { surface: 'codex', supportsConcurrentSessions: true,
+        supportsIsolatedWorkingDirectory: true, supportsPerSessionEnvironment: true } },
+    });
+    assert.ok(result && typeof result === 'object');
+    const response = result as Record<string, unknown>;
+    assert.equal(response.status, 'failed');
+    assert.equal(response.failureCode, 'guarded_integration_os_proof_unavailable');
+    assert.equal(response.dispatched, false);
+    assert.equal(cp.stateStore.getStepAttempts(f.runId).length, 0);
+    assert.equal(cp.stateStore.getRun(f.runId)?.mutationRevision, 0);
+    assert.equal(existsSync(path.join(f.root, 'worker-start-alpha')), false);
+    assert.equal(existsSync(path.join(f.root, 'worker-start-beta')), false);
+  } finally {
+    await cp.close();
+    await rm(f.root, { recursive: true, force: true });
+  }
+});

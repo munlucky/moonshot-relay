@@ -2241,7 +2241,8 @@ export const createKernelControlPlane = async ({
       fencingToken,
       sessionToken = holder,
       ttlMs = 120000,
-    }: { expectedMutationRevision?: number; expectedWorkspaceIdentity?: string; expectedHeadCommitSha?: string; expectedProjectId?: string | null; expectedWorktreeId?: string | null; expectedWorkspaceId?: string | null; workspaceId?: string | null; fencingToken?: number; sessionToken?: string; ttlMs?: number } = {}) {
+      phase = 'pre',
+    }: { expectedMutationRevision?: number; expectedWorkspaceIdentity?: string; expectedHeadCommitSha?: string; expectedProjectId?: string | null; expectedWorktreeId?: string | null; expectedWorkspaceId?: string | null; workspaceId?: string | null; fencingToken?: number; sessionToken?: string; ttlMs?: number; phase?: 'pre' | 'post-commit' } = {}) {
       const run = getRunSnapshot(runId);
       const projectId = expectedProjectId || run?.projectId || currentProject.projectId;
       const worktreeId = expectedWorktreeId || run?.worktreeId || currentWorktree.worktreeId;
@@ -2295,7 +2296,7 @@ export const createKernelControlPlane = async ({
           expectedWorkspaceId: effectiveWorkspaceId,
           ...inspectMutationWorkspace({ workspaceRoot: fencingWorkspaceRoot }),
           actualWorkspaceIdentity: observeWorkspaceIdentity({ projectRoot: fencingWorkspaceRoot }).identity,
-          phase: 'pre',
+          phase,
         });
         return {
           lock: renewal.lock,

@@ -81,6 +81,7 @@
 | T38 CAS 후 Cross-Host 복구 | **Linux·Mac 실제 Host 정상 2 Report 승인 / CAS 중단 blocked 재조회 PASS — 자동 복구 DEFER** | [T38](W0_T38_POST_CAS_CROSS_HOST_RECOVERY_2026-11-04.md): 실제 독립 OS 프로세스로 검증했으나 동기식 시험 Worker의 결과이며 Native Writer 종료 증거는 아님. |
 | T39 Native Writer 물리 종료 증거 | **Mac 실제 Codex direct RPC Grandchild 실측 1 PASS / 일반 Native 완전 종료 미증명** | [T39](W0_T39_NATIVE_WRITER_DESCENDANT_LIFETIME_2026-11-04.md): macOS 독립 PGID 다단계 Grandchild 검증. `writerExitVerified:false` 및 자동 합류 DEFER 유지. |
 | T40 Native Crash·Fence·격리 | **Mac Native Crash·TTL·새 복구 Worktree 쓰기 375회 전부 거부 PASS / 자동 합류 DEFER** | [T40](W0_T40_NATIVE_GENERATION_FENCE_OS_WRITE_ISOLATION_2026-11-04.md): 살아 있는 이전 Native Writer의 OS 쓰기 격리와 새 Host 복구 경계 실증. |
+| T41 보호된 Dispatcher 통합 | **선택형 제품 경로 실증 중 / 기본 Native 자동 합류 DEFER** | [T41](W0_T41_GUARDED_DISPATCH_INTEGRATION_FENCE_2026-11-04.md): 최초 쓰기부터 Canonical Report 정착까지 하나의 기존 Owner Fence 사용, macOS OS 강제 Proof와 독립 통합 Worktree. |
 | G0 전체 | **PARTIAL** | **W1 live worker 구현 중단**, 미완료 Native 실험부터 계속 |
 
 **다음 단계 (이미 결정된 경로):** 정상 동작하는 Native Host에서 격리 프로세스/Thread를 만들어 (1) start handle (2) 상태 재조회 (3) Main 독립성 (4) cancel/approval (5) old writer 안전 정지를 입증한다. Live Worker가 안 되지만 안전 중단·새 Thread 재개만 가능하다면 원래 계획의 B가 아니라 **degraded-safe-resume 별도 제한 채택**으로 분류한다. 원래 `E` authority-only resume을 먼저 검증하고, `C` Handoff는 추가 효용 입증 전 도입하지 않는다.

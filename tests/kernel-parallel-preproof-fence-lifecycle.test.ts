@@ -137,6 +137,19 @@ test('one real Owner fence covers first cherry-pick, scoped Proof, CAS, and atte
     assert.equal(committed.mutationRevision, 1);
     assert.equal((await f.b.getRun(f.runId))?.mutationRevision, 1);
     const freshSnapshot = { ...f.snapshot, expectedMutationRevision: 1, expectedWorkspaceIdentity: updatedIdentity };
+    // CAS has already changed the Owner Worktree, so a pre-write renewal
+    // would reject a dirty workspace. The existing post-commit guard validates
+    // the new revision/identity without minting a second fencing token.
+    assert.throws(() => f.a.renewOwnerWorkspaceMutationFence(f.runId, {
+      ...freshSnapshot, workspaceId: fence.lock.workspaceId,
+      fencingToken: fence.lock.fencingToken, sessionToken: fence.lock.sessionToken,
+    }), (error: unknown) => (error as { code?: string }).code === 'delivery_workspace_drift');
+    const postCommitRenewal = f.a.renewOwnerWorkspaceMutationFence(f.runId, {
+      ...freshSnapshot, workspaceId: fence.lock.workspaceId,
+      fencingToken: fence.lock.fencingToken, sessionToken: fence.lock.sessionToken,
+      phase: 'post-commit',
+    });
+    assert.equal(postCommitRenewal.lock?.fencingToken, fence.lock.fencingToken);
     denied(f, freshSnapshot);
     // Invalid/absent worker receipt must NEVER become canonical success merely
     // because CAS was committed; report settlement remains a separate gate.

@@ -1,0 +1,46 @@
+# W0 T41 — Dispatcher 선택형 OS 격리 통합·단일 Owner Fence 수명
+
+- 날짜: 2026-11-04
+- 기준 소스: `main / 525a4f8f1b150cc97386e07c2b2b5b6e20a7cd49`
+- 구현: `src/host/kernel/parallel-dispatcher.ts`
+- 실증: `tests/kernel-parallel-post-cas-host-restart.test.ts` 및 T37·T38 선행 회귀
+- 의사결정: **기본 Dispatcher와 Native 자동 재회수는 변경하지 않는다.** OS 강제 쓰기 경계를 가진 macOS에서만 명시적으로 선택하는 `guardedIntegration:true` 경로로 검증한다. 전체 **G0 PARTIAL / W1 DEFER**.
+
+## 먼저 확인한 기존 단절
+
+기본 Dispatcher는 두 Worker의 Canonical Attempt/Result Commit을 영속화한 뒤 다음 순서로 실행한다.
+
+`일반 integration Worktree cherry-pick → Trusted Proof → materializeDelivery에서 Owner Fence 획득 → patch check/Owner CAS → Owner Fence 해제 → settleParallelResult → cleanup`.
+
+따라서 첫 integration 쓰기와 Proof 도중 다른 Host의 Owner Fence 경쟁이 발생할 수 있으며, CAS 직후 Report 정착을 하기 전에 Fence가 해제된다. T34는 논리 Fence 만료 뒤에도 OS Proof 후손이 여전히 쓰는 반례를 증명했다. T35는 macOS `writeScope`에 의한 OS 강제 Proof 제한, T36은 복구 시도마다 새로운 물리 Integration Worktree, T37은 전 구간 Fence 수용 순서, T38은 CAS 직후 중단 시 안전한 blocked 복구, T39~T40은 Native 이탈 Writer의 외부 OS 쓰기 격리를 검증했다.
+
+## T41 선택형 실제 제품 경로
+
+- `dispatchKernelParallel({ guardedIntegration:true })`는 **macOS에서만** 실행한다. 다른 OS 또는 호출자가 직접 제공한 Proof Runner를 감지하면 작업을 시작하기 전에 `guarded_integration_os_proof_unavailable`로 **실패 종료**한다. 작업 준비·권위·입장 조건에 실패해도 기존 순차 실행이나 Sandbox 없는 Proof로 전환하지 않는다.
+- 보호 모드는 **기존 고정 `integration` Worktree를 열지 않는다**. Step 준비 시 기존 물리 Step Worktree의 재사용이 확인되면, 실제 Writer 종료를 알 수 없으므로 새 Worker를 시작하기 전에 거부한다. 기존 Dispatcher의 Step·Integration 준비 동작은 유지한다.
+- 기존 Host가 실행한 모든 Step의 Canonical Worker 실행 Receipt가 이번 배치 안에 준비된 경우에만 통합을 허용한다. 실패하거나 경쟁 Host에게 선점된 Step이 있으면 일부 결과만 Owner에 적용하지 않는다.
+- 기존 `acquireOwnerWorkspaceMutationFence()`로 Owner Fence를 **최초 cherry-pick 이전**에 확보한다. 그 다음 T36의 `prepareRecoveryIntegrationWorktree()`에서 **새 물리 Git Worktree**를 만들어 Kernel에 등록한다. 실패 시 통합하지 않고 기존 Fence를 해제한다.
+- 모든 `cherry-pick` 직전에 기존 Fencing Token을 `renewOwnerWorkspaceMutationFence()`로 갱신하고 Owner CAS 사전 검사를 받는다. 실제 Proof는 기존 `executeTrustedProof()`에 `writeScope=integration Workspace`를 명시해 macOS의 OS 제한을 상속한 후손을 생성한다. 외부 임의 Proof Runner를 허용하지 않는다.
+- Proof가 실행 중 Fence를 잃거나 만료되면 Owner 변경 전에 기존 갱신·CAS 검사가 거부한다. 별도 Timeout·PID 감시·새 Lock 권위를 추가하지 않는다.
+- 기존 `git apply --check → Fence 갱신 → assertOwnerWorkspaceMutationReady → git apply → recordOwnerWorkspaceMutation` 체계를 유지한다. **같은 Fencing Token**은 Owner CAS 이후에도 살아 있다. CAS 이전 갱신은 기존 Kernel `phase=pre`의 깨끗한 Owner 검사, CAS 이후 갱신은 기존 Mutation Guard의 `phase=post-commit` 검사로 현재 Owner Mutation Revision/Workspace Identity를 검증한다. 이 명시적 갱신 구분은 기존 `renewOwnerWorkspaceMutationFence` 인자에 추가하며 기본값은 `pre`로 유지한다. CAS 이후의 Owner Worktree는 원래 변경돼 있으므로 더 이상 `pre`로 판단할 수 없다. Report 정착 중 Host가 죽으면 T38과 같이 기존 Recovery가 미정착 Run을 blocked로 판정하도록 한다.
+- 모든 Report 정착 시도와 오류 처리가 끝난 뒤 **동일 Fence를 `finally`에서 한 번만 해제**한다. CAS 이후 정착 오류나 Fence 오류는 기존 `delivery_materialization_recovery_required`로 blocked 처리한다.
+- 종료 불명 Worker·Proof 후손을 단순히 Report 성공으로 치우지 않는다. T36 복구 Worktree와 일반 Run/Step Worktree를 자동 삭제하지 않으며, 승인된 유한 시험 소스만 별도 명시적 정리한다.
+
+## 검증 범위
+
+| 검증 | 판정 |
+| --- | --- |
+| Linux strict TypeScript·제품·테스트 빌드 | **PASS**. 최종 `phase=post-commit`/guarded Step 준비 변경 포함 재검증 (`operationId=29fd7633-96b1-4e7b-9503-516f1c272d57`) |
+| Linux 기본 Dispatcher 회귀 및 보호 경로 OS 미지원 거부 | 최종 확대 **37 PASS / 5 OS SKIP / 0 FAIL**, `check:boundaries` **9 modules / 312 files / 850 edges PASS** (`operationId=29fd7633-96b1-4e7b-9503-516f1c272d57`) |
+| Mac 실제 Seatbelt `writeScope` Proof, 최초 Fence~CAS~정착 및 재시작 | 결과 반영 예정 |
+| Mac 보호 경로 CAS 직후 Host 종료·다음 Host blocked 재조회 | 결과 반영 예정 |
+| 임의 Native Worker 실제 물리 후손 종료와 결과 자동 재회수 | **미증명; 이 옵션으로도 허용하지 않음** |
+| Linux/Windows OS 강제 Proof | **미지원; 자동 일반 spawn 폴백 없음** |
+
+## 구조·복잡도와 보수적 판정
+
+이 변경은 기존 Kernel Control Plane, Owner Fence, OS Scoped Proof, T36 물리 Worktree, Canonical Attempt/Report API의 조합만 사용한다. 별도 DB/Queue/Service/Provider 전용 retry/fallback, 새로운 Fencing Token 또는 실행 스케줄러를 도입하지 않는다.
+
+선택형 보호 통합은 **이번 Host가 실제 실행하여 완료한 Worker 결과만** 받는다. 다른 Host가 완료한 이전 split 결과를 자동으로 수집·재실행하거나 이전 Native Writer의 단일 예약을 해제하지 않는다. OS Sandbox로 과거 Worker의 Owner/다음 세대 외부 쓰기를 거부하더라도, 그 Writer의 **모든 후손이 실제 종료됐다는 증거**는 별개다. Native Writer의 전체 OS 종료가 모르는 상태에서 `writerExitVerified:false`, 물리 Worktree/예약 보존, `recoverPendingDeliveryMaterialization()` blocked 판정을 유지한다.
+
+**G0 PARTIAL / W1 DEFER.**
