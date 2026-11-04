@@ -33,9 +33,17 @@
 | --- | --- |
 | Linux 타입·제품·테스트 빌드 | **PASS**. 초기에 테스트의 `Run.projectId` nullable 계약 누락을 strict TypeScript가 검출해 값 검증을 추가했다. |
 | Linux 독립 Worktree 2개와 기존 Run cleanup 비간섭 | **집중 4 PASS / 2 OS SKIP / 0 FAIL** (`operationId=d3220b3f-a872-4102-8ce6-5c0bc91b4e16`) |
-| Mac 실제 OS 늦은 Writer가 새 통합 Worktree/Owner 쓰기 차단 | 동일 커밋의 Mac 네이티브 후속 실증 대기 |
+| Mac 실제 OS 늦은 Writer가 새 통합 Worktree/Owner 쓰기 차단 | **2 PASS / 0 FAIL / 0 SKIP** (시험 시작 시간 예산 조정 후). 기존 A Scoped Proof 후손의 A 쓰기 허용, 새 복구 B 및 Owner 쓰기 `EPERM` 거부. 두 Fence Epoch 및 stale renew 차단 확인. |
 | Linux 확대 회귀 및 모듈 경계 검사 | **60 PASS / 3 OS SKIP / 0 FAIL**, 9 modules / 312 files / 850 edges PASS (`operationId=90d17218-23f7-44a8-b8e3-cac2eb984cff`) |
 | 두 Host 독립 프로세스·만료·Owner CAS·Report 정착 통합 | 아직 미검증/자동 활성화 금지 |
+
+## macOS 실제 OS 검증에서 발견한 시험 초기화 시간 문제
+
+격리된 동일 commit `d987b781c33ab732961337002269a1aebfccf4b8`로 macOS에서 최초 전체 실행을 수행했을 때 **4 PASS / 1 FAIL / 1 SKIP**이었다(`operationId=d8a4d6c5-c670-46f7-8d39-4234e08fd0ad`). 실패는 Trusted Proof Timeout 직후 `launched.pid`가 생성되지 않았다는 시험 관측이다. 확인된 이전/현재 PID 파일이 없었으며, **복구 Worker 종료 증명을 성공으로 판정하지 않았다**. 시험 유한 Node 실행기의 macOS 시작 비용을 고려해 시험 전용 Proof 제한 시간을 `1.2초 → 5.5초`, Fence TTL `3.2초 → 9초`, 자식·Launcher의 자기 종료 기한을 늘렸다. 제품 `DEFAULT_TIMEOUT_MS`나 실제 Fence 정책은 수정하지 않았다.
+
+수정한 동일 시험 로직으로 macOS에서 TypeScript·테스트 빌드를 다시 통과했고 **T36 집중 2 PASS / 0 FAIL / 0 SKIP**이었다(`operationId=68928682-c631-457b-81e1-450ae739832b`). 실행 증거: 새 Fence Epoch, 이전 Token 갱신 거부, 오래된 A의 detached Writer의 A 내부 늦은 기록 PASS, B의 새로운 Git Worktree·Owner에 대한 쓰기 각각 `EPERM`, Owner Revision `0`. 전체 T34~T36 합산 최초 6개 시나리오와 재검증 대상의 PASS/FAIL을 혼합해 최초 실패를 지우지 않는다.
+
+최초 실패한 임시 Runtime은 `launched.pid`/`writer.pid`가 존재하지 않고 시험에 생성된 후손 프로세스가 없음을 확인했다. 시험 전용 Git Worktree 참조를 해제한 후 해당 임시 디렉터리와 격리 Git Clone을 정리했다(`operationId=2e15720a-04c3-4f2c-b4b2-4e3c8a3be6c7`). macOS 원본 저장소와 운영 Codex 세션은 변경하지 않았다.
 
 ## 다음 단계
 

@@ -45,13 +45,13 @@ const fixture = async () => {
     "const attempt=(file)=>{try{fs.writeFileSync(file,'unsafe');return 'allowed';}catch(e){return e.code||String(e);}};",
     "fs.writeFileSync(p.join(base,'verdict.json'),JSON.stringify({other:attempt(p.join(other,'stale-write')),owner:attempt(p.join(owner,'stale-write'))}));",
     "clearInterval(tick);process.exit(0);},25);",
-    'setTimeout(()=>process.exit(0),8000);',
+    'setTimeout(()=>process.exit(0),22000);',
   ].join('\n');
   const launcher = [
     "const fs=require('node:fs');const p=require('node:path');const {spawn}=require('node:child_process');",
     `const child=spawn(process.execPath,['-e',${JSON.stringify(childCode)}],{detached:true,stdio:'inherit'});`,
     "child.unref();fs.writeFileSync(p.join(process.cwd(),'launched.pid'),String(child.pid));",
-    'setTimeout(()=>process.exit(0),5000);',
+    'setTimeout(()=>process.exit(0),20000);',
   ].join('\n');
   await writeFile(path.join(owner, 'proof.cjs'), launcher + '\n');
   git(owner, ['init', '-b', 'main']);
@@ -129,18 +129,18 @@ test('recovery always creates new Git integration Worktrees untouched by normal 
 
 test('stale OS-scoped Proof child cannot modify the next recovery Git Worktree after fence expiry', {
   skip: process.platform !== 'darwin' && 'requires actual macOS OS file-write containment',
-  timeout: 24000,
+  timeout: 36000,
 }, async () => {
   const f = await fixture();
   let safe = false;
   try {
     const firstFence = f.a.acquireOwnerWorkspaceMutationFence(f.runId, {
-      ...f.snapshot, sessionToken: 'old-owner', ttlMs: 3200,
+      ...f.snapshot, sessionToken: 'old-owner', ttlMs: 9000,
     });
     const first = await f.prepare();
     const proof = executeTrustedProof({
       projectRoot: first.workspaceRoot, commandRef: 'test:late',
-      writeScope: first.workspaceRoot, timeoutMs: 1200,
+      writeScope: first.workspaceRoot, timeoutMs: 5500,
     });
     assert.equal(proof.status, 'failed');
     assert.equal(proof.timedOut, true);
