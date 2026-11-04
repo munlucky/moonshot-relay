@@ -3,7 +3,7 @@
 - 작성일: 2026-11-04
 - 기준선: main / c595c6f7f633ae8f2294169274aebd814d75e800
 - 변경: src/host/kernel/workspace/canonical-worker-receipts.ts, physical-worktree.ts, 기존 T24 두 Host 회귀
-- 판정: T42-A Readback 구현. **T42-B 실제 Owner 정착은 미완료**. G0 PARTIAL / W1 DEFER.
+- 판정: **T42-A Linux·Mac Native Readback PASS**. **T42-B 실제 Owner 정착은 미구현**. G0 PARTIAL / W1 DEFER.
 
 ## 왜 Readback부터 하는가
 
@@ -31,8 +31,19 @@ T39~T40에서는 Native App Server와 부모 프로세스가 종료돼도 독립
 | Linux TypeScript·제품·테스트 빌드 | PASS (operationId=a75cb02c-591e-4636-99fc-2799c7121eb9) |
 | Linux 집중 실제 두 Host 3 시나리오 | 3 PASS / 0 FAIL |
 | Linux 확대 Dispatcher·Proof·Fence·Report 및 모듈 경계 | 37 PASS / 4 OS SKIP / 0 FAIL; 9 modules, 313 files, 854 edges PASS (operationId=01f7660e-2614-41a1-95a4-6041cd8dfcae) |
-| macOS 독립 Native Host 실제 Canonical Readback | 완료 후 반영 |
+| Linux Attempt별 CODEX_HOME 격리 후 회귀 | **strict TypeScript·제품·테스트 빌드 PASS**, 집중 **3 PASS / 1 OS SKIP / 0 FAIL**, 확대 **37 PASS / 5 OS SKIP / 0 FAIL**, 모듈 경계 **9/313/854 PASS** (operationId=36f13455-d0da-4cef-a832-33fa247d5bc4, a5db1caa-908b-4ca1-9b30-f5388f838b8d) |
+| macOS 독립 Native Host 실제 Canonical Readback | **Attempt별 CODEX_HOME 격리 후 별도 Git Clone에서 3 PASS / 0 FAIL / 0 SKIP × 2회** (총 6 PASS). 실제 Codex App Server 직접 command/exec·Host 분리·Weak Proof·Result Readback (operationId=d31de910-7ca5-492e-8321-f1b9e0e94bce, b1d7fbd9-0f97-4317-b6fc-ae4fdb7495d2) |
 | 서로 다른 과거 Host의 결과를 단일 CAS·Proof·Report로 자동 정착 | **미구현 — T42-B** |
+
+## Mac Native 재검증과 이전 실패의 구분
+
+첫 macOS 실물 실행은 소스 2edbd7e5의 단일 격리 CODEX_HOME을 복수 Native App Server 프로세스가 공유했다. 그 실행에서는 one-owner 1개가 native_host_test_app_server_connection_lost:initialize:exit=1:signal=none으로 실패했고 split-owners, split-weak-proof 2개는 PASS였다 (operationId=fe27790e-9dcd-4ac9-8c9c-0d003c5e9744). **실패 원인은 App Server 초기화 단계의 종료로 확인됐으나, 종료의 근본 원인은 확정되지 않았다.**
+
+후속 커밋 6ab1b4f7에서는 **시험용 Native Attempt마다 별도 빈 CODEX_HOME**을 제공했다. 공유 Provider 설정이나 제품 Dispatcher의 종료 정책은 건드리지 않았으며 기존 테스트 전용 runNativeHostCommand에 선택적 env 전달만 추가했다. 실제 Mac Native 시험을 두 개의 독립 Git Clone·빈 부모 CODEX_HOME에서 각각 진행한 결과 one-owner·split-owners·split-weak-proof **3/3 PASS가 두 번**, 총 **6 PASS / 0 FAIL / 0 SKIP**로 관측됐다. 첫 시험에서는 TypeScript·제품·테스트 빌드가 통과했고, 두 번째 독립 시험에서도 제품·테스트 빌드가 통과했다.
+
+통과한 두 시험의 한정된 Native 자식 종료와 시험 Fixture 정착을 확인한 뒤, **새로 만든 시험 전용 Git Clone·격리 CODEX_HOME만** 제거했다 (operationId=ed0203b7-70e0-4a19-b728-cbded538713a, aa7858a1-5f30-461b-83ab-11b693dcc7cc). 원본 Mac checkout 및 사용자 Codex 세션은 변경하지 않았다. **최초 실패 시 보존한 시험 Fixture/예약 파일은 임의 후손 전체 종료를 증명하지 못했으므로 삭제하지 않았다.**
+
+이 결과는 시나리오의 재현성과 Attempt 단위 시험 격리 효과를 뒷받침하지만, 모든 Native 초기화 오류의 원인 해결 또는 임의 Writer 후손 종료를 증명하지는 않는다. 읽기 전용 결과 ready의 계약인 writerExitVerified:false 및 deliveryAuthorized:false는 유지된다. 해당 검증은 **T42-B 자동 Owner Delivery와 관계없이 T42-A 범위에서 완료**됐다.
 
 ## T42-B 선행 조건
 
