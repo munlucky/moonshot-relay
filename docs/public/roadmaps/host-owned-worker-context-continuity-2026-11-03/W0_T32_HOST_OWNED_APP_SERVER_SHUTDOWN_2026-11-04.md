@@ -33,11 +33,13 @@
 | 동시 `close()` 후 SIGKILL 종료 | PASS — 두 반환 모두 App Server 종료, Writer 종료는 false |
 | 기존 detached OS 후손 Writer 반례 | PASS — 종료·예약 승인으로 승격하지 않음 |
 | Linux 확대 회귀·모듈 경계 | **58 PASS / 5 OS SKIP / 0 FAIL**, 9 modules / 311 files / 849 edges PASS |
-| Mac Native 실제 OS 환경 반복 | 실행 결과 반영 예정 |
+| Mac 실제 OS Node App Server (격리 소스 `03e56ad1`) | **14 PASS / 0 FAIL / 0 SKIP**, Node 24.6.0, TypeScript/제품/테스트 빌드 PASS |
 
 Linux 확대 회귀 증거: `operationId=d44e37df-4b73-4c64-97ed-2794e0cbd859`.
 
 Linux 집중 증거: 별도 의존성·빌드 사본 `operationId=51805eb9-9407-4f9c-b85b-c14f247e2a09`. 격리 소스의 처음 TypeScript 호출은 기존 계정 `node_modules` 참조에 플랫폼 바이너리가 빠져 실패했으나, `npm ci --include=dev`로 독립 의존성을 설치해 TypeScript·제품·테스트 빌드와 집중 실행을 통과했다. 저장소 의존성은 변경하지 않았다.
+
+Mac 교차 증거: 운영 checkout과 분리한 동일 커밋 소스 clone에서 `operationId=deedb744-f796-4e18-8586-02a6b71188e5` (exit 0). 검증한 SIGTERM 무시/동시 `close()`의 대상은 **테스트가 직접 생성한 Node App Server**다. 기존 T27 detached 후손 생존 회귀도 같은 전체 테스트 실행에서 PASS였으며 후손 종료·자동 예약 해제의 권위로 해석하지 않는다. `operationId=d27ff7d4-3e40-4e5d-8fa2-6474304887c0`에서 `14 PASS / 0 FAIL / 0 SKIP`를 재확인하고 시험 전용 Git clone·임시 의존성만 정리했다. macOS 원본 checkout/운영 Codex 세션은 변경하지 않았다.
 
 ## 다음 작업
 
