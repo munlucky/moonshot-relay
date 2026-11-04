@@ -8,6 +8,7 @@ import { createCodexAppServerTransport } from '../src/host/kernel/codex-app-serv
 import { type NativeExecutionObservation } from '../src/host/kernel/adapter-dispatch.js';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
 import { runHostOwnedWritableAttempt } from '../src/host/kernel/host-owned-writable-attempt.js';
+import { prepareHostWriterAttemptWorktree } from '../src/host/kernel/workspace/physical-worktree.js';
 
 const fakeServer = String.raw`
 const readline = require('node:readline');
@@ -22,18 +23,18 @@ input.on('line', (line) => {
   if (message.method === 'initialize') {
     if (process.env.TEST_MODE !== 'stall-initialize') send({ id, result: { userAgent: 'fixture' } });
   } else if (message.method === 'thread/start') {
-    const expectedSandbox = process.env.TEST_MODE === 'writable' ? 'workspace-write' : 'read-only';
+    const expectedSandbox = process.env.TEST_MODE?.startsWith('writable') ? 'workspace-write' : 'read-only';
     if (message.params.sandbox !== expectedSandbox || message.params.approvalPolicy !== 'never') {
       send({ id, error: { code: -1, message: 'unsafe launch' } });
     } else {
       send({ id, result: { thread: { id: 'thr-' + (++serial) } } });
     }
   } else if (message.method === 'turn/start') {
-    if (process.env.TEST_MODE === 'disconnect') process.exit(0);
+    if (process.env.TEST_MODE === 'disconnect' || process.env.TEST_MODE === 'writable-disconnect') process.exit(0);
     const threadId = message.params.threadId;
     const turnId = 'turn-' + serial;
     const policy = message.params.sandboxPolicy;
-    const workspaceWrite = process.env.TEST_MODE === 'writable';
+    const workspaceWrite = process.env.TEST_MODE?.startsWith('writable');
     const allowed = workspaceWrite
       ? policy?.type === 'workspaceWrite'
         && policy?.networkAccess === false
@@ -477,6 +478,85 @@ test('Explicit Host-owned Writable runner binds a real Kernel Attempt and a sepa
       // Test-only teardown, no real OS Writer descendants in this fake server.
       for (const root of ownedWorktrees.reverse()) {
         const removed = spawnSync('git', ['worktree', 'remove', '--force', root], {
+          cwd: workspace, encoding: 'utf8', timeout: 10000,
+        });
+        assert.equal(removed.status, 0, removed.stderr);
+      }
+      await cp.close();
+    }
+  });
+});
+
+
+test('T26: disconnected Writable Turn keeps canonical Attempt unknown and rejects another Host on the same physical Workspace', async () => {
+  await withFixture(async ({ workspace, server, reservationRoot }) => {
+    const git = (...args: string[]) => {
+      const result = spawnSync('git', args, { cwd: workspace, encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr);
+      return result.stdout.trim();
+    };
+    git('init');
+    git('config', 'user.name', 'Host Disconnect Fixture');
+    git('config', 'user.email', 'disconnect@example.invalid');
+    await writeFile(path.join(workspace, 'package.json'), '{"name":"host-connection-loss-fixture"}');
+    git('add', '--all');
+    git('commit', '-m', 'baseline');
+    const baseCommit = git('rev-parse', 'HEAD');
+    const runtimeHome = path.join(path.dirname(workspace), 'kernel-runtime');
+    const cp = await createKernelControlPlane({ runtimeHome, projectRoot: workspace });
+    const runId = 'run-disconnected-host-writer';
+    let attemptWorkspace: string | null = null;
+    try {
+      await cp.startRun({ runId, objective: 'connection loss must not authorize duplicate Writer' });
+      const a = cp.beginAttempt(runId);
+      const run = await cp.getRun(runId);
+      assert.ok(a?.stepId && a.attemptId && run?.projectId && run.workspaceId);
+      const input = {
+        controlPlane: cp, repoRoot: workspace, runtimeHome, reservationRoot,
+        baseCommit, runId, stepId: a.stepId, attemptId: a.attemptId,
+        prompt: 'writable Host connection-loss fixture', model: 'test-model',
+        effort: 'high', turnTimeoutMs: 2500,
+      };
+      const options = {
+        executable: process.execPath, args: [server], requestTimeoutMs: 1200,
+        env: { ...process.env, TEST_MODE: 'writable-disconnect' },
+      };
+      await assert.rejects(
+        runHostOwnedWritableAttempt({ ...input, transportOptions: options }),
+        { code: 'codex_app_server_connection_lost' },
+      );
+      // App Server died immediately after receiving turn/start. The Host
+      // cannot know whether a descendant process is still writing.
+      const recorded = cp.getAttemptById(runId, a.attemptId);
+      assert.equal(recorded?.status, 'started');
+      assert.ok(recorded.workspaceId && recorded.workspaceId !== run.workspaceId);
+      assert.equal((await readdir(reservationRoot)).length, 1);
+      const prepared = await prepareHostWriterAttemptWorktree({
+        repoRoot: workspace, runtimeHome, baseCommit,
+        projectId: run.projectId, runId, stepId: a.stepId, attemptId: a.attemptId,
+      });
+      attemptWorkspace = prepared.workspaceRoot;
+      assert.equal(prepared.reused, true);
+      assert.equal((await readdir(prepared.workspaceRoot)).includes('mock-writer-started.txt'), false);
+
+      // Even though no dirty files were left by the disconnect, a restarted
+      // Host must not send a second writable command for the same Attempt.
+      await assert.rejects(runHostOwnedWritableAttempt({
+        ...input,
+        transportOptions: {
+          ...options,
+          env: { ...process.env, TEST_MODE: 'writable' },
+        },
+      }), { code: 'host_writer_workspace_already_reserved' });
+      assert.equal((await readdir(reservationRoot)).length, 1);
+      assert.equal(cp.getAttemptById(runId, a.attemptId)?.status, 'started');
+      assert.equal(cp.getAttemptById(runId, a.attemptId)?.workspaceId, recorded.workspaceId);
+      assert.equal(git('status', '--porcelain'), '', 'Owner must remain untouched by unknown Writer');
+    } finally {
+      // This fake server exits without spawning any Writer descendants.
+      // Test-only cleanup is not evidence for production release semantics.
+      if (attemptWorkspace) {
+        const removed = spawnSync('git', ['worktree', 'remove', '--force', attemptWorkspace], {
           cwd: workspace, encoding: 'utf8', timeout: 10000,
         });
         assert.equal(removed.status, 0, removed.stderr);

@@ -145,3 +145,8 @@ Lease 만료·CAS mismatch만으로 A가 OS level에서 파일 쓰기를 멈췄�
 ## T25 Canonical Attempt와 Host-owned Writable Turn의 선택형 실행 결합 (2026-11-04)
 
 [통합 구현 및 검증](W0_T25_HOST_OWNED_WRITABLE_ATTEMPT_INTEGRATION_2026-11-04.md): `src/host/kernel/host-owned-writable-attempt.ts`의 `runHostOwnedWritableAttempt`는 **실제 Kernel Run/started Attempt 확인 → Attempt별 물리 Worktree 준비 → 기존 `registerExecutionWorkspace` 및 `updateStepAttempt`로 불변 Workspace ID 정착 → 선택적 Native `workspace-write` Turn 시작 전 외부 Writer 예약 → 검증된 Command 이벤트 관측**을 하나의 명시적 Host 진입 함수에서 연결한다. 모의 Native App Server와 실제 Kernel State Store 통합 86/86 테스트 PASS. 반면 **Native Turn 완료 시에도 Kernel Report/Owner Delivery 권위를 만들지 않으며 `writerExitVerified=false`, `reportAuthority=none`**으로 남긴다. 기본 `spawn_agent`/Parallel Dispatcher는 미변경이고 실제 Mac 모델·OS Writer 후손 종료·안전 폐기·Host 중단 복구는 아직 미검증이다. **G0 PARTIAL, W1 DEFER.**
+
+
+## T26 실제 Mac Native+Canonical Kernel E2E 및 끊김 후 재조회 (2026-11-04)
+
+[Mac 실측·Linux T26 반례 보고서](W0_T26_MAC_NATIVE_KERNEL_AND_CONNECTION_LOSS_2026-11-04.md): 이전 `runHostOwnedWritableAttempt`를 Mac Native Host의 임시 clone에서 **실제 `gpt-6.1-sol` Codex App Server 모델 Turn과 Canonical Kernel Run/Attempt**에 연결했다. 실제 Worktree 파일 쓰기 및 Command 이벤트 2건, Turn 완료 뒤 Attempt `started`와 Host 예약 불변, 새 Host에서 재개방 후 7개 상태 재조회 PASS. 같은 Mac Codex CLI 실제 `command/exec`의 `workspaceWrite` 정책으로 별도 테스트 Worker 내부 쓰기 성공, Host 외부 시험 센티널 삭제 **exit 1 / Operation not permitted** 확인. 모델에게 삭제를 요청한 별도 Turn은 Command 이벤트 0건으로 INCONCLUSIVE 처리했다. Linux `tests/kernel-codex-app-server-transport.test.ts`에는 `writable-disconnect` 모의 서버를 통해 `turn/start` 연결 상실 직후 **clean 물리 Workspace에서도 동일 Attempt 재시작 거부**, Kernel Attempt `started` 유지 반례를 추가했다. 전체 관련 회귀 87/87 PASS. 실제 OS Writer/후손 전체 종료·Report/Owner CAS Delivery/안전 폐기와 기본 Dispatcher 자동 적용은 남았으며 **G0 PARTIAL / W1 DEFER**다.
