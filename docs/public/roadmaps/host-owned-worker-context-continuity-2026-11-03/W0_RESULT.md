@@ -72,7 +72,7 @@
 | Mac/Windows Native Worker life/status/reconnect | **Mac Turn-level PARTIAL / Windows DEFER** | Host 연결 유지 시 inProgress 재조회·원격 interrupt PASS; 실제 Main/Host lifecycle·OS Writer·Windows executor 미검증 |
 | T24 Goals/loop 이중 실행 위험 | **PARTIAL / 코드 관찰만** | 앱/Host 실제 실행 경로 검증 |
 | T26 Main/MCP/App Server/Host 종료 후 상태 | **PARTIAL (Native 모의 클라이언트 및 이력 재조회)** | 시작 WS 해제 시 interrupted, Host WS 유지 시 다른 클라이언트 종료·재조회 가능, 새 App Server에서 기록 조회. 실제 Main/MCP/OS command 연속성은 미검증 |
-| T25~T28 Native Writer 격리·종료 | **Mac 실제 후손의 쓰기 범위 제한 PASS / 임의 후손의 종료·안전 폐기 미검증** | [T28 후손 sandbox 상속](W0_T28_NATIVE_DETACHED_WRITE_CONFINEMENT_2026-11-04.md): 실제 macOS 독립 PGID Writer가 A에 기록 중 B·Host 테스트 파일 수정 각 115회 전부 거부, 재사용 Mac Conformance 100/100 거부 PASS. Linux 회귀 97건 중 95 PASS·2 OS SKIP·0 FAIL. **실제 Canonical A/B 동시 운영·전체 OS 후손 종료, Owner CAS Delivery, 기본 실행 적용은 미검증** |
+| T25~T29 Native Writer 격리·Owner CAS | **Mac 실제 Canonical A/B Native + Owner CAS 단일 반영 PASS / Worker Report·전체 후손 종료·안전 폐기 미검증** | [T29 실제 A/B·Owner CAS](W0_T29_CANONICAL_AB_NATIVE_OWNER_CAS_2026-11-04.md): A 분리된 OS Writer 생존 중 B Native 실행, 두 물리 Worktree·Workspace 소유권 분리, A/B 교차 쓰기·Host 수정 차단, Owner Patch 한 번 적용 및 이전 Revision 거부 Mac 1/1 PASS. Linux 확대 98건 중 95 PASS·3 OS SKIP·0 FAIL. **Worker Outcome/Proof/Report·임의 후손 수명·기본 Dispatcher 적용 미검증** |
 | G0 전체 | **PARTIAL** | **W1 live worker 구현 중단**, 미완료 Native 실험부터 계속 |
 
 **다음 단계 (이미 결정된 경로):** 정상 동작하는 Native Host에서 격리 프로세스/Thread를 만들어 (1) start handle (2) 상태 재조회 (3) Main 독립성 (4) cancel/approval (5) old writer 안전 정지를 입증한다. Live Worker가 안 되지만 안전 중단·새 Thread 재개만 가능하다면 원래 계획의 B가 아니라 **degraded-safe-resume 별도 제한 채택**으로 분류한다. 원래 `E` authority-only resume을 먼저 검증하고, `C` Handoff는 추가 효용 입증 전 도입하지 않는다.
