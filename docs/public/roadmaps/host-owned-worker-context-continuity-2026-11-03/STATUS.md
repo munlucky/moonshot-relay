@@ -13,6 +13,7 @@
 | 기존 사용자 작업 간섭 | 없음 (준비 작업 범위) | 사용자 Runtime/DB·Codex 세션 종료·설치·마이그레이션 없음 |
 | 프로젝트 로드맵 문서 정착 | **완료** | 2026-11-03 초기 문서와 W0-Fix를 `main`에 커밋·푸시 확인 |
 | W0 — Capability/기준선 | **G0 PARTIAL** | [T31 Native Host 실제 중단·복구](W0_T31_NATIVE_HOST_DISCONNECT_AND_ATTEMPT_RECOVERY_2026-11-04.md): Mac Native command/exec 진행 중 Host SIGKILL 후 독립 Writer 생존, 재접속 Kernel Attempt·Host 외부 예약 확인, 중복 실행 0건, 새 물리 B Worktree 허용 1/1 PASS. Linux 96 PASS·6 OS SKIP. **기존 Native RPC 결과·임의 후손 종료/안전 폐기·기본 Dispatcher 적용 미검증** |
+| T24 — Goals·Dispatcher 중복 진입 | **SOURCE RISK / NATIVE 미재현** | [소스 경계 조사](W0_T24_DISPATCH_DUPLICATE_ENTRY_SOURCE_REVIEW_2026-11-04.md): 기본 병렬 Worker pre-spawn 중복 방어와 Owner Delivery CAS는 별개. 두 독립 Host의 동일 Run/Step 경쟁 재현 전 제품 변경·G0 승격 금지 |
 | W0-Fix — ContextReceipt | **SOURCE PASS** | T23 재현 → 최소 수정, focused 17/17, typecheck/build/boundaries PASS. 확장 test:source-runtime timeout |
 | W1 — Host-owned Worker | **DEFER / 실제 Attempt-Writer Gate 대기** | Host 소유 Native commandExecution handle과 격리 Worktree/기존 Owner CAS를 연결해 종료·격리 증거 확인 전 같은 Workspace 재할당 금지 필요 |
 | W2 — status/signal/reconnect | NOT STARTED | W1 생존·Owner 경계 필요 |
