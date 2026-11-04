@@ -77,6 +77,7 @@
 | T33 App Server 전체 Process Group 종료 | **Mac 실제 음성 반례 PASS / Native Writer 전체 종료 미증명** | [T33](W0_T33_NATIVE_OS_GROUP_CONTAINMENT_NEGATIVE_2026-11-04.md): Mac 실제 PGID 26167 전체 SIGTERM 종료 후 별도 PGID 26173 Writer가 기록을 지속, B/Host 외부 쓰기 각 100/100 거부. killpg 방식 전체 종료 주장 금지. |
 | T34 통합 Proof 이전 Owner Fence | **Linux·Mac Proof 후손 이탈 실측 / 전 구간 Owner Fence 보호 NOT VERIFIED** | [T34](W0_T34_PRE_PROOF_FENCE_LIFETIME_2026-11-04.md): 실제 Trusted Proof Timeout과 Fence 만료 이후 두 번째 Owner가 획득해도 첫 Proof의 분리 Writer가 살아 있음을 재현. 자동 통합 정착은 DEFER. |
 | T35 Trusted Proof `writeScope` | **macOS 선택형 OS 쓰기 격리 PASS / Native 전체 복구 DEFER** | [T35](W0_T35_TRUSTED_PROOF_WRITE_CONTAINMENT_2026-11-04.md): Canonical `realpath` 기반 Seatbelt가 분리 후손의 Owner·형제·symlink 우회 쓰기를 `EPERM`으로 차단. Linux/Windows 미지원 시 typed fail-closed. 기존 Dispatcher 기본 Proof·자동 합류는 미변경. |
+| T37 통합 전 구간 Owner Fence | **Kernel 순서·만료 음성 경로 PASS / 제품 자동 합류 DEFER** | [T37](W0_T37_PREPROOF_OWNER_FENCE_LIFECYCLE_2026-11-04.md): 처음 쓰기 전부터 Report 정착 시도까지 단일 기존 Fence를 보유하는 테스트, 만료시 stale 거부. 실제 Dispatcher 기본 경로·Canonical 정상 Settlement는 미변경. |
 | G0 전체 | **PARTIAL** | **W1 live worker 구현 중단**, 미완료 Native 실험부터 계속 |
 
 **다음 단계 (이미 결정된 경로):** 정상 동작하는 Native Host에서 격리 프로세스/Thread를 만들어 (1) start handle (2) 상태 재조회 (3) Main 독립성 (4) cancel/approval (5) old writer 안전 정지를 입증한다. Live Worker가 안 되지만 안전 중단·새 Thread 재개만 가능하다면 원래 계획의 B가 아니라 **degraded-safe-resume 별도 제한 채택**으로 분류한다. 원래 `E` authority-only resume을 먼저 검증하고, `C` Handoff는 추가 효용 입증 전 도입하지 않는다.
