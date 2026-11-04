@@ -1,6 +1,6 @@
 # Host-owned Worker / Context Continuity 진행 현황
 
-- 최종 갱신: 2026-11-04 (KST) — **W0 Context SOURCE PASS / G0 Native Capability PARTIAL**
+- 최종 갱신: 2026-11-05 (KST) — **W0 Context SOURCE PASS / G0 Native Capability PARTIAL**
 - 기준 소스: `main / c35979c408da120e4827791700ccb5a4c06ab78f` (W0-Fix 커밋·푸시 확인)
 - 문서: [PLAN](PLAN.md) · [W0 착수](W0_START.md) · [검증 계약](VERIFICATION.md)
 - 이 파일의 상태는 **새 제품 기능의 PASS가 아니다.**
@@ -28,6 +28,7 @@
 | T42-B1 — 분리 Host Canonical Result 보호된 사전 Proof | **Linux 37 PASS·Mac Native 3 PASS / Owner Delivery DEFER** | [T42-B1](W0_T42B_GUARDED_CANONICAL_RECOVERY_PREFLIGHT_2026-11-04.md): 기존 Fence·새 Integration Worktree·Scoped Proof, 실제 CAS 및 Report 자동 회수 없음. |
 | T42-B2-A — 종료 증명이 있는 두 Host 결과의 Owner CAS·Report 검증 | **Linux 37 PASS·Mac 동기식 실증 3 PASS / Native 자동 합류 DEFER** | [T42-B2-A](W0_T42B2_FINITE_SPLIT_OWNER_CAS_SETTLEMENT_2026-11-04.md): 동기식 Fixture 기존 Kernel Fence·CAS 1회·Report 2회 테스트. 제품 자동 합류 미구현. |
 | T42-B2-B — 과거 Host 결과 Owner CAS 직후 복구 Host 종료 | **Linux 38 PASS·Mac 4 PASS / Native 자동 합류 DEFER** | [T42-B2-B](W0_T42B2_POST_CAS_CRASH_2026-11-04.md): 실제 Recovery Host CAS 중단 후 다른 Host fail-closed Recovery. |
+| T42-B2-C — 첫 Cherry-pick 전 두 복구 Host 경쟁·Proof 중 TTL 만료 | **Linux 집중 6 PASS·확대 27 PASS/2 SKIP·Mac 6 PASS / Native 자동 합류 DEFER** | [T42-B2-C](W0_T42B2C_RECOVERY_CONTENTION_TTL_2026-11-05.md): 실제 복구 Host 경합에서 1 CAS·2 Report, Proof 중 TTL 만료 후 새 Epoch·Worktree, 이전 Token 갱신·적용·CAS 차단. |
 | W0-Fix — ContextReceipt | **SOURCE PASS** | T23 재현 → 최소 수정, focused 17/17, typecheck/build/boundaries PASS. 확장 test:source-runtime timeout |
 | W1 — Host-owned Worker | **DEFER / 실제 Attempt-Writer Gate 대기** | Host 소유 Native commandExecution handle과 격리 Worktree/기존 Owner CAS를 연결해 종료·격리 증거 확인 전 같은 Workspace 재할당 금지 필요 |
 | W2 — status/signal/reconnect | NOT STARTED | W1 생존·Owner 경계 필요 |
