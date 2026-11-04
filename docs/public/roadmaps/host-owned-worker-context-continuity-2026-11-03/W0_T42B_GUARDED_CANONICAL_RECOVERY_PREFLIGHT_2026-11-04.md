@@ -28,9 +28,19 @@ T41에서 macOS OS Scoped Proof와 기존 Owner Fence를 최초 `cherry-pick`부
 | Linux strict TypeScript·제품·테스트 빌드 | PASS (`operationId=06419d1c-6f7d-4b57-b1a2-68e109a5b9b5`) |
 | Linux 집중 두 Host·T37·T38·T41 회귀 | 8 PASS / 2 OS SKIP / 0 FAIL |
 | Linux 확대 Dispatcher·Recovery·Proof 및 경계 | **37 PASS / 5 OS SKIP / 0 FAIL**, 9 modules / 313 files / 855 edges PASS (`operationId=16efca69-811c-4fb4-bc16-2354f68a2e24`) |
-| 실제 macOS Native 두 Host 과거 Result의 새로운 OS Scoped Proof | 검증 후 기입 |
-| 실제 macOS Proof 도중 Owner CAS 없음·Worker 재시작 없음·Fence 해제 | 검증 후 기입 |
+| 실제 macOS Native 두 Host 과거 Result의 새로운 OS Scoped Proof | **실제 Codex App Server direct command/exec 3 PASS / 0 FAIL / 0 SKIP**, 소스 `1f04d77e3c4e39428f0dce4d867ad1b85c6654cc`, macOS Seatbelt Proof 실증 (`operationId=8c174b48-b971-45b0-bc23-9f32cd634438`) |
+| 실제 macOS Proof 도중 Owner CAS 없음·Worker 재시작 없음·Fence 해제 | **PASS**: 분리 Step 2개 재사용, 재시작 0, Kernel Owner Mutation Revision `0`, Fence 해제 뒤 Lock 없음, Result 반환 `writerExitVerified:false`, `deliveryAuthorized:false` |
 | B2 실제 Owner CAS·Report exactly once 및 Crash 재조회 | **미구현; 별도 권한 증명 필요** |
+
+## 실제 Mac 검증과 시험용 환경 정리
+
+2026-11-04, 원본 사용자 Mac checkout은 clean 상태로 유지했다. 별도 임시 Git Clone의 HEAD `1f04d77e3c4e39428f0dce4d867ad1b85c6654cc`, 별도 빈 `CODEX_HOME`, 실제 `codex app-server` 직접 `command/exec`로 `one-owner`, `split-owners`, `split-weak-proof`를 수행했다. strict TypeScript·제품·테스트 빌드 PASS, 실제 Native 테스트 **3 PASS / 0 FAIL / 0 SKIP** (`operationId=8c174b48-b971-45b0-bc23-9f32cd634438`).
+
+`split-owners`는 두 Host가 각각 이미 기록한 Canonical Commit/Worker Report를 세 번째 Host가 재조회한 뒤, 실제 macOS Seatbelt로 `writeScope`가 제한된 새 Worktree에 순차 Cherry-pick·Scoped Proof를 수행했다. `verifyOnly`는 Owner CAS·Canonical Report 정착을 호출하지 않았다. Owner Revision 0 및 Step Attempt 개수 2개가 유지됐고, 기존 Owner Fence는 해제됐다. T24 기존 경쟁 수용과 weak-proof 차단도 회귀 통과했다.
+
+처음 두 테스트 Clone 정리 명령이 실패한 이유는 **`npm run build:tests`에서 발생한 시험 Clone 내부 미추적 `.mjs` 산출물을 Git clean 조건으로 착각**했기 때문이다. 내용 검토에서 임시 경로 외 변경·지속 실행 시험 프로세스는 확인되지 않았다. Source SHA·테스트 PASS·원본 checkout clean을 확인한 뒤 테스트 전용 Clone/격리 `CODEX_HOME`만 제거했다 (`operationId=30b097b2-879e-48c8-8839-d8ff6052d7a4`). 이전 T42-A 실패 시 따로 보존한 Fixture·예약 파일은 삭제하지 않았다.
+
+**유효한 증거 범위:** 이 시험은 known-finite command/exec와 macOS의 실제 OS 제한 Proof를 검증했다. 임의 Native Writer의 알 수 없는 후손 전체 종료, 새로운 Linux/Windows OS Sandbox 보장, T42-B2 Owner Delivery exactly-once를 승인하지 않는다.
 
 ## 남은 장벽
 
