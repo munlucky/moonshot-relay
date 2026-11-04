@@ -30,8 +30,18 @@ T42-A는 다른 Host의 Canonical Attempt·Git Commit·Patch Digest·Workspace I
 | Linux strict TypeScript·제품·테스트 빌드 | **PASS** (operationId=a5d51e5c-b208-4337-b62a-0238936daed5) |
 | Linux 실제 두 Host 집중 회귀 | **3 PASS / 0 FAIL** |
 | Linux 확대 Dispatcher·Fence·CAS Crash·Report·Proof, 경계 검사 | **37 PASS / 5 OS SKIP / 0 FAIL**. 모듈 경계 **9 modules / 313 files / 855 edges PASS** (operationId=e8dbb6ac-146c-48f2-8609-871a83fc50a3, b84bbde8-a183-47b2-b65c-3d4e256357f1) |
-| 실제 Mac 동기식 두 Host 기존 결과 정착·OS 제한 Proof | 검증 후 기록 |
+| 실제 Mac 동기식 두 Host 기존 결과 정착·OS 제한 Proof | **3 PASS / 0 FAIL / 0 SKIP**. 별도 Mac 임시 Clone HEAD `0e4e2ec695b6015924a548a71efc14de1ab4ac9a`; strict TS·제품·테스트 빌드 PASS, 실제 macOS Seatbelt Trusted Proof와 Owner CAS 0→1·Report 2건·중복 제출 거부 (operationId=d6b91d33-78d9-4885-a2bb-b5b63a4a33d2) |
 | 임의 Native Writer/후손 OS 종료 및 과거 결과 자동 Delivery | **미검증·비활성화** |
+
+## Mac 실측 범위와 정리
+
+macOS Native Host 자체에서 **모델 호출 없는 동기식 Fixture**를 실행했다. 사용한 소스는 `0e4e2ec695b6015924a548a71efc14de1ab4ac9a`를 새 임시 Git Clone으로 가져온 버전이다. Mac 원본 Codex/프로젝트 Checkout에 수정하거나 작업 실행을 주입하지 않았다. Linux strict TS·제품·테스트 빌드와 확대 회귀 37 PASS / 5 OS SKIP / 0 FAIL을 먼저 통과했고, Mac strict TS·제품·테스트 빌드 및 실제 세 시나리오 **3 PASS / 0 FAIL / 0 SKIP**도 통과했다.
+
+`split-owners`에서는 두 개의 독립 Host가 동기식 파일 쓰기를 완료하고 종료한 뒤 새 Control Plane이 Canonical Git Result 2개를 재조회한다. 새 Recovery Integration Worktree에서 두 Commit을 합치고 실제 macOS OS Scoped Proof를 수행한 뒤 **기존 Kernel Owner Fence와 CAS API**를 직접 호출했다. 이후 같은 Token의 `post-commit` 갱신으로 두 Canonical Worker Report가 각각 정착했다. 마지막 Run은 `completed`, Revision은 정확히 1, Attempt는 정확히 2개, 중복 Report 재제출은 추가 `passed` 정착을 얻지 못했다. 같은 테스트는 기존 Cross-Host Fence 경합, stale Token 및 weak proof 차단도 확인했다.
+
+시험 Runner가 완료되고 제한된 수명의 시험 Host 프로세스 종료를 확인한 후 **이번에 생성한 임시 Mac Clone·의존성 및 Linux 빌드 사본만** 정리했다 (operationId=8c68bbfb-fc59-46f4-a1ec-b5fe3c2cd5ff, b7ff6dd0-0745-4230-be2e-ff531b54aa46). 이전 별도의 T42-A 실패 Fixture/Writer 예약은 보존한다.
+
+**이 검증은 Native App Server의 종료가 모든 Writer 후손 종료를 의미한다는 사실을 증명하지 않는다.** 실제 Native 자동 합류는 사용하지 않았고 제품 코드를 변경하지 않았다. T42-B2의 후속 CAS 직후 실제 Host Crash·Fence TTL·후손 쓰기 봉쇄 검증이 남아 있으므로 G0 PARTIAL / W1 DEFER를 유지한다.
 
 ## B2 후속 조건
 
