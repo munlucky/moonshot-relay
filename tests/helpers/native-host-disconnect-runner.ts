@@ -22,6 +22,7 @@ type Pending = {
   resolve: (result: ObjectValue) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  method: string;
 };
 
 export const runNativeHostCommand = async (input: NativeDisconnectHostInput): Promise<ObjectValue> => {
@@ -44,11 +45,13 @@ export const runNativeHostCommand = async (input: NativeDisconnectHostInput): Pr
   let nextId = 1;
   let buffer = '';
   let exited = false;
-  child.once('exit', () => {
+  child.once('exit', (exitCode, signal) => {
     exited = true;
+    // Keep the failing RPC phase and bounded OS exit evidence. This is a
+    // TEST diagnostic only: App Server exit is not Writer descendant exit.
     for (const item of pending.values()) {
       clearTimeout(item.timer);
-      item.reject(new Error('native_host_test_app_server_connection_lost'));
+      item.reject(new Error(`native_host_test_app_server_connection_lost:${item.method}:exit=${exitCode ?? 'null'}:signal=${signal || 'none'}`));
     }
     pending.clear();
   });
@@ -78,7 +81,7 @@ export const runNativeHostCommand = async (input: NativeDisconnectHostInput): Pr
         pending.delete(id);
         reject(new Error('native_host_test_rpc_timeout:' + method));
       }, 40_000);
-      pending.set(id, { resolve, reject, timer });
+      pending.set(id, { resolve, reject, timer, method });
       child.stdin.write(JSON.stringify({ id, method, params }) + '\n');
     })
   );

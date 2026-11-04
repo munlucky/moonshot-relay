@@ -73,11 +73,15 @@ Mac 증거: 최종 제품·테스트 빌드 operation `65089f70-4982-4aad-a107-6
 - 이전 Host의 stale fencing token/session token으로 `renewOwnerWorkspaceMutationFence()`를 호출하면 `delivery_mutation_fence_lost`로 거부한다.
 - 해당 과정 전체에서 Owner Mutation Revision은 `0`을 유지한다. 기존 Step별 Canonical Attempt는 각각 1건이고 재시작 후 실행 가능한 새 Step은 0건이다. Writer 실행·Owner Git 적용·Worker Report 정착은 발생하지 않는다.
 
-**검증:** Linux 임시 소스/Runtime에서 타입·제품·테스트 빌드 PASS, Owner Fence 및 기존 Worker 경쟁 집중 **3 PASS / 0 FAIL**, 확대 회귀 **68 PASS / 3 OS SKIP / 0 FAIL**, 모듈 경계 **9 modules / 311 files / 849 edges PASS**. T24 독립 복구 Host 실제 경쟁 증거 operation `2062d265-7166-423f-ae58-afb8e67dc9de`, 확대 회귀 `6a0f2981-aa56-41cf-9c4f-f8fc99165b10`. Mac Native 동일 테스트는 별도 실행 후 기록한다.
+**검증:** Linux 임시 소스/Runtime에서 타입·제품·테스트 빌드 PASS, Owner Fence 및 기존 Worker 경쟁 집중 **3 PASS / 0 FAIL**, 확대 회귀 **68 PASS / 3 OS SKIP / 0 FAIL**, 모듈 경계 **9 modules / 311 files / 849 edges PASS**. T24 독립 복구 Host 실제 경쟁 증거 operation `2062d265-7166-423f-ae58-afb8e67dc9de`, 확대 회귀 `6a0f2981-aa56-41cf-9c4f-f8fc99165b10`. Mac Native 동일 소스(`e8c7e811a2e20bcd56d00deb7339c135e815881a`) 타입·제품·테스트 빌드 PASS (`e09c8751-b99d-4b72-92d3-4e6dafc0d59a`). **최초 전체 Native 3개 시나리오는 2 PASS / 1 FAIL** (`1c42c5a4-6217-49ef-96d3-fdc84bd2620f`): 전체 소유 케이스에서 alpha Worker의 Native 성공 마커가 없었다. 보존한 Host 결과에서 `worker-report-missing`의 직접 선행 오류가 **`native_host_test_app_server_connection_lost`**임을 확인했으며 beta Worker는 PASS, Owner Mutation Revision 0, 두 시험 App Server PID 종료를 확인했다 (`9de2adcb-ebc2-477b-85fc-1c962ce4494b`). 당시 종료 코드·시그널은 기록되지 않았으므로 App Server 종료의 근본 원인은 미확정이다.
+
+테스트 진단에 RPC 단계·프로세스 exit code·signal 및 실패 시 Host 결과를 표시하도록 개선했다. Mac에서 수정된 테스트를 임시 격리 소스에 반영해 타입·테스트 빌드 PASS, 단일 소유 **1 PASS** (`ed803740-7600-4e75-afd5-39d3ee724e1a`), 전체 정상 소유/강한 Proof 분할/약한 Proof 분할 **3 PASS / 0 FAIL / 0 SKIP** (`593393e5-4a56-409d-9293-cdbbc10167f5`)를 확인했다. 실패를 재시도로 숨기지 않았고, 테스트 이력의 실패를 PASS로 재분류하지 않는다. 원본 Mac checkout clean, 테스트 전용 두 App Server의 종료 확인 후 실패 fixture·격리 Git 소스·빈 CODEX_HOME을 정리했다 (`8b596af1-ad80-457e-a419-17d1c541c133`).
 
 **판정 구분:** 이 검증은 기존 Owner Fence의 *복구 조정자 동시 소유 거부*에 관한 증거다. 현재 제품 Dispatcher는 통합 Proof 후, Owner patch apply 직전에 Fence를 획득한다. 따라서 이 테스트만으로 아직 통합 Worktree 편집·Proof 실행을 두 복구 Host에 대해 직렬화했다고 판정하지 않는다. 실제 자동 합류를 만들려면 Writer/후손이 더는 수정할 수 없음을 증명한 뒤, Owner Fence를 통합 Worktree 접근 **전**에 획득하고 Proof 시간·Fence TTL·결과 정착까지 하나의 확인 가능한 경계로 묶어야 한다. Fence만 소유하고 있다고 해서 OS Writer 종료까지 증명되는 것은 아니다.
 
 현재 Native Host의 `writerExitVerified: false`, 영구적인 외부 Writer 예약, 테스트 T27의 Native Turn/App Server 종료 후에도 계속 쓰는 OS 후손 반례를 유지한다. 운영 환경에 적용할 수 있는 물리 Writer 종료 증거가 없는 동안 결과 자동 합류·Owner Delivery를 활성화하지 않는다. 이 검증을 통과한 범위만 체크포인트에 완료 기록한다.
+
+**진단 범위:** 위 test-only Native runner의 추가 종료 정보는 실패 시점 이후 관측되는 RPC/OS 메타데이터일 뿐, 임의 Native Writer·OS 후손의 종료를 증명하거나 재실행을 승인하지 않는다. 기존 `writerExitVerified: false`·예약 영속화 계약과 제품 기본 동작은 변경하지 않는다.
 
 ## 남은 항목
 

@@ -221,7 +221,7 @@ for(const mode of ['one-owner','split-owners','split-weak-proof'] as const){
    assert.ok(results.every(r=>r.dispatched===true));
    if(nativeEnabled){
     const files=(await readdir(root)).filter(x=>x.startsWith('native-'));
-    assert.equal(files.length,2,'two real native commands, one per Step');
+    assert.equal(files.length,2,`two real native commands, one per Step; markers=${JSON.stringify(files)} Host outcomes=${JSON.stringify(results)}`);
     assert.equal(files.filter(x=>x.startsWith('native-alpha-')).length,1);
     assert.equal(files.filter(x=>x.startsWith('native-beta-')).length,1);
     const reservations=(await readdir(path.join(root,'reservations'))).filter(x=>x.startsWith('writer-'));
