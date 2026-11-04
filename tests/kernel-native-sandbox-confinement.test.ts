@@ -36,6 +36,7 @@ test('Native workspaceWrite confines a detached Writer after App Server exit', {
   let nextId = 0;
   let buffer = '';
   let writerPid: number | null = null;
+  let supervisorPid: number | null = null;
   let safeToRemove = false;
   const rows = async (): Promise<number> => {
     try {
@@ -73,12 +74,20 @@ test('Native workspaceWrite confines a detached Writer after App Server exit', {
       ' if(n>=100){clearInterval(timer);process.exit(0)}',
       '},30);',
     ].join('\n') + '\n');
+    // T39: the short-lived supervisor's exit is not evidence its detached
+    // grandchild has retired. The grandchild owns another process group.
+    await writeFile(path.join(a, 'supervisor.cjs'), [
+      "const fs=require('node:fs');const path=require('node:path');const {spawn}=require('node:child_process');",
+      "fs.writeFileSync(path.join(__dirname,'supervisor.pid'),String(process.pid));",
+      "const child=spawn(process.execPath,[path.join(__dirname,'writer.cjs'),path.join(__dirname,'heartbeat.log'),path.join(__dirname,'writer-results.json'),process.argv[2],process.argv[3],path.join(__dirname,'writer.pid')],{detached:true,stdio:'ignore'});",
+      "child.unref();process.stdout.write('GRANDCHILD_PID='+child.pid+'\\n');",
+    ].join('\n') + '\n');
     const launch = path.join(a, 'spawn.cjs');
     await writeFile(launch, [
       "const {spawn}=require('node:child_process');",
       "const path=require('node:path');",
-      "const child=spawn(process.execPath,[path.join(__dirname,'writer.cjs'),path.join(__dirname,'heartbeat.log'),path.join(__dirname,'writer-results.json'),process.argv[2],process.argv[3],path.join(__dirname,'writer.pid')],{detached:true,stdio:'ignore'});",
-      "child.unref();process.stdout.write('CHILD_PID='+child.pid+'\\n');",
+      "const child=spawn(process.execPath,[path.join(__dirname,'supervisor.cjs'),process.argv[2],process.argv[3]],{detached:true,stdio:'ignore'});",
+      "child.unref();process.stdout.write('SUPERVISOR_PID='+child.pid+'\\n');",
     ].join('\n') + '\n');
 
     server = spawn(process.env.W0_CODEX_EXECUTABLE || 'codex', ['app-server'], {
@@ -141,6 +150,18 @@ test('Native workspaceWrite confines a detached Writer after App Server exit', {
       catch { await delay(40); }
     }
     assert.ok(writerPid && Number.isSafeInteger(writerPid), 'OS Writer PID must be observed');
+    supervisorPid = Number((await readFile(path.join(a, 'supervisor.pid'), 'utf8')).trim());
+    assert.ok(Number.isSafeInteger(supervisorPid) && supervisorPid > 0);
+    assert.notEqual(supervisorPid, writerPid, 'observed grandchild must be distinct from supervisor');
+    for (let i = 0; i < 80; i++) {
+      const snapshot = spawnSync('/bin/ps', ['-o', 'stat=', '-p', String(supervisorPid)], { encoding: 'utf8' });
+      const state = snapshot.stdout.trim();
+      if (snapshot.status !== 0 || !state || state.startsWith('Z')) break;
+      await delay(25);
+    }
+    const supervisorRow = spawnSync('/bin/ps', ['-o', 'stat=', '-p', String(supervisorPid)], { encoding: 'utf8' });
+    assert.ok(supervisorRow.status !== 0 || !supervisorRow.stdout.trim() || supervisorRow.stdout.trim().startsWith('Z'),
+      'supervisor must exit while the detached grandchild is still writing');
     const processRow = spawnSync('/bin/ps', [
       '-o', 'pid=,ppid=,pgid=,stat=', '-p', String(writerPid),
     ], { encoding: 'utf8' });
@@ -149,6 +170,7 @@ test('Native workspaceWrite confines a detached Writer after App Server exit', {
     const writerFields = processRow.stdout.trim().split(/\s+/u);
     assert.equal(Number(writerFields[2]), writerPid, 'Writer created its own detached process group');
     assert.notEqual(Number(writerFields[2]), serverPid, 'Writer is outside the App Server group');
+    assert.notEqual(Number(writerFields[2]), supervisorPid, 'grandchild must not share supervisor group');
     const before = await rows();
     await delay(120);
     assert.ok((await rows()) > before, 'detached Writer should outlive command/exec');
@@ -196,7 +218,8 @@ test('Native workspaceWrite confines a detached Writer after App Server exit', {
     safeToRemove = true;
     console.log(JSON.stringify({
       case: 'W0 detached sandbox inheritance and App Server group retirement',
-      appServerOwnedGroup: serverPid, childPid: writerPid,
+      appServerOwnedGroup: serverPid, supervisorPid, childPid: writerPid,
+      supervisorExitedBeforeWriter: true, grandchildWriterOutlivedSupervisor: true,
       processRow: processRow.stdout.trim(), writes: outcome, rows: last,
       result: 'PASS', writerExitVerifiedForArbitraryTurn: false,
     }));
