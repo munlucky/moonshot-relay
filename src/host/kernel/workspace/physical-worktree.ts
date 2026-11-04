@@ -262,6 +262,16 @@ const requiredString = (value: string | undefined, label: string): string => {
   return value;
 };
 
+// Read-only canonical location for the existing per-Step execution Worktree.
+// A recovery inspector must derive it from the same authority as the writer,
+// without invoking `prepareStepWorktree` (which creates/reuses Git paths).
+export const executionStepWorktreePath = ({
+  runtimeHome = null, projectId, runId, stepId,
+}: PrepareWorktreeInput = {}): string => path.join(
+  executionRoot({ runtimeHome, projectId: requiredString(projectId, 'projectId'), runId: requiredString(runId, 'runId') }),
+  `s-${shortExecutionToken(requiredString(stepId, 'stepId'), 4)}`,
+);
+
 export const prepareStepWorktree = async ({
   repoRoot,
   baseCommit,
@@ -280,10 +290,9 @@ export const prepareStepWorktree = async ({
     projectId: activeProjectId,
     runId: activeRunId,
   });
-  const target = path.join(
-    root,
-    `s-${shortExecutionToken(activeStepId, 4)}`,
-  );
+  const target = executionStepWorktreePath({
+    runtimeHome, projectId: activeProjectId, runId: activeRunId, stepId: activeStepId,
+  });
   const prepared = await addOrReuseWorktree({
     repoRoot: activeRepoRoot,
     target,

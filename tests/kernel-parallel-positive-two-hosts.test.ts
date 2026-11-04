@@ -12,6 +12,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
 import { prepareExecutionWorkspaces, cleanupExecutionWorkspaces } from '../src/host/kernel/workspace/physical-worktree.js';
 import { observeWorkspaceIdentity } from '../src/host/kernel/workspace/workspace-identity.js';
+import { readCanonicalParallelWorkerReceipts } from '../src/host/kernel/workspace/canonical-worker-receipts.js';
 
 const hostCode = String.raw`
 import { createKernelControlPlane } from './scripts/host/kernel/control-plane-runtime.js';
@@ -297,6 +298,37 @@ for(const mode of ['one-owner','split-owners','split-weak-proof'] as const){
       const paths=git(workspace.workspaceRoot,['diff-tree','--no-commit-id','--name-only','-r',attempt.resultCommitSha!]).split('\n').filter(Boolean);
       assert.deepEqual(paths,attempt.changedPaths);
      }
+     {
+      const readback=readCanonicalParallelWorkerReceipts({
+       controlPlane:reopened,runId,projectRoot,runtimeHome,
+      });
+      assert.equal(readback.status,'ready',JSON.stringify(readback));
+      assert.equal(readback.writerExitVerified,false);
+      assert.equal(readback.deliveryAuthorized,false);
+      if(readback.status==='ready'){
+       assert.equal(readback.receipts.length,2);
+       assert.deepEqual(readback.receipts.map(r=>r.stepId).sort(),steps.map(s=>s.stepId).sort());
+       assert.deepEqual(readback.receipts.map(r=>r.attemptId).sort(),
+        steps.flatMap(step=>reopened.stateStore.getStepAttempts(runId,{stepId:step.stepId}).map(a=>a.attemptId)).sort());
+      }
+      if(!nativeEnabled){
+       // Negative checks mutate only test-owned fixture paths, and restore
+       // them before the existing cross-Host contention checks proceed.
+       const victim=prepared.steps[0]!;
+       await writeFile(path.join(victim.workspaceRoot,'stale-untracked'),'stale');
+       const dirty=readCanonicalParallelWorkerReceipts({controlPlane:reopened,runId,projectRoot,runtimeHome});
+       assert.equal(dirty.status,'blocked');
+       if(dirty.status==='blocked')assert.equal(dirty.code,'canonical_git_result_drift');
+       await rm(path.join(victim.workspaceRoot,'stale-untracked'));
+       const original=git(victim.workspaceRoot,['rev-parse','HEAD']);
+       git(victim.workspaceRoot,['reset','--hard','HEAD~1']);
+       const stale=readCanonicalParallelWorkerReceipts({controlPlane:reopened,runId,projectRoot,runtimeHome});
+       assert.equal(stale.status,'blocked');
+       if(stale.status==='blocked')assert.equal(stale.code,'canonical_git_result_drift');
+       git(victim.workspaceRoot,['reset','--hard',original]);
+       assert.equal(readCanonicalParallelWorkerReceipts({controlPlane:reopened,runId,projectRoot,runtimeHome}).status,'ready');
+      }
+     }
      assert.equal((await reopened.getRun(runId))?.mutationRevision,0,'read-only recovery must not mutate Owner');
     }finally{
      await reopened.close();
@@ -320,6 +352,20 @@ for(const mode of ['one-owner','split-owners','split-weak-proof'] as const){
      cp.releaseOwnerWorkspaceMutationFence(runId,{workspaceId:next.lock.workspaceId,
       fencingToken:next.lock.fencingToken,sessionToken:next.lock.sessionToken});
      assert.equal((await cp.getRun(runId))?.mutationRevision,0);
+     if(!nativeEnabled){
+      // A changed Owner baseline invalidates even complete, still-clean
+      // Step result commits. Restore exactly the test-only baseline.
+      const originalOwner=git(projectRoot,['rev-parse','HEAD']);
+      git(projectRoot,['commit','--allow-empty','-m','t42-stale-owner-base']);
+      const oldBase=readCanonicalParallelWorkerReceipts({controlPlane:cp,runId,projectRoot,runtimeHome});
+      assert.equal(oldBase.status,'blocked');
+      if(oldBase.status==='blocked')assert.ok(
+       ['canonical_owner_base_drift','canonical_git_result_drift'].includes(oldBase.code),
+       oldBase.code,
+      );
+      git(projectRoot,['reset','--hard',originalOwner]);
+      assert.equal(readCanonicalParallelWorkerReceipts({controlPlane:cp,runId,projectRoot,runtimeHome}).status,'ready');
+     }
     }
    }
   }finally{
