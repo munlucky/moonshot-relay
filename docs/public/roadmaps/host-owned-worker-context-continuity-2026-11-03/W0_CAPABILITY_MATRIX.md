@@ -29,7 +29,7 @@
 | 승인/취소 신호와 적용 시점 | NOT_TESTED | DEFER | NOT_TESTED | 다른 연결의 `turn/interrupt` 후 interrupted 상태 PASS; 승인·후손 OS 프로세스 종료 UNKNOWN |
 | 원본 transcript/terminal event 직접 접근·digest | NOT_TESTED | DEFER | NOT_TESTED | App Server 재시작 후 `thread/read(includeTurns=true)` 기록 조회 PASS; 원본 event digest/lossless·in-flight 명령 복구 UNKNOWN |
 | Native `spawn_agent` 실제 사용 가능 | 코드 wrapper만 확인 | DEFER | 코드 wrapper만 확인 | UNKNOWN |
-| old Worker에 대한 물리 쓰기 차단 | **Mac 실제 A/B Writer Sandbox PASS, Native Report/Proof·Owner CAS 정착 PASS** | DEFER | NOT_TESTED | **turn/interrupt-only FAIL / Mac workspaceWrite 격리·Owner CAS·Kernel Report/Proof 수용 PASS**. [T30 Native Worker Proof](W0_T30_NATIVE_PROOF_REPORT_SETTLEMENT_2026-11-04.md): T29는 A 생존 중 B 작업·Owner CAS 단일 반영, T30은 두 실제 Native Worker의 검증 성공→Owner CAS→Report 승인 및 검증 실패→Owner 미변경을 확인. **임의 OS 후손 종료/안전 폐기, 실제 모델 Tool, 연결 상실·Windows/분산 Host/기본 Dispatcher 전환 미검증** |
+| old Worker에 대한 물리 쓰기 차단 | **Mac 실제 A/B Sandbox·Owner CAS·Report/Proof와 Host SIGKILL 후 외부 예약 중복 거부 PASS** | DEFER | NOT_TESTED | **turn/interrupt-only FAIL / Mac 물리 Worktree·Host 예약 기반 fail-closed 재접속 PASS**. [T31 실제 Host 중단·복구](W0_T31_NATIVE_HOST_DISCONNECT_AND_ATTEMPT_RECOVERY_2026-11-04.md): in-flight command/exec 중 Host SIGKILL 이후 Writer 생존, 새 Kernel의 A Attempt/Host 외부 예약 보존, A 재실행 0건 및 분리된 B Native 실행 PASS. T30의 Owner CAS·Report/Proof 성공/실패 검증 유지. **원래 Native Tool handle 재연결·임의 OS 후손 전체 종료·Linux/Windows/분산 Host 및 기본 Dispatcher 적용 미검증** |
 
 ## 관련 소스 경계
 
