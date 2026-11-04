@@ -824,7 +824,11 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
         ? String(errorRecord(entry.reason).code || 'worker-dispatch-failed')
         : String(entry.value.failureCode || 'worker-failed');
       dispatchFailures.push({ stepId: step.stepId, failureCode });
-      if (controlPlane.failStepAttempt) await controlPlane.failStepAttempt(runId, step.stepId, { code: failureCode });
+      // A concurrent Host lost the pre-spawn Step claim. Its failure must not
+      // fail the winner's active Canonical Attempt or permit another Writer.
+      if (failureCode !== 'STEP_ATTEMPT_ALREADY_CLAIMED' && controlPlane.failStepAttempt) {
+        await controlPlane.failStepAttempt(runId, step.stepId, { code: failureCode });
+      }
       continue;
     }
     try {

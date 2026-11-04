@@ -348,14 +348,11 @@ export const createWorkCursorApi = ({
     const step = store.getRunStep(runId, stepId);
     if (!step) throw Object.assign(new Error('step-not-found'), { code: 'STEP_NOT_FOUND' });
     assertImplementationWorkUnitScope({ step, contract: store.getRun(runId)?.taskContract || null, actionType: 'implement' });
-    store.updateRunStep(runId, stepId, {
-      state: 'running',
-      executionWorkspaceId: binding.workspaceId || null,
-      baseWorkspaceIdentity: binding.baseWorkspaceIdentity || null,
-      capsuleDigest: binding.capsuleDigest || null,
-    });
+    // The State Store atomically claims the ready Step and records this
+    // routed Attempt; a competing Host must fail before provider launch.
     return store.recordStepAttempt(runId, {
       stepId,
+      claimReadyStep: true,
       bindingId: binding.bindingId || store.getRunOwnerBinding?.(runId)?.bindingId || null,
       actorSessionId: binding.actorSessionId,
       capsuleId: binding.capsuleId,

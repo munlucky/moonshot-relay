@@ -39,7 +39,7 @@ const makeSteps = () => [
   { stepId: 'step-beta', sequence: 2, allowedPaths: ['src/beta/**'], obligationIds: ['beta-proof'], expectedOutputs: ['beta result'] },
 ];
 
-const makeControlPlane = ({ fixture, failedStepId = null, failMaterialization = false, failRenewal = false, settlementFailureStepId = null, failReceiptPersistenceStepId = null }: FixtureOptions) => {
+const makeControlPlane = ({ fixture, failedStepId = null, failMaterialization = false, failRenewal = false, settlementFailureStepId = null, failReceiptPersistenceStepId = null, denyAllClaims = false }: FixtureOptions) => {
   const steps = makeSteps();
   const failures: unknown[] = [];
   const reports: unknown[] = [];
@@ -71,6 +71,7 @@ const makeControlPlane = ({ fixture, failedStepId = null, failMaterialization = 
       identity: observeWorkspaceIdentity({ projectRoot: workspaceRoot }).identity,
     }),
     bindStepAttempt: async (_runId: string, step: Parameters<TestControlPlane["bindStepAttempt"]>[1]) => {
+      if (denyAllClaims) throw Object.assign(new Error('another Host owns the running Step'), { code: 'STEP_ATTEMPT_ALREADY_CLAIMED' });
       const attempt = {
         id: steps.findIndex(item => item.stepId === step) + 1,
         runId: 'run-parallel-dispatch',
@@ -198,9 +199,9 @@ const makeControlPlane = ({ fixture, failedStepId = null, failMaterialization = 
   };
 };
 
-const runDispatch = async ({ failedStepId = null, failMaterialization = false, failRenewal = false, verificationAddsExtraPath = false, settlementFailureStepId = null, failReceiptPersistenceStepId = null, integrationVerification = null }: DispatchFixtureOptions = {}) => {
+const runDispatch = async ({ failedStepId = null, failMaterialization = false, failRenewal = false, verificationAddsExtraPath = false, settlementFailureStepId = null, failReceiptPersistenceStepId = null, denyAllClaims = false, integrationVerification = null }: DispatchFixtureOptions = {}) => {
   const fixture = await createFixture();
-  const controlPlane = makeControlPlane({ fixture, failedStepId, failMaterialization, failRenewal, settlementFailureStepId, failReceiptPersistenceStepId });
+  const controlPlane = makeControlPlane({ fixture, failedStepId, failMaterialization, failRenewal, settlementFailureStepId, failReceiptPersistenceStepId, denyAllClaims });
   try {
     const result = await dispatchKernelParallel({
       controlPlane,
@@ -304,6 +305,23 @@ test('parallel default worker dispatch keeps its Host envelope out of the provid
     await cleanupExecutionWorkspaces({ runtimeHome: fixture.runtimeHome, projectId: 'project-parallel-dispatch', runId: 'run-parallel-dispatch', repoRoot: fixture.projectRoot, retain: false }).catch(() => {});
     await rm(fixture.runtimeHome, { recursive: true, force: true });
     await rm(fixture.projectRoot, { recursive: true, force: true });
+  }
+});
+
+test('a competing Host losing every Step claim never fails the winner\'s canonical Attempt', async () => {
+  const run = await runDispatch({ denyAllClaims: true });
+  try {
+    assert.equal(assertTestRecord(run.result).status, 'failed');
+    assert.deepEqual(run.controlPlane.failures, [], 'claim rejection does not own the winning Attempt');
+    assert.equal(run.controlPlane.ownerMutations.length, 0);
+    assert.equal(run.controlPlane.run.mutationRevision, 0);
+    assert.equal(run.controlPlane.reports.length, 0);
+    assert.equal(assertTestRecord(assertTestRecord(run.result).cleanup).retained, true);
+    const failures = assertTestArray(assertTestRecord(run.result).dispatchFailures);
+    assert.equal(failures.length, 2);
+    assert.ok(failures.every(value => assertTestRecord(value).failureCode === 'STEP_ATTEMPT_ALREADY_CLAIMED'));
+  } finally {
+    await finishFixture(run);
   }
 });
 
@@ -622,7 +640,7 @@ type TestControlPlane = Awaited<ReturnType<typeof import('../src/host/kernel/con
 type TestStateStore = Awaited<ReturnType<typeof import('../src/kernel/state-store.js').openKernelStateStore>>;
 
 
-interface FixtureOptions { fixture: Awaited<ReturnType<typeof createFixture>>; failedStepId?: string | null; failMaterialization?: boolean; failRenewal?: boolean; settlementFailureStepId?: string | null; failReceiptPersistenceStepId?: string | null }
+interface FixtureOptions { fixture: Awaited<ReturnType<typeof createFixture>>; failedStepId?: string | null; failMaterialization?: boolean; failRenewal?: boolean; settlementFailureStepId?: string | null; failReceiptPersistenceStepId?: string | null; denyAllClaims?: boolean }
 interface DispatchFixtureOptions extends Omit<FixtureOptions, "fixture"> { verificationAddsExtraPath?: boolean; integrationVerification?: Record<string, unknown> | null }
 interface FixtureAttempt extends Record<string, unknown> { id: number; runId: string; stepId: string; attemptId: string; bindingId: string; status: string }
 

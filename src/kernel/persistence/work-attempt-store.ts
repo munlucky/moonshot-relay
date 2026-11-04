@@ -135,6 +135,7 @@ export interface WorkAttempt extends Record<string, unknown> {
 
 export interface RecordStepAttemptInput {
   stepId: string;
+  claimReadyStep?: boolean;
   attemptId?: unknown;
   bindingId?: unknown;
   actorSessionId?: unknown;
@@ -903,6 +904,7 @@ export const createWorkAttemptStore = ({
 
   const recordStepAttempt: WorkAttemptStore['recordStepAttempt'] = (runId, {
     stepId,
+    claimReadyStep = false,
     attemptId = null,
     bindingId = null,
     actorSessionId = null,
@@ -926,63 +928,85 @@ export const createWorkAttemptStore = ({
     verificationRefs = [],
     knowledgeObservationRefs = [],
   }) => {
-    const run = getRun(runId);
-    if (!run) throw new Error(`Run ${runId} not found`);
-    const step = stepId ? getRunStep(runId, stepId) : null;
-    if (!step) throw new Error(`Run ${runId} step ${stepId || '<missing>'} not found`);
-    const provenance = normalizeAttemptProvenance({
-      attemptId,
-      bindingId,
-      capsuleId,
-      capsuleDigest,
-      admissionId,
-      parentAttemptId,
-      provenanceKind,
-      planRevision: provenanceKind === 'legacy-unattributed'
-        ? null
-        : planRevision ?? step.planRevision ?? run.planRevision ?? 1,
-      mutationRevision: provenanceKind === 'legacy-unattributed'
-        ? null
-        : mutationRevision ?? run.mutationRevision ?? 0,
-      retryReason,
-      failureCategory,
-    });
-    const attemptNumber = nextStepAttemptNumber(runId, stepId);
-    const result = asInsertResult(db.prepare(`
-      INSERT INTO run_step_attempts(attempt_id, run_id, step_id, attempt_number, binding_id, actor_session_id, capsule_id, capsule_digest, admission_id, route_decision_id, usage_receipt_id, parent_attempt_id, provenance_kind, plan_revision, mutation_revision, retry_reason, failure_category, status, workspace_identity_start, summary, changed_paths_json, workspace_id, workspace_root_hash, base_workspace_identity, verification_refs_json, knowledge_observation_refs_json, started_at)
-      VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'started', ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      provenance.attemptId,
-      runId,
-      stepId,
-      attemptNumber,
-      provenance.bindingId,
-      hashActorSessionId(actorSessionId),
-      provenance.capsuleId,
-      provenance.capsuleDigest,
-      provenance.admissionId,
-      routeDecisionId,
-      usageReceiptId,
-      provenance.parentAttemptId,
-      provenance.provenanceKind,
-      provenance.planRevision,
-      provenance.mutationRevision,
-      provenance.retryReason,
-      provenance.failureCategory,
-      workspaceIdentityStart,
-      summary,
-      JSON.stringify(changedPaths),
-      workspaceId,
-      workspaceRootHash,
-      baseWorkspaceIdentity,
-      JSON.stringify(verificationRefs),
-      JSON.stringify(knowledgeObservationRefs),
-      now(),
-    ));
-    db.prepare(
-      'UPDATE run_steps SET attempt_count=attempt_count+1, updated_at=? WHERE run_id=? AND step_id=?',
-    ).run(now(), runId, stepId);
-    return getStepAttempt(result.lastInsertRowid);
+    const persist = () => {
+      const run = getRun(runId);
+      if (!run) throw new Error(`Run ${runId} not found`);
+      const step = stepId ? getRunStep(runId, stepId) : null;
+      if (!step) throw new Error(`Run ${runId} step ${stepId || '<missing>'} not found`);
+      if (claimReadyStep) {
+        // The Step is the existing canonical dispatch claim. Claim and insert
+        // its Attempt in one SQLite transaction before any Host starts a tool.
+        const claim = asChangeResult(db.prepare(`
+          UPDATE run_steps
+          SET state='running', execution_workspace_id=?, base_workspace_identity=?,
+              capsule_digest=?, started_at=COALESCE(started_at, ?), updated_at=?
+          WHERE run_id=? AND step_id=? AND plan_revision=?
+            AND state IN ('ready', 'failed')
+        `).run(
+          workspaceId, baseWorkspaceIdentity, capsuleDigest,
+          now(), now(), runId, stepId, run.planRevision,
+        ));
+        if (claim.changes !== 1) {
+          throw Object.assign(new Error('Canonical Step is no longer claimable for dispatch'), {
+            code: 'STEP_ATTEMPT_ALREADY_CLAIMED',
+          });
+        }
+      }
+      const provenance = normalizeAttemptProvenance({
+        attemptId,
+        bindingId,
+        capsuleId,
+        capsuleDigest,
+        admissionId,
+        parentAttemptId,
+        provenanceKind,
+        planRevision: provenanceKind === 'legacy-unattributed'
+          ? null
+          : planRevision ?? step.planRevision ?? run.planRevision ?? 1,
+        mutationRevision: provenanceKind === 'legacy-unattributed'
+          ? null
+          : mutationRevision ?? run.mutationRevision ?? 0,
+        retryReason,
+        failureCategory,
+      });
+      const attemptNumber = nextStepAttemptNumber(runId, stepId);
+      const result = asInsertResult(db.prepare(`
+        INSERT INTO run_step_attempts(attempt_id, run_id, step_id, attempt_number, binding_id, actor_session_id, capsule_id, capsule_digest, admission_id, route_decision_id, usage_receipt_id, parent_attempt_id, provenance_kind, plan_revision, mutation_revision, retry_reason, failure_category, status, workspace_identity_start, summary, changed_paths_json, workspace_id, workspace_root_hash, base_workspace_identity, verification_refs_json, knowledge_observation_refs_json, started_at)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'started', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        provenance.attemptId,
+        runId,
+        stepId,
+        attemptNumber,
+        provenance.bindingId,
+        hashActorSessionId(actorSessionId),
+        provenance.capsuleId,
+        provenance.capsuleDigest,
+        provenance.admissionId,
+        routeDecisionId,
+        usageReceiptId,
+        provenance.parentAttemptId,
+        provenance.provenanceKind,
+        provenance.planRevision,
+        provenance.mutationRevision,
+        provenance.retryReason,
+        provenance.failureCategory,
+        workspaceIdentityStart,
+        summary,
+        JSON.stringify(changedPaths),
+        workspaceId,
+        workspaceRootHash,
+        baseWorkspaceIdentity,
+        JSON.stringify(verificationRefs),
+        JSON.stringify(knowledgeObservationRefs),
+        now(),
+      ));
+      db.prepare(
+        'UPDATE run_steps SET attempt_count=attempt_count+1, updated_at=? WHERE run_id=? AND step_id=?',
+      ).run(now(), runId, stepId);
+      return getStepAttempt(result.lastInsertRowid);
+    };
+    return claimReadyStep ? db.transaction(persist)() : persist();
   };
 
   const finishStepAttempt: WorkAttemptStore['finishStepAttempt'] = (
