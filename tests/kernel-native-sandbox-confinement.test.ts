@@ -86,7 +86,16 @@ test('Native workspaceWrite confines a detached Writer after App Server exit', {
       env: process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: false,
+      // The App Server alone owns a fresh test-only process group. Never
+      // signal a group inherited from this test runner or another Host.
+      detached: true,
     });
+    const serverPid = server.pid;
+    assert.ok(serverPid && Number.isSafeInteger(serverPid), 'owned App Server PID required');
+    const serverGroup = spawnSync('/bin/ps', ['-o', 'pgid=', '-p', String(serverPid)], { encoding: 'utf8' });
+    assert.equal(serverGroup.status, 0);
+    assert.equal(Number(serverGroup.stdout.trim()), serverPid,
+      'group-wide signal is allowed only for this exact test-created process group');
     server.stderr.resume();
     server.stdout.setEncoding('utf8');
     server.stdout.on('data', (chunk: string) => {
@@ -137,14 +146,28 @@ test('Native workspaceWrite confines a detached Writer after App Server exit', {
     ], { encoding: 'utf8' });
     assert.equal(processRow.status, 0);
     assert.ok(processRow.stdout.trim(), 'Writer must physically exist');
+    const writerFields = processRow.stdout.trim().split(/\s+/u);
+    assert.equal(Number(writerFields[2]), writerPid, 'Writer created its own detached process group');
+    assert.notEqual(Number(writerFields[2]), serverPid, 'Writer is outside the App Server group');
     const before = await rows();
     await delay(120);
     assert.ok((await rows()) > before, 'detached Writer should outlive command/exec');
-    // Close only the App Server PID; do NOT assume this closes descendants.
+    // Retire the ENTIRE test-owned App Server group, not just its PID. The
+    // detached Writer has a distinct PGID and must remain alive; this is
+    // negative evidence against treating killpg as full Writer containment.
+    const groupBeforeKill = spawnSync('/bin/ps', ['-o', 'pgid=', '-p', String(serverPid)], { encoding: 'utf8' });
+    assert.equal(groupBeforeKill.status, 0);
+    assert.equal(Number(groupBeforeKill.stdout.trim()), serverPid,
+      'only signal a still-running, independently owned App Server group');
     const exit = once(server, 'exit');
-    server.kill('SIGTERM');
+    process.kill(-serverPid, 'SIGTERM');
     await Promise.race([exit, delay(1800)]);
-    if (server.exitCode === null && server.signalCode === null) server.kill('SIGKILL');
+    if (server.exitCode === null && server.signalCode === null) {
+      process.kill(-serverPid, 'SIGKILL');
+      await Promise.race([exit, delay(900)]);
+    }
+    assert.ok(server.exitCode !== null || server.signalCode !== null,
+      'test-owned App Server must be observed exited after group retirement');
     const afterServer = await rows();
     await delay(130);
     assert.ok((await rows()) > afterServer, 'detached Writer should outlive App Server');
@@ -172,7 +195,8 @@ test('Native workspaceWrite confines a detached Writer after App Server exit', {
     assert.equal(psFinal.stdout.trim(), '', 'test-owned finite PID must not remain');
     safeToRemove = true;
     console.log(JSON.stringify({
-      case: 'W0 detached sandbox inheritance', childPid: writerPid,
+      case: 'W0 detached sandbox inheritance and App Server group retirement',
+      appServerOwnedGroup: serverPid, childPid: writerPid,
       processRow: processRow.stdout.trim(), writes: outcome, rows: last,
       result: 'PASS', writerExitVerifiedForArbitraryTurn: false,
     }));
