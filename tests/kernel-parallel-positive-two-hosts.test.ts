@@ -94,6 +94,77 @@ await writeFile(path.join(root,'result-'+hostId),JSON.stringify({hostId,starts,s
  settlements:result.executionResults?.length,deliveryRevision:result.deliveryMutation?.mutationRevision||null,
  cleanup:result.cleanup}));
 `;
+// Two fresh recovery Host processes, competing for the existing Owner fence.
+// Neither Host is authorized to restart a Worker or mutate its Worktree.
+const recoveryFenceHost = String.raw`
+import { createKernelControlPlane } from './scripts/host/kernel/control-plane-runtime.js';
+import { writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { setTimeout as delay } from 'node:timers/promises';
+const {P_ROOT:root,P_REPO:projectRoot,P_RUNTIME:runtimeHome,P_RUN:runId,P_HOST:hostId}=process.env;
+const cp=await createKernelControlPlane({projectRoot,runtimeHome});
+try {
+ const run=await cp.getRun(runId);
+ const head=spawnSync('git',['rev-parse','HEAD'],{cwd:projectRoot,encoding:'utf8'});
+ if(!run||run.mutationRevision!==0||head.status!==0)throw Error('invalid recovery snapshot');
+ const snapshot={expectedMutationRevision:run.mutationRevision,
+  expectedWorkspaceIdentity:run.currentWorkspaceIdentity,expectedHeadCommitSha:head.stdout.trim(),
+  expectedProjectId:run.projectId,expectedWorktreeId:run.worktreeId,expectedWorkspaceId:run.workspaceId};
+ await writeFile(path.join(root,'fence-ready-'+hostId),'ready');
+ for(let i=0;i<500&&!existsSync(path.join(root,'fence-go'));i++)await delay(10);
+ if(!existsSync(path.join(root,'fence-go')))throw Error('barrier timeout');
+ let outcome;
+ try{
+  const fence=cp.acquireOwnerWorkspaceMutationFence(runId,{...snapshot,sessionToken:'recovery-'+hostId});
+  outcome={status:'acquired',token:fence.lock.fencingToken,sessionToken:fence.lock.sessionToken};
+  await writeFile(path.join(root,'fence-held-'+hostId),'held');
+  const peerDone=path.join(root,'fence-done-'+(hostId==='A'?'B':'A'));
+  for(let i=0;i<500&&!existsSync(peerDone);i++)await delay(10);
+  if(!existsSync(peerDone))throw Error('peer did not complete contention');
+  cp.releaseOwnerWorkspaceMutationFence(runId,{workspaceId:fence.lock.workspaceId,
+   fencingToken:fence.lock.fencingToken,sessionToken:fence.lock.sessionToken});
+ }catch(error){
+  if(error.code!=='delivery_mutation_fence_lost')throw error;
+  outcome={status:'denied',code:error.code};
+ }
+ await writeFile(path.join(root,'fence-result-'+hostId),JSON.stringify(outcome));
+ await writeFile(path.join(root,'fence-done-'+hostId),'done');
+}finally{await cp.close()}
+`;
+const competeRecoveryFences=async(root:string,projectRoot:string,runtimeHome:string,runId:string)=>{
+ const children:ChildProcessWithoutNullStreams[]=[];
+ const launch=(id:string)=>{
+  const child=spawn(process.execPath,['--input-type=module','-e',recoveryFenceHost],{
+   cwd:process.cwd(),env:{...process.env,P_ROOT:root,P_REPO:projectRoot,P_RUNTIME:runtimeHome,P_RUN:runId,P_HOST:id},
+   stdio:['pipe','pipe','pipe'],
+  });children.push(child);
+  return new Promise<{status:string;token?:number;sessionToken?:string;code?:string}>((resolve,reject)=>{
+   let stderr='';child.stderr.on('data',chunk=>stderr+=String(chunk));child.stdout.resume();
+   child.on('error',reject);child.on('exit',async code=>{
+    if(code!==0)return reject(Error('recovery fence Host '+id+' exit '+code+' '+stderr));
+    try{resolve(JSON.parse(await readFile(path.join(root,'fence-result-'+id),'utf8')))}catch(error){reject(error)}
+   });
+  });
+ };
+ try{
+  const a=launch('A'),b=launch('B');
+  await waitFor(async()=>existsSync(path.join(root,'fence-ready-A'))&&existsSync(path.join(root,'fence-ready-B')),'both recovery Hosts ready');
+  await writeFile(path.join(root,'fence-go'),'go');
+  const results=await Promise.all([a,b]);
+  assert.equal(results.filter(x=>x.status==='acquired').length,1,JSON.stringify(results));
+  assert.equal(results.filter(x=>x.code==='delivery_mutation_fence_lost').length,1,JSON.stringify(results));
+  assert.equal((await readdir(root)).filter(x=>x.startsWith('fence-held-')).length,1);
+  return results.find(x=>x.status==='acquired')!;
+ }finally{
+  for(const child of children)if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');
+  await Promise.all(children.map(child=>new Promise<void>(resolve=>{
+   if(child.exitCode!==null||child.signalCode!==null)return resolve();child.once('exit',resolve);
+  })));
+ }
+};
+
 const git=(cwd:string,args:string[]):string=>{const r=spawnSync('git',args,{cwd,encoding:'utf8',timeout:10000});assert.equal(r.status,0,String(r.stderr||r.error));return r.stdout.trim()};
 const waitFor=async(f:()=>Promise<boolean>,reason:string)=>{for(let i=0;i<400;i++){if(await f())return;await delay(15)}throw Error('T24 positive contention timeout '+reason)};
 
@@ -229,6 +300,26 @@ for(const mode of ['one-owner','split-owners','split-weak-proof'] as const){
      assert.equal((await reopened.getRun(runId))?.mutationRevision,0,'read-only recovery must not mutate Owner');
     }finally{
      await reopened.close();
+    }
+    if(mode==='split-owners'){
+     const winner=await competeRecoveryFences(root,projectRoot,runtimeHome,runId);
+     assert.equal((await cp.getRun(runId))?.mutationRevision,0);
+     assert.equal(cp.getExecutableSteps(runId).steps.length,0);
+     for(const step of steps)assert.equal(cp.stateStore.getStepAttempts(runId,{stepId:step.stepId}).length,1);
+     const current=(await cp.getRun(runId))!;
+     const snapshot={expectedMutationRevision:current.mutationRevision,
+      expectedWorkspaceIdentity:current.currentWorkspaceIdentity!,
+      expectedHeadCommitSha:git(projectRoot,['rev-parse','HEAD']),
+      expectedProjectId:current.projectId!,expectedWorktreeId:current.worktreeId!,
+      expectedWorkspaceId:current.workspaceId!};
+     const next=cp.acquireOwnerWorkspaceMutationFence(runId,{...snapshot,sessionToken:'recovery-C'});
+     assert.ok(next.lock.fencingToken>winner.token!,'fence epoch must increase after release');
+     assert.throws(()=>cp!.renewOwnerWorkspaceMutationFence(runId,{...snapshot,
+      workspaceId:next.lock.workspaceId,fencingToken:winner.token!,sessionToken:winner.sessionToken!}),
+      (error:unknown)=>(error as {code?:string}).code==='delivery_mutation_fence_lost');
+     cp.releaseOwnerWorkspaceMutationFence(runId,{workspaceId:next.lock.workspaceId,
+      fencingToken:next.lock.fencingToken,sessionToken:next.lock.sessionToken});
+     assert.equal((await cp.getRun(runId))?.mutationRevision,0);
     }
    }
   }finally{

@@ -64,6 +64,21 @@ Mac 증거: 최종 제품·테스트 빌드 operation `65089f70-4982-4aad-a107-6
 
 **현 단계 결론:** Canonical 결과 재조회와 Git 무결성 검증은 PASS다. 물리 Writer 종료 증명과 fence 하에서의 통합·CAS 중복 실행 차단은 아직 PASS가 아니므로 **자동 결과 합류/Owner Delivery는 활성화하지 않았다.** G0 `PARTIAL`, W1 `DEFER` 유지.
 
+## 서로 다른 복구 Host의 Owner Fence 실제 경쟁 (T24 후속)
+
+서로 다른 Host가 동일 Run의 성공 결과를 저장하고 Owner Revision `0`에서 종료한 `split-owners` 회귀 뒤, **실제 독립 복구 Host 프로세스 2개**를 추가로 시작한다. 두 프로세스는 새 Control Plane을 열어 같은 Run의 Owner snapshot을 읽고, 동일한 기존 `acquireOwnerWorkspaceMutationFence()`에 서로 다른 Host session token으로 동시에 진입한다. 별도 Coordinator/DB/Queue를 만들지 않는다.
+
+- 첫 Host만 Owner Fence를 획득한다. 첫 Host는 경쟁 Host의 획득 시도가 끝날 때까지 Fence를 유지한다. 다른 Host는 `delivery_mutation_fence_lost`를 받는다.
+- 획득에 성공한 Host 1개를 확인한 뒤 기존 API로 Fence를 해제하고, 다른 session token으로 다시 획득하면 fencing epoch가 **단조 증가**한다.
+- 이전 Host의 stale fencing token/session token으로 `renewOwnerWorkspaceMutationFence()`를 호출하면 `delivery_mutation_fence_lost`로 거부한다.
+- 해당 과정 전체에서 Owner Mutation Revision은 `0`을 유지한다. 기존 Step별 Canonical Attempt는 각각 1건이고 재시작 후 실행 가능한 새 Step은 0건이다. Writer 실행·Owner Git 적용·Worker Report 정착은 발생하지 않는다.
+
+**검증:** Linux 임시 소스/Runtime에서 타입·제품·테스트 빌드 PASS, Owner Fence 및 기존 Worker 경쟁 집중 **3 PASS / 0 FAIL**, 확대 회귀 **68 PASS / 3 OS SKIP / 0 FAIL**, 모듈 경계 **9 modules / 311 files / 849 edges PASS**. T24 독립 복구 Host 실제 경쟁 증거 operation `2062d265-7166-423f-ae58-afb8e67dc9de`, 확대 회귀 `6a0f2981-aa56-41cf-9c4f-f8fc99165b10`. Mac Native 동일 테스트는 별도 실행 후 기록한다.
+
+**판정 구분:** 이 검증은 기존 Owner Fence의 *복구 조정자 동시 소유 거부*에 관한 증거다. 현재 제품 Dispatcher는 통합 Proof 후, Owner patch apply 직전에 Fence를 획득한다. 따라서 이 테스트만으로 아직 통합 Worktree 편집·Proof 실행을 두 복구 Host에 대해 직렬화했다고 판정하지 않는다. 실제 자동 합류를 만들려면 Writer/후손이 더는 수정할 수 없음을 증명한 뒤, Owner Fence를 통합 Worktree 접근 **전**에 획득하고 Proof 시간·Fence TTL·결과 정착까지 하나의 확인 가능한 경계로 묶어야 한다. Fence만 소유하고 있다고 해서 OS Writer 종료까지 증명되는 것은 아니다.
+
+현재 Native Host의 `writerExitVerified: false`, 영구적인 외부 Writer 예약, 테스트 T27의 Native Turn/App Server 종료 후에도 계속 쓰는 OS 후손 반례를 유지한다. 운영 환경에 적용할 수 있는 물리 Writer 종료 증거가 없는 동안 결과 자동 합류·Owner Delivery를 활성화하지 않는다. 이 검증을 통과한 범위만 체크포인트에 완료 기록한다.
+
 ## 남은 항목
 
 1. 서로 다른 Host에서 성공한 Canonical Worker 결과들을 안전하게 재조회·합류시켜 최종 통합 Proof와 Delivery를 완료하는 **회수 경로**는 아직 존재한다고 증명하지 못했다. 현재는 충돌 시 fail-closed 후 Worktree를 보존한다.
