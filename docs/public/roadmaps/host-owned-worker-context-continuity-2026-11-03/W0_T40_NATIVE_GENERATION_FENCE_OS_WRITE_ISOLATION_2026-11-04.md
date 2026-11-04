@@ -27,10 +27,21 @@ T39에서 실제 Codex `command/exec`의 App Server 및 직계 Supervisor가 종
 | --- | --- |
 | Linux TypeScript·제품·테스트 빌드 | **PASS** (`operationId=6b1cad92-d02f-4474-82e2-0861de117574`) |
 | Linux 기존 T31·T36·T37·T39 회귀 | **집중 3 PASS / 3 OS SKIP / 0 FAIL**, 확대 **32 PASS / 4 OS SKIP / 0 FAIL**, 모듈 경계 9 modules / 312 files / 850 edges PASS (`operationId=7aed70d2-ef7e-4552-823f-95a5f7042120`) |
-| macOS 실제 Native Crash + Owner Fence Epoch 만료 + 새 Integration Worktree 외부 쓰기 차단 | 실행 후 반영 |
-| 다른 Host Native Worker의 실제 동시 실행과 기존 A의 생존 | 실행 후 반영 |
+| macOS 실제 Native Crash + Owner Fence Epoch 만료 + 새 Integration Worktree 외부 쓰기 차단 | **1 PASS / 0 FAIL / 0 SKIP**; 새 Fence Epoch 1→2; B Step, Recovery Integration, Owner 각각 125회 거부·허용 0 (operation 46bd456d-6242-4291-97cf-d555ab0f2ed5) |
+| 다른 Host Native Worker의 실제 동시 실행과 기존 A의 생존 | **PASS**; 이전 Writer가 계속 쓰는 동안 B Native 실행 성공, 이전 Provider 재실행 0, Owner Revision 0, 예약 유지 |
 | 일반 Native Tool의 임의 후손 전부 종료 | **미검증** |
 | 제품 자동 Owner Delivery/Report 회수·Writer 예약 해제 | **미적용, DEFER** |
+
+## 실제 Mac Native 실증 및 정리
+
+소스 SHA 0d52fbeef630c499aedd72dfbe5fd4be7f59ae8a의 별도 Mac Git Clone과 빈 격리 CODEX_HOME에서 strict TypeScript·제품·테스트 빌드 후 실제 Codex App Server 직접 command/exec를 실행했다. 모델 Turn과 운영 Codex 세션은 호출하지 않았다.
+
+- Host A가 Native 명령 실행 중 SIGKILL돼도 이전 Writer는 계속 heartbeat를 기록했다. 별도 Host B는 원래 Fence가 유효하면 진입할 수 없고, TTL 만료 후에만 새 Epoch 2를 얻었다. 이전 토큰 갱신은 거부됐다.
+- A와 다른 물리 B Step Worktree 및 새로운 T36 복구 Integration Worktree를 생성했다. 이전 A Writer는 B Step·새 Integration·Owner에 각각 125회 실제 쓰기를 시도했으나 모두 OS Sandbox에서 거부됐다. 외부 쓰기 성공 0건이다.
+- 별도 B Native command/exec는 자신의 B Worktree에만 쓰기 성공했다. A Launcher 재실행 0회, Owner Mutation Revision 0, Canonical Report 권위 없음, Writer 예약 자동 해제 없음.
+- 유한 A Writer가 heartbeat 240회를 기록하고 자체 종료했으며 Launcher도 OS PID에서 사라진 것을 시험 안에서 확인했다. 시험 결과와 원격 SHA를 재대조한 후 별도 Clone/격리 CODEX_HOME만 제거했다 (operation 2b851ebd-bf84-45c7-8c80-6ba7a644b1e8). 원본 Mac checkout 및 사용자 Codex 세션은 변경하지 않았다.
+
+이 PASS는 해당 macOS Native Sandbox에서 살아 있는 이전 Writer의 외부 쓰기 격리를 입증한다. 임의 미래 Native 명령의 모든 후손 종료, 다른 OS 격리 및 자동 Canonical 결과 회수는 입증하지 않는다. Linux 최초 npm prepare의 테스트 타입 선언 오류는 Control Plane 반환 타입으로 수정해 동일 격리 환경에서 빌드·회귀를 재검증했다. 제품 코드는 변경하지 않았다.
 
 ## 권위·복잡도 제한
 
