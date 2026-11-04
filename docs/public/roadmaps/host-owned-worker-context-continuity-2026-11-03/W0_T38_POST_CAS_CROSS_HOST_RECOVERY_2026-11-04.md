@@ -29,8 +29,10 @@ T30은 정상 Canonical Report/Proof 정착을 검증했고, T34는 통합 Proof
 | Linux TypeScript·제품·테스트 빌드 | PASS |
 | Linux 실제 독립 Host A/B/C 정상·CAS 중단 집중 | **2 PASS / 0 FAIL / 0 SKIP** (`operationId=169c294c-94bc-4e9b-9b15-6bb4645cdece`) |
 | Linux 확대 Dispatcher/Recovery/Fence/Proof 회귀·경계 검사 | **38 PASS / 2 OS SKIP / 0 FAIL**, 경계 검사 **9 modules / 312 files / 850 edges PASS** (`operationId=145d63b1-2016-4a3c-b86f-7cadb2d6cce0`) |
-| macOS 실제 Seatbelt Scoped Proof + Cross-Host | 추후 결과 반영 |
+| macOS 실제 Seatbelt Scoped Proof + Cross-Host | **4 PASS / 0 FAIL / 0 SKIP** (T38 신규 2, T37 Fence 2), Node v24.6.0, strict TS/제품/테스트 빌드 PASS (`operationId=23c1f9fe-b19d-480f-bc4f-51e80fd6411c`) |
 | 실제 Native Writer 물리 종료 증명·자동 Canonical 회수 | 미검증 — **DEFER** |
+
+macOS 후속 검증은 Git 커밋 `14a7571f07ccc4a76a97da76d715dff9c4f59b6e`을 **별도 실제 Mac Native Git Clone**에 가져와 실행했다. TypeScript·제품·테스트 빌드 통과 후 T37·T38을 `--test-concurrency=1`로 실행했고 **4 PASS / 0 FAIL / 0 SKIP**이었다. T38 정상 분기에서 `writeScope=integrationWorkspace`로 Mac Seatbelt OS 쓰기 제한이 적용된 실제 Trusted Proof가 통과했다. CAS 직후 프로세스 강제 종료 분기는 다른 OS Host의 Run blocked 판정과 중복 실행 방지가 통과했다. 시험 종료 후 실행 마커, PASS 상태, 소스 SHA를 대조하고 시험 전용 Git Clone을 정리했다 (`operationId=68a765f1-a54e-4c77-9725-e48c9d2ee7c9`). 원본 Mac 저장소 및 운영 Codex 세션은 변경하지 않았다.
 
 ## 설계 판단과 후속 작업
 
