@@ -1,6 +1,7 @@
 // Real two-process Host collision with successful Workers and trusted proof.
 // The test uses only an ephemeral Git/Kernel Runtime, never user Codex sessions.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
@@ -10,6 +11,7 @@ import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
 import { prepareExecutionWorkspaces, cleanupExecutionWorkspaces } from '../src/host/kernel/workspace/physical-worktree.js';
+import { observeWorkspaceIdentity } from '../src/host/kernel/workspace/workspace-identity.js';
 
 const hostCode = String.raw`
 import { createKernelControlPlane } from './scripts/host/kernel/control-plane-runtime.js';
@@ -124,7 +126,7 @@ for(const mode of ['one-owner','split-owners','split-weak-proof'] as const){
    }});
    projectId=started.projectId;assert.ok(projectId);
    const steps=cp.getExecutableSteps(runId).steps;assert.equal(steps.length,2);
-   await prepareExecutionWorkspaces({repoRoot:projectRoot,runtimeHome,projectId,runId,baseCommit:git(projectRoot,['rev-parse','HEAD']),steps});
+   const prepared=await prepareExecutionWorkspaces({repoRoot:projectRoot,runtimeHome,projectId,runId,baseCommit:git(projectRoot,['rev-parse','HEAD']),steps});
    const startHost=(host:string)=>{
     const child=spawn(process.execPath,['--input-type=module','-e',hostCode],{cwd:process.cwd(),env:{...process.env,P_ROOT:root,P_REPO:projectRoot,P_RUNTIME:runtimeHome,P_RUN:runId,P_HOST:host,P_MODE:mode},stdio:['pipe','pipe','pipe']});children.push(child);
     return new Promise<Record<string,unknown>>((resolve,reject)=>{let out='',err='';child.stdout.on('data',v=>out+=String(v));child.stderr.on('data',v=>err+=String(v));child.on('error',reject);child.on('exit',async code=>{
@@ -186,6 +188,48 @@ for(const mode of ['one-owner','split-owners','split-weak-proof'] as const){
     assert.equal(results.reduce((sum,r)=>sum+Number(r.settlements||0),0),0);
     assert.equal(existsSync(path.join(projectRoot,'src/alpha/result.txt')),false);
     assert.equal(existsSync(path.join(projectRoot,'src/beta/result.txt')),false);
+
+    // Each Host exited with its own canonical result persisted. A different
+    // Control Plane can inspect both receipts without opening another Attempt
+    // or running a Worker. This is evidence for recovery, not Writer exit proof.
+    const reopened=await createKernelControlPlane({projectRoot,runtimeHome});
+    try{
+     const retainedRun=await reopened.getRun(runId);
+     assert.equal(retainedRun?.mutationRevision,0);
+     assert.equal(reopened.getExecutableSteps(runId).steps.length,0,
+      'restarting must not turn already claimed Steps back into new Worker launches');
+     const retainedSteps=reopened.getRunSteps(runId);
+     assert.equal(retainedSteps.length,2);
+     for(const step of steps){
+      const retainedStep=retainedSteps.find(candidate=>candidate.stepId===step.stepId);
+      assert.ok(retainedStep,'restarted Control Plane must see same canonical Step');
+      const attempts=reopened.stateStore.getStepAttempts(runId,{stepId:step.stepId});
+      assert.equal(attempts.length,1,'recovery must not create a second Attempt');
+      const attempt=attempts[0];
+      assert.equal(attempt?.status,'started','Worker report remains unsettled before Owner CAS');
+      assert.equal(retainedStep.resultAttemptId,attempt?.attemptId);
+      assert.equal(retainedStep.resultCommitSha,attempt?.resultCommitSha);
+      assert.equal(retainedStep.executionWorkspaceId,attempt?.workspaceId);
+      assert.ok(attempt?.resultWorkspaceIdentity?.startsWith('sha256:'));
+      assert.ok(attempt?.patchDigest?.startsWith('sha256:'));
+      assert.ok(attempt?.workerReport && Array.isArray((attempt.workerReport as {verifications?:unknown}).verifications));
+      const workspace=prepared.steps.find(candidate=>candidate.stepId===step.stepId);
+      assert.ok(workspace,'physical Step Worktree must have stable identity');
+      assert.equal(git(workspace.workspaceRoot,['rev-parse','HEAD']),attempt.resultCommitSha);
+      assert.equal(git(workspace.workspaceRoot,['status','--porcelain']),'');
+      assert.equal(observeWorkspaceIdentity({projectRoot:workspace.workspaceRoot}).identity,attempt.resultWorkspaceIdentity);
+      const patch=spawnSync('git',['show','--format=','--binary',attempt.resultCommitSha!],{
+       cwd:workspace.workspaceRoot,encoding:'utf8',timeout:10000,
+      });
+      assert.equal(patch.status,0,String(patch.stderr||patch.error));
+      assert.equal('sha256:'+createHash('sha256').update(patch.stdout).digest('hex'),attempt.patchDigest);
+      const paths=git(workspace.workspaceRoot,['diff-tree','--no-commit-id','--name-only','-r',attempt.resultCommitSha!]).split('\n').filter(Boolean);
+      assert.deepEqual(paths,attempt.changedPaths);
+     }
+     assert.equal((await reopened.getRun(runId))?.mutationRevision,0,'read-only recovery must not mutate Owner');
+    }finally{
+     await reopened.close();
+    }
    }
   }finally{
    await writeFile(path.join(root,'release'),'go').catch(()=>{});

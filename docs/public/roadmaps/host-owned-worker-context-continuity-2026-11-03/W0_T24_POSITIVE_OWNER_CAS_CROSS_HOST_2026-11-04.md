@@ -43,6 +43,27 @@ Mac 증거: 최종 제품·테스트 빌드 operation `65089f70-4982-4aad-a107-6
 
 제품 수정 커밋: `16ee06ce0c7cb369d5db551bc6e57145bd0348a2`. 독립 정상 경쟁 회귀의 최초 커밋: `156d24d5f0a38a52048c580e2ef3be29df5e69d3`.
 
+## 재시작 후 Canonical 결과 재조회 검증 (T24 후속)
+
+두 Host가 서로 다른 Step의 Worker를 정상 완료한 경우, **두 Dispatcher가 모두 Owner Delivery를 중단한 뒤 새로운 Control Plane으로 같은 Run을 재조회**하는 Linux 회귀를 기존 `tests/kernel-parallel-positive-two-hosts.test.ts`에 추가했다. 이 테스트는 저장소 및 Runtime을 격리하고 별도 결과 원장이나 임의 복구 마커를 만들지 않는다.
+
+- `run_steps`의 `resultAttemptId`, `resultCommitSha`, `executionWorkspaceId`가 최신 Canonical Attempt와 정확히 일치한다. 각 Step의 Attempt는 재시작 후에도 **1건**뿐이다.
+- Attempt에는 `workerReport`와 검증 항목, `resultWorkspaceIdentity`, `patchDigest`, `changedPaths`가 남아 있다. 실제 Step Worktree의 `HEAD`는 기록된 `resultCommitSha`이고, `git show --binary`의 SHA-256은 `patchDigest`와 같다. `git diff-tree`의 변경 경로와 작업 공간 식별자도 기록과 일치한다.
+- 새 Control Plane의 `getExecutableSteps()`는 두 `running` Step을 새 실행 대상으로 돌려주지 않는다. 재조회만으로 새로운 Writer나 Attempt가 생기지 않는다.
+- 이 과정에서 Owner Revision `0`과 원본 Owner 파일의 무변경 상태를 유지한다. **새 Proof 실행, 최종 Owner CAS, Report settlement는 수행하지 않았다.** 이는 결과 재조회 가능성에 대한 증거이며 완료 판정이 아니다.
+
+### 기존 구조로 후속 정착을 구현하기 위한 조건
+
+1. **권위 있는 후보 조회:** 현재 plan revision과 mutation revision이 같은 Step별 최신 Canonical Attempt에서만 commit SHA·patch digest·report를 구성한다. `failed`/불완전한 Attempt, plan 변경, 누락·중복 Step, Worktree HEAD/identity/patch의 불일치는 거부한다. Host 메모리의 성공 응답은 권위로 사용하지 않는다.
+2. **물리 Writer 종료 확인:** 단지 Host 프로세스가 종료됐거나 SQLite에 결과가 남았다고 해서 이탈한 OS Writer 및 후손이 종료됐다고 판단하지 않는다. 이미 존재하는 Native Host 실행/예약 증거로 해당 Attempt에 대한 종료를 확인하기 전에는 결과 Worktree를 변형하거나 삭제하지 않는다.
+3. **단일 통합 진입:** 결과가 모두 유효하고 물리 Writer가 정착된 경우에만 기존 Owner fence 아래에서 한 조정자만 통합 Worktree를 사용할 수 있어야 한다. fence TTL 만료·두 Host 동시 복구·검증 도중 작업 공간 변경을 반례로 검증한다. 이를 충족하지 못하면 별도 Coordinator, Queue, 타임아웃 폴백을 만들어 우회하지 않는다.
+4. **기존 통합/정착 재사용:** 검증된 `resultCommitSha`들을 Step 순서로 합쳐 기존 `integrateParallelResults()`의 변경 경로·통합 Proof 검사를 사용한다. `recordOwnerWorkspaceMutation`의 CAS가 한 번만 성공해야 하며, 이후 각각의 저장된 Worker Report를 기존 `settleParallelResult()`로 정착한다. 미완료/충돌 때 Writer를 재실행하지 않고 Worktree를 보존한다.
+5. **실패 창 검증:** Owner apply 전·후, CAS 후 Report 이전, 두 Host가 복구에 동시 진입하는 경우를 격리된 실제 Run으로 재현한 뒤에만 자동 정착을 허용한다. 현재의 `recoverPendingDeliveryMaterialization()` 차단 동작을 약화시키지 않는다.
+
+**추가 Linux 검증:** TypeScript 타입 검사·제품·테스트 빌드 PASS. 분할 Host 재시작 재조회 3/3 PASS (operation `4c368c1b-8e3f-4a30-95f1-5e6f38659825`, `ec94f639-4cb4-4d05-b6c8-35f8716b487d`). 확대 회귀 56 PASS / 3 OS SKIP / 0 FAIL, 경계 검사 9 modules / 311 files / 849 edges PASS (operation `352c6b7e-f1fb-40b3-a7ba-b84679bfc8b0`). Mac Native 재조회 검증은 별도 판단한다.
+
+**현 단계 결론:** Canonical 결과 재조회와 Git 무결성 검증은 PASS다. 물리 Writer 종료 증명과 fence 하에서의 통합·CAS 중복 실행 차단은 아직 PASS가 아니므로 **자동 결과 합류/Owner Delivery는 활성화하지 않았다.** G0 `PARTIAL`, W1 `DEFER` 유지.
+
 ## 남은 항목
 
 1. 서로 다른 Host에서 성공한 Canonical Worker 결과들을 안전하게 재조회·합류시켜 최종 통합 Proof와 Delivery를 완료하는 **회수 경로**는 아직 존재한다고 증명하지 못했다. 현재는 충돌 시 fail-closed 후 Worktree를 보존한다.
