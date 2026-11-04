@@ -34,9 +34,11 @@ T33에서 실제 Mac Native App Server의 전체 process group 종료 후에도 
 | Timeout·Lease 만료·상대 Host 획득·옛 Token 거부 | PASS |
 | 새 Fence 유지 중 이전 OS 후손의 쓰기 | **재현 PASS (안전성 요구는 미충족)** |
 | Linux 확대 회귀·모듈 경계 검사 | **60 PASS / 1 OS SKIP / 0 FAIL**, 9 modules / 311 files / 849 edges PASS (`operationId=6452a98a-6c7c-43d7-8e4d-9f507d0a8fc0`) |
-| Mac Native OS 유한 후손 검증 | 검증 완료 후 반영 |
+| macOS 실제 Trusted Proof 및 분리 OS 후손 | **2 PASS / 0 FAIL / 0 SKIP**, Node 24.6.0, 동일 소스 `d4272af334549c185a0db9b7db4d881a01cb51e3`, 타입·제품·테스트 빌드 PASS (`operationId=a31a728a-6c35-437d-a9cb-154730f62fb9`) |
 
 최초 독립 Linux `npm ci` prepare 시 Strict TypeScript가 `renewed.lock`과 `renewal.lock`의 Nullable 계약 미확인을 정확히 검출했다. 제품 API가 null을 반환할 수 있음을 인정하고 테스트 Assertion에서 `lock` 존재를 먼저 확인한 후 typecheck, 빌드, 집중 검증에 성공했다. 제품의 nullable 경계를 임의 폴백으로 숨기지 않았다.
+
+Mac 교차 검증은 운영 checkout과 분리한 동일 커밋의 임시 소스 Clone에서 수행했다. 실제 macOS의 `executeTrustedProof()` `npm run` Timeout 뒤에도 시험용 분리 Node 후손이 새 Kernel Fence 소유자 아래에서 파일을 쓸 수 있음을 확인했다. **Native Codex App Server나 모델 Worker 호출은 이번 T34에는 없다.** 기존 T33의 Native OS 실증을 대체하지 않는다. 유한 test-only 프로세스의 종료 확인과 격리 Clone 제거를 완료했으며 원본 macOS 저장소/운영 Codex 프로세스는 변경하지 않았다 (`operationId=e653719a-41d5-45d9-ac09-6f7484f4b0e3`, 정리 `operationId=cc11ebf2-459e-4e86-978c-af568d7f53ce`).
 
 ## 결정 및 다음 구현 게이트
 
