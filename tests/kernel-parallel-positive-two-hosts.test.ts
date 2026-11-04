@@ -10,10 +10,11 @@ import path from 'node:path';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
-import { prepareExecutionWorkspaces, cleanupExecutionWorkspaces } from '../src/host/kernel/workspace/physical-worktree.js';
+import { prepareExecutionWorkspaces, prepareRecoveryIntegrationWorktree, cleanupExecutionWorkspaces } from '../src/host/kernel/workspace/physical-worktree.js';
 import { observeWorkspaceIdentity } from '../src/host/kernel/workspace/workspace-identity.js';
 import { readCanonicalParallelWorkerReceipts } from '../src/host/kernel/workspace/canonical-worker-receipts.js';
 import { verifyCanonicalParallelRecoveryCandidate } from '../src/host/kernel/parallel-dispatcher.js';
+import { executeTrustedProof } from '../src/host/kernel/proof/proof-executor.js';
 
 const hostCode = String.raw`
 import { createKernelControlPlane } from './scripts/host/kernel/control-plane-runtime.js';
@@ -172,6 +173,145 @@ const competeRecoveryFences=async(root:string,projectRoot:string,runtimeHome:str
 
 const git=(cwd:string,args:string[]):string=>{const r=spawnSync('git',args,{cwd,encoding:'utf8',timeout:10000});assert.equal(r.status,0,String(r.stderr||r.error));return r.stdout.trim()};
 const waitFor=async(f:()=>Promise<boolean>,reason:string)=>{for(let i=0;i<400;i++){if(await f())return;await delay(15)}throw Error('T24 positive contention timeout '+reason)};
+
+// T42-B2 controlled fixture only. The two old Host processes exited and
+// their Workers were synchronous file writes with no detached descendants.
+// This proves Kernel's existing CAS/Report behavior, NOT Native Writer exit.
+const settleFiniteHistoricalFixture = async (
+ projectRoot:string,runtimeHome:string,runId:string,
+):Promise<void>=>{
+ const cp=await createKernelControlPlane({projectRoot,runtimeHome});
+ let fence:ReturnType<typeof cp.acquireOwnerWorkspaceMutationFence>|null=null;
+ try{
+  const readback=readCanonicalParallelWorkerReceipts({controlPlane:cp,runId,projectRoot,runtimeHome});
+  assert.equal(readback.status,'ready');
+  if(readback.status!=='ready')return;
+  assert.equal(readback.writerExitVerified,false);
+  assert.equal(readback.deliveryAuthorized,false);
+  const run=(await cp.getRun(runId))!;
+  const ownerBase=git(projectRoot,['rev-parse','HEAD']);
+  const snapshot={expectedMutationRevision:run.mutationRevision,
+   expectedWorkspaceIdentity:run.currentWorkspaceIdentity!,
+   expectedHeadCommitSha:ownerBase,expectedProjectId:run.projectId!,
+   expectedWorktreeId:run.worktreeId!,expectedWorkspaceId:run.workspaceId!};
+  fence=cp.acquireOwnerWorkspaceMutationFence(runId,snapshot);
+  const receipts=readCanonicalParallelWorkerReceipts({controlPlane:cp,runId,projectRoot,runtimeHome});
+  assert.deepEqual(receipts,readback,'retired fixture results cannot drift under the Owner fence');
+  const integration=await prepareRecoveryIntegrationWorktree({
+   repoRoot:projectRoot,baseCommit:ownerBase,runtimeHome,runId,projectId:run.projectId!,
+  });
+  const registered=cp.registerExecutionWorkspace(runId,integration.workspaceRoot);
+  assert.ok(registered.workspaceId);
+  const steps=cp.getRunSteps(runId);
+  for(const item of [...readback.receipts].sort((a,b)=>
+    (steps.find(s=>s.stepId===a.stepId)?.sequence??0)-(steps.find(s=>s.stepId===b.stepId)?.sequence??0))){
+   const renewal=cp.renewOwnerWorkspaceMutationFence(runId,{...snapshot,
+    workspaceId:fence.lock.workspaceId,fencingToken:fence.lock.fencingToken,
+    sessionToken:fence.lock.sessionToken});
+   assert.equal(renewal.lock?.fencingToken,fence.lock.fencingToken);
+   git(integration.workspaceRoot,['cherry-pick','--no-commit',item.resultCommitSha]);
+  }
+  const staged=git(integration.workspaceRoot,['diff','--name-only','--cached']).split('\n').filter(Boolean).sort();
+  assert.deepEqual(staged,['src/alpha/result.txt','src/beta/result.txt']);
+  const patch=spawnSync('git',['diff','--cached','--binary',ownerBase],{
+   cwd:integration.workspaceRoot,encoding:'utf8',timeout:10000,
+  });
+  assert.equal(patch.status,0,String(patch.stderr||patch.error));
+  const proof=executeTrustedProof({
+   projectRoot:integration.workspaceRoot,commandRef:'test:ok',
+   ...(process.platform==='darwin'?{writeScope:integration.workspaceRoot}:{}),
+  });
+  assert.equal(proof.status,'passed');
+  if(process.platform==='darwin')assert.equal(proof.writeContainment?.mechanism,'macos-seatbelt');
+  assert.equal(git(integration.workspaceRoot,['diff','--name-only','--cached']).split('\n').filter(Boolean).sort().join(','),staged.join(','));
+  const afterPatch=spawnSync('git',['diff','--cached','--binary',ownerBase],{
+   cwd:integration.workspaceRoot,encoding:'utf8',timeout:10000,
+  });
+  assert.equal(afterPatch.status,0);
+  assert.equal(afterPatch.stdout,patch.stdout,'trusted proof must not change Delivery bytes');
+  const integrationWorkspaceIdentity=observeWorkspaceIdentity({projectRoot:integration.workspaceRoot}).identity;
+  const patchDigest='sha256:'+createHash('sha256').update(patch.stdout).digest('hex');
+  const renewed=cp.renewOwnerWorkspaceMutationFence(runId,{...snapshot,
+   workspaceId:fence.lock.workspaceId,fencingToken:fence.lock.fencingToken,
+   sessionToken:fence.lock.sessionToken});
+  assert.ok(renewed.lock);
+  cp.assertOwnerWorkspaceMutationReady(runId,{...snapshot,
+   expectedWorkspaceId:fence.lock.workspaceId,
+   fencingToken:fence.lock.fencingToken,sessionToken:fence.lock.sessionToken,
+   integrationWorkspaceIdentity,changedPaths:staged,patchDigest});
+  const checked=spawnSync('git',['apply','--check','--binary','-'],{
+   cwd:projectRoot,input:patch.stdout,encoding:'utf8',timeout:10000,
+  });
+  assert.equal(checked.status,0,String(checked.stderr||checked.error));
+  const applied=spawnSync('git',['apply','--binary','-'],{
+   cwd:projectRoot,input:patch.stdout,encoding:'utf8',timeout:10000,
+  });
+  assert.equal(applied.status,0,String(applied.stderr||applied.error));
+  const mutation=cp.recordOwnerWorkspaceMutation(runId,{...snapshot,
+   fencingToken:fence.lock.fencingToken,sessionToken:fence.lock.sessionToken,
+   integrationWorkspaceIdentity,changedPaths:staged,patchDigest});
+  assert.equal(mutation.mutationRevision,Number(run.mutationRevision)+1);
+  assert.equal((await cp.getRun(runId))?.mutationRevision,Number(run.mutationRevision)+1);
+  const settled:string[]=[];
+  for(const receipt of readback.receipts){
+   const attempt=cp.stateStore.getStepAttempts(runId,{stepId:receipt.stepId})[0]!;
+   const updated=await cp.getRun(runId);
+   const lease=cp.renewOwnerWorkspaceMutationFence(runId,{
+    ...snapshot,expectedMutationRevision:updated?.mutationRevision,
+    expectedWorkspaceIdentity:observeWorkspaceIdentity({projectRoot}).identity,
+    workspaceId:fence.lock.workspaceId,fencingToken:fence.lock.fencingToken,
+    sessionToken:fence.lock.sessionToken,phase:'post-commit',
+   });
+   assert.equal(lease.lock?.fencingToken,fence.lock.fencingToken);
+   const report=await cp.settleParallelResult(runId,{
+    ...(attempt.workerReport as Record<string,unknown>),
+    stepId:receipt.stepId,attemptId:attempt.attemptId,
+    capsuleId:attempt.capsuleId,workspaceId:attempt.workspaceId,
+    bindingId:attempt.bindingId,actorSessionId:attempt.actorSessionId,
+   },{deliveryMutation:{...mutation,snapshot},result:{
+    attemptId:attempt.attemptId,executionWorkspaceId:receipt.executionWorkspaceId,
+    workerWorkspaceIdentity:attempt.baseWorkspaceIdentity,
+    resultWorkspaceIdentity:receipt.resultWorkspaceIdentity,
+    resultCommitSha:receipt.resultCommitSha,changedPaths:receipt.changedPaths,
+    patchDigest:receipt.patchDigest,workerReport:receipt.workerReport,
+   }});
+   assert.equal((report as {step?:{state?:string}} | null)?.step?.state,'passed',JSON.stringify(report).slice(0,1400));
+   settled.push(receipt.stepId);
+  }
+  assert.equal(settled.length,2);
+  assert.equal((await cp.getRun(runId))?.mutationRevision,Number(run.mutationRevision)+1);
+  assert.equal((await cp.getRun(runId))?.status,'completed');
+  assert.deepEqual(cp.getRunSteps(runId).map(s=>s.state),['passed','passed']);
+  assert.equal(cp.stateStore.getStepAttempts(runId).length,2);
+  assert.deepEqual(cp.stateStore.getMutationProvenance(runId)?.changedPaths,staged);
+  assert.equal(cp.stateStore.getWorkspaceMutationLockV2(fence.lock.workspaceId),null,
+   'terminal canonical settlement must already release the Owner fence');
+  const replay=readCanonicalParallelWorkerReceipts({controlPlane:cp,runId,projectRoot,runtimeHome});
+  assert.equal(replay.status,'blocked','settled Run cannot reconsume Canonical receipts');
+  assert.equal(replay.status==='blocked'?replay.code:null,'canonical_run_not_pre_delivery');
+  const first=readback.receipts[0]!;
+  const settledAttempt=cp.stateStore.getStepAttempts(runId,{stepId:first.stepId})[0]!;
+  const duplicate=await cp.settleParallelResult(runId,{
+   ...(settledAttempt.workerReport as Record<string,unknown>),
+   stepId:first.stepId,attemptId:first.attemptId,workspaceId:first.executionWorkspaceId,
+  },{deliveryMutation:{...mutation,snapshot},result:{
+   attemptId:first.attemptId,executionWorkspaceId:first.executionWorkspaceId,
+   workerWorkspaceIdentity:settledAttempt.baseWorkspaceIdentity,
+   resultWorkspaceIdentity:first.resultWorkspaceIdentity,
+   resultCommitSha:first.resultCommitSha,changedPaths:first.changedPaths,
+   patchDigest:first.patchDigest,workerReport:first.workerReport,
+  }});
+  assert.notEqual((duplicate as {step?:{state?:string}} | null)?.step?.state,'passed',
+   'the already settled Attempt must not acquire another passed Report');
+  assert.equal((await cp.getRun(runId))?.mutationRevision,Number(run.mutationRevision)+1);
+ }finally{
+  if(fence && cp.stateStore.getWorkspaceMutationLockV2(fence.lock.workspaceId)){
+   try{cp.releaseOwnerWorkspaceMutationFence(runId,{workspaceId:fence.lock.workspaceId,
+    fencingToken:fence.lock.fencingToken,sessionToken:fence.lock.sessionToken})}catch{}
+  }
+  await cp.close();
+ }
+};
 
 for(const mode of ['one-owner','split-owners','split-weak-proof'] as const){
  test(`T24 positive two-Host batch collision: ${mode}`,{timeout:60000},async()=>{
@@ -392,6 +532,14 @@ for(const mode of ['one-owner','split-owners','split-weak-proof'] as const){
       );
       git(projectRoot,['reset','--hard',originalOwner]);
       assert.equal(readCanonicalParallelWorkerReceipts({controlPlane:cp,runId,projectRoot,runtimeHome}).status,'ready');
+      // B2 authority is exercised ONLY by synchronous exited fixture Writers.
+      // Native child descendants are not covered by their App Server exit.
+      await settleFiniteHistoricalFixture(projectRoot,runtimeHome,runId);
+      assert.equal((await cp.getRun(runId))?.mutationRevision,1);
+      assert.equal(cp.stateStore.getStepAttempts(runId).length,2);
+      assert.equal(cp.getExecutableSteps(runId).steps.length,0);
+      for(const name of ['alpha','beta'])
+       assert.equal(await readFile(path.join(projectRoot,'src',name,'result.txt'),'utf8'),name+'\n');
      }
     }
    }
