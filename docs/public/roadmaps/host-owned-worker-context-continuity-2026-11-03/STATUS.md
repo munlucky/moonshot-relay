@@ -21,7 +21,7 @@
 | T36 — 복구별 물리 통합 Worktree | **Linux·Mac 실측 PASS / 자동 복구 DEFER** | [T36](W0_T36_RECOVERY_INTEGRATION_WORKTREE_ISOLATION_2026-11-04.md): 별도 Runtime 영역에 매 복구 시도마다 새로운 물리 Git Worktree를 생성해 기존 Proof 후손이 수정하던 경로를 다시 사용하지 않도록 준비. OS 쓰기 격리 및 Owner Fence는 별도로 검증. |
 | T37 — 통합 전 구간 Owner Fence 수명 | **Linux 36 PASS·Mac 직렬 7 PASS / 기본 Dispatcher 전환 DEFER** | [T37](W0_T37_PREPROOF_OWNER_FENCE_LIFECYCLE_2026-11-04.md): 최초 cherry-pick 전에 Fence 획득, Proof·Owner CAS·정착 시도 내내 타 Host 차단, 만료 Token 거부. 정상 Canonical Report 승인과 자동 회수는 아직 미검증. |
 | T38 — CAS 후 독립 Host 복구 경계 | **Linux 38 PASS·Mac 4 PASS / 자동 합류 DEFER** | [T38](W0_T38_POST_CAS_CROSS_HOST_RECOVERY_2026-11-04.md): 별도 OS Host A/B/C가 정상 Worker 정착과 CAS 직후 Host 비정상 종료 후 blocked 재조회·중복 Worker 없음 검증. Native 물리 Writer 종료 및 자동 회수는 미증명. |
-| T39 — Native Grandchild OS Writer 수명 | **실제 OS 검증 중 / 임의 Writer 종료 DEFER** | [T39](W0_T39_NATIVE_WRITER_DESCENDANT_LIFETIME_2026-11-04.md): 기존 Mac Native direct command/exec 후 Supervisor 종료·별도 PGID 손자 Writer 생존 및 Sandbox 상속 반례. 모든 후손 종료 미증명, 예약 자동 해제 금지. |
+| T39 — Native Grandchild OS Writer 수명 | **Mac Native 실물 1 PASS / 임의 Writer 종료 DEFER** | [T39](W0_T39_NATIVE_WRITER_DESCENDANT_LIFETIME_2026-11-04.md): 기존 Mac Native direct command/exec 후 Supervisor 종료·별도 PGID 손자 Writer 생존 및 Sandbox 상속 반례. 모든 후손 종료 미증명, 예약 자동 해제 금지. |
 | W0-Fix — ContextReceipt | **SOURCE PASS** | T23 재현 → 최소 수정, focused 17/17, typecheck/build/boundaries PASS. 확장 test:source-runtime timeout |
 | W1 — Host-owned Worker | **DEFER / 실제 Attempt-Writer Gate 대기** | Host 소유 Native commandExecution handle과 격리 Worktree/기존 Owner CAS를 연결해 종료·격리 증거 확인 전 같은 Workspace 재할당 금지 필요 |
 | W2 — status/signal/reconnect | NOT STARTED | W1 생존·Owner 경계 필요 |
