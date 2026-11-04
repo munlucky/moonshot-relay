@@ -85,6 +85,7 @@
 | T42-A Cross-Host Receipt Readback | **Linux 37 PASS·Mac Native 실물 6 PASS / 자동 Delivery DEFER** | [T42-A](W0_T42_SPLIT_HOST_CANONICAL_READBACK_2026-11-04.md): 이전 Host 결과 SHA·Digest·Workspace Identity 대조. |
 | T42-B1 OS Scoped Canonical Recovery Preflight | **Linux 37 PASS·Mac Native 3 PASS / 실제 Delivery 미적용** | [T42-B1](W0_T42B_GUARDED_CANONICAL_RECOVERY_PREFLIGHT_2026-11-04.md): 다른 Host의 Canonical Result를 새 OS Scoped Worktree에서 Proof만 실행. |
 | T42-B2-A Controlled Cross-Host Settlement | **Linux 37 PASS·Mac 동기식 3 PASS / 실제 Native 자동 Delivery 미승인** | [T42-B2-A](W0_T42B2_FINITE_SPLIT_OWNER_CAS_SETTLEMENT_2026-11-04.md): 기존 Kernel API의 CAS·Report 정확히 한 번, Writer 종료 증명이 있는 동기식 Fixture. |
+| T42-B2-B Historical Split-Host Post-CAS Crash | **Linux·Mac 검증 중 / Native Delivery 불승인** | [T42-B2-B](W0_T42B2_POST_CAS_CRASH_2026-11-04.md): 역사적 두 Host Result로 CAS 직후 물리 Host 종료, 재진입 차단. |
 | G0 전체 | **PARTIAL** | **W1 live worker 구현 중단**, 미완료 Native 실험부터 계속 |
 
 **다음 단계 (이미 결정된 경로):** 정상 동작하는 Native Host에서 격리 프로세스/Thread를 만들어 (1) start handle (2) 상태 재조회 (3) Main 독립성 (4) cancel/approval (5) old writer 안전 정지를 입증한다. Live Worker가 안 되지만 안전 중단·새 Thread 재개만 가능하다면 원래 계획의 B가 아니라 **degraded-safe-resume 별도 제한 채택**으로 분류한다. 원래 `E` authority-only resume을 먼저 검증하고, `C` Handoff는 추가 효용 입증 전 도입하지 않는다.

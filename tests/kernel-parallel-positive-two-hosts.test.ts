@@ -179,6 +179,7 @@ const waitFor=async(f:()=>Promise<boolean>,reason:string)=>{for(let i=0;i<400;i+
 // This proves Kernel's existing CAS/Report behavior, NOT Native Writer exit.
 const settleFiniteHistoricalFixture = async (
  projectRoot:string,runtimeHome:string,runId:string,
+ crashAfterOwnerCas=false,
 ):Promise<void>=>{
  const cp=await createKernelControlPlane({projectRoot,runtimeHome});
  let fence:ReturnType<typeof cp.acquireOwnerWorkspaceMutationFence>|null=null;
@@ -252,6 +253,17 @@ const settleFiniteHistoricalFixture = async (
    integrationWorkspaceIdentity,changedPaths:staged,patchDigest});
   assert.equal(mutation.mutationRevision,Number(run.mutationRevision)+1);
   assert.equal((await cp.getRun(runId))?.mutationRevision,Number(run.mutationRevision)+1);
+  if(crashAfterOwnerCas){
+   // Actual recovery Host exits after the committed Owner CAS, before reports.
+   const marker=process.env.T42_RECOVERY_MARKER;
+   assert.ok(marker);
+   await writeFile(marker,JSON.stringify({
+    mutationRevision:mutation.mutationRevision,
+    attemptStatuses:cp.stateStore.getStepAttempts(runId).map(a=>a.status),
+    fencingToken:fence.lock.fencingToken,
+   }));
+   process.exit(73);
+  }
   const settled:string[]=[];
   for(const receipt of readback.receipts){
    const attempt=cp.stateStore.getStepAttempts(runId,{stepId:receipt.stepId})[0]!;
@@ -313,8 +325,48 @@ const settleFiniteHistoricalFixture = async (
  }
 };
 
-for(const mode of ['one-owner','split-owners','split-weak-proof'] as const){
- test(`T24 positive two-Host batch collision: ${mode}`,{timeout:60000},async()=>{
+if(process.env.T42_RECOVERY_HOST_MODE==='cas-crash'){
+ const projectRoot=process.env.T42_PROJECT_ROOT;
+ const runtimeHome=process.env.T42_RUNTIME_HOME;
+ const runId=process.env.T42_RUN_ID;
+ assert.ok(projectRoot&&runtimeHome&&runId);
+ await settleFiniteHistoricalFixture(projectRoot,runtimeHome,runId,true);
+ throw new Error('T42_expected_post_cas_process_exit');
+}
+// Independent OS recovery Host observes the post-CAS gap and invokes existing fail-closed Kernel recovery.
+const inspectHistoricalCasCrashHost=[
+ "import { createKernelControlPlane } from './scripts/host/kernel/control-plane-runtime.js';",
+ "import { writeFileSync } from 'node:fs';",
+ "const {T42_PROJECT_ROOT:projectRoot,T42_RUNTIME_HOME:runtimeHome,T42_RUN_ID:runId,T42_INSPECTION_FILE:output,T42_INSPECTION_MODE:mode}=process.env;",
+ "const cp=await createKernelControlPlane({projectRoot,runtimeHome});",
+ "try{",
+ "const before=await cp.getRun(runId);",
+ "const attemptsBefore=cp.stateStore.getStepAttempts(runId);",
+ "const executableBefore=cp.getExecutableSteps(runId).steps.length;",
+ "const fence=before?.workspaceId?cp.stateStore.getWorkspaceMutationLockV2(before.workspaceId):null;",
+ "const recovery=mode==='recover'?await cp.recoverPendingDeliveryMaterialization(runId):null;",
+ "const after=await cp.getRun(runId);",
+ "const attemptsAfter=cp.stateStore.getStepAttempts(runId);",
+ "writeFileSync(output,JSON.stringify({",
+ "before:{status:before?.status,revision:before?.mutationRevision},",
+ "recovery:{status:recovery?.status,reason:recovery?.reason},",
+ "after:{status:after?.status,revision:after?.mutationRevision,blockedReason:after?.blockedReason},",
+ "attemptsBefore:attemptsBefore.map(a=>a.status),",
+ "attemptsAfter:attemptsAfter.map(a=>a.status),",
+ "attemptCount:attemptsAfter.length,executableBefore,",
+ "provenanceRevision:cp.stateStore.getMutationProvenance(runId)?.mutationRevision,",
+ "heldFenceEpoch:fence?.fencingToken??null,",
+ "}));",
+ "}finally{await cp.close()}",
+].join('\n');
+
+for(const mode of ['one-owner','split-owners','split-cas-crash','split-weak-proof'] as const){
+ test(`T24 positive two-Host batch collision: ${mode}`,{
+  timeout:95000,
+  skip: mode==='split-cas-crash' && process.platform==='darwin' && process.env.T24_NATIVE_POSITIVE==='1'
+   ? 'Native Writer descendants are not proven retired'
+   : false,
+ },async()=>{
   const root=await mkdtemp(path.join(os.tmpdir(),'t24-positive-owner-'));
   const nativeEnabled=process.platform==='darwin'&&process.env.T24_NATIVE_POSITIVE==='1';
   if(nativeEnabled)assert.ok(process.env.CODEX_HOME,'isolated CODEX_HOME required');
@@ -477,7 +529,7 @@ for(const mode of ['one-owner','split-owners','split-weak-proof'] as const){
     }finally{
      await reopened.close();
     }
-    if(mode==='split-owners'){
+    if(mode==='split-owners'||mode==='split-cas-crash'){
      // This preflight reuses both persisted Worker Commit SHAs but has no
      // Delivery or Writer-retirement authority. Linux refuses before Git.
      const candidate=await verifyCanonicalParallelRecoveryCandidate({
@@ -534,7 +586,58 @@ for(const mode of ['one-owner','split-owners','split-weak-proof'] as const){
       assert.equal(readCanonicalParallelWorkerReceipts({controlPlane:cp,runId,projectRoot,runtimeHome}).status,'ready');
       // B2 authority is exercised ONLY by synchronous exited fixture Writers.
       // Native child descendants are not covered by their App Server exit.
-      await settleFiniteHistoricalFixture(projectRoot,runtimeHome,runId);
+      if(mode==='split-cas-crash'){
+       const casMarker=path.join(root,'historical-cas-crashed.json');
+       const crash=spawnSync(process.execPath,['--input-type=module','-e',
+        "import('./tests/kernel-parallel-positive-two-hosts.test.mjs')"],{
+        cwd:process.cwd(),encoding:'utf8',timeout:75000,
+        env:{...process.env,T42_RECOVERY_HOST_MODE:'cas-crash',T42_PROJECT_ROOT:projectRoot,
+         T42_RUNTIME_HOME:runtimeHome,T42_RUN_ID:runId,T42_RECOVERY_MARKER:casMarker},
+       });
+       assert.equal(crash.status,73,'actual historical recovery Host exit after Owner CAS: '+crash.stderr);
+       assert.ok(existsSync(casMarker),'durable Owner CAS must precede Host process exit');
+       const cas=JSON.parse(await readFile(casMarker,'utf8')) as {
+        mutationRevision:number;attemptStatuses:string[];fencingToken:number;
+       };
+       assert.equal(cas.mutationRevision,1);
+       assert.deepEqual(cas.attemptStatuses,['started','started']);
+       assert.ok(cas.fencingToken>0);
+       assert.equal((await cp.getRun(runId))?.mutationRevision,1);
+       assert.equal(cp.stateStore.getStepAttempts(runId).length,2);
+       const inspect=async(kind:'recover'|'recheck')=>{
+        const output=path.join(root,'inspect-'+kind+'.json');
+        const child=spawnSync(process.execPath,['--input-type=module','-e',
+         inspectHistoricalCasCrashHost],{
+         cwd:process.cwd(),encoding:'utf8',timeout:30000,
+         env:{...process.env,T42_PROJECT_ROOT:projectRoot,
+          T42_RUNTIME_HOME:runtimeHome,T42_RUN_ID:runId,
+          T42_INSPECTION_FILE:output,T42_INSPECTION_MODE:kind},
+        });
+        assert.equal(child.status,0,'new recovery Host '+kind+' failed: '+child.stderr);
+        return JSON.parse(await readFile(output,'utf8')) as Record<string,unknown>;
+       };
+       const recovered=await inspect('recover');
+       assert.equal((recovered.before as {revision?:number}).revision,1);
+       assert.equal((recovered.recovery as {status?:string}).status,'blocked',JSON.stringify(recovered));
+       assert.deepEqual(recovered.attemptsBefore,['started','started']);
+       assert.deepEqual(recovered.attemptsAfter,['started','started']);
+       assert.equal(recovered.attemptCount,2);
+       assert.equal(recovered.executableBefore,0);
+       assert.equal((recovered.after as {status?:string}).status,'blocked');
+       assert.equal((recovered.after as {revision?:number}).revision,1);
+       assert.equal((recovered.after as {blockedReason?:string}).blockedReason,
+        'delivery_materialization_recovery_required');
+       const rechecked=await inspect('recheck');
+       assert.equal((rechecked.after as {revision?:number}).revision,1);
+       assert.equal((rechecked.after as {status?:string}).status,'blocked');
+       assert.deepEqual(rechecked.attemptsAfter,['started','started']);
+       assert.equal(rechecked.attemptCount,2);
+       assert.equal(rechecked.executableBefore,0);
+       const notReusable=readCanonicalParallelWorkerReceipts({controlPlane:cp,runId,projectRoot,runtimeHome});
+       assert.equal(notReusable.status,'blocked');
+      }else{
+       await settleFiniteHistoricalFixture(projectRoot,runtimeHome,runId);
+      }
       assert.equal((await cp.getRun(runId))?.mutationRevision,1);
       assert.equal(cp.stateStore.getStepAttempts(runId).length,2);
       assert.equal(cp.getExecutableSteps(runId).steps.length,0);
