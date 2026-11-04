@@ -25,6 +25,7 @@
 | T40 — Native Crash 후 세대별 쓰기 격리 | **Mac Native 1 PASS / 자동 정착 DEFER** | [T40](W0_T40_NATIVE_GENERATION_FENCE_OS_WRITE_ISOLATION_2026-11-04.md): T31에 T36의 복구 Integration Worktree와 Owner Fence 만료·재획득 및 이전 Native Writer의 새 세대·Owner OS 쓰기 거부 실증 추가. |
 | T41 — 선택형 전 구간 Owner Fence + OS Scoped Proof | **Linux 37 PASS·Mac 9 PASS / 기본 경로·Native 자동 재회수 DEFER** | [T41](W0_T41_GUARDED_DISPATCH_INTEGRATION_FENCE_2026-11-04.md): macOS 명시적 보호 모드에서 첫 cherry-pick 전 Fence, 새 복구 Worktree, OS 제한 Proof, CAS 및 Report 정착 후 Fence 해제. |
 | T42-A — Cross-Host Canonical Result readback | **Linux 37 PASS·Mac Native 6 PASS / Owner 자동 합류 DEFER** | [T42-A](W0_T42_SPLIT_HOST_CANONICAL_READBACK_2026-11-04.md): Git·Attempt 무결성 재조회, Native Writer 종료/Delivery 미승인. |
+| T42-B1 — 분리 Host Canonical Result 보호된 사전 Proof | **Linux 검증·Mac 실증 중 / Owner Delivery DEFER** | [T42-B1](W0_T42B_GUARDED_CANONICAL_RECOVERY_PREFLIGHT_2026-11-04.md): 기존 Fence·새 Integration Worktree·Scoped Proof, 실제 CAS 및 Report 자동 회수 없음. |
 | W0-Fix — ContextReceipt | **SOURCE PASS** | T23 재현 → 최소 수정, focused 17/17, typecheck/build/boundaries PASS. 확장 test:source-runtime timeout |
 | W1 — Host-owned Worker | **DEFER / 실제 Attempt-Writer Gate 대기** | Host 소유 Native commandExecution handle과 격리 Worktree/기존 Owner CAS를 연결해 종료·격리 증거 확인 전 같은 Workspace 재할당 금지 필요 |
 | W2 — status/signal/reconnect | NOT STARTED | W1 생존·Owner 경계 필요 |

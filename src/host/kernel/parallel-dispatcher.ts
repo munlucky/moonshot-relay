@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { runGit } from '../../shared/git-safe.js';
 import { observeWorkspaceIdentity } from './workspace/workspace-identity.js';
+import { readCanonicalParallelWorkerReceipts } from './workspace/canonical-worker-receipts.js';
 import {
   prepareExecutionWorkspaces,
   prepareStepWorktree,
@@ -192,6 +193,8 @@ interface IntegrateParallelResultsInput {
   executeIntegrationVerification: (input: VerificationRunnerInput) => UnknownRecord | Promise<UnknownRecord>;
   beforeCherryPick?: (() => Promise<void>) | undefined;
   materializeDelivery: (input: MaterializeDeliveryInput) => UnknownRecord | Promise<UnknownRecord>;
+  // Preflight creates only a protected candidate patch. No Owner CAS/Report.
+  verifyOnly?: boolean;
   runtimeHome?: (string | null) | undefined;
   projectRoot: string;
   runId: string;
@@ -622,7 +625,7 @@ const git = (root: string, args: string[], options: RunGitOptions = {}): string 
 
 const stagedPaths = (root: string): string[] => normalizePaths(git(root, ['diff', '--name-only', '--cached', '--']).split(/\r?\n/u).filter(Boolean));
 
-const integrateParallelResults = async ({ run, steps, results, integrationWorkspace, deliveryWorkspace, integrationVerification, executeIntegrationVerification, beforeCherryPick, materializeDelivery, runtimeHome, projectRoot, runId }: IntegrateParallelResultsInput): Promise<IntegrationResult> => {
+const integrateParallelResults = async ({ run, steps, results, integrationWorkspace, deliveryWorkspace, integrationVerification, executeIntegrationVerification, beforeCherryPick, materializeDelivery, verifyOnly = false, runtimeHome, projectRoot, runId }: IntegrateParallelResultsInput): Promise<IntegrationResult> => {
   const ordered = [...results].sort((left, right) => (steps.find((step) => step.stepId === left.stepId)?.sequence || 0) - (steps.find((step) => step.stepId === right.stepId)?.sequence || 0));
   const base = run.baseCommitSha || git(integrationWorkspace.workspaceRoot, ['rev-parse', 'HEAD']).trim();
   const preIntegrationIdentity = observeWorkspaceIdentity({ projectRoot: integrationWorkspace.workspaceRoot }).identity;
@@ -668,6 +671,14 @@ const integrateParallelResults = async ({ run, steps, results, integrationWorksp
     const integrationIdentity = observeWorkspaceIdentity({ projectRoot: integrationWorkspace.workspaceRoot }).identity;
     const patch = postVerificationPatch;
     if (!patch) throw Object.assign(new Error('delivery_patch_empty'), { code: 'delivery_patch_empty' });
+    if (verifyOnly) {
+      return {
+        status: 'verified', changedPaths: integratedPaths,
+        integrationWorkspaceIdentity: integrationIdentity, preIntegrationIdentity,
+        verification, patchDigest: digest(patch),
+        deliveryMutation: null, deliveryAuthorized: false,
+      };
+    }
     if (typeof materializeDelivery !== 'function') {
       throw Object.assign(new Error('delivery_authority_unavailable'), { code: 'delivery_authority_unavailable' });
     }
@@ -1238,3 +1249,143 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
 };
 
 export const dispatchKernelRun = (options: DispatchKernelParallelInput = {} as DispatchKernelParallelInput) => dispatchKernelParallel(options);
+
+// T42-B preflight: assemble and verify old canonical Worker results without
+// claiming that the old Native Writer or any detached descendant has exited.
+// The caller cannot turn this result into a Delivery authorization.
+export const verifyCanonicalParallelRecoveryCandidate = async ({
+  controlPlane, runId, projectRoot, runtimeHome, commandRef,
+}: {
+  controlPlane: ControlPlaneLike;
+  runId: string;
+  projectRoot: string;
+  runtimeHome: string;
+  commandRef: string;
+}): Promise<UnknownRecord> => {
+  const refusal = (failureCode: string): UnknownRecord => ({
+    schemaVersion: 1, runId, status: 'blocked', failureCode,
+    writerExitVerified: false, deliveryAuthorized: false,
+  });
+  // T35 OS-scoped Proof is required for known and unknown post-Proof writers.
+  if (process.platform !== 'darwin') return refusal('recovery_os_write_scope_unavailable');
+  if (!commandRef || !runtimeHome) return refusal('recovery_proof_command_missing');
+  const run = await controlPlane.getRun(runId);
+  const snapshot = readCanonicalParallelWorkerReceipts({ controlPlane, runId, projectRoot, runtimeHome });
+  if (snapshot.status !== 'ready') return refusal(snapshot.code);
+  if (!run?.projectId || !run.workspaceId) return refusal('recovery_owner_authority_unavailable');
+  const stepRows = controlPlane.getRunSteps(runId);
+  const steps = stepRows as StepLike[];
+  if (steps.length !== snapshot.receipts.length) return refusal('recovery_step_count_changed');
+  const ownerBase = baseCommit(projectRoot);
+  if (!ownerBase) return refusal('recovery_owner_base_unavailable');
+  const expected = {
+    expectedMutationRevision: Number(run.mutationRevision ?? -1),
+    expectedWorkspaceIdentity: run.currentWorkspaceIdentity ?? observeWorkspaceIdentity({ projectRoot }).identity,
+    expectedHeadCommitSha: ownerBase,
+    expectedProjectId: run.projectId,
+    expectedWorktreeId: run.worktreeId,
+    expectedWorkspaceId: run.workspaceId,
+  };
+  let fence: OwnerFenceLike | null = null;
+  let integrationWorkspace: RegisteredWorkspace | null = null;
+  let outcome: UnknownRecord = refusal('recovery_preflight_not_started');
+  try {
+    // Acquire before any Git integration writes; the competing recovery Host
+    // is denied by the existing Kernel Owner Fence, not by a new lock system.
+    fence = await controlPlane.acquireOwnerWorkspaceMutationFence(runId, expected);
+    const reread = readCanonicalParallelWorkerReceipts({ controlPlane, runId, projectRoot, runtimeHome });
+    if (reread.status !== 'ready'
+      || JSON.stringify(reread.receipts) !== JSON.stringify(snapshot.receipts)) {
+      throw Object.assign(new Error('recovery_receipt_changed_under_fence'), { code: 'recovery_receipt_changed_under_fence' });
+    }
+    const prepared = await prepareRecoveryIntegrationWorktree({
+      repoRoot: projectRoot, baseCommit: ownerBase,
+      runtimeHome, runId, projectId: run.projectId,
+    });
+    const registered = controlPlane.registerExecutionWorkspace(runId, prepared.workspaceRoot);
+    if (!registered?.workspaceId) throw Object.assign(new Error('recovery_integration_registration_unavailable'), { code: 'recovery_integration_registration_unavailable' });
+    integrationWorkspace = { ...prepared, ...registered } as RegisteredWorkspace;
+    const renew = async (): Promise<void> => {
+      if (!fence) throw Object.assign(new Error('recovery_fence_missing'), { code: 'delivery_mutation_fence_lost' });
+      const updated = await controlPlane.renewOwnerWorkspaceMutationFence(runId, {
+        ...expected, workspaceId: fence.lock.workspaceId,
+        fencingToken: fence.lock.fencingToken,
+        sessionToken: fence.lock.sessionToken,
+      });
+      if (!updated.lock) throw Object.assign(new Error('recovery_fence_lost'), { code: 'delivery_mutation_fence_lost' });
+      fence = { lock: updated.lock };
+    };
+    const integrated = await integrateParallelResults({
+      run: { ...run, baseCommitSha: ownerBase },
+      steps,
+      results: snapshot.receipts.map((receipt) => ({
+        stepId: receipt.stepId,
+        step: steps.find((item) => item.stepId === receipt.stepId)!,
+        workspace: { workspaceRoot: receipt.workspaceRoot, workspaceId: receipt.executionWorkspaceId },
+        outcome: { status: 'passed', workerReport: receipt.workerReport },
+        resultCommitSha: receipt.resultCommitSha,
+        changedPaths: receipt.changedPaths,
+        patchDigest: receipt.patchDigest,
+        resultWorkspaceIdentity: receipt.resultWorkspaceIdentity,
+      })),
+      integrationWorkspace,
+      deliveryWorkspace: { workspaceRoot: projectRoot },
+      integrationVerification: { commandRef },
+      executeIntegrationVerification: async ({ commandRef: ref, workspaceRoot }) => {
+        const execution = executeTrustedProof({
+          projectRoot: workspaceRoot, commandRef: ref,
+          writeScope: workspaceRoot,
+          evidenceDir: path.join(runtimeHome, 'evidence', run.projectId!, runId, 'recovery-preflight'),
+        });
+        const mechanism = execution.writeContainment?.mechanism;
+        return {
+          status: mechanism === 'macos-seatbelt' ? execution.status : 'failed',
+          passed: execution.status === 'passed' && mechanism === 'macos-seatbelt',
+          verificationRef: execution.evidenceRef,
+          execution,
+        };
+      },
+      beforeCherryPick: renew,
+      materializeDelivery: () => { throw new Error('recovery_preflight_has_no_delivery_authority'); },
+      verifyOnly: true,
+      runtimeHome, projectRoot, runId,
+    });
+    if (integrated.status !== 'verified') throw Object.assign(new Error('recovery_integration_verification_failed'), { code: String(integrated.failureCode || 'recovery_integration_verification_failed') });
+    await renew();
+    const afterProof = readCanonicalParallelWorkerReceipts({ controlPlane, runId, projectRoot, runtimeHome });
+    if (afterProof.status !== 'ready'
+      || JSON.stringify(afterProof.receipts) !== JSON.stringify(snapshot.receipts)) {
+      throw Object.assign(new Error('recovery_receipt_changed_during_proof'), { code: 'recovery_receipt_changed_during_proof' });
+    }
+    outcome = {
+      schemaVersion: 1, runId, status: 'verified',
+      candidate: {
+        changedPaths: integrated.changedPaths,
+        patchDigest: integrated.patchDigest,
+        integrationWorkspaceIdentity: integrated.integrationWorkspaceIdentity,
+        integrationWorkspaceRoot: integrationWorkspace.workspaceRoot,
+      },
+      verification: integrated.verification,
+      writerExitVerified: false, deliveryAuthorized: false,
+    };
+  } catch (error: unknown) {
+    outcome = refusal(String(errorRecord(error).code || 'recovery_preflight_failed'));
+  } finally {
+    if (fence) {
+      // Do not release silently: after expiry the previous Host cannot make
+      // any Owner claim about this preflight (even though it changed no Owner).
+      try {
+        await controlPlane.releaseOwnerWorkspaceMutationFence(runId, {
+          workspaceId: fence.lock.workspaceId,
+          fencingToken: fence.lock.fencingToken,
+          sessionToken: fence.lock.sessionToken,
+        });
+      } catch {
+        outcome = refusal('recovery_owner_fence_release_unconfirmed');
+      }
+    }
+  }
+  // Do not cleanup the physical integration Worktree: unknown Proof children
+  // could remain alive even after the synchronous Proof runner returned.
+  return outcome;
+};

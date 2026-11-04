@@ -13,6 +13,7 @@ import { createKernelControlPlane } from '../src/host/kernel/control-plane-runti
 import { prepareExecutionWorkspaces, cleanupExecutionWorkspaces } from '../src/host/kernel/workspace/physical-worktree.js';
 import { observeWorkspaceIdentity } from '../src/host/kernel/workspace/workspace-identity.js';
 import { readCanonicalParallelWorkerReceipts } from '../src/host/kernel/workspace/canonical-worker-receipts.js';
+import { verifyCanonicalParallelRecoveryCandidate } from '../src/host/kernel/parallel-dispatcher.js';
 
 const hostCode = String.raw`
 import { createKernelControlPlane } from './scripts/host/kernel/control-plane-runtime.js';
@@ -337,6 +338,29 @@ for(const mode of ['one-owner','split-owners','split-weak-proof'] as const){
      await reopened.close();
     }
     if(mode==='split-owners'){
+     // This preflight reuses both persisted Worker Commit SHAs but has no
+     // Delivery or Writer-retirement authority. Linux refuses before Git.
+     const candidate=await verifyCanonicalParallelRecoveryCandidate({
+      controlPlane:cp,runId,projectRoot,runtimeHome,commandRef:'test:ok',
+     });
+     assert.equal(candidate.writerExitVerified,false);
+     assert.equal(candidate.deliveryAuthorized,false);
+     if(process.platform==='darwin'){
+      assert.equal(candidate.status,'verified',JSON.stringify(candidate));
+      const proof=candidate.verification as {execution?:{writeContainment?:{mechanism?:string}}};
+      assert.equal(proof.execution?.writeContainment?.mechanism,'macos-seatbelt');
+      const patch=candidate.candidate as {changedPaths?:string[];patchDigest?:string;integrationWorkspaceRoot?:string};
+      assert.deepEqual(patch.changedPaths,['src/alpha/result.txt','src/beta/result.txt']);
+      assert.ok(patch.patchDigest?.startsWith('sha256:'));
+      assert.ok(patch.integrationWorkspaceRoot?.includes('recovery'));
+     }else{
+      assert.equal(candidate.status,'blocked');
+      assert.equal(candidate.failureCode,'recovery_os_write_scope_unavailable');
+     }
+     assert.equal((await cp.getRun(runId))?.mutationRevision,0);
+     assert.equal(cp.stateStore.getStepAttempts(runId).length,2);
+     const held=cp.stateStore.getWorkspaceMutationLockV2(run.workspaceId!);
+     assert.equal(held,null,'proof-only recovery must release Owner Fence without CAS');
      const winner=await competeRecoveryFences(root,projectRoot,runtimeHome,runId);
      assert.equal((await cp.getRun(runId))?.mutationRevision,0);
      assert.equal(cp.getExecutableSteps(runId).steps.length,0);
