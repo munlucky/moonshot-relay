@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { mkdir, realpath, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   runGit,
   type GitCommandResult,
@@ -394,6 +394,58 @@ export const prepareIntegrationWorktree = async ({
     kind: 'integration',
     reused: prepared.reused,
     workspaceRoot: target,
+    baseCommitSha: activeBaseCommit,
+    baseWorkspaceIdentity: identity.identity,
+  };
+};
+
+// New recovery Proofs must never share the prior Host's possibly still-
+// writable integration directory. A UUID is a physical isolation generation,
+// NOT a fencing token, Writer-exit receipt, or permission to clean old roots.
+// Keep these Worktrees outside executionRoot() so ordinary batch cleanup
+// cannot accidentally delete a Worktree with an unretired Proof descendant.
+export const prepareRecoveryIntegrationWorktree = async ({
+  repoRoot,
+  baseCommit,
+  runId,
+  projectId,
+  runtimeHome = null,
+}: PrepareWorktreeInput = {}): Promise<PreparedExecutionWorkspace> => {
+  const activeRepoRoot = requiredString(repoRoot, 'repoRoot');
+  const activeBaseCommit = requiredString(baseCommit, 'baseCommit');
+  const activeRunId = requiredString(runId, 'runId');
+  const activeProjectId = requiredString(projectId, 'projectId');
+  const activeHome = requiredString(runtimeHome || undefined, 'runtimeHome');
+  const [canonicalOwner, canonicalHome] = await Promise.all([
+    realpath(activeRepoRoot), realpath(activeHome),
+  ]);
+  const root = path.join(
+    canonicalHome,
+    'host-recovery-integration-worktrees',
+    `p-${shortExecutionToken(activeProjectId, 16)}`,
+    `r-${shortExecutionToken(activeRunId, 16)}`,
+  );
+  const target = path.join(root, `i-${randomUUID()}`);
+  const relativeToOwner = path.relative(canonicalOwner, target);
+  if (!relativeToOwner || (!relativeToOwner.startsWith('..' + path.sep)
+    && relativeToOwner !== '..' && !path.isAbsolute(relativeToOwner))) {
+    throw Object.assign(new Error('recovery integration Worktree must be outside Owner'), {
+      code: 'WORKTREE_RECOVERY_OWNER_OVERLAP',
+    });
+  }
+  // addWorktree is create-only. Even a clean Worktree from a stale Host must
+  // never be selected for a new recovery Proof.
+  await addWorktree({
+    repoRoot: activeRepoRoot,
+    target,
+    baseCommit: activeBaseCommit,
+    containmentRoot: root,
+  });
+  const identity = observeWorkspaceIdentity({ projectRoot: target });
+  return {
+    kind: 'integration',
+    workspaceRoot: target,
+    reused: false,
     baseCommitSha: activeBaseCommit,
     baseWorkspaceIdentity: identity.identity,
   };
