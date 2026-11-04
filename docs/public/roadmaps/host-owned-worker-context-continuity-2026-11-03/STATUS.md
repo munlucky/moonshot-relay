@@ -1,6 +1,6 @@
 # Host-owned Worker / Context Continuity 진행 현황
 
-- 최종 갱신: 2026-11-03 (KST) — **W0 Context SOURCE PASS / G0 Native Capability PARTIAL**
+- 최종 갱신: 2026-11-04 (KST) — **W0 Context SOURCE PASS / G0 Native Capability PARTIAL**
 - 기준 소스: `main / c35979c408da120e4827791700ccb5a4c06ab78f` (W0-Fix 커밋·푸시 확인)
 - 문서: [PLAN](PLAN.md) · [W0 착수](W0_START.md) · [검증 계약](VERIFICATION.md)
 - 이 파일의 상태는 **새 제품 기능의 PASS가 아니다.**
@@ -12,7 +12,7 @@
 | Mac-side MCP canonical checkout | 조회 완료 | 문서 편입 전 양쪽 `main / 3797c60f`, 별개 Runtime·DB·세션 |
 | 기존 사용자 작업 간섭 | 없음 (준비 작업 범위) | 사용자 Runtime/DB·Codex 세션 종료·설치·마이그레이션 없음 |
 | 프로젝트 로드맵 문서 정착 | **완료** | 2026-11-03 초기 문서와 W0-Fix를 `main`에 커밋·푸시 확인 |
-| W0 — Capability/기준선 | **G0 PARTIAL** | [T26 실제 Mac Native·연결 상실 검증](W0_T26_MAC_NATIVE_KERNEL_AND_CONNECTION_LOSS_2026-11-04.md): 실제 Mac Codex 모델+Canonical Kernel Attempt 한 Host E2E PASS, 재시작 재조회 PASS, 실제 App Server workspaceWrite 외부 센티널 삭제 거부 PASS, Linux T26 87/87 PASS. OS 후손 종료·Owner CAS Delivery·안전 폐기 및 기본 Dispatcher 전환은 미완료 |
+| W0 — Capability/기준선 | **G0 PARTIAL** | [T27 실제 후손 Writer 생존 반례](W0_T27_NATIVE_DESCENDANT_SURVIVAL_AND_RETIREMENT_GATES_2026-11-04.md): Mac 실제 command/exec 종료·App Server 종료 뒤 분리된 OS Writer가 추가 쓰기 6/6 PASS. Linux 실제 OS detached Writer + Canonical Attempt/예약 반례 확대 95 PASS·1 Windows SKIP·0 FAIL. 종료 증거·안전 폐기/Owner CAS Delivery 미구현 |
 | W0-Fix — ContextReceipt | **SOURCE PASS** | T23 재현 → 최소 수정, focused 17/17, typecheck/build/boundaries PASS. 확장 test:source-runtime timeout |
 | W1 — Host-owned Worker | **DEFER / 실제 Attempt-Writer Gate 대기** | Host 소유 Native commandExecution handle과 격리 Worktree/기존 Owner CAS를 연결해 종료·격리 증거 확인 전 같은 Workspace 재할당 금지 필요 |
 | W2 — status/signal/reconnect | NOT STARTED | W1 생존·Owner 경계 필요 |
@@ -35,7 +35,7 @@
 2. `W0_START.md`의 "0. 입장 조건" 수행. 완료된 분석·명령은 반복하지 않음.
 3. **완료한 T23 수정·인증·실제 Turn 완료·Native WebSocket 수명 비교·Turn-level interrupt·재시작 이력 조회를 반복하지 않음.** 다음에는 실제 Moonshot Relay의 Main/Host 실행 연결 분리, OS Writer 물리 중단·중복 실행 금지, Windows Native executor heartbeat 복구부터 시작. 기존 사용자 세션 종료 금지.
 4. [T25 추가 음성 검증](W0_T25_ADDITIONAL_NEGATIVE_VERIFICATION_2026-11-03.md)에서 실제 A Writer가 살아 있는 상태로 동일 Workspace Lock 재획득/추가 쓰기 5회와 별도 Worktree A/B 물리 격리 PASS를 확보. **Main/Host 연결 해제 중 Native Handle 회수는 이번 모델 시험에서 Writer 미생성으로 미검증.** 다음은 Attempt↔Native 실행 스트림 결합, 같은 Workspace Writer 재허가 Gate 및 실제 Delivery CAS 통합 검증. 완료된 시험 반복·새 DB/Queue/Provider별 하드코딩 금지.
-5. [T26 Mac Native·연결 상실 추가 검증](W0_T26_MAC_NATIVE_KERNEL_AND_CONNECTION_LOSS_2026-11-04.md)에서 **실제 Mac 모델+Kernel Attempt 단일 Host 실행 PASS**, Canonical 상태·예약 재조회 PASS, workspaceWrite 샌드박스 직접 명령의 외부 센티널 삭제 거부 PASS, Linux 연결 상실 뒤 동일 Attempt 중복 Writer 거부 87/87 PASS를 확인했다. 모델의 별도 외부 삭제 요청은 Command 이벤트 0건으로 판정 불가였다. **다음은 OS Writer/후손 실제 종료·안전 폐기 및 검증된 Worker Outcome/Report→Owner CAS Delivery 수용**이다. 기본 Dispatcher는 미변경, G0 PARTIAL / W1 DEFER 유지.
+5. [T27 Native 후손 생존·폐기 보류 검증](W0_T27_NATIVE_DESCENDANT_SURVIVAL_AND_RETIREMENT_GATES_2026-11-04.md): **실제 Mac command/exec exit 0 및 App Server 종료 뒤에도 OS Writer가 추가 기록**하는 반례 재현(6/6). Linux의 실제 detached Writer/Kernel Attempt 회귀 확대 96건 중 95 PASS·1 Windows SKIP. **단순 Turn 완료·App Server PID/Process Group 종료를 Worktree 폐기 증거로 사용하지 않는다.** 다음은 OS 강제 containment·종료 후 재관측·안전 폐기 조건 및 Worker Report→Owner CAS Delivery 통합이다. 기본 Dispatcher/DB는 미변경, G0 PARTIAL / W1 DEFER 유지.
 
 ## 변경 범위 원칙
 

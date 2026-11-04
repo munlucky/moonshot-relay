@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { test } from 'node:test';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,11 +10,13 @@ import { type NativeExecutionObservation } from '../src/host/kernel/adapter-disp
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
 import { runHostOwnedWritableAttempt } from '../src/host/kernel/host-owned-writable-attempt.js';
 import { prepareHostWriterAttemptWorktree } from '../src/host/kernel/workspace/physical-worktree.js';
+import { reserveHostWorkspaceWriter } from '../src/host/kernel/workspace-writer-reservation.js';
 
 const fakeServer = String.raw`
 const readline = require('node:readline');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 let serial = 0;
 const send = (message) => process.stdout.write(JSON.stringify(message) + '\n');
 const input = readline.createInterface({ input: process.stdin });
@@ -50,6 +53,22 @@ input.on('line', (line) => {
     }
     if (process.env.TEST_MODE === 'writable') {
       fs.writeFileSync(path.join(message.params.cwd, 'mock-writer-started.txt'), 'started');
+    }
+    if (process.env.TEST_MODE === 'writable-detached-descendant') {
+      // Real OS child with its own process group. The fake server completes
+      // its Turn while this bounded Writer continues independently.
+      const script = [
+        "const fs=require('node:fs');",
+        "fs.writeFileSync(process.argv[2],String(process.pid));",
+        'let n=0;',
+        "const timer=setInterval(()=>{const fd=fs.openSync(process.argv[1],'a');try{fs.writeSync(fd,String(++n)+'\\n');fs.fsyncSync(fd)}finally{fs.closeSync(fd)}if(n>=105){clearInterval(timer);process.exit(0)}},25);",
+      ].join('');
+      const child = spawn(process.execPath, [
+        '-e', script,
+        path.join(message.params.cwd, 'detached-writer.log'),
+        path.join(message.params.cwd, 'detached-writer.pid'),
+      ], { cwd: message.params.cwd, stdio: 'ignore', detached: true });
+      child.unref();
     }
     if (process.env.TEST_MODE === 'stall-turn') {
       send({ id, result: { turn: { id: turnId, status: 'inProgress' } } });
@@ -557,6 +576,93 @@ test('T26: disconnected Writable Turn keeps canonical Attempt unknown and reject
       // Test-only cleanup is not evidence for production release semantics.
       if (attemptWorkspace) {
         const removed = spawnSync('git', ['worktree', 'remove', '--force', attemptWorkspace], {
+          cwd: workspace, encoding: 'utf8', timeout: 10000,
+        });
+        assert.equal(removed.status, 0, removed.stderr);
+      }
+      await cp.close();
+    }
+  });
+});
+
+
+test('T27: real detached OS Writer outlives completed Native Turn and App Server; reservation and Kernel ownership never auto-release', async () => {
+  await withFixture(async ({ workspace, server, reservationRoot }) => {
+    const git = (...args: string[]) => {
+      const r = spawnSync('git', args, { cwd: workspace, encoding: 'utf8' });
+      assert.equal(r.status, 0, r.stderr);
+      return r.stdout.trim();
+    };
+    git('init');
+    git('config', 'user.name', 'Detached Writer Fixture');
+    git('config', 'user.email', 'descendant@example.invalid');
+    await writeFile(path.join(workspace, 'package.json'), '{"name":"detached-writer-fixture"}');
+    git('add', '--all');
+    git('commit', '-m', 'baseline');
+    const baseCommit = git('rev-parse', 'HEAD');
+    const runtimeHome = path.join(path.dirname(workspace), 'detached-kernel-runtime');
+    const cp = await createKernelControlPlane({ runtimeHome, projectRoot: workspace });
+    const runId = 'run-detached-writer-survival';
+    let workerRoot: string | null = null;
+    const rows = async (file: string): Promise<number> => {
+      try {
+        const content = (await readFile(file, 'utf8')).trim();
+        return content ? content.split('\n').length : 0;
+      } catch { return 0; }
+    };
+    try {
+      await cp.startRun({ runId, objective: 'prove OS descendant survives native completed Turn and server close' });
+      const attempt = cp.beginAttempt(runId);
+      assert.ok(attempt?.attemptId && attempt.stepId);
+      const result = await runHostOwnedWritableAttempt({
+        controlPlane: cp, repoRoot: workspace, runtimeHome, reservationRoot,
+        baseCommit, runId, stepId: attempt.stepId, attemptId: attempt.attemptId,
+        prompt: 'test bounded descendant only', model: 'test-model', effort: 'high',
+        turnTimeoutMs: 2500, transportOptions: {
+          executable: process.execPath, args: [server], requestTimeoutMs: 1500,
+          env: { ...process.env, TEST_MODE: 'writable-detached-descendant' },
+        },
+      });
+      workerRoot = result.workspaceRoot;
+      const file = path.join(workerRoot, 'detached-writer.log');
+      const pidfile = path.join(workerRoot, 'detached-writer.pid');
+      assert.equal(result.nativeTurn.turnStatus, 'completed');
+      assert.equal(result.writerExitVerified, false);
+      assert.equal(result.reportAuthority, 'none');
+      let writerPid = 0;
+      for (let i = 0; i < 30 && !writerPid; i++) {
+        try { writerPid = Number((await readFile(pidfile, 'utf8')).trim()); }
+        catch { await sleep(30); }
+      }
+      assert.ok(Number.isSafeInteger(writerPid) && writerPid > 0 && writerPid !== process.pid);
+      const before = await rows(file);
+      await sleep(180);
+      const after = await rows(file);
+      assert.ok(after > before, 'detached real OS Writer continues after Host-runner has closed its App Server');
+      assert.equal(cp.getAttemptById(runId, attempt.attemptId)?.status, 'started');
+      assert.equal((await readdir(reservationRoot)).length, 1);
+      assert.equal(git('status', '--porcelain'), '', 'detached Writer must not mutate Owner');
+      await assert.rejects(reserveHostWorkspaceWriter({
+        workspaceRoot: workerRoot, reservationRoot, runId,
+        attemptId: attempt.attemptId,
+        workspaceId: result.workspaceId,
+      }), { code: 'host_writer_workspace_already_reserved' });
+      // No production code invokes Worktree/marker deletion on Turn completed.
+      assert.ok((await rows(file)) > 0);
+      await sleep(2850); // Test-owned child has a hard, bounded 105 x 25ms lifetime.
+      const stable = await rows(file);
+      await sleep(130);
+      assert.equal(await rows(file), stable, 'test fixture child settled its last write');
+      assert.ok(stable >= after, 'the test did not silently delete still-writing data');
+      assert.equal((await readdir(reservationRoot)).length, 1,
+        'even settled test-only Writer does not automatically release the reservation');
+    } finally {
+      // This is a bounded fixture, not a general proof of descendant exit.
+      // Even an early failed assertion must wait out its finite OS Writer loop
+      // before deleting the disposable Worktree.
+      if (workerRoot) await sleep(2950);
+      if (workerRoot) {
+        const removed = spawnSync('git', ['worktree', 'remove', '--force', workerRoot], {
           cwd: workspace, encoding: 'utf8', timeout: 10000,
         });
         assert.equal(removed.status, 0, removed.stderr);
