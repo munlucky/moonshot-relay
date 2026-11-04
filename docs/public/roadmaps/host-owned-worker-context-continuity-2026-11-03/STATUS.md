@@ -12,7 +12,7 @@
 | Mac-side MCP canonical checkout | 조회 완료 | 문서 편입 전 양쪽 `main / 3797c60f`, 별개 Runtime·DB·세션 |
 | 기존 사용자 작업 간섭 | 없음 (준비 작업 범위) | 사용자 Runtime/DB·Codex 세션 종료·설치·마이그레이션 없음 |
 | 프로젝트 로드맵 문서 정착 | **완료** | 2026-11-03 초기 문서와 W0-Fix를 `main`에 커밋·푸시 확인 |
-| W0 — Capability/기준선 | **G0 PARTIAL** | [T29 실제 Canonical A/B + Owner CAS](W0_T29_CANONICAL_AB_NATIVE_OWNER_CAS_2026-11-04.md): 실제 Mac A Writer 생존 중 별도 Canonical B Native 실행·A/B/Host 격리 및 Owner CAS Revision 0→1, Stale 재적용 거부 1/1 PASS. Linux 95 PASS·3 OS SKIP. **Worker Report/Proof·임의 OS 후손 종료/안전 폐기·기본 Dispatcher 적용 미완료** |
+| W0 — Capability/기준선 | **G0 PARTIAL** | [T30 Native Worker Report·Proof 정착](W0_T30_NATIVE_PROOF_REPORT_SETTLEMENT_2026-11-04.md): Mac 실제 Native Worker 두 개의 통합 Proof→Owner CAS→Kernel Report/Proof 수용 및 실패 시 Owner 미반영 2/2 PASS. Host–Kernel `settleParallelResult` this 소실 수정. Linux 96 PASS·5 OS SKIP. **임의 후손 종료/안전 폐기·기본 Dispatcher 적용 미완료** |
 | W0-Fix — ContextReceipt | **SOURCE PASS** | T23 재현 → 최소 수정, focused 17/17, typecheck/build/boundaries PASS. 확장 test:source-runtime timeout |
 | W1 — Host-owned Worker | **DEFER / 실제 Attempt-Writer Gate 대기** | Host 소유 Native commandExecution handle과 격리 Worktree/기존 Owner CAS를 연결해 종료·격리 증거 확인 전 같은 Workspace 재할당 금지 필요 |
 | W2 — status/signal/reconnect | NOT STARTED | W1 생존·Owner 경계 필요 |
@@ -35,7 +35,7 @@
 2. `W0_START.md`의 "0. 입장 조건" 수행. 완료된 분석·명령은 반복하지 않음.
 3. **완료한 T23 수정·인증·실제 Turn 완료·Native WebSocket 수명 비교·Turn-level interrupt·재시작 이력 조회를 반복하지 않음.** 다음에는 실제 Moonshot Relay의 Main/Host 실행 연결 분리, OS Writer 물리 중단·중복 실행 금지, Windows Native executor heartbeat 복구부터 시작. 기존 사용자 세션 종료 금지.
 4. [T25 추가 음성 검증](W0_T25_ADDITIONAL_NEGATIVE_VERIFICATION_2026-11-03.md)에서 실제 A Writer가 살아 있는 상태로 동일 Workspace Lock 재획득/추가 쓰기 5회와 별도 Worktree A/B 물리 격리 PASS를 확보. **Main/Host 연결 해제 중 Native Handle 회수는 이번 모델 시험에서 Writer 미생성으로 미검증.** 다음은 Attempt↔Native 실행 스트림 결합, 같은 Workspace Writer 재허가 Gate 및 실제 Delivery CAS 통합 검증. 완료된 시험 반복·새 DB/Queue/Provider별 하드코딩 금지.
-5. [T29 Canonical A/B Native + Owner CAS](W0_T29_CANONICAL_AB_NATIVE_OWNER_CAS_2026-11-04.md): Mac 실제 Kernel Attempt A가 OS 로그를 기록하는 중 B에 별도 Git Worktree/Workspace ID를 부여하고 실제 Native B 명령을 실행했다. A→B/Owner/Host 각 25회 쓰기 거부, B→A/Host 각 1회 거부, 기존 Owner Mutation Fence/CAS로 B 결과만 1회 반영(Revision 0→1)하고 이전 Revision 재적용을 거부했다. Mac opt-in 1/1, Linux 98건 중 95 PASS·3 OS SKIP. **Worker Outcome/Report/Proof 승인, 임의 후손 종료·자동 폐기, 기본 Dispatcher 적용은 미검증**. G0 PARTIAL / W1 DEFER 유지.
+5. [T30 Native Worker Report·Proof 정착](W0_T30_NATIVE_PROOF_REPORT_SETTLEMENT_2026-11-04.md): 실제 Mac Codex `command/exec` Worker 2개를 기존 `dispatchKernelParallel`에 연결하고 통합 Worktree의 프로젝트 `test:ok`를 실행했다. 정상 사례는 Owner CAS Revision 0→1, 영속 Worker Result 2건, Kernel Report/Proof 2 Step 정착 PASS; 오류 사례는 검증 실패 후 Owner 변경 없이 Revision 0 유지 PASS. 실 Control Plane의 `settleParallelResult` 메서드 Receiver 누락으로 발생한 TypeError를 `.bind(controlPlane)`으로 해결하고 무래퍼 Linux 회귀로 고정했다. Mac 2 PASS·T29 전용 1 SKIP, Linux 101건 중 96 PASS·5 OS SKIP. **임의 OS 후손 종료/운영 예약·Worktree 안전 폐기, 연결 상실 및 기본 Dispatcher 자동 전환은 미검증**. G0 PARTIAL / W1 DEFER 유지.
 
 ## 변경 범위 원칙
 

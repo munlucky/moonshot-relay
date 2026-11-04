@@ -12,6 +12,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import test from 'node:test';
 
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
+import { dispatchKernelParallel } from '../src/host/kernel/parallel-dispatcher.js';
 import { prepareHostWriterAttemptWorktree } from '../src/host/kernel/workspace/physical-worktree.js';
 import { reserveHostWorkspaceWriter } from '../src/host/kernel/workspace-writer-reservation.js';
 import { observeWorkspaceIdentity } from '../src/host/kernel/workspace/workspace-identity.js';
@@ -360,3 +361,211 @@ test('T29 Mac Native Canonical A Writer alive while B writes and only B Owner CA
     }
   }
 });
+
+
+// T30 reuses the same test-only Native RPC client. The production parallel
+// Dispatcher owns real Kernel receipt persistence, trusted integration proof,
+// Owner CAS, and post-Delivery Report/Proof settlement. A model Turn is never
+// promoted directly to proof authority.
+const proofEnabled = process.platform === 'darwin'
+  && process.env.W0_NATIVE_PROOF_CONFORMANCE === '1'
+  && Boolean(process.env.CODEX_HOME);
+
+for (const invalidIntegration of [false, true]) {
+  test(
+    invalidIntegration
+      ? 'T30 Mac Native parallel Worker fails trusted integration proof before Owner Delivery'
+      : 'T30 Mac Native parallel Workers settle canonical Report/Proof after Owner CAS exactly once',
+    {
+      skip: !proofEnabled && 'requires macOS, isolated CODEX_HOME and W0_NATIVE_PROOF_CONFORMANCE=1',
+      timeout: 60_000,
+    },
+    async () => {
+      const root = await mkdtemp(path.join(os.tmpdir(), 'w0-native-proof-parallel-'));
+      const owner = path.join(root, 'owner');
+      const runtimeHome = path.join(root, 'runtime');
+      const runId = invalidIntegration ? 'w0-native-proof-rejected' : 'w0-native-proof-accepted';
+      let cp: Awaited<ReturnType<typeof createKernelControlPlane>> | null = null;
+      const allServers: NativeTestServer[] = [];
+      let tested = false;
+      try {
+        await mkdir(owner);
+        git(owner, ['init', '-b', 'main']);
+        git(owner, ['config', 'user.name', 'Kernel Native Proof Fixture']);
+        git(owner, ['config', 'user.email', 'w0-native-proof@example.invalid']);
+        await mkdir(path.join(owner, 'src'), { recursive: true });
+        await writeFile(path.join(owner, 'src', 'base.txt'), 'fixture\n');
+        await writeFile(path.join(owner, 'verify.cjs'), [
+          "const fs=require('node:fs');",
+          "const get=(name)=>{try{return fs.readFileSync(name,'utf8')}catch{return null}};",
+          "if(get('src/alpha/result.txt')!=='alpha\\n'||get('src/beta/result.txt')!=='beta\\n')process.exit(13);",
+        ].join('\n') + '\n');
+        await writeFile(path.join(owner, 'package.json'), JSON.stringify({
+          name: 'w0-native-proof-parallel',
+          scripts: { 'test:ok': 'node verify.cjs' },
+        }) + '\n');
+        git(owner, ['add', '--all']);
+        git(owner, ['commit', '-m', 'native proof baseline']);
+        const baseCommit = git(owner, ['rev-parse', 'HEAD']);
+        const contract = {
+          complex: true,
+          riskTier: 'T1',
+          acceptance: [
+            { id: 'AC-ALPHA', acceptance: 'alpha matches expected', evidencePlan: {
+              class: 'hard', method: 'unit-test', commandRefs: ['test:ok'], obligationId: 'alpha-proof',
+            } },
+            { id: 'AC-BETA', acceptance: 'beta matches expected', evidencePlan: {
+              class: 'hard', method: 'unit-test', commandRefs: ['test:ok'], obligationId: 'beta-proof',
+            } },
+          ],
+          requiredObligations: ['alpha-proof', 'beta-proof'],
+          requiredVerifications: [
+            { obligationId: 'alpha-proof', commandRefs: ['test:ok'] },
+            { obligationId: 'beta-proof', commandRefs: ['test:ok'] },
+          ],
+          steps: [
+            { objective: 'materialize alpha', allowedPaths: ['src/alpha/**'],
+              acceptanceIds: ['AC-ALPHA'], obligationIds: ['alpha-proof'], dependsOn: [] },
+            { objective: 'materialize beta', allowedPaths: ['src/beta/**'],
+              acceptanceIds: ['AC-BETA'], obligationIds: ['beta-proof'], dependsOn: [] },
+          ],
+        };
+        cp = await createKernelControlPlane({ runtimeHome, projectRoot: owner });
+        await cp.startRun({ runId, objective: 'verify Native proof delivery authority', taskContract: contract });
+        assert.equal(cp.getExecutableSteps(runId).mode, 'parallel');
+
+        const launches: Array<{ name: string; workspaceId: string; commandExit: unknown }> = [];
+        const result = await dispatchKernelParallel({
+          controlPlane: cp, runId,
+          adapter: { capabilities: {
+            surface: 'codex', supportsConcurrentSessions: true,
+            supportsIsolatedWorkingDirectory: true, supportsPerSessionEnvironment: true,
+          } },
+          projectRoot: owner,
+          runtimeHome,
+          parentSessionId: 'w0-native-proof-fixture-parent',
+          actionContext: { integrationVerification: { commandRef: 'test:ok' } },
+          dispatchStep: async ({ step, workspace }) => {
+            const name = String(step.objective).endsWith('alpha') ? 'alpha' : 'beta';
+            const relativePath = 'src/' + name + '/result.txt';
+            const intended = (invalidIntegration && name === 'alpha') ? 'invalid-alpha' : name;
+            const server = new NativeTestServer(workspace.workspaceRoot);
+            allServers.push(server);
+            await server.initialize();
+            try {
+              const native = await server.exec([
+                process.execPath, '-e',
+                "const fs=require('node:fs');const p=require('node:path');fs.mkdirSync(p.dirname(process.argv[1]),{recursive:true});fs.writeFileSync(process.argv[1],process.argv[2]+'\\n')",
+                relativePath, intended,
+              ], workspace.workspaceRoot);
+              assert.equal(native.exitCode, 0, 'real native Worker command failed');
+              launches.push({ name, workspaceId: String(workspace.workspaceId), commandExit: native.exitCode });
+              assert.equal(await readFile(path.join(workspace.workspaceRoot,relativePath),'utf8'),intended+'\n');
+              return {
+                status: 'passed', resultStatus: 'passed',
+                report: {
+                  summary: 'Native ' + name + ' command executed',
+                  changedPaths: [relativePath],
+                  verifications: [
+                    { obligationId: name + '-proof', commandRef: 'test:ok',
+                      acceptanceCoverage: ['AC-' + name.toUpperCase()] },
+                    ...(name === 'beta'
+                      ? [{ obligationId: 'unit-test', commandRef: 'test:ok', acceptanceCoverage: [] }]
+                      : []),
+                  ],
+                },
+              };
+            } finally {
+              await server.close();
+            }
+          },
+        });
+        assert.equal(launches.length,2,'both Native Codex commands actually executed');
+        assert.notEqual(launches[0]?.workspaceId,launches[1]?.workspaceId);
+        assert.ok(launches.every(x=>x.commandExit===0));
+        const typed = result as Record<string, unknown>;
+        const integration = typed.integration as Record<string, unknown>;
+        const mutation = (typed.deliveryMutation || null) as Record<string, unknown> | null;
+        const currentRun = await cp.getRun(runId);
+        assert.ok(currentRun);
+        if (invalidIntegration) {
+          assert.equal(typed.status,'failed',JSON.stringify(typed).slice(0,2800));
+          assert.equal(integration.status,'failed');
+          assert.equal(integration.failureCode,'integration_verification_failed');
+          assert.equal(mutation,null);
+          assert.equal(currentRun.mutationRevision,0);
+          assert.equal(await readFile(path.join(owner,'src','base.txt'),'utf8'),'fixture\n');
+          await assert.rejects(readFile(path.join(owner,'src','alpha','result.txt')), { code:'ENOENT' });
+          await assert.rejects(readFile(path.join(owner,'src','beta','result.txt')), { code:'ENOENT' });
+          assert.equal((typed.executionResults as unknown[]).length,0);
+          assert.notEqual(typed.status,'passed');
+        } else {
+          assert.equal(typed.status,'passed',JSON.stringify({
+            status:typed.status,
+            integration:{status:integration.status,failureCode:integration.failureCode},
+            failed:typed.settlementFailures,
+            steps:cp.getRunSteps(runId).map(s=>({state:s.state,stepId:s.stepId})),
+            proofs:cp.stateStore.getVerifications(runId).map(v=>({obligationId:v.obligationId,status:v.status})),
+          },null,2));
+          assert.equal(integration.status,'integrated');
+          assert.ok(mutation);
+          assert.equal(mutation.mutationRevision,1);
+          assert.equal(currentRun.mutationRevision,1);
+          assert.equal(await readFile(path.join(owner,'src','alpha','result.txt'),'utf8'),'alpha\n');
+          assert.equal(await readFile(path.join(owner,'src','beta','result.txt'),'utf8'),'beta\n');
+          const workerSettlements = typed.executionResults as Array<{reportResult: {step?:{state?:string};executed?:unknown[]}}>;
+          assert.equal(workerSettlements.length,2);
+          assert.ok(workerSettlements.every(x=>x.reportResult.step?.state==='passed'),
+            'all step reports must pass the real Kernel Report gate');
+          assert.ok(cp.getRunSteps(runId).every(x=>x.state==='passed'));
+          const attempts = cp.stateStore.getStepAttempts(runId);
+          assert.equal(attempts.length,2);
+          assert.ok(attempts.every(x=>x.resultCommitSha && x.workerReport && x.patchDigest),
+            'canonical Native execution receipts must be durable before Delivery');
+          const proofs = cp.stateStore.getVerifications(runId);
+          assert.ok(proofs.some(x=>x.status==='passed' && x.obligationId==='alpha-proof'));
+          assert.ok(proofs.some(x=>x.status==='passed' && x.obligationId==='beta-proof'));
+          assert.ok(proofs.every(x=>x.evidenceRef), 'Kernel must record trusted proof evidence');
+          assert.deepEqual(cp.stateStore.getMutationProvenance(runId)?.changedPaths,
+            ['src/alpha/result.txt','src/beta/result.txt']);
+          const staleSnapshot = {
+            ...((mutation.snapshot || {}) as Record<string, unknown>),
+            expectedMutationRevision:0,
+          };
+          assert.equal(staleSnapshot.expectedMutationRevision,0);
+          // Already settled parallel attempts cannot be settled a second time.
+          const attempt = attempts[0]!;
+          const replay = await cp.settleParallelResult(runId, {
+            ...(attempt.workerReport as Record<string, unknown>),
+            stepId: attempt.stepId, attemptId: attempt.attemptId,
+            workspaceId: attempt.workspaceId,
+          }, { deliveryMutation: mutation, result: {
+            attemptId:attempt.attemptId, executionWorkspaceId:attempt.workspaceId,
+            workerWorkspaceIdentity:attempt.baseWorkspaceIdentity,
+            resultWorkspaceIdentity:attempt.resultWorkspaceIdentity,
+            resultCommitSha:attempt.resultCommitSha, changedPaths:attempt.changedPaths,
+            patchDigest:attempt.patchDigest, workerReport:attempt.workerReport,
+          } });
+          assert.notEqual((replay as {step?:{state?:string}}).step?.state,'passed',
+            'duplicate report must not obtain a second Step passed settlement');
+          assert.equal((await cp.getRun(runId))?.mutationRevision,1);
+        }
+        tested=true;
+        console.log(JSON.stringify({
+          case:invalidIntegration?'T30-native-proof-denied':'T30-native-proof-accepted',
+          nativeWorkerCommands:launches.length,
+          runId,resultStatus:typed.status,integrationStatus:integration.status,
+          nativeWorkspaceIds:launches.map(x=>x.workspaceId),
+          ownerMutationRevision:currentRun.mutationRevision,
+          workerReportSettlements:(typed.executionResults as unknown[]).length,
+          nativeModelCalled:false, result:'PASS',
+        }));
+      } finally {
+        for(const server of allServers.reverse())await server.close();
+        await cp?.close();
+        if(tested) await rm(root,{recursive:true,force:true});
+        else console.warn('T30 isolated native fixture retained after failed assertion:',root);
+      }
+    },
+  );
+}

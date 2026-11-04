@@ -72,7 +72,7 @@
 | Mac/Windows Native Worker life/status/reconnect | **Mac Turn-level PARTIAL / Windows DEFER** | Host 연결 유지 시 inProgress 재조회·원격 interrupt PASS; 실제 Main/Host lifecycle·OS Writer·Windows executor 미검증 |
 | T24 Goals/loop 이중 실행 위험 | **PARTIAL / 코드 관찰만** | 앱/Host 실제 실행 경로 검증 |
 | T26 Main/MCP/App Server/Host 종료 후 상태 | **PARTIAL (Native 모의 클라이언트 및 이력 재조회)** | 시작 WS 해제 시 interrupted, Host WS 유지 시 다른 클라이언트 종료·재조회 가능, 새 App Server에서 기록 조회. 실제 Main/MCP/OS command 연속성은 미검증 |
-| T25~T29 Native Writer 격리·Owner CAS | **Mac 실제 Canonical A/B Native + Owner CAS 단일 반영 PASS / Worker Report·전체 후손 종료·안전 폐기 미검증** | [T29 실제 A/B·Owner CAS](W0_T29_CANONICAL_AB_NATIVE_OWNER_CAS_2026-11-04.md): A 분리된 OS Writer 생존 중 B Native 실행, 두 물리 Worktree·Workspace 소유권 분리, A/B 교차 쓰기·Host 수정 차단, Owner Patch 한 번 적용 및 이전 Revision 거부 Mac 1/1 PASS. Linux 확대 98건 중 95 PASS·3 OS SKIP·0 FAIL. **Worker Outcome/Proof/Report·임의 후손 수명·기본 Dispatcher 적용 미검증** |
+| T25~T30 Native Writer 격리·Report/Proof | **Mac Native 명령→통합 Proof→Owner CAS→Kernel Report/Proof 수용·거부 PASS / 임의 후손 종료·안전 폐기 미검증** | [T30 실제 Report·Proof 정착](W0_T30_NATIVE_PROOF_REPORT_SETTLEMENT_2026-11-04.md): Mac 정상 Worker 2건의 Owner CAS 0→1 및 Kernel Step Report 2건 PASS, 검증 실패 시 Owner 미적용 2/2 PASS. 실 Control Plane 메서드 Receiver 누락 수정, Linux 101건 중 96 PASS·5 OS SKIP·0 FAIL. **임의 OS 후손 종료, 실제 모델 Tool 연결 상실, 기본 Dispatcher 적용 미검증** |
 | G0 전체 | **PARTIAL** | **W1 live worker 구현 중단**, 미완료 Native 실험부터 계속 |
 
 **다음 단계 (이미 결정된 경로):** 정상 동작하는 Native Host에서 격리 프로세스/Thread를 만들어 (1) start handle (2) 상태 재조회 (3) Main 독립성 (4) cancel/approval (5) old writer 안전 정지를 입증한다. Live Worker가 안 되지만 안전 중단·새 Thread 재개만 가능하다면 원래 계획의 B가 아니라 **degraded-safe-resume 별도 제한 채택**으로 분류한다. 원래 `E` authority-only resume을 먼저 검증하고, `C` Handoff는 추가 효용 입증 전 도입하지 않는다.

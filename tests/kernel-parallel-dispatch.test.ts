@@ -625,3 +625,108 @@ type TestStateStore = Awaited<ReturnType<typeof import('../src/kernel/state-stor
 interface FixtureOptions { fixture: Awaited<ReturnType<typeof createFixture>>; failedStepId?: string | null; failMaterialization?: boolean; failRenewal?: boolean; settlementFailureStepId?: string | null; failReceiptPersistenceStepId?: string | null }
 interface DispatchFixtureOptions extends Omit<FixtureOptions, "fixture"> { verificationAddsExtraPath?: boolean; integrationVerification?: Record<string, unknown> | null }
 interface FixtureAttempt extends Record<string, unknown> { id: number; runId: string; stepId: string; attemptId: string; bindingId: string; status: string }
+
+
+test('unwrapped real Control Plane settlement retains its method receiver across Host dispatcher', async () => {
+  const fixture = await createFixture();
+  const cp = await createKernelControlPlane({
+    runtimeHome: fixture.runtimeHome,
+    projectRoot: fixture.projectRoot,
+  });
+  const runId = 'run-real-unwrapped-control-plane';
+  let projectId: string | null = null;
+  try {
+    const started = await cp.startRun({
+      runId,
+      objective: 'verify real Host-to-Kernel settlement method binding',
+      taskContract: {
+        complex: true,
+        riskTier: 'T1',
+        acceptance: [
+          { id: 'AC-ALPHA', acceptance: 'alpha exists', evidencePlan: {
+            class: 'hard', method: 'unit-test', commandRefs: ['test:ok'], obligationId: 'alpha-proof',
+          } },
+          { id: 'AC-BETA', acceptance: 'beta exists', evidencePlan: {
+            class: 'hard', method: 'unit-test', commandRefs: ['test:ok'], obligationId: 'beta-proof',
+          } },
+        ],
+        requiredObligations: ['alpha-proof', 'beta-proof'],
+        requiredVerifications: [
+          { obligationId: 'alpha-proof', commandRefs: ['test:ok'] },
+          { obligationId: 'beta-proof', commandRefs: ['test:ok'] },
+        ],
+        steps: [
+          { objective: 'materialize alpha', allowedPaths: ['src/alpha/**'],
+            acceptanceIds: ['AC-ALPHA'], obligationIds: ['alpha-proof'], dependsOn: [] },
+          { objective: 'materialize beta', allowedPaths: ['src/beta/**'],
+            acceptanceIds: ['AC-BETA'], obligationIds: ['beta-proof'], dependsOn: [] },
+        ],
+      },
+    });
+    projectId = started.projectId;
+    // Unlike the older fixture, do not intercept settleParallelResult
+    // with an arrow wrapper that hides a lost method receiver.
+    const result = await dispatchKernelParallel({
+      controlPlane: cp,
+      runId,
+      adapter: { capabilities },
+      projectRoot: fixture.projectRoot,
+      runtimeHome: fixture.runtimeHome,
+      parentSessionId: 'real-unwrapped-settlement',
+      actionContext: { integrationVerification: { commandRef: 'test:ok' } },
+      dispatchStep: async ({ step, workspace }) => {
+        const name = String(step.objective).endsWith('alpha') ? 'alpha' : 'beta';
+        const relativePath = 'src/' + name + '/result.txt';
+        await mkdir(path.dirname(path.join(workspace.workspaceRoot, relativePath)), {
+          recursive: true,
+        });
+        await writeFile(path.join(workspace.workspaceRoot, relativePath), name + '\n');
+        return {
+          status: 'passed',
+          resultStatus: 'passed',
+          report: {
+            summary: name + ' trusted worker receipt',
+            changedPaths: [relativePath],
+            verifications: [
+              { obligationId: name + '-proof', commandRef: 'test:ok',
+                acceptanceCoverage: ['AC-' + name.toUpperCase()] },
+              ...(name === 'beta'
+                ? [{ obligationId: 'unit-test', commandRef: 'test:ok', acceptanceCoverage: [] }]
+                : []),
+            ],
+          },
+        };
+      },
+      executeIntegrationVerification: async () => ({
+        status: 'passed', passed: true, evidenceRef: 'evidence://unwrapped-receiver',
+      }),
+    });
+    const settled = assertTestRecord(result);
+    assert.equal(settled.status, 'passed', JSON.stringify({
+      resultStatus: settled.status,
+      integration: settled.integration,
+      settlements: settled.settlementFailures,
+    }).slice(0, 2200));
+    assert.equal(assertTestRecord(settled.deliveryMutation).mutationRevision, 1);
+    assert.equal(assertTestArray(settled.executionResults).length, 2);
+    assert.ok(assertTestArray(settled.executionResults).every(
+      item => assertTestRecord(assertTestRecord(assertTestRecord(item).reportResult).step).state === 'passed',
+    ));
+    assert.equal((await cp.getRun(runId))?.mutationRevision, 1);
+    assert.deepEqual(
+      cp.stateStore.getMutationProvenance(runId)?.changedPaths,
+      ['src/alpha/result.txt', 'src/beta/result.txt'],
+    );
+  } finally {
+    await cp.close();
+    if (projectId) await cleanupExecutionWorkspaces({
+      runtimeHome: fixture.runtimeHome,
+      projectId,
+      runId,
+      repoRoot: fixture.projectRoot,
+      retain: false,
+    }).catch(() => {});
+    await rm(fixture.runtimeHome, { recursive: true, force: true });
+    await rm(fixture.projectRoot, { recursive: true, force: true });
+  }
+});

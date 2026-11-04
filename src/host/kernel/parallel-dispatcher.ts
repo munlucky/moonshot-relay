@@ -763,7 +763,9 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
   const assertOwnerMutationReady = controlPlane.assertOwnerWorkspaceMutationReady;
   const recordOwnerMutation = controlPlane.recordOwnerWorkspaceMutation;
   const releaseOwnerFence = controlPlane.releaseOwnerWorkspaceMutationFence;
-  const settleParallelResult = controlPlane.settleParallelResult;
+  // The canonical Kernel settlement method calls other Control Plane methods
+  // through `this`. Retain its receiver when crossing the Host dispatcher.
+  const settleParallelResult = controlPlane.settleParallelResult.bind(controlPlane);
   const blockDeliveryMaterialization = controlPlane.blockDeliveryMaterialization;
   const recordStepResult = controlPlane.recordStepResult;
 
