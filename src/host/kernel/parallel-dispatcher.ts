@@ -151,6 +151,9 @@ type StepControlPlane = {
 };
 type ParallelControlPlane = StepControlPlane & {
   projectRoot?: string;
+  // Read-only canonical observation: terminal settlement may release its own
+  // Owner lock before this Host reaches the guarded finally block.
+  stateStore?: { getWorkspaceMutationLockV2?: (workspaceId: string) => unknown };
   getExecutableSteps: (...args: Parameters<ControlPlaneLike['getExecutableSteps']>) => ExecutableStepsLike | Promise<ExecutableStepsLike>;
   getRun: (...args: Parameters<ControlPlaneLike['getRun']>) => RunLike | null | Promise<RunLike | null>;
   discoverProjectCommands?: () => CommandLike[];
@@ -1180,7 +1183,16 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
   } finally {
     if (guardedOwnerFence) {
       try {
-        await releaseOwnerFence(runId, {
+        // The final Report can complete the Run and Kernel terminal
+        // reconciliation releases its Owner lock atomically. Treat that
+        // verified terminal/no-lock observation as already retired, rather
+        // than attempting a second release of a non-existent lock. Never
+        // suppress stale-token or lost-fence failures for an active Run.
+        const terminal = (await controlPlane.getRun(runId))?.status === 'completed';
+        const readLock = controlPlane.stateStore?.getWorkspaceMutationLockV2;
+        const releasedByTerminalSettlement = terminal && typeof readLock === 'function'
+          && readLock(guardedOwnerFence.lock.workspaceId) === null;
+        if (!releasedByTerminalSettlement) await releaseOwnerFence(runId, {
           workspaceId: guardedOwnerFence.lock.workspaceId,
           fencingToken: guardedOwnerFence.lock.fencingToken,
           sessionToken: guardedOwnerFence.lock.sessionToken,

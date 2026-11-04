@@ -3,7 +3,7 @@
 // unknown-lifetime Native Writer is restarted or retired by this test.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -36,7 +36,11 @@ try{
     const current=cp.stateStore.getRun(runId);
     const lock=cp.stateStore.getWorkspaceMutationLockV2(current.workspaceId);
     if(!lock||lock.holderRunId!==runId||!lock.fencingToken)throw Error('T41_FENCE_NOT_HELD_DURING_SETTLEMENT');
-    writeFileSync(path.join(root,'guarded-held-at-settlement'),String(lock.fencingToken));
+    const marker=path.join(root,'guarded-held-at-settlement');
+    if(existsSync(marker) && readFileSync(marker,'utf8')!==String(lock.fencingToken)){
+     throw Error('T41_OWNER_FENCE_EPOCH_CHANGED_BETWEEN_REPORTS');
+    }
+    writeFileSync(marker,String(lock.fencingToken));
     return original(...args);
    };
   }
@@ -212,6 +216,13 @@ for (const mode of ['crash', 'normal', 'guarded', 'guarded-crash'] as const) {
       const cp = await createKernelControlPlane({ projectRoot: f.projectRoot, runtimeHome: f.runtimeHome });
       assert.equal(cp.stateStore.getStepAttempts(f.runId).length, 2);
       assert.equal(cp.stateStore.getRun(f.runId)?.mutationRevision, 1);
+      if (mode === 'guarded') {
+        const completed = cp.stateStore.getRun(f.runId);
+        assert.equal(completed?.status, 'completed');
+        assert.ok(completed?.workspaceId);
+        assert.equal(cp.stateStore.getWorkspaceMutationLockV2(completed.workspaceId), null,
+          'terminal settlement must retire the guarded Owner fence exactly once');
+      }
       await cp.close();
       // No Native/async Writers were ever launched by the test, so its own
       // temporary Git Worktrees are safe to remove after all Hosts exited.
@@ -226,7 +237,7 @@ for (const mode of ['crash', 'normal', 'guarded', 'guarded-crash'] as const) {
       for(const line of all.split('\n')){
         if(!line.startsWith('worktree '))continue;
         const root=line.slice('worktree '.length).trim();
-        if(root===f.projectRoot)continue;
+        if(realpathSync(root)===realpathSync(f.projectRoot))continue;
         git(f.projectRoot, ['worktree', 'remove', '--force', root]);
       }
       safe = true;

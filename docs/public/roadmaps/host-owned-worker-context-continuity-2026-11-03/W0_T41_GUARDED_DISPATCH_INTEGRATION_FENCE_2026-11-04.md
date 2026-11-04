@@ -23,19 +23,28 @@
 - 모든 `cherry-pick` 직전에 기존 Fencing Token을 `renewOwnerWorkspaceMutationFence()`로 갱신하고 Owner CAS 사전 검사를 받는다. 실제 Proof는 기존 `executeTrustedProof()`에 `writeScope=integration Workspace`를 명시해 macOS의 OS 제한을 상속한 후손을 생성한다. 외부 임의 Proof Runner를 허용하지 않는다.
 - Proof가 실행 중 Fence를 잃거나 만료되면 Owner 변경 전에 기존 갱신·CAS 검사가 거부한다. 별도 Timeout·PID 감시·새 Lock 권위를 추가하지 않는다.
 - 기존 `git apply --check → Fence 갱신 → assertOwnerWorkspaceMutationReady → git apply → recordOwnerWorkspaceMutation` 체계를 유지한다. **같은 Fencing Token**은 Owner CAS 이후에도 살아 있다. CAS 이전 갱신은 기존 Kernel `phase=pre`의 깨끗한 Owner 검사, CAS 이후 갱신은 기존 Mutation Guard의 `phase=post-commit` 검사로 현재 Owner Mutation Revision/Workspace Identity를 검증한다. 이 명시적 갱신 구분은 기존 `renewOwnerWorkspaceMutationFence` 인자에 추가하며 기본값은 `pre`로 유지한다. CAS 이후의 Owner Worktree는 원래 변경돼 있으므로 더 이상 `pre`로 판단할 수 없다. Report 정착 중 Host가 죽으면 T38과 같이 기존 Recovery가 미정착 Run을 blocked로 판정하도록 한다.
-- 모든 Report 정착 시도와 오류 처리가 끝난 뒤 **동일 Fence를 `finally`에서 한 번만 해제**한다. CAS 이후 정착 오류나 Fence 오류는 기존 `delivery_materialization_recovery_required`로 blocked 처리한다.
+- 모든 Report 정착 시도와 오류 처리가 끝난 뒤 **동일 Fence를 정리**한다. 단, 마지막 Report에서 Run이 `completed`가 되면 Kernel의 기존 terminal reconciliation이 Fence를 이미 삭제할 수 있다. 이때 Dispatcher는 Canonical Run `completed`와 State Store의 현재 Fence 부재를 함께 확인하고 중복 삭제하지 않는다. 활성 Run에 남은 Fence는 기존 방식으로 정확한 Token을 지정해 해제하며, CAS 이후 정착 오류나 Fence 오류는 기존 `delivery_materialization_recovery_required`로 blocked 처리한다.
 - 종료 불명 Worker·Proof 후손을 단순히 Report 성공으로 치우지 않는다. T36 복구 Worktree와 일반 Run/Step Worktree를 자동 삭제하지 않으며, 승인된 유한 시험 소스만 별도 명시적 정리한다.
 
 ## 검증 범위
 
 | 검증 | 판정 |
 | --- | --- |
-| Linux strict TypeScript·제품·테스트 빌드 | **PASS**. 최종 `phase=post-commit`/guarded Step 준비 변경 포함 재검증 (`operationId=29fd7633-96b1-4e7b-9503-516f1c272d57`) |
-| Linux 기본 Dispatcher 회귀 및 보호 경로 OS 미지원 거부 | 최종 확대 **37 PASS / 5 OS SKIP / 0 FAIL**, `check:boundaries` **9 modules / 312 files / 850 edges PASS** (`operationId=29fd7633-96b1-4e7b-9503-516f1c272d57`) |
+| Linux strict TypeScript·제품·테스트 빌드 | **PASS**. 최초 제품·전 구간 빌드와 보정 이후 동일 격리 Source에서 strict TypeScript/테스트 빌드 재검증 (`operationId=1a4b93e5-6a12-474b-8df4-939429b50708`, `a3bfe8d2-ecb5-4fe5-8995-ae7f23dd3296`) |
+| Linux 기본 Dispatcher 회귀 및 보호 경로 OS 미지원 거부 | 보정 후 확대 **37 PASS / 5 OS SKIP / 0 FAIL**, 최종 집중 **5 PASS / 2 OS SKIP / 0 FAIL**, `check:boundaries` **9 modules / 312 files / 850 edges PASS** (`operationId=1a4b93e5-6a12-474b-8df4-939429b50708`, `a3bfe8d2-ecb5-4fe5-8995-ae7f23dd3296`) |
 | Mac 실제 Seatbelt `writeScope` Proof, 최초 Fence~CAS~정착 및 재시작 | 결과 반영 예정 |
 | Mac 보호 경로 CAS 직후 Host 종료·다음 Host blocked 재조회 | 결과 반영 예정 |
 | 임의 Native Worker 실제 물리 후손 종료와 결과 자동 재회수 | **미증명; 이 옵션으로도 허용하지 않음** |
 | Linux/Windows OS 강제 Proof | **미지원; 자동 일반 spawn 폴백 없음** |
+
+## 첫 macOS 실증에서 확인한 수정 원인
+
+커밋 `a20bb944`의 실물 Mac Native 시험은 strict TS/제품/테스트 빌드 PASS였지만 통합 4건이 FAIL로 판정됐다. 실패는 두 종류로 분리됐다.
+
+- T38 정상·CAS 중단 및 T41 CAS 중단: 시험 fixture의 Git 메인 Worktree가 macOS에서 `/private/var/...`로 정규화됐는데 시험의 `/var/...` 문자열과 비교해 일치하지 않았고, Git 메인 Worktree를 제거하려고 시도하면서 **시험 정리 assertion만 FAIL**이었다. 두 Host·CAS 본문 실패로 보지 않는다. 개선은 `realpathSync()` 비교만 적용한다.
+- T41 정상: macOS 실제 Scoped Proof가 성공하고 두 Canonical Step이 `passed`, Owner Revision `0→1`, Run `completed`, Fence 행이 **이미 삭제**된 증거를 읽기 전용 SQLite에서 확인했다. Kernel은 terminal Run으로 전환할 때 기존 Workspace Fence를 정리하지만 Dispatcher는 마지막 `finally`에서 동일 Token의 재해제를 요청해 `workspace_lock_handoff_failed`를 발생시켰다. 개선은 **`completed`와 기존 State Store의 Fence 부재가 동시에 관측될 때만** 재해제를 생략하며, 활성 Run의 Fence 상실은 기존 실패로 유지한다.
+
+이 보정은 새로운 Lock 권위·영속 상태·예외별 폴백을 추가하지 않는다. 이전의 Mac 실패를 PASS로 소급하거나 같은 SHA를 검증했다고 주장하지 않는다. 이후 보정 커밋의 실제 Mac 회귀를 별도로 기록한다.
 
 ## 구조·복잡도와 보수적 판정
 
