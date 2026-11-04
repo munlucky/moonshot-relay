@@ -35,7 +35,9 @@ Linux MCP는 cgroup v2가 쓰기 불가능한 기존 환경이다. Linux에서 �
 ## 검증 결과
 
 - Linux 격리 TypeScript 7·제품 빌드·테스트 빌드 PASS, 집중 **14 PASS / 4 OS SKIP / 0 FAIL**, 경계 **9 modules / 311 files / 849 edges PASS** (`operationId=326ead21-b4d6-4fc7-a91a-515988c96141`). Mac 전용 실측은 Linux에서 SKIP으로 남기며 성공으로 승격하지 않는다.
-- Mac 실제 POSIX group 종료 실험: **실행 결과 반영 전**.
+- **Mac 실제 POSIX process group 수명 검증 1 PASS / 0 FAIL / 0 SKIP**: macOS Darwin 25.5.0, Node v24.6.0, Codex CLI 0.162.1, 동일 Git 소스 `7e9aad28b2edecef132de815301d527c6b1fdaca`. 격리 `CODEX_HOME`, TypeScript·제품·테스트 빌드 PASS. 직접 생성한 App Server PGID `26167`의 전체 그룹 종료를 OS에 요청하고 App Server exit를 확인한 뒤에도 Writer PID/PGID `26173` (PPID 1)는 별도 그룹에서 살아 자기 작업 파일에 쓰기를 지속했다. 유한 루프 **100회 기록**, 다른 B 및 Host 테스트 경로 쓰기 **각 100회 거부·허용 0건**, Writer 자체 수명 종료 뒤 PID 부재와 로그 정착 확인. `writerExitVerifiedForArbitraryTurn=false` 유지. 실행 `operationId=4632e1eb-2099-41e5-abd3-9bef6871c44a`, 원본 관측값 재검사 `operationId=9acb2d7a-33cf-4b1b-9608-00eb7d3c7ce0`.
+
+Mac 시험의 Writer와 자체 PGID는 단 하나의 테스트 생성 경로에 대해서만 식별했고, 종료 신호를 이 Writer 그룹에 보내지 않았다. 따라서 **App Server 전체 group 종료의 효과가 Writer에게 도달하지 않았다는 반례**이며, 모든 process group 수거의 가능성을 증명한 것이 아니다. 시험용 Worktree와 빈 `CODEX_HOME`은 시험 Writer의 유한 종료 및 검증 후에만 제거했다(`operationId=e7d0e317-1c61-48a6-a4f8-789e9eec713e`). 원본 Mac checkout 및 실제 사용자 Codex 세션은 변경하지 않았다.
 
 ## 다음 작업
 
