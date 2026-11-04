@@ -43,6 +43,7 @@ export interface ProofExecutionResult {
   networkIsolation: string;
   networkPolicy: string;
   networkMechanism: string | null;
+  writeContainment?: { mechanism: string; scope: string } | null;
   evidenceRef: string | null;
   errorSummary: string | null;
   timeoutCleanup: ProofTimeoutCleanup | null;
@@ -54,6 +55,7 @@ export interface TrustedProofInput {
   timeoutMs?: (number) | undefined;
   evidenceDir?: string | null | undefined;
   networkPolicy?: unknown;
+  writeScope?: string | null;
   env?: NodeJS.ProcessEnv;
 }
 

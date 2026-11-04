@@ -14,6 +14,7 @@ import {
 import { observeProjectCommandDeclarations } from './project-command-observation.js';
 import { sanitizePersistentText } from '../../../shared/persistent-sanitizer.js';
 import { cleanupWindowsTimeoutProcessTree } from './process-tree.js';
+import { confineTrustedProofWrites } from './write-containment.js';
 
 const COMMAND_REF_REGEX = /^[A-Za-z0-9:._/-]+$/;
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -50,6 +51,7 @@ interface RunResolvedCommandInput {
   timeoutMs: number;
   evidenceDir?: string | null;
   networkPolicy?: unknown;
+  writeScope?: string | null;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -227,6 +229,7 @@ const runResolvedCommand = ({
   timeoutMs,
   evidenceDir,
   networkPolicy = 'inherited',
+  writeScope = null,
   env = process.env,
 }: RunResolvedCommandInput): ProofExecutionResult => {
   const network = resolveNetworkExecution({
@@ -234,6 +237,10 @@ const runResolvedCommand = ({
     env,
   });
   const wrapped = network.wrapArgv(command, args);
+  const isolated = writeScope ? confineTrustedProofWrites({
+    projectRoot, writeScope, command: wrapped.command, args: wrapped.args,
+  }) : null;
+  const executed = isolated || wrapped;
   const effectiveTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0
     ? Math.min(timeoutMs, 30 * 60 * 1000)
     : DEFAULT_TIMEOUT_MS;
@@ -245,22 +252,22 @@ const runResolvedCommand = ({
     maxBuffer: MAX_OUTPUT_BUFFER,
     env: buildChildEnv(),
   };
-  let expectedCommand = wrapped.command;
+  let expectedCommand = executed.command;
   let result: SpawnSyncReturns<string>;
 
   if (process.platform === 'win32') {
     const resolved = resolveWindowsExecutable(
-      wrapped.command,
+      executed.command,
       spawnOptions.env,
     );
     if (!resolved) {
       throw new UntrustedCommandError(
-        `Executable not found on PATH: ${wrapped.command}`,
+        `Executable not found on PATH: ${executed.command}`,
       );
     }
     expectedCommand = resolved.file;
     const safeTokens = assertSafeCommandTokens(
-      [resolved.file, ...wrapped.args],
+      [resolved.file, ...executed.args],
       { commandProcessor: resolved.needsCommandProcessor },
     );
     result = resolved.needsCommandProcessor
@@ -274,12 +281,15 @@ const runResolvedCommand = ({
           ],
           { ...spawnOptions, windowsVerbatimArguments: true },
         )
-      : spawnSync(resolved.file, wrapped.args, spawnOptions);
+      : spawnSync(resolved.file, executed.args, spawnOptions);
   } else {
+    // The OS-generated Seatbelt profile deliberately contains line breaks.
+    // Validate only the originally resolved executable and command tokens;
+    // the profile is not a caller-supplied shell token.
     assertSafeCommandTokens([wrapped.command, ...wrapped.args]);
     result = spawnSync(
-      wrapped.command,
-      wrapped.args,
+      executed.command,
+      executed.args,
       spawnOptions,
     );
   }
@@ -295,7 +305,7 @@ const runResolvedCommand = ({
     ? cleanupWindowsTimeoutProcessTree({
         launcherPid: result.pid,
         expectedCommand,
-        expectedArgs: wrapped.args,
+        expectedArgs: executed.args,
         startedAt,
       })
     : null;
@@ -329,8 +339,8 @@ const runResolvedCommand = ({
     commandRef: label,
     command,
     args,
-    executedCommand: wrapped.command,
-    executedArgs: wrapped.args,
+    executedCommand: executed.command,
+    executedArgs: executed.args,
     cwd: projectRoot,
     exitCode: timedOut || spawnFailed
       ? exitCode || 1
@@ -348,6 +358,7 @@ const runResolvedCommand = ({
     networkMechanism: 'mechanism' in network
       ? network.mechanism || null
       : null,
+    ...(isolated && !failed ? { writeContainment: { mechanism: isolated.mechanism, scope: isolated.scope } } : {}),
     evidenceRef,
     errorSummary,
     timeoutCleanup,
@@ -360,6 +371,7 @@ export const executeTrustedProof = ({
   timeoutMs = DEFAULT_TIMEOUT_MS,
   evidenceDir = null,
   networkPolicy = 'inherited',
+  writeScope = null,
   env = process.env,
 }: TrustedProofInput = {}) => {
   const trusted = resolveTrustedCommand({
@@ -375,6 +387,7 @@ export const executeTrustedProof = ({
     timeoutMs,
     evidenceDir,
     networkPolicy,
+    writeScope,
     env,
   });
   return {
