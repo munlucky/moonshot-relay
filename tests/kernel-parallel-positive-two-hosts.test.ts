@@ -179,11 +179,16 @@ const waitFor=async(f:()=>Promise<boolean>,reason:string)=>{for(let i=0;i<400;i+
 // This proves Kernel's existing CAS/Report behavior, NOT Native Writer exit.
 const settleFiniteHistoricalFixture = async (
  projectRoot:string,runtimeHome:string,runId:string,
- crashAfterOwnerCas=false,
+ crashAfterOwnerCas=false, recoveryMode:'normal'|'dual'|'ttl'='normal',
 ):Promise<void>=>{
  const cp=await createKernelControlPlane({projectRoot,runtimeHome});
  let fence:ReturnType<typeof cp.acquireOwnerWorkspaceMutationFence>|null=null;
+ let proofFenceDeadline:string|null=null;
  try{
+  if(recoveryMode==='dual'){
+   await writeFile(path.join(process.env.T42_RECOVERY_ROOT!,'recover-ready-A'),'ready');
+   await waitFor(async()=>existsSync(path.join(process.env.T42_RECOVERY_ROOT!,'recover-go')),'recovery start barrier');
+  }
   const readback=readCanonicalParallelWorkerReceipts({controlPlane:cp,runId,projectRoot,runtimeHome});
   assert.equal(readback.status,'ready');
   if(readback.status!=='ready')return;
@@ -195,7 +200,15 @@ const settleFiniteHistoricalFixture = async (
    expectedWorkspaceIdentity:run.currentWorkspaceIdentity!,
    expectedHeadCommitSha:ownerBase,expectedProjectId:run.projectId!,
    expectedWorktreeId:run.worktreeId!,expectedWorkspaceId:run.workspaceId!};
-  fence=cp.acquireOwnerWorkspaceMutationFence(runId,snapshot);
+  fence=cp.acquireOwnerWorkspaceMutationFence(runId,{
+   ...snapshot,sessionToken:recoveryMode==='normal'?undefined:'historical-owner-A',
+   ...(recoveryMode==='ttl'?{ttlMs:5000}:{}),
+  });
+  if(recoveryMode==='dual'){
+   const root=process.env.T42_RECOVERY_ROOT!;
+   await writeFile(path.join(root,'recover-fenced-A'),'held');
+   await waitFor(async()=>existsSync(path.join(root,'recover-denied-B')),'competing Host rejected before first cherry-pick');
+  }
   const receipts=readCanonicalParallelWorkerReceipts({controlPlane:cp,runId,projectRoot,runtimeHome});
   assert.deepEqual(receipts,readback,'retired fixture results cannot drift under the Owner fence');
   const integration=await prepareRecoveryIntegrationWorktree({
@@ -208,8 +221,10 @@ const settleFiniteHistoricalFixture = async (
     (steps.find(s=>s.stepId===a.stepId)?.sequence??0)-(steps.find(s=>s.stepId===b.stepId)?.sequence??0))){
    const renewal=cp.renewOwnerWorkspaceMutationFence(runId,{...snapshot,
     workspaceId:fence.lock.workspaceId,fencingToken:fence.lock.fencingToken,
-    sessionToken:fence.lock.sessionToken});
+    sessionToken:fence.lock.sessionToken,
+    ...(recoveryMode==='ttl'?{ttlMs:5000}:{})});
    assert.equal(renewal.lock?.fencingToken,fence.lock.fencingToken);
+   if(recoveryMode==='ttl')proofFenceDeadline=renewal.lock.expiresAt;
    git(integration.workspaceRoot,['cherry-pick','--no-commit',item.resultCommitSha]);
   }
   const staged=git(integration.workspaceRoot,['diff','--name-only','--cached']).split('\n').filter(Boolean).sort();
@@ -218,6 +233,19 @@ const settleFiniteHistoricalFixture = async (
    cwd:integration.workspaceRoot,encoding:'utf8',timeout:10000,
   });
   assert.equal(patch.status,0,String(patch.stderr||patch.error));
+  if(recoveryMode==='dual'){
+   await writeFile(path.join(process.env.T42_RECOVERY_ROOT!,'recover-proof-A'),'entered');
+  }
+  if(recoveryMode==='ttl'){
+   assert.ok(proofFenceDeadline);
+   // Proof's child environment is intentionally allowlisted by production.
+   // Test control therefore uses a file inside the scoped integration root.
+   await writeFile(path.join(integration.workspaceRoot,'.t42-proof-enable'),'enabled');
+   await writeFile(path.join(process.env.T42_RECOVERY_ROOT!,'ttl-proof.json'),JSON.stringify({
+    integrationRoot:integration.workspaceRoot,expiresAt:proofFenceDeadline,
+    fencingToken:fence.lock.fencingToken,
+   }));
+  }
   const proof=executeTrustedProof({
    projectRoot:integration.workspaceRoot,commandRef:'test:ok',
    ...(process.platform==='darwin'?{writeScope:integration.workspaceRoot}:{}),
@@ -230,6 +258,30 @@ const settleFiniteHistoricalFixture = async (
   });
   assert.equal(afterPatch.status,0);
   assert.equal(afterPatch.stdout,patch.stdout,'trusted proof must not change Delivery bytes');
+  if(recoveryMode==='ttl'){
+   assert.ok(proofFenceDeadline&&Date.parse(proofFenceDeadline)<=Date.now(),
+    'the original Owner fence must expire while scoped Proof is running');
+   const staleCredentials={
+    ...snapshot,workspaceId:fence.lock.workspaceId,fencingToken:fence.lock.fencingToken,
+    sessionToken:fence.lock.sessionToken,
+   };
+   const lost=(cause:unknown)=>(cause as {code?:string}).code==='delivery_mutation_fence_lost';
+   assert.throws(()=>cp.renewOwnerWorkspaceMutationFence(runId,staleCredentials),lost);
+   const identity=observeWorkspaceIdentity({projectRoot:integration.workspaceRoot}).identity;
+   const digest='sha256:'+createHash('sha256').update(patch.stdout).digest('hex');
+   assert.throws(()=>cp.assertOwnerWorkspaceMutationReady(runId,{
+    ...staleCredentials,integrationWorkspaceIdentity:identity,changedPaths:staged,patchDigest:digest,
+   }),lost,'the old owner must not start applying its patch after Fence expiration');
+   assert.throws(()=>cp.recordOwnerWorkspaceMutation(runId,{
+    ...staleCredentials,integrationWorkspaceIdentity:identity,changedPaths:staged,patchDigest:digest,
+   }),lost,'stale Epoch must not perform Owner CAS or authorize Report settlement');
+   await writeFile(path.join(process.env.T42_RECOVERY_ROOT!,'ttl-stale-rejected'),JSON.stringify({
+    originalEpoch:fence.lock.fencingToken,proofStatus:proof.status,
+    containment:proof.writeContainment?.mechanism??null,
+    revision:(await cp.getRun(runId))?.mutationRevision,
+   }));
+   return;
+  }
   const integrationWorkspaceIdentity=observeWorkspaceIdentity({projectRoot:integration.workspaceRoot}).identity;
   const patchDigest='sha256:'+createHash('sha256').update(patch.stdout).digest('hex');
   const renewed=cp.renewOwnerWorkspaceMutationFence(runId,{...snapshot,
@@ -253,6 +305,8 @@ const settleFiniteHistoricalFixture = async (
    integrationWorkspaceIdentity,changedPaths:staged,patchDigest});
   assert.equal(mutation.mutationRevision,Number(run.mutationRevision)+1);
   assert.equal((await cp.getRun(runId))?.mutationRevision,Number(run.mutationRevision)+1);
+  if(recoveryMode==='dual')await writeFile(
+   path.join(process.env.T42_RECOVERY_ROOT!,'recover-cas-A'),String(mutation.mutationRevision));
   if(crashAfterOwnerCas){
    // Actual recovery Host exits after the committed Owner CAS, before reports.
    const marker=process.env.T42_RECOVERY_MARKER;
@@ -316,6 +370,8 @@ const settleFiniteHistoricalFixture = async (
   assert.notEqual((duplicate as {step?:{state?:string}} | null)?.step?.state,'passed',
    'the already settled Attempt must not acquire another passed Report');
   assert.equal((await cp.getRun(runId))?.mutationRevision,Number(run.mutationRevision)+1);
+  if(recoveryMode==='dual')await writeFile(path.join(process.env.T42_RECOVERY_ROOT!,'recover-settled-A'),
+   JSON.stringify({reports:settled.length,revision:mutation.mutationRevision}));
  }finally{
   if(fence && cp.stateStore.getWorkspaceMutationLockV2(fence.lock.workspaceId)){
    try{cp.releaseOwnerWorkspaceMutationFence(runId,{workspaceId:fence.lock.workspaceId,
@@ -325,6 +381,75 @@ const settleFiniteHistoricalFixture = async (
  }
 };
 
+if(process.env.T42_RECOVERY_HOST_MODE==='dual-winner'
+ || process.env.T42_RECOVERY_HOST_MODE==='ttl-stale'){
+ const projectRoot=process.env.T42_PROJECT_ROOT;
+ const runtimeHome=process.env.T42_RUNTIME_HOME;
+ const runId=process.env.T42_RUN_ID;
+ assert.ok(projectRoot&&runtimeHome&&runId&&process.env.T42_RECOVERY_ROOT);
+ await settleFiniteHistoricalFixture(projectRoot,runtimeHome,runId,false,
+  process.env.T42_RECOVERY_HOST_MODE==='dual-winner'?'dual':'ttl');
+ process.exit(0);
+}
+if(process.env.T42_RECOVERY_HOST_MODE==='dual-loser'
+ || process.env.T42_RECOVERY_HOST_MODE==='ttl-new'){
+ const projectRoot=process.env.T42_PROJECT_ROOT;
+ const runtimeHome=process.env.T42_RUNTIME_HOME;
+ const runId=process.env.T42_RUN_ID;
+ const root=process.env.T42_RECOVERY_ROOT;
+ assert.ok(projectRoot&&runtimeHome&&runId&&root);
+ const cp=await createKernelControlPlane({projectRoot,runtimeHome});
+ try{
+  const readback=readCanonicalParallelWorkerReceipts({controlPlane:cp,runId,projectRoot,runtimeHome});
+  assert.equal(readback.status,'ready');
+  assert.equal(readback.deliveryAuthorized,false);
+  const run=(await cp.getRun(runId))!;
+  const ownerBase=git(projectRoot,['rev-parse','HEAD']);
+  const snapshot={expectedMutationRevision:run.mutationRevision,
+   expectedWorkspaceIdentity:run.currentWorkspaceIdentity!,
+   expectedHeadCommitSha:ownerBase,expectedProjectId:run.projectId!,
+   expectedWorktreeId:run.worktreeId!,expectedWorkspaceId:run.workspaceId!};
+  if(process.env.T42_RECOVERY_HOST_MODE==='dual-loser'){
+   await writeFile(path.join(root,'recover-ready-B'),'ready');
+   await waitFor(async()=>existsSync(path.join(root,'recover-go')),'recovery start barrier');
+   await waitFor(async()=>existsSync(path.join(root,'recover-fenced-A')),'first recovery Host holds Owner fence');
+   assert.equal(existsSync(path.join(root,'recover-proof-A')),false,'contender must race before cherry-pick/Proof');
+   assert.throws(()=>cp.acquireOwnerWorkspaceMutationFence(runId,{
+    ...snapshot,sessionToken:'historical-owner-B',
+   }),(cause:unknown)=>(cause as {code?:string}).code==='delivery_mutation_fence_lost');
+   await writeFile(path.join(root,'recover-denied-B'),'denied');
+  }else{
+   const configPath=path.join(root,'ttl-proof.json');
+   await waitFor(async()=>existsSync(configPath),'stale proof preparation');
+   const config=JSON.parse(await readFile(configPath,'utf8')) as {
+    integrationRoot:string;expiresAt:string;fencingToken:number;
+   };
+   await waitFor(async()=>existsSync(path.join(config.integrationRoot,'.t42-proof-active')),
+    'scoped Proof actually started');
+   assert.ok(Date.now()<Date.parse(config.expiresAt),'Proof must begin before fence expiry');
+   await delay(Math.max(0,Date.parse(config.expiresAt)-Date.now()+80));
+   const newer=cp.acquireOwnerWorkspaceMutationFence(runId,{
+    ...snapshot,sessionToken:'historical-owner-B',ttlMs:25000,
+   });
+   assert.ok(newer.lock.fencingToken>config.fencingToken);
+   const fresh=await prepareRecoveryIntegrationWorktree({
+    repoRoot:projectRoot,baseCommit:ownerBase,runtimeHome,runId,projectId:run.projectId!,
+   });
+   assert.notEqual(fresh.workspaceRoot,config.integrationRoot,'recovery must never reuse stale Proof Worktree');
+   await writeFile(path.join(root,'ttl-new-fenced'),JSON.stringify({
+    epoch:newer.lock.fencingToken,workspaceRoot:fresh.workspaceRoot,
+    previousRoot:config.integrationRoot,
+   }));
+   // Release the finite test Proof only after the newer Host owns its own generation.
+   await writeFile(path.join(root,'ttl-unblock-proof'),'new epoch');
+   await waitFor(async()=>existsSync(path.join(root,'ttl-stale-rejected')),'stale Host denied Owner CAS');
+   assert.equal((await cp.getRun(runId))?.mutationRevision,0);
+   cp.releaseOwnerWorkspaceMutationFence(runId,{workspaceId:newer.lock.workspaceId,
+    fencingToken:newer.lock.fencingToken,sessionToken:newer.lock.sessionToken});
+  }
+ }finally{await cp.close()}
+ process.exit(0);
+}
 if(process.env.T42_RECOVERY_HOST_MODE==='cas-crash'){
  const projectRoot=process.env.T42_PROJECT_ROOT;
  const runtimeHome=process.env.T42_RUNTIME_HOME;
@@ -360,10 +485,12 @@ const inspectHistoricalCasCrashHost=[
  "}finally{await cp.close()}",
 ].join('\n');
 
-for(const mode of ['one-owner','split-owners','split-cas-crash','split-weak-proof'] as const){
+for(const mode of ['one-owner','split-owners','split-cas-crash','split-dual-recovery',
+ 'split-ttl-proof','split-weak-proof'] as const){
  test(`T24 positive two-Host batch collision: ${mode}`,{
   timeout:95000,
-  skip: mode==='split-cas-crash' && process.platform==='darwin' && process.env.T24_NATIVE_POSITIVE==='1'
+  skip: ['split-cas-crash','split-dual-recovery','split-ttl-proof'].includes(mode)
+   && process.platform==='darwin' && process.env.T24_NATIVE_POSITIVE==='1'
    ? 'Native Writer descendants are not proven retired'
    : false,
  },async()=>{
@@ -384,6 +511,12 @@ for(const mode of ['one-owner','split-owners','split-cas-crash','split-weak-proo
       "const fs=require('node:fs');",
       "if(!fs.existsSync('src/alpha/result.txt')||!fs.existsSync('src/beta/result.txt'))process.exit(23);",
       "if(fs.readFileSync('src/alpha/result.txt','utf8')!=='alpha\\n'||fs.readFileSync('src/beta/result.txt','utf8')!=='beta\\n')process.exit(24);",
+      "if(fs.existsSync('.t42-proof-enable')){",
+      "fs.writeFileSync('.t42-proof-active','active');",
+      "const marker="+JSON.stringify(path.join(root,'ttl-unblock-proof'))+";const deadline=Date.now()+25000;",
+      "while(!fs.existsSync(marker)&&Date.now()<deadline)Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,30);",
+      "if(!fs.existsSync(marker))process.exit(29);",
+      "}",
      ].join('\n')+'\n');
    git(projectRoot,['add','--all']);git(projectRoot,['commit','-m','baseline']);
    cp=await createKernelControlPlane({runtimeHome,projectRoot});
@@ -529,7 +662,7 @@ for(const mode of ['one-owner','split-owners','split-cas-crash','split-weak-proo
     }finally{
      await reopened.close();
     }
-    if(mode==='split-owners'||mode==='split-cas-crash'){
+    if(['split-owners','split-cas-crash','split-dual-recovery','split-ttl-proof'].includes(mode)){
      // This preflight reuses both persisted Worker Commit SHAs but has no
      // Delivery or Writer-retirement authority. Linux refuses before Git.
      const candidate=await verifyCanonicalParallelRecoveryCandidate({
@@ -586,7 +719,70 @@ for(const mode of ['one-owner','split-owners','split-cas-crash','split-weak-proo
       assert.equal(readCanonicalParallelWorkerReceipts({controlPlane:cp,runId,projectRoot,runtimeHome}).status,'ready');
       // B2 authority is exercised ONLY by synchronous exited fixture Writers.
       // Native child descendants are not covered by their App Server exit.
-      if(mode==='split-cas-crash'){
+      if(mode==='split-dual-recovery'||mode==='split-ttl-proof'){
+       // Real independent recovery Host processes execute the same persisted
+       // two-Host Canonical fixture. A holds the fence before cherry-pick.
+       // B either loses the contention or supersedes an expired Proof epoch.
+       const recover=(kind:'dual-winner'|'dual-loser'|'ttl-stale'|'ttl-new')=>{
+        const child=spawn(process.execPath,['--input-type=module','-e',
+         "import('./tests/kernel-parallel-positive-two-hosts.test.mjs')"],{
+         cwd:process.cwd(),env:{...process.env,T42_RECOVERY_HOST_MODE:kind,
+          T42_PROJECT_ROOT:projectRoot,T42_RUNTIME_HOME:runtimeHome,T42_RUN_ID:runId,
+          T42_RECOVERY_ROOT:root,
+         },stdio:['pipe','pipe','pipe'],
+        });
+        children.push(child);
+        return new Promise<void>((resolve,reject)=>{
+         let stderr='',stdout='';
+         child.stderr.on('data',chunk=>stderr+=String(chunk));
+         child.stdout.on('data',chunk=>stdout+=String(chunk));
+         child.on('error',reject);
+         child.on('exit',code=>code===0?resolve():reject(Error(
+          'recovery '+kind+' exit '+code+' '+stderr+' '+stdout)));
+        });
+       };
+       const isTtl=mode==='split-ttl-proof';
+       const a=recover(isTtl?'ttl-stale':'dual-winner');
+       const b=recover(isTtl?'ttl-new':'dual-loser');
+       if(!isTtl){
+        await waitFor(async()=>existsSync(path.join(root,'recover-ready-A'))&&
+         existsSync(path.join(root,'recover-ready-B')),'two OS recovery Hosts ready');
+        await writeFile(path.join(root,'recover-go'),'go');
+       }
+       await Promise.all([a,b]);
+       assert.equal(existsSync(path.join(root,'recover-denied-B')),!isTtl);
+       if(isTtl){
+        const proof=JSON.parse(await readFile(path.join(root,'ttl-proof.json'),'utf8')) as {
+         integrationRoot:string;expiresAt:string;fencingToken:number;
+        };
+        const newer=JSON.parse(await readFile(path.join(root,'ttl-new-fenced'),'utf8')) as {
+         epoch:number;workspaceRoot:string;previousRoot:string;
+        };
+        const stale=JSON.parse(await readFile(path.join(root,'ttl-stale-rejected'),'utf8')) as {
+         originalEpoch:number;revision:number;proofStatus:string;containment:string|null;
+        };
+        assert.ok(newer.epoch>proof.fencingToken);
+        assert.notEqual(newer.workspaceRoot,proof.integrationRoot);
+        assert.equal(newer.previousRoot,proof.integrationRoot);
+        assert.equal(stale.originalEpoch,proof.fencingToken);
+        assert.equal(stale.proofStatus,'passed');
+        if(process.platform==='darwin')assert.equal(stale.containment,'macos-seatbelt');
+        assert.equal(stale.revision,0);
+        assert.equal(existsSync(path.join(projectRoot,'src/alpha/result.txt')),false);
+        assert.equal(existsSync(path.join(projectRoot,'src/beta/result.txt')),false);
+        assert.equal((await cp.getRun(runId))?.mutationRevision,0);
+        assert.deepEqual(cp.stateStore.getStepAttempts(runId).map(a=>a.status),['started','started']);
+       }else{
+        assert.equal((await readFile(path.join(root,'recover-cas-A'),'utf8')).trim(),'1');
+        const settled=JSON.parse(await readFile(path.join(root,'recover-settled-A'),'utf8')) as {
+         reports:number;revision:number;
+        };
+        assert.deepEqual(settled,{reports:2,revision:1});
+        assert.ok(existsSync(path.join(root,'recover-proof-A')));
+        assert.deepEqual(cp.getRunSteps(runId).map(s=>s.state),['passed','passed']);
+        assert.equal(cp.stateStore.getMutationProvenance(runId)?.mutationRevision,1);
+       }
+      }else if(mode==='split-cas-crash'){
        const casMarker=path.join(root,'historical-cas-crashed.json');
        const crash=spawnSync(process.execPath,['--input-type=module','-e',
         "import('./tests/kernel-parallel-positive-two-hosts.test.mjs')"],{
@@ -638,10 +834,11 @@ for(const mode of ['one-owner','split-owners','split-cas-crash','split-weak-proo
       }else{
        await settleFiniteHistoricalFixture(projectRoot,runtimeHome,runId);
       }
-      assert.equal((await cp.getRun(runId))?.mutationRevision,1);
+      assert.equal((await cp.getRun(runId))?.mutationRevision,
+       mode==='split-ttl-proof'?0:1);
       assert.equal(cp.stateStore.getStepAttempts(runId).length,2);
       assert.equal(cp.getExecutableSteps(runId).steps.length,0);
-      for(const name of ['alpha','beta'])
+      if(mode!=='split-ttl-proof')for(const name of ['alpha','beta'])
        assert.equal(await readFile(path.join(projectRoot,'src',name,'result.txt'),'utf8'),name+'\n');
      }
     }
