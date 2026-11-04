@@ -3,7 +3,7 @@
 - 작성일: 2026-11-04
 - 기준 소스: main / 5169e0056cdf84616306381e4b817256749417f7
 - 범위: 기존 T24/T42-B2-A 통합 회귀 테스트 파일의 동기식 Worker 시험 경계
-- 판정: 검증 중. Native Writer 자동 합류 비활성화, G0 PARTIAL / W1 DEFER.
+- 판정: **T42-B2-B 종료 증명이 있는 Fixture의 Linux·Mac 검증 PASS**. Native Writer 자동 합류 비활성화, G0 PARTIAL / W1 DEFER.
 
 ## 위협 모델
 
@@ -27,8 +27,18 @@ T42-B2-A는 서로 다른 과거 Host의 동기식 Worker 결과를 기존 Owner
 | Linux TypeScript 및 제품·테스트 빌드 | **PASS** (operationId=c15140a9-2793-4d93-98d9-3f11a8b38a02) |
 | Linux 두 Host 결과→세 번째 Host CAS 강제 종료→새 Host Recovery 차단 | **PASS**. 집중 4 PASS / 0 FAIL. 실제 별도 Host exit 73, 새 Host Recovery blocked 및 재조회 불변 |
 | Linux 확대 회귀·경계 | **38 PASS / 5 OS SKIP / 0 FAIL**, 경계 **9 modules / 313 files / 855 edges PASS** (operationId=2cbe8bcb-ad14-4d0f-9e7a-16c099245fa6) |
-| 실제 macOS 한정된 동기식 Fixture의 Host 중단과 OS Scoped Proof | 검증 전 |
+| 실제 macOS 한정된 동기식 Fixture의 Host 중단과 OS Scoped Proof | **4 PASS / 0 FAIL / 0 SKIP**, 소스 SHA `acb069a95bb098b42ee8c14e2f6aaa89ced224f4`, TypeScript·제품·테스트 빌드 PASS, 실제 macOS Seatbelt Proof 및 Host CAS 직후 OS exit 73·재진입 차단 PASS (`operationId=8a0b1c14-5cfa-4f36-a2b8-3c182cbd00ce`) |
 | 임의 Native Writer 후손 종료·자동 Owner Delivery 권한 | 미검증·비활성화 |
+
+## 검증 중 발견한 환경 문제와 실제 정리
+
+Linux 실행기에서 별도 프로젝트의 Chromium·Next.js 동작과 격리 npm 설치/빌드가 겹쳐 메모리 및 Swap이 부족해졌고, 최초 제품 빌드 실행은 SIGTERM으로 종료됐다 (`operationId=bd769bd7-b16b-4d4b-9ba7-0e5035b0d8b9`). 이를 PASS로 처리하지 않았다. 그 실행이 종료된 후 같은 격리 소스에서 TypeScript·제품·테스트 빌드와 집중 4 PASS / 0 FAIL을 다시 확인했다 (`operationId=c15140a9-2793-4d93-98d9-3f11a8b38a02`). 다른 프로젝트의 프로세스·파일은 변경하지 않았다. 확대 회귀는 43개 중 **38 PASS / 5 OS 전용 SKIP / 0 FAIL**, 모듈 경계 9/313/855 PASS (`operationId=2cbe8bcb-ad14-4d0f-9e7a-16c099245fa6`).
+
+실제 Mac Host에서 기존 사용자 Checkout을 변경하지 않고 최신 `acb069a9`로 새로운 일회용 Git Clone을 만든 뒤 strict TypeScript·제품·테스트 빌드와 `one-owner`, `split-owners`, `split-cas-crash`, `split-weak-proof` **4 PASS / 0 FAIL / 0 SKIP**를 수행했다. `split-cas-crash`는 실제 macOS Seatbelt Trusted Proof와 기존 Owner CAS 0→1 직후 복구 Host의 실제 종료 코드 73, 새 복구 Host의 fail-closed 차단·재조회 지속을 확인한다.
+
+두 시험 환경은 소스 SHA·PASS 기록 및 시험 소유 프로세스 종료와 원본 작업 트리 clean을 확인한 후, **이번 실행에서 생성한 Linux 빌드 사본과 Mac 임시 Clone만** 삭제했다 (`operationId=785050c2-bfbd-4ef3-a492-2ed28af7b838`, `683fef1c-c0d6-4f53-a417-c64e3918614f`). 기존 다른 T42-A 실패 Fixture/Writer 예약은 삭제하지 않았다.
+
+이 결과는 제한된 동기식 파일 Writer의 종료가 확인된 경우에 한하며, 임의 Native App Server/Writer와 모든 독립 후손의 영구 쓰기 봉쇄를 증명하지 않는다. 제품 자동 Owner Delivery·Writer 예약 자동 해제는 변경하지 않는다.
 
 ## 별도 미완료 안전 조건
 

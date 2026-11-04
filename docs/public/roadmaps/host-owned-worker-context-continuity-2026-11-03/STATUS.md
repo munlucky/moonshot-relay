@@ -27,7 +27,7 @@
 | T42-A — Cross-Host Canonical Result readback | **Linux 37 PASS·Mac Native 6 PASS / Owner 자동 합류 DEFER** | [T42-A](W0_T42_SPLIT_HOST_CANONICAL_READBACK_2026-11-04.md): Git·Attempt 무결성 재조회, Native Writer 종료/Delivery 미승인. |
 | T42-B1 — 분리 Host Canonical Result 보호된 사전 Proof | **Linux 37 PASS·Mac Native 3 PASS / Owner Delivery DEFER** | [T42-B1](W0_T42B_GUARDED_CANONICAL_RECOVERY_PREFLIGHT_2026-11-04.md): 기존 Fence·새 Integration Worktree·Scoped Proof, 실제 CAS 및 Report 자동 회수 없음. |
 | T42-B2-A — 종료 증명이 있는 두 Host 결과의 Owner CAS·Report 검증 | **Linux 37 PASS·Mac 동기식 실증 3 PASS / Native 자동 합류 DEFER** | [T42-B2-A](W0_T42B2_FINITE_SPLIT_OWNER_CAS_SETTLEMENT_2026-11-04.md): 동기식 Fixture 기존 Kernel Fence·CAS 1회·Report 2회 테스트. 제품 자동 합류 미구현. |
-| T42-B2-B — 과거 Host 결과 Owner CAS 직후 복구 Host 종료 | **Linux·Mac 검증 중 / Native 자동 합류 DEFER** | [T42-B2-B](W0_T42B2_POST_CAS_CRASH_2026-11-04.md): 실제 Recovery Host CAS 중단 후 다른 Host fail-closed Recovery. |
+| T42-B2-B — 과거 Host 결과 Owner CAS 직후 복구 Host 종료 | **Linux 38 PASS·Mac 4 PASS / Native 자동 합류 DEFER** | [T42-B2-B](W0_T42B2_POST_CAS_CRASH_2026-11-04.md): 실제 Recovery Host CAS 중단 후 다른 Host fail-closed Recovery. |
 | W0-Fix — ContextReceipt | **SOURCE PASS** | T23 재현 → 최소 수정, focused 17/17, typecheck/build/boundaries PASS. 확장 test:source-runtime timeout |
 | W1 — Host-owned Worker | **DEFER / 실제 Attempt-Writer Gate 대기** | Host 소유 Native commandExecution handle과 격리 Worktree/기존 Owner CAS를 연결해 종료·격리 증거 확인 전 같은 Workspace 재할당 금지 필요 |
 | W2 — status/signal/reconnect | NOT STARTED | W1 생존·Owner 경계 필요 |
