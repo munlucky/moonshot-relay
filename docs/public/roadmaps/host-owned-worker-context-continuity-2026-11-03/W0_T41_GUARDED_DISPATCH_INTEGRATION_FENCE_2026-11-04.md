@@ -32,8 +32,8 @@
 | --- | --- |
 | Linux strict TypeScript·제품·테스트 빌드 | **PASS**. 최초 제품·전 구간 빌드와 보정 이후 동일 격리 Source에서 strict TypeScript/테스트 빌드 재검증 (`operationId=1a4b93e5-6a12-474b-8df4-939429b50708`, `a3bfe8d2-ecb5-4fe5-8995-ae7f23dd3296`) |
 | Linux 기본 Dispatcher 회귀 및 보호 경로 OS 미지원 거부 | 보정 후 확대 **37 PASS / 5 OS SKIP / 0 FAIL**, 최종 집중 **5 PASS / 2 OS SKIP / 0 FAIL**, `check:boundaries` **9 modules / 312 files / 850 edges PASS** (`operationId=1a4b93e5-6a12-474b-8df4-939429b50708`, `a3bfe8d2-ecb5-4fe5-8995-ae7f23dd3296`) |
-| Mac 실제 Seatbelt `writeScope` Proof, 최초 Fence~CAS~정착 및 재시작 | 결과 반영 예정 |
-| Mac 보호 경로 CAS 직후 Host 종료·다음 Host blocked 재조회 | 결과 반영 예정 |
+| Mac 실제 Seatbelt `writeScope` Proof, 최초 Fence~CAS~정착 및 재시작 | **PASS** — `d792b05b`의 실제 macOS OS Host 시험. Guarded 정상 2개 Canonical Report, Owner Revision `0→1`, Run `completed`, 같은 Fence Token을 정착까지 유지하고 Kernel terminal이 Fence 정리. Scoped Proof `macos-seatbelt` 확인 (`operationId=cfaf1a60-35ce-4d77-bbe5-07b4960c8870`) |
+| Mac 보호 경로 CAS 직후 Host 종료·다음 Host blocked 재조회 | **PASS** — 실제 독립 OS Host `guarded-crash`, 기존 두 Canonical Attempt·Owner Revision `1` 보존, 새 Host `delivery_materialization_recovery_required` 차단, 중복 Worker·Owner Delivery 없음 (`operationId=cfaf1a60-35ce-4d77-bbe5-07b4960c8870`) |
 | 임의 Native Worker 실제 물리 후손 종료와 결과 자동 재회수 | **미증명; 이 옵션으로도 허용하지 않음** |
 | Linux/Windows OS 강제 Proof | **미지원; 자동 일반 spawn 폴백 없음** |
 
@@ -47,6 +47,20 @@
 이 보정은 새로운 Lock 권위·영속 상태·예외별 폴백을 추가하지 않는다. 이전의 Mac 실패를 PASS로 소급하거나 같은 SHA를 검증했다고 주장하지 않는다. 이후 보정 커밋의 실제 Mac 회귀를 별도로 기록한다.
 
 보정 커밋 `7ddd2e54`의 Mac 재시험에서는 일반 정상 경로가 PASS, 실제 Mac Scoped Proof/T36 격리와 T37 Fence 회귀가 PASS였다. 보호된 정상 경로도 Owner `completed` 및 terminal Fence 해제까지 진행했다. 다만 Crash·Guarded 3건이 공통적으로 **이미 지워진 Step Worktree의 Git metadata를 `realpathSync()`로 읽는 시험 정리 코드**에서 ENOENT로 실패했다. T38 fixture가 **자신의 경로로 확인된 남은 Worktree만** 정리하도록 `path.resolve`와 `existsSync`를 사용하고, 삭제된 경로의 Git 메타데이터는 기존 `git worktree prune`으로 제거한다. 두 번째 Mac 실패 역시 PASS로 소급하지 않는다.
+
+## T41 최종 macOS 실물 검증 (커밋 `d792b05b`)
+
+보정된 코드와 테스트의 정확한 Git SHA `d792b05b87a38e07b032636194e7a9fa0a69a817`을 별도 Mac Native Git Clone에서 빌드했다. macOS Node v24에서 TypeScript·제품·테스트 빌드 PASS, `node --test --test-concurrency=1`의 실제 Mac OS 교차 회귀 **9 PASS / 2 OS 별도 분기 SKIP / 0 FAIL**을 확인했다.
+
+- **T38 원래 경로 2건**: 서로 다른 실제 Host 프로세스의 정상 두 Step Report 정착과 CAS 직후 강제 종료·다음 Host blocked 판정 모두 PASS.
+- **T41 보호 경로 2건**: `guarded`는 처음 cherry-pick 이전 단일 Owner Fence 획득, 별도 물리 T36 Integration Worktree, macOS Seatbelt `writeScope` Proof, 같은 Fencing Token으로 두 Report 정착, Run `completed`와 terminal Fence 제거 확인. `guarded-crash`는 CAS 직후 Host 종료를 재현하고 새 Host에서 미정착 Run blocked, 두 Attempt·Owner Revision 보존 및 중복 Worker 없음.
+- **T37 기존 Fence 회귀 2건**: 단일 Fence 범위와 만료 후 stale Token 거부 PASS.
+- **T35·T36 기존 OS 격리 회귀 3건**: 분리 Proof 후손의 Owner·symlink 우회 쓰기 거부, 새 물리 Worktree 세대 격리·기존 후손의 새 세대 외부 쓰기 거부 PASS.
+- **2 SKIP**: macOS에서 실행할 이유가 없는 non-macOS 지원 거부 및 타 OS writeScope 미지원 분기. 실패나 검증 누락을 PASS로 계산하지 않았다.
+
+동일 시험에서 처음 두 Mac 커밋(`a20bb944`, `7ddd2e54`)은 각각 4 FAIL·3 FAIL이었고, 위에서 확인된 제품 terminal Fence 이중 해제 및 시험 정리의 macOS Git 경로 별칭·삭제된 Worktree 메타데이터 원인만 최소 수정했다. 실패 기록은 그대로 보존하고 **최종 커밋의 독립된 새 시험만 PASS**로 판정한다. 최종 시험과 앞선 실패 시험이 생성한 **세 개의 격리 Git Clone 및 일곱 개의 T38 fixture**는 결과·Git SHA·fixture identity를 대조한 뒤 정리했다 (`operationId=9a8dba30-ef53-40e7-8ce7-a7a0e8181a52`, `c264438a-8521-43fb-b8a3-a4df7e2699aa`, `10e90d13-2caa-438b-89e8-66c32c06f4b6`, `1f2f9e78-c74a-4de5-8291-30c1b6b5e2ee`). 원본 Mac 사용자 checkout은 `4f1ed1b0`의 clean 상태로 유지했다.
+
+**판정 경계:** 이 시험은 *동기식으로 완료되는 시험 Worker*와 실제 OS-scoped Trusted Proof의 제품 Dispatcher 생명주기를 검증한다. 실제 임의 Native Codex Tool Writer가 생성한 모든 후손의 종료·동일 Attempt 예약 해제·다른 Host의 과거 split Worker 결과 자동 합류까지 증명하지는 않는다. 보호 옵션은 기본값 `false`를 유지한다. G0 `PARTIAL` / W1 `DEFER`.
 
 ## 구조·복잡도와 보수적 판정
 
