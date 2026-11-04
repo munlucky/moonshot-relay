@@ -19,7 +19,7 @@
 | T34 — Proof 이전 Owner Fence 수명 | **Linux·Mac OS 실제 음성 반례 PASS / 자동 복구 DEFER** | [T34](W0_T34_PRE_PROOF_FENCE_LIFETIME_2026-11-04.md): 정상 Proof 중 기존 Fence의 경쟁 차단 확인. Trusted Proof Timeout 후 분리 OS Writer가 새 Host Fence 획득 뒤에도 통합 시험 경로에 쓰는 반례 재현. 제품 Fence 이동·자동 합류 금지. |
 | T35 — Trusted Proof OS 쓰기 격리 | **Mac 실제 선택형 실행 PASS / 자동 결과 합류 DEFER** | [T35](W0_T35_TRUSTED_PROOF_WRITE_CONTAINMENT_2026-11-04.md): `realpath` 정규화된 macOS Seatbelt writeScope 선택형 경계. Linux·Windows OS 수단 없으면 실행 거부, 기존 Proof 기본값 미변경. 자동 합류 G0 PARTIAL/W1 DEFER. |
 | T36 — 복구별 물리 통합 Worktree | **Linux·Mac 실측 PASS / 자동 복구 DEFER** | [T36](W0_T36_RECOVERY_INTEGRATION_WORKTREE_ISOLATION_2026-11-04.md): 별도 Runtime 영역에 매 복구 시도마다 새로운 물리 Git Worktree를 생성해 기존 Proof 후손이 수정하던 경로를 다시 사용하지 않도록 준비. OS 쓰기 격리 및 Owner Fence는 별도로 검증. |
-| T37 — 통합 전 구간 Owner Fence 수명 | **기존 Kernel API 실물 순서 검증 PASS / Dispatcher 자동 전환 DEFER** | [T37](W0_T37_PREPROOF_OWNER_FENCE_LIFECYCLE_2026-11-04.md): 최초 cherry-pick 전에 Fence 획득, Proof·Owner CAS·정착 시도 내내 타 Host 차단, 만료 Token 거부. 정상 Canonical Report 승인과 자동 회수는 아직 미검증. |
+| T37 — 통합 전 구간 Owner Fence 수명 | **Linux 36 PASS·Mac 직렬 7 PASS / 기본 Dispatcher 전환 DEFER** | [T37](W0_T37_PREPROOF_OWNER_FENCE_LIFECYCLE_2026-11-04.md): 최초 cherry-pick 전에 Fence 획득, Proof·Owner CAS·정착 시도 내내 타 Host 차단, 만료 Token 거부. 정상 Canonical Report 승인과 자동 회수는 아직 미검증. |
 | W0-Fix — ContextReceipt | **SOURCE PASS** | T23 재현 → 최소 수정, focused 17/17, typecheck/build/boundaries PASS. 확장 test:source-runtime timeout |
 | W1 — Host-owned Worker | **DEFER / 실제 Attempt-Writer Gate 대기** | Host 소유 Native commandExecution handle과 격리 Worktree/기존 Owner CAS를 연결해 종료·격리 증거 확인 전 같은 Workspace 재할당 금지 필요 |
 | W2 — status/signal/reconnect | NOT STARTED | W1 생존·Owner 경계 필요 |

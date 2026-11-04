@@ -26,9 +26,15 @@ T34는 Timeout된 Proof의 분리 후손이 이전 논리 Fence 만료 뒤에도
 | --- | --- |
 | Linux 실제 SQLite·Git 전 구간 Fence 두 반례 | **2 PASS / 0 FAIL / 0 SKIP**, 타입·제품·테스트 빌드 PASS (`operationId=91252a04-a148-47eb-8050-dd12ed813d81`) |
 | Linux 확대 Dispatcher·Proof·Report·Native Recovery 회귀 및 모듈 경계 | **36 PASS / 3 OS SKIP / 0 FAIL**, 모듈 경계 **9 modules / 312 files / 850 edges PASS** (`operationId=b2f0cfb4-f49c-4e64-a317-23f940912fae`) |
-| macOS 실제 `writeScope` Trusted Proof와 동일 Fence 생명주기 | 검증 후 반영 |
+| macOS 실제 `writeScope` Trusted Proof와 동일 Fence 생명주기 | **직렬 교차 검증 7 PASS / 1 OS SKIP / 0 FAIL**, T37 두 신규 테스트 모두 PASS (`operationId=23004986-b22d-454e-a931-72459c5850de`) |
 | 기존 제품 Dispatcher의 첫 쓰기~정착 전 구간 Fence 보장 | **미적용 — T37은 수용 가능성 검증이며 기본 제품 경로 불변** |
 | Canonical Report 정상 승인·Split Owner 결과 자동 재사용 | **미검증·DEFER** |
+
+## Mac 실제 OS 교차 검증의 최초 병렬 실패 및 확정 범위
+
+동일 소스 `86eeffa6c7b823518778807cfb2cee3a7c1aa85a`의 독립 Mac Clone, Node 24.6.0에서 strict TypeScript·제품·테스트 빌드 PASS. 최초 **기본 병렬 테스트 실행 6 PASS / 1 FAIL / 1 OS SKIP** (`operationId=0832b6ac-d129-42c2-9421-5b65d0af0437`). **신규 T37 두 항목은 이 실행에서도 PASS**였고, 실패한 항목은 기존 T34의 *timeout 직후 분리된 Proof Writer 시작 마커(`launched.pid`) 미관측*이다. 시작 마커도 Launcher/Writer PID도 기록되지 않았으며 당시 다른 제품 Error로 승격하지 않았다. 동일 소스를 `--test-concurrency=1`로 실행하자 **7 PASS / 1 OS SKIP / 0 FAIL**이었다. T34 후손·T35 Mac Seatbelt 직접 격리·T36 만료 복구 분리·T37 Fence/CAS/실패 정착 경계가 모두 PASS했다.
+
+첫 병렬 실패의 결정적 원인은 단정하지 않는다. OS 프로세스 초기화가 1초짜리 T34 시험 예산과 경쟁하는 상황에서만 발생한 정황이 있으며, **시험 병렬 부하·타이밍 차이가 제품 결함이라는 증거는 없다**. 최초 실패 기록을 보존하고, 제품 `executeTrustedProof` Timeout·Kernel Fence TTL·Native Writer 종료 동작을 변경하지 않았다. 실패한 시험 전용 Worktree는 PID 시작 마커가 없고 자식의 유한 최대 수명을 충분히 경과했으며 관련 실행 프로세스가 없음을 확인한 뒤 정리했다 (`operationId=ae6c8d74-7939-4518-a901-f78671116b48`). 격리 Mac Clone도 정리했고 원래 Mac Git checkout과 Codex 사용 세션은 변경하지 않았다.
 
 ## 구조·복잡도 결정 및 남은 게이트
 
