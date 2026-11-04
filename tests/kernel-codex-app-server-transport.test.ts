@@ -20,11 +20,17 @@ const { spawn } = require('node:child_process');
 let serial = 0;
 const send = (message) => process.stdout.write(JSON.stringify(message) + '\n');
 const input = readline.createInterface({ input: process.stdin });
+if (process.env.TEST_MODE === 'ignore-term' || process.env.TEST_MODE === 'stall-initialize-ignore-term') {
+  process.on('SIGTERM', () => fs.writeFileSync(path.join(process.env.TEST_PID_DIR,'term-observed'),'yes'));
+  fs.writeFileSync(path.join(process.env.TEST_PID_DIR,'app-server.pid'),String(process.pid));
+  // Bounded test-owned process; never kill an arbitrary PID read from a file.
+  setTimeout(() => process.exit(0), 15000);
+}
 input.on('line', (line) => {
   const message = JSON.parse(line);
   const id = message.id;
   if (message.method === 'initialize') {
-    if (process.env.TEST_MODE !== 'stall-initialize') send({ id, result: { userAgent: 'fixture' } });
+    if (process.env.TEST_MODE !== 'stall-initialize' && process.env.TEST_MODE !== 'stall-initialize-ignore-term') send({ id, result: { userAgent: 'fixture' } });
   } else if (message.method === 'thread/start') {
     const expectedSandbox = process.env.TEST_MODE?.startsWith('writable') ? 'workspace-write' : 'read-only';
     if (message.params.sandbox !== expectedSandbox || message.params.approvalPolicy !== 'never') {
@@ -185,6 +191,46 @@ test('An unfinished Turn times out and prevents another dispatch on the same con
     } finally {
       const closed = await transport.close();
       assert.equal(closed.writerExitVerified, false);
+    }
+  });
+});
+
+test('Initialize failure retires its owned App Server even when SIGTERM is ignored', {
+  skip: process.platform === 'win32' && 'POSIX signal fixture',
+}, async () => {
+  await withFixture(async ({ workspace, server }) => {
+    await assert.rejects(createCodexAppServerTransport({
+      executable: process.execPath, args: [server], requestTimeoutMs: 1200,
+      env: { ...process.env, TEST_MODE: 'stall-initialize-ignore-term', TEST_PID_DIR: workspace },
+    }), { code: 'codex_app_server_rpc_timeout' });
+    const pid = Number(await readFile(path.join(workspace, 'app-server.pid'), 'utf8'));
+    assert.ok(Number.isSafeInteger(pid) && pid > 0);
+    assert.equal(await readFile(path.join(workspace, 'term-observed'), 'utf8'), 'yes');
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' },
+      'rejected initialize must await owned App Server SIGKILL/exit');
+  });
+});
+
+test('Repeated close waits for the same owned App Server exit without proving Writer descendants', {
+  skip: process.platform === 'win32' && 'POSIX signal fixture',
+}, async () => {
+  await withFixture(async ({ workspace, server }) => {
+    const transport = await createCodexAppServerTransport({
+      executable: process.execPath, args: [server], requestTimeoutMs: 1500,
+      env: { ...process.env, TEST_MODE: 'ignore-term', TEST_PID_DIR: workspace },
+    });
+    try {
+      const pid = Number(await readFile(path.join(workspace, 'app-server.pid'), 'utf8'));
+      assert.ok(Number.isSafeInteger(pid) && pid > 0);
+      const results = await Promise.all([transport.close(), transport.close()]);
+      assert.deepEqual(results, [
+        { appServerExited: true, writerExitVerified: false },
+        { appServerExited: true, writerExitVerified: false },
+      ]);
+      assert.equal(await readFile(path.join(workspace, 'term-observed'), 'utf8'), 'yes');
+      assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+    } finally {
+      await transport.close();
     }
   });
 });

@@ -99,6 +99,7 @@ export async function createCodexAppServerTransport({
   let nextId = 1;
   let buffer = '';
   let active = false;
+  let shutdown: Promise<boolean> | null = null;
   const attemptedWorkspaces = new Set<string>();
   const pending = new Map<number, Pending>();
   const listeners = new Set<(message: ServerMessage) => void>();
@@ -124,6 +125,33 @@ export async function createCodexAppServerTransport({
     exited = true;
     fail('codex_app_server_connection_lost');
   });
+  // Own only this App Server process, never its unknown tool descendants.
+  // Reuse one shutdown across initialization failures and repeated close().
+  const stopOwnedAppServer = (): Promise<boolean> => {
+    if (shutdown) return shutdown;
+    shutdown = (async () => {
+      const waitForExit = (timeoutMs: number): Promise<boolean> => new Promise((resolve) => {
+        if (exited) { resolve(true); return; }
+        let done = false;
+        const finish = (): void => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          child.removeListener('exit', finish);
+          resolve(exited);
+        };
+        child.once('exit', finish);
+        const timer = setTimeout(finish, timeoutMs);
+        if (exited) finish();
+      });
+      if (exited) return true;
+      child.kill('SIGTERM');
+      if (await waitForExit(2000)) return true;
+      child.kill('SIGKILL');
+      return waitForExit(2000);
+    })();
+    return shutdown;
+  };
   child.stdout.setEncoding('utf8');
   child.stdout.on('data', (data: string) => {
     if (poisoned || closed) return;
@@ -201,7 +229,11 @@ export async function createCodexAppServerTransport({
     child.stdin.write(JSON.stringify({ method: 'initialized', params: {} }) + '\n');
   } catch (cause) {
     closed = true;
-    child.kill('SIGTERM');
+    // The caller receives no transport on initialize failure. Do not abandon
+    // a live owned App Server after a timeout or rejected initialize RPC.
+    if (!await stopOwnedAppServer()) {
+      throw Object.assign(error('codex_app_server_shutdown_unconfirmed'), { cause });
+    }
     throw cause;
   }
 
@@ -331,16 +363,11 @@ export async function createCodexAppServerTransport({
       if (!closed) {
         closed = true;
         fail('codex_app_server_closed');
-        if (!exited) {
-          child.kill('SIGTERM');
-          await new Promise<void>((resolve) => {
-            const timer = setTimeout(resolve, 2000);
-            child.once('exit', () => { clearTimeout(timer); resolve(); });
-          });
-          if (!exited) child.kill('SIGKILL'); // Only this owned App Server PID.
-        }
       }
-      return { appServerExited: exited, writerExitVerified: false };
+      // A repeated close() must wait for the first shutdown, not claim exit
+      // while the previously issued SIGTERM/SIGKILL is still pending.
+      const appServerExited = await stopOwnedAppServer();
+      return { appServerExited, writerExitVerified: false };
     },
   };
 }
