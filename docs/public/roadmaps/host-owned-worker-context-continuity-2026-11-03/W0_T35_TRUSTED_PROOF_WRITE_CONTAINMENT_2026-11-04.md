@@ -29,10 +29,12 @@ T34는 기존 Owner Fence TTL이 만료된 뒤 이전 Trusted Proof의 detached 
 | Linux 집중 Trusted Proof/Network/기존 T34 | 17 PASS / 2 OS SKIP / 0 FAIL |
 | Linux `writeScope` opt-in | OS 강제 수단 부재 시 오류로 거부, 미격리 실행 없음 |
 | Mac 기본 OS Sandbox 직접/분리 Write Scope 시험 | `realpath` 정규화 후 지정 경로 허용, Owner/형제 경로 쓰기 `EPERM` 차단 |
-| Mac 실제 Kernel `executeTrustedProof(writeScope)` + symlink 반례 | 검증 결과 별도 기록 |
+| Mac 실제 Kernel `executeTrustedProof(writeScope)` + symlink 반례 | **3 PASS / 1 OS SKIP / 0 FAIL**, TypeScript·제품·테스트 빌드 PASS, detached 후손의 자기 Worktree 쓰기 허용, Owner·형제·symlink Owner 쓰기 각각 `EPERM` 거부 |
 | Linux 확대 회귀·모듈 경계 | **58 PASS / 3 OS SKIP / 0 FAIL**, 9 modules / 312 files / 850 edges PASS (`operationId=98ce9671-eaa3-443a-8bfd-d8173847f6c6`) |
 
 Linux 최초 결과: operation `9f6cbb94-85cf-4e31-bd44-ce9575d8b2e7`. Mac 저수준 실측: operation `e091b3f8-ab49-46bc-a726-8053a10f6c19` (실경로 제한), `92d8d33d-cfdf-44da-85cf-8033ce140ba4` (scope 밖 기본 차단), `2ae726df-98da-4178-bb6f-73b904040222` (detached Node 실제 `EPERM`). 비정규화 경로에서 정책 미적용과 최초 기본 차단 Node 호환성 오류도 실패 기록으로 보존한다.
+
+Mac 실제 격리 소스는 `feacc9d81c96e10de8a0a2d43d514e0b842aed6b`이며 Node v24.6.0에서 제품 `executeTrustedProof(writeScope)`로 Sandbox 정책을 적용했다. 실행 operation `2390b873-210e-43e2-84e7-3fe69acb87dc`, 로그 및 Runtime SHA 교차 확인 `183b3bf7-c43b-4d22-b6ce-76896490335d`, 시험 전용 소스/의존성 정리 `5fce7f3a-9ff0-4f30-b364-9e7288af3357`. 원본 Mac 저장소와 운영 Codex 세션은 변경하지 않았다. T34의 Fence 만료 후 늦은 쓰기 반례는 **여전히 PASS**이며 새로운 API의 쓰기 격리가 오직 명시적 선택형이기 때문에 기존 자동 결과 합류를 안전하다고 오판하지 않는다.
 
 ## 다음 게이트
 
