@@ -62,6 +62,7 @@ const result=await dispatchKernelParallel({
   starts++;
   await writeFile(path.join(root,'launched-'+name+'-'+hostId),'launched');
   await wait('release');
+  if(mode==='split-weak-proof'&&hostId==='B')await wait('result-A');
   if(nativeEnabled){
    if(!process.env.CODEX_HOME)throw Error('isolated CODEX_HOME required for native positive test');
    const attempt=cp.stateStore.getStepAttempts(runId,{stepId:step.stepId}).at(-1);
@@ -91,7 +92,7 @@ await writeFile(path.join(root,'result-'+hostId),JSON.stringify({hostId,starts,s
 const git=(cwd:string,args:string[]):string=>{const r=spawnSync('git',args,{cwd,encoding:'utf8',timeout:10000});assert.equal(r.status,0,String(r.stderr||r.error));return r.stdout.trim()};
 const waitFor=async(f:()=>Promise<boolean>,reason:string)=>{for(let i=0;i<400;i++){if(await f())return;await delay(15)}throw Error('T24 positive contention timeout '+reason)};
 
-for(const mode of ['one-owner','split-owners'] as const){
+for(const mode of ['one-owner','split-owners','split-weak-proof'] as const){
  test(`T24 positive two-Host batch collision: ${mode}`,{timeout:60000},async()=>{
   const root=await mkdtemp(path.join(os.tmpdir(),'t24-positive-owner-'));
   const nativeEnabled=process.platform==='darwin'&&process.env.T24_NATIVE_POSITIVE==='1';
@@ -104,11 +105,13 @@ for(const mode of ['one-owner','split-owners'] as const){
    await mkdir(projectRoot);if(nativeEnabled)await mkdir(path.join(root,'reservations'));git(projectRoot,['init','-b','main']);git(projectRoot,['config','user.name','T24 Test']);git(projectRoot,['config','user.email','t24@example.invalid']);
    await mkdir(path.join(projectRoot,'src'));
    await writeFile(path.join(projectRoot,'package.json'),JSON.stringify({name:'t24-positive',scripts:{'test:ok':'node verify.cjs'}}));
-   await writeFile(path.join(projectRoot,'verify.cjs'),[
-    "const fs=require('node:fs');",
-    "if(!fs.existsSync('src/alpha/result.txt')||!fs.existsSync('src/beta/result.txt'))process.exit(23);",
-    "if(fs.readFileSync('src/alpha/result.txt','utf8')!=='alpha\\n'||fs.readFileSync('src/beta/result.txt','utf8')!=='beta\\n')process.exit(24);",
-   ].join('\n')+'\n');
+   await writeFile(path.join(projectRoot,'verify.cjs'),mode==='split-weak-proof'
+    ? 'process.exit(0);\n'
+    : [
+      "const fs=require('node:fs');",
+      "if(!fs.existsSync('src/alpha/result.txt')||!fs.existsSync('src/beta/result.txt'))process.exit(23);",
+      "if(fs.readFileSync('src/alpha/result.txt','utf8')!=='alpha\\n'||fs.readFileSync('src/beta/result.txt','utf8')!=='beta\\n')process.exit(24);",
+     ].join('\n')+'\n');
    git(projectRoot,['add','--all']);git(projectRoot,['commit','-m','baseline']);
    cp=await createKernelControlPlane({runtimeHome,projectRoot});
    const started=await cp.startRun({runId,objective:'cross Host positive Worker result',taskContract:{complex:true,riskTier:'T1',
@@ -169,6 +172,14 @@ for(const mode of ['one-owner','split-owners'] as const){
    }else{
     assert.equal(run.mutationRevision,0,'split ownership must not deliver incomplete trusted proof');
     assert.ok(results.every(r=>r.status!=='passed'),JSON.stringify(results));
+    assert.ok(results.every(r=>Array.isArray(r.failures)&&r.failures.some(
+      (failure:unknown)=>typeof failure==='object'&&failure!==null&&
+       (failure as {failureCode?:string}).failureCode==='STEP_ATTEMPT_ALREADY_CLAIMED',
+    )),'both Hosts must observe a canonical competing claim');
+    assert.ok(results.every(r=>(r.cleanup as {retained?:boolean}|null)?.retained===true),
+      'contended Worktrees must be retained for reconciliation');
+    if(mode==='split-weak-proof')assert.ok(results.every(r=>r.integration==='failed'),
+      'even a weak trusted integration command cannot bypass a competing claim');
     assert.equal(results.reduce((sum,r)=>sum+Number(r.settlements||0),0),0);
     assert.equal(existsSync(path.join(projectRoot,'src/alpha/result.txt')),false);
     assert.equal(existsSync(path.join(projectRoot,'src/beta/result.txt')),false);

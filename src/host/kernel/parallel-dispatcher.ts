@@ -907,7 +907,13 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
       };
     });
   const admittedIntegrationVerification = admission.integrationVerification as { commandRef: string };
-  const integration: IntegrationResult = successful.length > 0
+  // A concurrent Host owns at least one Step in our selected batch. Never
+  // deliver only this Host's subset: a permissive integration command could
+  // otherwise approve an incomplete patch and consume the Owner CAS.
+  // Ordinary worker failures remain eligible for the existing partial-result
+  // policy; only the canonical cross-Host claim conflict blocks Delivery.
+  const competingStepClaim = dispatchFailures.some((failure) => failure.failureCode === 'STEP_ATTEMPT_ALREADY_CLAIMED');
+  const integration: IntegrationResult = successful.length > 0 && !competingStepClaim
     ? await integrateParallelResults({
       run: { ...run, baseCommitSha: base },
       steps: executable.steps,
@@ -1022,7 +1028,7 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
       projectRoot: repoRoot,
       runId,
     })
-    : { status: 'failed', failureCode: 'no-successful-worker-result' };
+    : { status: 'failed', failureCode: competingStepClaim ? 'parallel_step_claim_conflict' : 'no-successful-worker-result' };
 
   const reported: Array<IntegrationReceipt & { reportResult: UnknownRecord }> = [];
   const settlementFailures: Array<{ stepId: string; reportResult: UnknownRecord | null }> = [];
