@@ -86,6 +86,9 @@ const result=await dispatchKernelParallel({
 });
 await writeFile(path.join(root,'result-'+hostId),JSON.stringify({hostId,starts,status:result.status,
  dispatched:result.dispatched,integration:result.integration?.status,failures:result.dispatchFailures,
+ workerErrors:result.workerResults?.map(entry=>entry.status==='fulfilled'
+  ? (entry.value?.result?.errorSummary||entry.value?.failureCode||null)
+  : String(entry.reason)),
  settlements:result.executionResults?.length,deliveryRevision:result.deliveryMutation?.mutationRevision||null,
  cleanup:result.cleanup}));
 `;
