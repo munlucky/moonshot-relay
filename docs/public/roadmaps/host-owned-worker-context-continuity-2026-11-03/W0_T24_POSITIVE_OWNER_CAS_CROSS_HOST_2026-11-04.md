@@ -60,7 +60,7 @@ Mac 증거: 최종 제품·테스트 빌드 operation `65089f70-4982-4aad-a107-6
 4. **기존 통합/정착 재사용:** 검증된 `resultCommitSha`들을 Step 순서로 합쳐 기존 `integrateParallelResults()`의 변경 경로·통합 Proof 검사를 사용한다. `recordOwnerWorkspaceMutation`의 CAS가 한 번만 성공해야 하며, 이후 각각의 저장된 Worker Report를 기존 `settleParallelResult()`로 정착한다. 미완료/충돌 때 Writer를 재실행하지 않고 Worktree를 보존한다.
 5. **실패 창 검증:** Owner apply 전·후, CAS 후 Report 이전, 두 Host가 복구에 동시 진입하는 경우를 격리된 실제 Run으로 재현한 뒤에만 자동 정착을 허용한다. 현재의 `recoverPendingDeliveryMaterialization()` 차단 동작을 약화시키지 않는다.
 
-**추가 Linux 검증:** TypeScript 타입 검사·제품·테스트 빌드 PASS. 분할 Host 재시작 재조회 3/3 PASS (operation `4c368c1b-8e3f-4a30-95f1-5e6f38659825`, `ec94f639-4cb4-4d05-b6c8-35f8716b487d`). 확대 회귀 56 PASS / 3 OS SKIP / 0 FAIL, 경계 검사 9 modules / 311 files / 849 edges PASS (operation `352c6b7e-f1fb-40b3-a7ba-b84679bfc8b0`). Mac Native 재조회 검증은 별도 판단한다.
+**추가 Linux 검증:** TypeScript 타입 검사·제품·테스트 빌드 PASS. 분할 Host 재시작 재조회 3/3 PASS (operation `4c368c1b-8e3f-4a30-95f1-5e6f38659825`, `ec94f639-4cb4-4d05-b6c8-35f8716b487d`). 확대 회귀 56 PASS / 3 OS SKIP / 0 FAIL, 경계 검사 9 modules / 311 files / 849 edges PASS (operation `352c6b7e-f1fb-40b3-a7ba-b84679bfc8b0`). Mac 실제 Native Codex App Server `command/exec` 동일 소스(`3e0e23913f2aad3425545e3cddbc391e87def2d0`) 빌드 PASS (operation `8fdbed5d-66be-4ee5-880c-26ad240d5ec4`), 전체 경쟁/분할/약한 Proof와 재시작 Canonical 무결성 검증 **3 PASS / 0 FAIL / 0 SKIP** (operation `b69ecdb5-f55f-4a9f-9168-ef65ef7f0051`, 로그 재확인 `e3c01bb2-0bd9-4bb8-b9ee-a18fa1c0ea62`). 테스트 전용 Git 복제본과 빈 `CODEX_HOME`은 안전 조건 확인 후 정리했고 원본 Mac checkout은 clean을 유지했다 (operation `e19d5e2c-699e-4e7c-9eae-923ac87eb4e3`).
 
 **현 단계 결론:** Canonical 결과 재조회와 Git 무결성 검증은 PASS다. 물리 Writer 종료 증명과 fence 하에서의 통합·CAS 중복 실행 차단은 아직 PASS가 아니므로 **자동 결과 합류/Owner Delivery는 활성화하지 않았다.** G0 `PARTIAL`, W1 `DEFER` 유지.
 
