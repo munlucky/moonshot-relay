@@ -29,7 +29,7 @@
 | 승인/취소 신호와 적용 시점 | NOT_TESTED | DEFER | NOT_TESTED | 다른 연결의 `turn/interrupt` 후 interrupted 상태 PASS; 승인·후손 OS 프로세스 종료 UNKNOWN |
 | 원본 transcript/terminal event 직접 접근·digest | NOT_TESTED | DEFER | NOT_TESTED | App Server 재시작 후 `thread/read(includeTurns=true)` 기록 조회 PASS; 원본 event digest/lossless·in-flight 명령 복구 UNKNOWN |
 | Native `spawn_agent` 실제 사용 가능 | 코드 wrapper만 확인 | DEFER | 코드 wrapper만 확인 | UNKNOWN |
-| old Worker에 대한 물리 쓰기 차단 | **Mac 실제 command/exec·App Server 종료 뒤 detached Writer 생존·추가 쓰기 재현. 단순 종료를 물리 Fencing으로 승인 불가** | DEFER | NOT_TESTED | **turn/interrupt-only FAIL**. [T27 Native 후손 생존](W0_T27_NATIVE_DESCENDANT_SURVIVAL_AND_RETIREMENT_GATES_2026-11-04.md): 실제 macOS 독립 PGID 자식이 Server 종료 뒤에도 fsync 추가 기록. Linux real detached OS Writer + Canonical Attempt 테스트는 예약·미완료 상태 유지 PASS. **전체 OS 후손 containment·안전 폐기/재사용, Owner CAS Delivery, Windows/분산 Host 미검증** |
+| old Worker에 대한 물리 쓰기 차단 | **Mac workspaceWrite 후손 상속: A 살아 있는 동안 B·Host 테스트 경로 쓰기 각 115/115 거부** | DEFER | NOT_TESTED | **turn/interrupt-only FAIL / 분리된 후손 쓰기 격리는 Mac Native에서 PASS**. [T28 쓰기 범위 격리](W0_T28_NATIVE_DETACHED_WRITE_CONFINEMENT_2026-11-04.md): 실제 macOS detached PPID1/독립 PGID 프로세스가 A만 쓰고 B·Host 센티널 0건 변경. **전체 후손 OS 종료·기존 Attempt 자동 폐기/재사용, 실제 Canonical A/B 동시 Delivery, Linux/Windows·동일 UID 비격리 Host 미검증** |
 
 ## 관련 소스 경계
 
