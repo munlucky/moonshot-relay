@@ -1,6 +1,7 @@
 # Host-owned Worker / Context Continuity 진행 현황
 
-- 최종 갱신: 2026-11-05 (KST) — **T49 P2 HOLD_SAFE / W0 Context SOURCE PASS / G0 Native Capability PARTIAL**
+- 최종 갱신: 2026-11-05 (KST) — **T50 OS 격리 실측 종결: 유한 DAC 반례 PASS / Native 전체 HOLD_SAFE / G0 PARTIAL**
+- T50 후속: [Native OS 격리 실행 가능성·최종 판정](T50_NATIVE_OS_ISOLATION_FEASIBILITY_AND_FINAL_DECISION_2026-11-05.md). WSL2 namespace EPERM/cgroup 비쓰기, checkout 777 확인. 별도 UID 아래 Owner 직접·symlink·사전 hardlink 및 분리 후손 늦은 쓰기 차단 관측. 실제 Native App Server/Tool 전체 보안 경계와 macOS·Windows Native 미검증으로 자동 합류 계속 비활성.
 - T49 실행 결과: [A–E 증거 매트릭스](T49_PARALLEL_EVIDENCE_MATRIX.md) · [P2 기술 결정](T49_DECISION.md) · [G0–G6 수용 판정](T49_FINAL_ACCEPTANCE.md). **후속 Linux Kernel 집중 회귀 12 PASS / 0 FAIL / 2 macOS SKIP**, 타입·모듈 경계 검사 PASS. OS Native 쓰기 배제 미증명으로 P2 HOLD_SAFE 및 W1 DEFER 유지.
 - 기준 소스: `main / c35979c408da120e4827791700ccb5a4c06ab78f` (W0-Fix 커밋·푸시 확인)
 - 문서: [PLAN](PLAN.md) · [W0 착수](W0_START.md) · [검증 계약](VERIFICATION.md) · [T49 이후 병렬 통합 실행계획](T49_END_TO_END_PARALLEL_VERIFICATION_EXECUTION_PLAN_2026-11-05.md)
