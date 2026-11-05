@@ -7,6 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createMcpBridgeHandler } from '../src/kernel/bridge/mcp.js';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
+import { createHostWorkerSessions } from '../src/host/kernel/host-worker-sessions.js';
 import { dispatchKernelTurn } from '../src/host/kernel/turn-dispatcher.js';
 import { createClaudeAdapter } from '../src/host/kernel/adapters/claude.js';
 import { createKernelHostReviewBridge } from '../src/host/kernel/lifecycle-bridge.js';
@@ -711,6 +712,9 @@ input.on('line', (line) => {
     after = parseToolText(await call(handler, 153 + i, 'kernel_status', {}));
   }
   assert.equal(assertTestRecord(after.liveWorker).turnStatus, 'interrupted');
+  assert.equal(assertTestRecord(assertTestRecord(after.liveWorker).completedTurn).threadId, 'thread-owned');
+  assert.equal(assertTestRecord(assertTestRecord(after.liveWorker).completedTurn).turnId, 'turn-owned');
+  assert.equal(assertTestRecord(assertTestRecord(after.liveWorker).completedTurn).turnStatus, 'interrupted');
   assert.equal(assertTestRecord(after.liveWorker).writerExitVerified, false);
   assert.ok(assertTestArray(after.workerAttempts).some(item =>
     assertTestRecord(item).attemptId === attemptId && assertTestRecord(item).status === 'started'),
@@ -720,4 +724,67 @@ input.on('line', (line) => {
   });
   assert.equal(assertTestRecord(assertTestRecord(blocked).result).isError, true,
     'a new Host must not start a second Worker after losing its process-local handle');
+});
+
+
+test('W2: same Host coalesces concurrent Worker start calls into one canonical Attempt', async (t) => {
+  const workspaceRoot = await createFixtureRepo();
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-worker-coalesce-'));
+  const server = path.join(runtimeHome, 'mock-app-server.cjs');
+  t.after(async () => {
+    await Promise.all([workspaceRoot, runtimeHome].map(root => rm(root, { recursive: true, force: true })));
+  });
+  await writeFile(server, String.raw`
+const readline = require('node:readline');
+const send = value => process.stdout.write(JSON.stringify(value) + '\n');
+const input = readline.createInterface({ input: process.stdin });
+input.on('line', line => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') send({ id: message.id, result: { userAgent: 'fixture' } });
+  if (message.method === 'thread/start') send({ id: message.id, result: { thread: { id: 'thread-once' } } });
+  if (message.method === 'turn/start') send({ id: message.id, result: { turn: { id: 'turn-once', status: 'inProgress' } } });
+  if (message.method === 'turn/interrupt') {
+    send({ id: message.id, result: {} });
+    send({ method: 'turn/completed', params: { threadId: message.params.threadId, turn: { id: message.params.turnId, status: 'interrupted' } } });
+  }
+});
+`);
+  const runId = 'run-coalesced-host-worker';
+  const cp = await createKernelControlPlane({ runtimeHome, projectRoot: workspaceRoot });
+  try {
+    const ensured = await cp.ensureRun({
+      runId,
+      objective: 'update README',
+      taskContract: { objective: 'update README', acceptance: ['README updated'], allowedPaths: ['README.md'] },
+    });
+    const modelInput = assertTestRecord(ensured.next);
+    assert.equal(assertTestRecord(modelInput.action).type, 'implement');
+    const sessions = createHostWorkerSessions({
+      transportOptions: { executable: process.execPath, args: [server], requestTimeoutMs: 1500 },
+    });
+    const request = { projectRoot: workspaceRoot, runtimeHome, runId, model: 'test-model', effort: 'high', modelInput };
+    const [left, right] = await Promise.all([sessions.start(request), sessions.start(request)]);
+    assert.equal(left.attemptId, right.attemptId);
+    assert.equal(cp.getHostRoutingSnapshot(runId).stepAttempts.length, 1, 'no duplicate canonical Attempt');
+    await assert.rejects(sessions.start({ ...request, model: 'conflicting-model' }), /host_worker_start_conflict/);
+    let live = await sessions.status(workspaceRoot, runId);
+    for (let n = 0; n < 100 && live?.nativeTurn?.turnId !== 'turn-once'; n++) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      live = await sessions.status(workspaceRoot, runId);
+    }
+    assert.equal(live?.nativeTurn?.turnId, 'turn-once');
+    assert.equal((await sessions.interrupt(workspaceRoot, runId, left.attemptId)).status, 'requested');
+    for (let n = 0; n < 100 && live?.turnStatus === 'pending'; n++) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      live = await sessions.status(workspaceRoot, runId);
+    }
+    assert.equal(live?.completedTurn?.threadId, 'thread-once');
+    assert.equal(live?.completedTurn?.turnId, 'turn-once');
+    assert.equal(live?.completedTurn?.turnStatus, 'interrupted');
+    assert.equal(live?.writerExitVerified, false);
+    assert.equal(live?.deliveryAuthorized, false);
+    assert.equal(cp.getHostRoutingSnapshot(runId).stepAttempts[0]?.status, 'started');
+  } finally {
+    await cp.close();
+  }
 });
