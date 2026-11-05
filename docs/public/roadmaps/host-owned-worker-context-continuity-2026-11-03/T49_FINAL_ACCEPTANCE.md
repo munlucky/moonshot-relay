@@ -42,3 +42,7 @@ I01–I12, T01–T27의 **원래 계약을 수정하지 않았다**. 각 계약�
 ## 수용 결론
 
 **안전 미증명 기능을 무리하게 출시하지 않는 검증 결론을 채택했다.** 기존 동기식 Kernel 계약의 제한된 성공 증거는 보존하고, Native 일반 자동 재합류는 HOLD_SAFE로 정지한다. 계획상 후속 P3/G6를 미완료라고 숨기거나 성공한 것처럼 처리하지 않는다. 재개 시 필요한 것은 *OS 물리 쓰기 경계 검증*과 *C Lane 남은 회귀 실패의 원인 확인*이다.
+
+## 후속 정정 — Linux C Lane 집중 회귀 통과 (2026-11-05)
+
+기존 11 PASS / 1 FAIL / 2 SKIP은 T49 최초 검사 결과다. 실제 원인은 복구 테스트 Host가 생성된 JS 엔트리포인트를 문자열 경로로 가정한 문제였다. 복구 Host가 실행 중인 test entrypoint를 import하게 수정한 후 **12 PASS / 0 FAIL / 2 macOS 전용 SKIP**, 타입 검사와 모듈 경계 검사 PASS. 제품 Runtime 수정은 없다. 따라서 **G5의 Linux 유한 Fixture 집중 회귀만 PASS로 갱신**할 수 있다. Native 전체 G5/G0는 PARTIAL이며 G1~G4 DEFER, G6 NOT_RUN, P2 HOLD_SAFE를 유지한다.

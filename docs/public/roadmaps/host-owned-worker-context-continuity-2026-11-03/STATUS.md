@@ -1,7 +1,7 @@
 # Host-owned Worker / Context Continuity 진행 현황
 
 - 최종 갱신: 2026-11-05 (KST) — **T49 P2 HOLD_SAFE / W0 Context SOURCE PASS / G0 Native Capability PARTIAL**
-- T49 실행 결과: [A–E 증거 매트릭스](T49_PARALLEL_EVIDENCE_MATRIX.md) · [P2 기술 결정](T49_DECISION.md) · [G0–G6 수용 판정](T49_FINAL_ACCEPTANCE.md). 제품 Native 자동 합류 미채택, 집중 Linux 회귀 11 PASS / 1 FAIL / 2 SKIP. 기존 W1 DEFER 유지.
+- T49 실행 결과: [A–E 증거 매트릭스](T49_PARALLEL_EVIDENCE_MATRIX.md) · [P2 기술 결정](T49_DECISION.md) · [G0–G6 수용 판정](T49_FINAL_ACCEPTANCE.md). **후속 Linux Kernel 집중 회귀 12 PASS / 0 FAIL / 2 macOS SKIP**, 타입·모듈 경계 검사 PASS. OS Native 쓰기 배제 미증명으로 P2 HOLD_SAFE 및 W1 DEFER 유지.
 - 기준 소스: `main / c35979c408da120e4827791700ccb5a4c06ab78f` (W0-Fix 커밋·푸시 확인)
 - 문서: [PLAN](PLAN.md) · [W0 착수](W0_START.md) · [검증 계약](VERIFICATION.md) · [T49 이후 병렬 통합 실행계획](T49_END_TO_END_PARALLEL_VERIFICATION_EXECUTION_PLAN_2026-11-05.md)
 - 이 파일의 상태는 **새 제품 기능의 PASS가 아니다.**

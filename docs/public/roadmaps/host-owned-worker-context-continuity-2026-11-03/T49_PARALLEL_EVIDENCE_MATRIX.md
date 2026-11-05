@@ -35,3 +35,12 @@
 | E | Linux WSL2 `6.18.54.1`, Node 22.23.4 확인; Mac MCP 기본 도구 `Linux aarch64`이고 Native Host 명령 빈 출력; T35/T47/T48 Mac 기존 근거, Windows native 미검증 | DEFER | 실제 macOS/Windows Native 추가 검증 부재, Linux namespace 차단 및 공통 OS confinement 미증명 |
 
 결과가 확인될 때 각 행에 `sourceSHA / OS / fixture / operationId / exitCode / PASS·FAIL·SKIP / childExitVerified / cleanupStatus`를 반영한다. 제품 변경은 P2 결론 이전에 하지 않는다.
+
+## T49 후속 — Kernel C Lane 실패 원인 복구 (2026-11-05)
+
+- 원인: 실제 복구 Host의 `node -e import(...)`가 생성된 테스트 엔트리포인트 `tests/kernel-parallel-positive-two-hosts.test.mjs`를 경로 문자열로 고정함. 생성 파일이 없는 `dist/tests` 직접 실행은 `ERR_MODULE_NOT_FOUND`로 실패. `import.meta.url`은 빌더가 원본 `.ts` 경로로 변환하기 때문에 해결책이 아님.
+- 최소 수정: `tests/kernel-parallel-positive-two-hosts.test.ts`의 복구 Host 자기 참조 2곳을 현재 Node test 진입점 `path.resolve(process.argv[1]!)`로 연결. 제품 코드 변경 없음.
+- Linux Node 22.23.4 / T49 검증: 빌드 304 tests/9 helpers PASS; 수정된 crash/dual/TTL 집중 3 PASS/0 FAIL; **전체 3파일 회귀 12 PASS/0 FAIL/2 macOS SKIP** (op `4ccf54c6-244a-47b9-8fd4-99e0197d9175`, exit 0).
+- `npm run typecheck` PASS, `npm run check:boundaries` PASS (9 modules/313 files/855 edges), op `bd700cc5-beb3-47e1-9ca9-aa07d49b2184`, exit 0.
+- 환경: `NODE_ENV=production` 때문에 dev TypeScript 바이너리 누락. `npm install --include=dev --no-save --ignore-scripts --package-lock=false`로 현재 테스트 설치만 복구. 사용자 설정과 package-lock 수정 없음.
+- C Lane Kernel 집중 회귀: **PASS (검증된 유한 동기식 Fixture에 한함)**. macOS OS-Scope SKIP은 Native PASS로 대체하지 않는다. 기존 Native OS Writer 반례 때문에 G0/P2는 여전히 HOLD_SAFE.

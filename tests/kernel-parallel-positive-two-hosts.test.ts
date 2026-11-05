@@ -805,7 +805,7 @@ for(;;){
        // B either loses the contention or supersedes an expired Proof epoch.
        const recover=(kind:'dual-winner'|'dual-loser'|'ttl-stale'|'ttl-new')=>{
         const child=spawn(process.execPath,['--input-type=module','-e',
-         "import('./tests/kernel-parallel-positive-two-hosts.test.mjs')"],{
+         "import("+JSON.stringify(path.resolve(process.argv[1]!))+")"],{
          cwd:process.cwd(),env:{...process.env,T42_RECOVERY_HOST_MODE:kind,
           T42_PROJECT_ROOT:projectRoot,T42_RUNTIME_HOME:runtimeHome,T42_RUN_ID:runId,
           T42_RECOVERY_ROOT:root,
@@ -865,7 +865,7 @@ for(;;){
       }else if(mode==='split-cas-crash'){
        const casMarker=path.join(root,'historical-cas-crashed.json');
        const crash=spawnSync(process.execPath,['--input-type=module','-e',
-        "import('./tests/kernel-parallel-positive-two-hosts.test.mjs')"],{
+        "import("+JSON.stringify(path.resolve(process.argv[1]!))+")"],{
         cwd:process.cwd(),encoding:'utf8',timeout:75000,
         env:{...process.env,T42_RECOVERY_HOST_MODE:'cas-crash',T42_PROJECT_ROOT:projectRoot,
          T42_RUNTIME_HOME:runtimeHome,T42_RUN_ID:runId,T42_RECOVERY_MARKER:casMarker},
