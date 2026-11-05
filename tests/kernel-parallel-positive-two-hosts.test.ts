@@ -677,7 +677,7 @@ for(const mode of ['one-owner','split-owners','split-cas-crash','split-dual-reco
      const watcher=String.raw`
 import fs from 'node:fs';
 import path from 'node:path';
-const [runtimeHome,target]=process.argv.slice(0,2);
+const [runtimeHome,target]=process.argv.slice(1,3);
 const base=path.join(runtimeHome,'host-recovery-integration-worktrees');
 const end=Date.now()+18000;
 for(;;){
