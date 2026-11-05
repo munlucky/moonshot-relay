@@ -63,18 +63,26 @@ export function createHostWorkerSessions({
       const action = record(modelInput.action);
       const step = record(action.step);
       const stepId = typeof step.stepId === 'string' ? step.stepId : '';
+      // The canonical next() no longer exposes an executable Step while the
+      // Worker is unresolved. Only the owning Host may reattach to its exact
+      // Attempt; a different Host cannot turn this block into a fresh start.
+      const reconcilingAttemptId = modelInput.status === 'worker-reconciliation-required'
+        ? String(modelInput.attemptId || '')
+        : null;
+      const matches = (session: { stepId: string; attemptId?: string; model: string; effort: string }) => (
+        (reconcilingAttemptId
+          ? reconcilingAttemptId === session.attemptId
+          : stepId === session.stepId)
+        && model === session.model && effort === session.effort
+      );
       const pending = starting.get(jobKey);
-      if (pending) {
-        if (stepId !== pending.stepId || model !== pending.model || effort !== pending.effort) {
-          throw deny('host_worker_start_conflict');
-        }
-        return pending.result;
-      }
       if (existing) {
-        if (stepId !== existing.stepId || model !== existing.model || effort !== existing.effort) {
-          throw deny('host_worker_start_conflict');
-        }
+        if (!matches(existing)) throw deny('host_worker_start_conflict');
         return view(existing);
+      }
+      if (pending) {
+        if (reconcilingAttemptId || !matches(pending)) throw deny('host_worker_start_conflict');
+        return pending.result;
       }
       if (action.type !== 'implement' || !stepId) {
         throw deny('host_worker_not_implementation_step');

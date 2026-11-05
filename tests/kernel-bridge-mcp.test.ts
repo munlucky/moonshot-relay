@@ -687,6 +687,42 @@ input.on('line', (line) => {
   const attemptId = assertTestString(started.attemptId);
   assert.equal(started.writerExitVerified, false);
   assert.equal(started.deliveryAuthorized, false);
+  // W3: a new Main must not be handed the same executable Step while the
+  // Host-owned Worker is still writing (including before Workspace bind).
+  const inFlightNext = parseToolText(await call(otherHost, 105, 'kernel_next', {}));
+  assert.equal(inFlightNext.status, 'worker-reconciliation-required');
+  assert.equal(inFlightNext.errorCode, 'WORKER_RESULT_NOT_RECONCILED');
+  assert.equal(inFlightNext.attemptId, attemptId);
+  assert.equal(assertTestRecord(inFlightNext.action).type, 'blocked');
+  assert.equal(inFlightNext.writerExitVerified, false);
+  const immutable = await createKernelControlPlane({ projectRoot: workspaceRoot, runtimeHome });
+  try {
+    const before = await immutable.getRun(runId);
+    const attemptCount = immutable.getHostRoutingSnapshot(runId).stepAttempts.length;
+    await assert.rejects(immutable.ensureRun({
+      runId,
+      taskContract: {
+        objective: 'change the scope while Worker is active',
+        acceptance: ['different result'],
+        allowedPaths: ['README.md'],
+      },
+    }), { code: 'host_worker_contract_revision_blocked' });
+    const afterRevision = await immutable.getRun(runId);
+    assert.equal(afterRevision?.contractRevision, before?.contractRevision);
+    assert.equal(afterRevision?.planRevision, before?.planRevision);
+    assert.equal(immutable.getHostRoutingSnapshot(runId).stepAttempts.length, attemptCount);
+  } finally { await immutable.close(); }
+  const sameHost = parseToolText(await call(handler, 106, 'kernel_next', {
+    worker: { action: 'start', model: 'test-model', effort: 'high' },
+  }));
+  assert.equal(assertTestRecord(sameHost.hostWorker).attemptId, attemptId,
+    'the original Host reattaches to its Attempt without a second Worker');
+  const otherStart = await call(otherHost, 107, 'kernel_next', {
+    worker: { action: 'start', model: 'test-model', effort: 'high' },
+  });
+  assert.equal(assertTestRecord(assertTestRecord(otherStart).result).isError, true);
+  assert.equal(parseToolText(otherStart).code, 'host_worker_not_implementation_step',
+    'a different Host must not turn a blocked continuation into a new start');
   const prematureReport = parseToolText(await call(otherHost, 103, 'kernel_report', {
     report: { summary: 'claiming a finished Worker', changedPaths: [] },
   }));
@@ -743,6 +779,10 @@ input.on('line', (line) => {
   assert.equal(lateReport.status, 'worker-reconciliation-required');
   assert.equal(lateReport.writerExitVerified, false);
   assert.equal(lateReport.next, null);
+  const stillUnreconciled = parseToolText(await call(otherHost, 175, 'kernel_next', {}));
+  assert.equal(stillUnreconciled.status, 'worker-reconciliation-required',
+    'interrupting a Turn cannot authorize re-execution of an unknown Writer');
+  assert.equal(assertTestRecord(stillUnreconciled.action).type, 'blocked');
   assert.equal(assertTestRecord(assertTestRecord(after.liveWorker).completedTurn).threadId, 'thread-owned');
   assert.equal(assertTestRecord(assertTestRecord(after.liveWorker).completedTurn).turnId, 'turn-owned');
   assert.equal(assertTestRecord(assertTestRecord(after.liveWorker).completedTurn).turnStatus, 'interrupted');

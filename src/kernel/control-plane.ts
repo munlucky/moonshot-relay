@@ -351,6 +351,27 @@ export const createKernelControlPlane = async ({
     if (!run) throw Object.assign(new Error(`Run ${runId} not found`), { code: 'RUN_NOT_FOUND' });
     return run;
   };
+  // A Host-owned external Writer stays live/unknown in the canonical ledger
+  // until an authorized Owner Delivery reconciles it. An App Server Turn
+  // completion, disconnect or interrupt never clears this admission fence.
+  const pendingHostWorker = (runId: string) => store.getStepAttempts(runId).find((attempt) => (
+    attempt.provenanceKind === 'host-owned-worker' && attempt.status === 'started'
+  ));
+  const hostWorkerContinuation = (runId: string, attempt: NonNullable<ReturnType<typeof pendingHostWorker>>) => ({
+    schemaVersion: 1,
+    runId,
+    status: 'worker-reconciliation-required',
+    errorCode: 'WORKER_RESULT_NOT_RECONCILED',
+    attemptId: attempt.attemptId,
+    stepId: attempt.stepId,
+    writerExitVerified: false,
+    action: {
+      type: 'blocked',
+      reason: 'worker-reconciliation-required',
+      blockingClass: 'safety',
+      guidance: 'An existing Host-owned Worker Attempt requires reconciliation before any further implementation, verification, or Owner Delivery. Inspect kernel status; do not restart this Step.',
+    },
+  });
   const requiredContractPathAccess = ['resolveRealpath', 'checkExists', 'lstatPath'] as const;
   if (!contractPathAccess || typeof contractPathAccess !== 'object') {
     throw Object.assign(new Error('kernel_host_service_missing:contractPathAccess'), {
@@ -1873,6 +1894,17 @@ export const createKernelControlPlane = async ({
     async reviseContract(runId: string, contract: NormalizedTaskContract) {
       const run = getRunSnapshot(runId);
       if (!run) throw new Error(`Run ${runId} not found`);
+      // A contract revision would invalidate the running Work Unit's scope
+      // while its external Writer may still be active. Keep the original
+      // contract immutable until the existing Attempt is reconciled.
+      const outstanding = pendingHostWorker(runId);
+      if (outstanding) {
+        throw Object.assign(new Error('host_worker_contract_revision_blocked'), {
+          code: 'host_worker_contract_revision_blocked',
+          runId,
+          attemptId: outstanding.attemptId,
+        });
+      }
       const nextContractRevision = Number(run.contractRevision || 1) + 1;
       const obligations = compileRunObligations({
         projectRoot,
@@ -3541,6 +3573,11 @@ export const createKernelControlPlane = async ({
           detail: ('detail' in deliveryRecovery ? deliveryRecovery.detail : null),
         });
       }
+      // A reconnecting Main must not receive a second implementation directive
+      // while a Host-owned external Writer is in flight or still unretired.
+      // This is only a projection; it does not manufacture a completed Step.
+      const pendingWorker = pendingHostWorker(runId);
+      if (pendingWorker) return hostWorkerContinuation(runId, pendingWorker);
       let stageContext: UnknownRecord | null | undefined = store.getKnowledgeContextReceipt(runId, run.state)?.receiptJson;
       if (!stageContext) {
         stageContext = await this.refreshStageKnowledge(runId, { stage: run.state });
@@ -4036,19 +4073,11 @@ export const createKernelControlPlane = async ({
       // is prepared or assigned. Provenance, not the later Workspace ID, is
       // the durable admission boundary against a new Main's premature report.
       // Only existing verified Owner Delivery can settle external Worker work.
-      const unreportedWorker = store.getStepAttempts(runId).find((attempt) => (
-        attempt.provenanceKind === 'host-owned-worker'
-        && attempt.status === 'started'
-      ));
+      const unreportedWorker = pendingHostWorker(runId);
       if (unreportedWorker) {
-        return {
-          schemaVersion: 1, runId,
-          status: 'worker-reconciliation-required',
-          errorCode: 'WORKER_RESULT_NOT_RECONCILED',
-          attemptId: unreportedWorker.attemptId,
-          writerExitVerified: false,
-          next: null,
-        };
+        // Report and next share exactly one unresolved-Worker projection, but
+        // a rejected report must never hand out an executable continuation.
+        return { ...hostWorkerContinuation(runId, unreportedWorker), next: null };
       }
       // A completed run is only *done* when finalization also completed
       // (P0-7); a partial finalization stays retryable instead of reporting a
