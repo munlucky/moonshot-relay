@@ -381,7 +381,22 @@ export const handleMcpToolCall = async ({
         envRunId: env.MOON_RELAY_KERNEL_RUN_ID || null,
       });
       const res = await cp.status(runId);
-      return res || { status: 'not_found' };
+      if (!res || !('run' in res)) return res || { status: 'not_found' };
+      // W2: expose persisted Attempt identity for reconnecting Main clients.
+      // A started Attempt is not proof of a live OS Writer or a resumable Turn.
+      const attempts = cp.getHostRoutingSnapshot(runId).stepAttempts;
+      return {
+        ...res,
+        workerAttempts: attempts.map((attempt) => ({
+          attemptId: attempt.attemptId,
+          stepId: attempt.stepId,
+          status: attempt.status,
+          workspaceId: attempt.workspaceId,
+          provenanceKind: attempt.provenanceKind,
+          liveState: 'unobserved',
+          writerExitVerified: false,
+        })),
+      };
     }
 
     if (name === 'kernel_detach') {

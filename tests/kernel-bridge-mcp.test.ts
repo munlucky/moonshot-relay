@@ -184,6 +184,9 @@ test('mcp bridge provides initialize, ping, tools/list, and tool execution', asy
   const statusResult = JSON.parse(assertTestString(assertTestRecord(assertTestArray(assertTestPresent(assertTestPresent(statusCall).result).content)[0]).text));
   assert.equal(statusResult.run?.runId, runId);
   assert.ok(statusResult.completion);
+  assert.ok(Array.isArray(statusResult.workerAttempts));
+  assert.ok(statusResult.workerAttempts.every((attempt: { liveState: string; writerExitVerified: boolean }) =>
+    attempt.liveState === 'unobserved' && attempt.writerExitVerified === false));
 
   // 7. tools/call kernel_report
   await writeFile(path.join(workspaceRoot, 'README.md'), '# Bridge Fixture\n\nchanged by report\n');
