@@ -1,7 +1,7 @@
 # T49 P0–P1 통합 증거 매트릭스
 
 - 작성: 2026-11-05 KST. 기준 HEAD `712185c15fea3ff406676e81cdae3d553b34df4c`.
-- 원본 계약: [T49 실행계획](T49_END_TO_END_PARALLEL_VERIFICATION_EXECUTION_PLAN_2026-11-05.md), [VERIFICATION](VERIFICATION.md), [STATUS](STATUS.md).
+- 원본 계약: [원본 계획](PLAN.md), [VERIFICATION](VERIFICATION.md), [STATUS](STATUS.md).
 - Linux MCP: WSL2 Linux 6.18.54.1, Node 22.23.4, `main=origin/main` clean. Linux continuity task revision 55, 미정착 실행 0.
 - Mac MCP: 사용자 원본 checkout `4f1ed1b0`, 독립 continuity task revision 47, 미정착 실행 0. **원본 체크아웃과 Codex 계정은 수정하지 않는다.**
 - 판정은 각각의 증거에서 직접 확인되는 범위로 제한한다. 기존 부정 반례는 후속 단발 정상 시험으로 무효화하지 않는다.

@@ -3,7 +3,7 @@
 - 날짜: 2026-11-05 KST
 - 소스: `main 712185c15fea3ff406676e81cdae3d553b34df4c`
 - 판정: **HOLD_SAFE** (기술안전 검증 결론이며 기능 완료 PASS가 아님)
-- 근거: [증거 매트릭스](T49_PARALLEL_EVIDENCE_MATRIX.md), [실행계획](T49_END_TO_END_PARALLEL_VERIFICATION_EXECUTION_PLAN_2026-11-05.md), [STATUS](STATUS.md).
+- 근거: [증거 매트릭스](T49_PARALLEL_EVIDENCE_MATRIX.md), [원본 계획](PLAN.md), [STATUS](STATUS.md).
 
 ## 결정 근거
 
