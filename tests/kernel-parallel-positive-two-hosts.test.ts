@@ -500,6 +500,9 @@ for(const mode of ['one-owner','split-owners','split-cas-crash','split-dual-reco
   const projectRoot=path.join(root,'project'),runtimeHome=path.join(root,'runtime'),runId='t24-positive';
   let cp:Awaited<ReturnType<typeof createKernelControlPlane>>|null=null,projectId:string|null=null;
   const children:ChildProcessWithoutNullStreams[]=[];
+  // Keep every launched Host outcome observed even if a barrier assertion
+  // fails before the normal Promise.all join.
+  const hostOutcomes:Promise<Record<string,unknown>>[]=[];
   let nativeSettled=false;
   try{
    await mkdir(projectRoot);if(nativeEnabled)await mkdir(path.join(root,'reservations'));git(projectRoot,['init','-b','main']);git(projectRoot,['config','user.name','T24 Test']);git(projectRoot,['config','user.email','t24@example.invalid']);
@@ -536,10 +539,17 @@ for(const mode of ['one-owner','split-owners','split-cas-crash','split-dual-reco
    const prepared=await prepareExecutionWorkspaces({repoRoot:projectRoot,runtimeHome,projectId,runId,baseCommit:git(projectRoot,['rev-parse','HEAD']),steps});
    const startHost=(host:string)=>{
     const child=spawn(process.execPath,['--input-type=module','-e',hostCode],{cwd:process.cwd(),env:{...process.env,P_ROOT:root,P_REPO:projectRoot,P_RUNTIME:runtimeHome,P_RUN:runId,P_HOST:host,P_MODE:mode},stdio:['pipe','pipe','pipe']});children.push(child);
-    return new Promise<Record<string,unknown>>((resolve,reject)=>{let out='',err='';child.stdout.on('data',v=>out+=String(v));child.stderr.on('data',v=>err+=String(v));child.on('error',reject);child.on('exit',async code=>{
-     if(code!==0)return reject(Error('Host '+host+' exited '+code+' stderr='+err+' stdout='+out));
+    const outcome=new Promise<Record<string,unknown>>((resolve,reject)=>{let out='',err='';child.stdout.on('data',v=>out+=String(v));child.stderr.on('data',v=>err+=String(v));child.on('error',reject);child.on('exit',async(code,signal)=>{
+     if(code!==0)return reject(Error('Host '+host+' exited code='+code+' signal='+signal+
+      ' pid='+child.pid+' stderr='+err+' stdout='+out));
      try{resolve(JSON.parse(await readFile(path.join(root,'result-'+host),'utf8')))}catch(e){reject(e)}
     })});
+    // Attaching a rejection observer prevents an unhandledRejection from
+    // obscuring the first parent/test assertion. The caller still receives
+    // and checks the original rejecting Promise.
+    void outcome.catch(()=>{});
+    hostOutcomes.push(outcome);
+    return outcome;
    };
    const a=startHost('A'),b=startHost('B');
    await waitFor(async()=>existsSync(path.join(root,'ready-A'))&&existsSync(path.join(root,'ready-B')),'both ready');
@@ -917,6 +927,9 @@ for(;;){
    await writeFile(path.join(root,'release'),'go').catch(()=>{});
    for(const child of children)if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');
    await Promise.all(children.map(child=>new Promise<void>(resolve=>{if(child.exitCode!==null||child.signalCode!==null)return resolve();child.once('exit',()=>resolve())})));
+   // Reap the two Host promises on early assertion failure too. Never turn
+   // a failed Host into a successful test; the original assertion is retained.
+   await Promise.allSettled(hostOutcomes);
    if(!nativeEnabled||nativeSettled){
     if(projectId)await cleanupExecutionWorkspaces({runtimeHome,projectId,runId,repoRoot:projectRoot,retain:false});
     await cp?.close();await rm(root,{recursive:true,force:true});
