@@ -486,10 +486,10 @@ const inspectHistoricalCasCrashHost=[
 ].join('\n');
 
 for(const mode of ['one-owner','split-owners','split-cas-crash','split-dual-recovery',
- 'split-ttl-proof','split-weak-proof'] as const){
+ 'split-ttl-proof','split-proof-drift','split-weak-proof'] as const){
  test(`T24 positive two-Host batch collision: ${mode}`,{
   timeout:95000,
-  skip: ['split-cas-crash','split-dual-recovery','split-ttl-proof'].includes(mode)
+  skip: ['split-cas-crash','split-dual-recovery','split-ttl-proof','split-proof-drift'].includes(mode)
    && process.platform==='darwin' && process.env.T24_NATIVE_POSITIVE==='1'
    ? 'Native Writer descendants are not proven retired'
    : false,
@@ -517,6 +517,12 @@ for(const mode of ['one-owner','split-owners','split-cas-crash','split-dual-reco
       "while(!fs.existsSync(marker)&&Date.now()<deadline)Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,30);",
       "if(!fs.existsSync(marker))process.exit(29);",
       "}",
+      ...(mode==='split-proof-drift'?[
+       "fs.writeFileSync('.t43-proof-active','started');",
+       "const deadline=Date.now()+15000;",
+       "while(!fs.existsSync('.t43-proof-done')&&Date.now()<deadline)Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,30);",
+       "if(!fs.existsSync('.t43-proof-done'))process.exit(43);",
+      ]:[]),
      ].join('\n')+'\n');
    git(projectRoot,['add','--all']);git(projectRoot,['commit','-m','baseline']);
    cp=await createKernelControlPlane({runtimeHome,projectRoot});
@@ -661,6 +667,70 @@ for(const mode of ['one-owner','split-owners','split-cas-crash','split-dual-reco
      assert.equal((await reopened.getRun(runId))?.mutationRevision,0,'read-only recovery must not mutate Owner');
     }finally{
      await reopened.close();
+    }
+    if(mode==='split-proof-drift'){
+     // Old Host files were initially canonical. A separate bounded OS
+     // process writes to its ORIGINAL Step Worktree during the new Host's
+     // scoped Proof, after the earlier readback but before preflight returns.
+     const victim=prepared.steps[0]!.workspaceRoot;
+     const lateFile=path.join(victim,'t43-late-writer');
+     const watcher=String.raw`
+import fs from 'node:fs';
+import path from 'node:path';
+const [runtimeHome,target]=process.argv.slice(0,2);
+const base=path.join(runtimeHome,'host-recovery-integration-worktrees');
+const end=Date.now()+18000;
+for(;;){
+ if(Date.now()>end)process.exit(43);
+ if(fs.existsSync(base)){
+  const paths=fs.readdirSync(base,{recursive:true});
+  for(const name of paths){
+   if(path.basename(String(name))!=='.t43-proof-active')continue;
+   const directory=path.dirname(path.join(base,String(name)));
+   fs.writeFileSync(target,'LATE_WRITER');
+   fs.writeFileSync(path.join(directory,'.t43-proof-done'),'done');
+   process.exit(0);
+  }
+ }
+ await new Promise(resolve=>setTimeout(resolve,20));
+}
+`;
+     let child:ChildProcessWithoutNullStreams|null=null;
+     let watch:Promise<number>|null=null;
+     if(process.platform==='darwin'){
+      child=spawn(process.execPath,['--input-type=module','-e',watcher,
+       runtimeHome,lateFile],{cwd:process.cwd(),stdio:['pipe','pipe','pipe']});
+      children.push(child);
+      watch=new Promise<number>((resolve,reject)=>{
+       let errors='';
+       child!.stderr.on('data',chunk=>errors+=String(chunk));
+       child!.stdout.resume();
+       child!.on('error',reject);
+       child!.on('exit',code=>code===0?resolve(code):reject(Error('T43 finite stale writer '+code+' '+errors)));
+      });
+     }
+     const candidate=await verifyCanonicalParallelRecoveryCandidate({
+      controlPlane:cp,runId,projectRoot,runtimeHome,commandRef:'test:ok',
+     });
+     assert.equal(candidate.status,'blocked',JSON.stringify(candidate));
+     assert.equal(candidate.deliveryAuthorized,false);
+     assert.equal(candidate.writerExitVerified,false);
+     if(process.platform==='darwin'){
+      assert.equal(candidate.failureCode,'recovery_receipt_changed_during_proof',JSON.stringify(candidate));
+      assert.equal(await watch,0);
+      assert.equal(await readFile(lateFile,'utf8'),'LATE_WRITER');
+      const now=readCanonicalParallelWorkerReceipts({controlPlane:cp,runId,projectRoot,runtimeHome});
+      assert.equal(now.status,'blocked');
+      if(now.status==='blocked')assert.equal(now.code,'canonical_git_result_drift');
+     }else assert.equal(candidate.failureCode,'recovery_os_write_scope_unavailable');
+     assert.equal((await cp.getRun(runId))?.mutationRevision,0);
+     assert.equal(cp.stateStore.getStepAttempts(runId).length,2);
+     assert.deepEqual(cp.stateStore.getStepAttempts(runId).map(a=>a.status),['started','started']);
+     assert.equal(cp.getExecutableSteps(runId).steps.length,0);
+     assert.equal(existsSync(path.join(projectRoot,'src/alpha/result.txt')),false);
+     assert.equal(existsSync(path.join(projectRoot,'src/beta/result.txt')),false);
+     assert.equal(cp.stateStore.getWorkspaceMutationLockV2(run.workspaceId!),null);
+     if(process.platform==='darwin')await rm(lateFile);
     }
     if(['split-owners','split-cas-crash','split-dual-recovery','split-ttl-proof'].includes(mode)){
      // This preflight reuses both persisted Worker Commit SHAs but has no
