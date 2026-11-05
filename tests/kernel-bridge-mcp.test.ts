@@ -655,6 +655,20 @@ input.on('line', (line) => {
   const runId = 'run-mcp-host-owned-worker';
   const call = (client: typeof handler, id: number, name: string, args: Record<string, unknown>) =>
     client({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: { workspaceRoot, runId, ...args } } });
+  const defaultHost = createMcpBridgeHandler({ runtimeHome });
+  const rejectedRunId = 'run-mcp-unverified-native-worker';
+  const rejected = await call(defaultHost, 102, 'kernel_next', {
+    runId: rejectedRunId,
+    contractJson: { objective: 'implement README change', acceptance: ['README contains a new sentence'], allowedPaths: ['README.md'] },
+    worker: { action: 'start', model: 'test-model', effort: 'high' },
+  });
+  assert.equal(parseToolText(rejected).code, 'host_worker_native_isolation_unverified');
+  const verificationPlane = await createKernelControlPlane({ projectRoot: workspaceRoot, runtimeHome });
+  try {
+    assert.ok(!(await verificationPlane.getRun(rejectedRunId)), 'a rejected Worker start must not create a Run');
+  } finally {
+    await verificationPlane.close();
+  }
   const began = await call(handler, 100, 'kernel_next', {
     contractJson: { objective: 'implement README change', acceptance: ['README contains a new sentence'], allowedPaths: ['README.md'] },
     worker: { action: 'start', model: 'test-model', effort: 'high' },
@@ -665,7 +679,6 @@ input.on('line', (line) => {
   const attemptId = assertTestString(started.attemptId);
   assert.equal(started.writerExitVerified, false);
   assert.equal(started.deliveryAuthorized, false);
-  const defaultHost = createMcpBridgeHandler({ runtimeHome });
   const denied = await call(defaultHost, 101, 'kernel_next', {
     worker: { action: 'start', model: 'test-model', effort: 'high' },
   });

@@ -113,13 +113,25 @@ const host = (mode: string, root: string, projectRoot: string, runtimeHome: stri
   assert.equal(result.error, undefined, String(result.error || ''));
   return result;
 };
-const setup = async () => {
+const setup = async ({ checkProofIsolation = false } = {}) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 't38-two-host-cas-'));
   const projectRoot = path.join(root, 'owner');
   const runtimeHome = path.join(root, 'runtime');
   await Promise.all([mkdir(projectRoot), mkdir(runtimeHome)]);
+  if (checkProofIsolation) {
+    const sentinel = path.join(root, 'protected-proof-target.txt');
+    await writeFile(sentinel, 'protected\n');
+    await writeFile(path.join(projectRoot, 'verify.cjs'), [
+      "const fs = require('node:fs');",
+      "if (!['alpha','beta'].every(name => fs.existsSync('src/' + name + '/result.txt'))) return;",
+      `try { fs.writeFileSync(${JSON.stringify(sentinel)}, 'escaped'); }`,
+      "catch (error) { if (['EACCES','EPERM'].includes(error.code)) return; throw error; }",
+      "throw new Error('Proof wrote outside its worktree');",
+    ].join('\n'));
+  }
   await writeFile(path.join(projectRoot, 'package.json'), JSON.stringify({
-    name: 't38-two-host-cas-fixture', scripts: { 'test:ok': 'node --version' },
+    name: 't38-two-host-cas-fixture',
+    scripts: { 'test:ok': checkProofIsolation ? 'node verify.cjs' : 'node --version' },
   }));
   git(projectRoot, ['init', '-b', 'main']);
   git(projectRoot, ['config', 'user.name', 'T38 Host Test']);
@@ -159,7 +171,7 @@ for (const mode of ['crash', 'normal', 'guarded', 'guarded-crash'] as const) {
     skip: mode.startsWith('guarded') && process.platform !== 'darwin' && 'requires macOS scoped OS write containment',
     timeout: 95000,
   }, async () => {
-    const f = await setup();
+    const f = await setup({ checkProofIsolation: mode === 'guarded' });
     let safe = false;
     try {
       const first = host(mode, f.root, f.projectRoot, f.runtimeHome, f.runId);
@@ -196,6 +208,7 @@ for (const mode of ['crash', 'normal', 'guarded', 'guarded-crash'] as const) {
         assert.equal(sent.settled, 2);
         if(mode==='guarded'){
           assert.ok(existsSync(path.join(f.root,'guarded-held-at-settlement')));
+          assert.equal(await readFile(path.join(f.root, 'protected-proof-target.txt'), 'utf8'), 'protected\n');
           assert.equal(sent.verificationMechanism,'macos-seatbelt');
         }
       }

@@ -55,6 +55,7 @@ interface ParallelSettlement {
   workerWorkspaceId?: string | null; workerWorkspaceIdentity?: string | null; deliveryWorkspaceIdentity?: string | null;
   result?: { changedPaths?: string[] } | null;
 }
+type GuardedProofWorkspace = { root: string; identity: string };
 type ExecutedProof = {
   obligationId: string; commandRef?: (string | null) | undefined;
   verificationScope?: (ReturnType<typeof deriveVerificationSettlementScope>) | undefined;
@@ -91,6 +92,7 @@ interface ProofRequest {
  verificationScope?: ReturnType<typeof deriveVerificationSettlementScope>;
  evidenceIdentity?: NormalizedEvidenceIdentity | null; freshnessInputs?: string[] | null; sharedExecution?: ReportProofExecution | null;
  [proofExecutionCacheRequest]?: ProofCacheContext | null;
+ [guardedProofRequest]?: GuardedProofWorkspace | null;
 }
 interface ProofCacheContext { key?: string; runId?: string; sourceIdentity?: string | null; workspaceIdentity?: string | null; mutationRevision?: number | null; contractRevision?: number | null; scopeAuthority?: unknown; scopeIdentity?: unknown; }
 interface ProofCacheInput { run?: KernelRun | null; obligation?: PersistedRunObligation | null; request?: ProofRequest; scopeObservation?: ScopedWorkspaceObservation | null; }
@@ -189,6 +191,7 @@ import { buildCoordinatorSurface } from './bridge/coordinator-surface.js';
 // cache entry or replay one from another report/run through executeProof().
 const proofExecutionCacheContexts = new WeakMap<ReportProofExecution, ProofCacheContext>();
 const proofExecutionCacheRequest = Symbol('kernel-proof-execution-cache-request');
+const guardedProofRequest = Symbol('kernel-guarded-proof-request');
 
 const rememberProofExecutionCacheEntry = (execution: ReportProofExecution, context: ProofCacheContext | null) => {
   if (execution && typeof execution === 'object' && context) {
@@ -3115,7 +3118,7 @@ export const createKernelControlPlane = async ({
     // Hard evidence path: the Kernel runtime resolves a trusted manifest
     // command, executes it itself, and binds the result to the workspace
     // identity observed immediately before execution.
-    async executeProof(runId: string, { obligationId = 'default', commandRef, timeoutMs, acceptanceCoverage = [], flakyRerun = false, discovered = null, networkPolicy = 'inherited', evidenceIdentity: requestedEvidenceIdentity = null, freshnessInputs = null, allowEvidenceReuse = true, sharedExecution = null, [proofExecutionCacheRequest]: proofExecutionCacheContext = null }: ProofRequest = {}): Promise<{ run: StoredKernelRun; execution: ReportProofExecution }> {
+    async executeProof(runId: string, { obligationId = 'default', commandRef, timeoutMs, acceptanceCoverage = [], flakyRerun = false, discovered = null, networkPolicy = 'inherited', evidenceIdentity: requestedEvidenceIdentity = null, freshnessInputs = null, allowEvidenceReuse = true, sharedExecution = null, [proofExecutionCacheRequest]: proofExecutionCacheContext = null, [guardedProofRequest]: guardedProof = null }: ProofRequest = {}): Promise<{ run: StoredKernelRun; execution: ReportProofExecution }> {
       const run = getRunSnapshot(runId);
       if (!run) throw new Error(`Run ${runId} not found`);
       if (!discovered && !commandRef) throw new Error('Trusted proof requires a command reference');
@@ -3134,6 +3137,11 @@ export const createKernelControlPlane = async ({
       }
 
       const observation = observeWorkspaceIdentity({ projectRoot });
+      if (guardedProof && (discovered || observation.identity !== guardedProof.identity)) {
+        throw Object.assign(new Error('Guarded report proof requires the delivered source and a bound command'), {
+          code: 'guarded_report_proof_source_mismatch',
+        });
+      }
       store.observeWorkspaceIdentity(runId, observation.identity);
 
       const scopeAuthority = authoritativeVerificationScope(declaredObligation);
@@ -3346,7 +3354,28 @@ export const createKernelControlPlane = async ({
       // manifest scripts. Flaky reruns re-execute once at the same identity.
       const runner = discovered
         ? () => executeApprovedProof({ projectRoot, command: discovered.command, args: discovered.args || [], approval: discovered.approval, label: obligationId, timeoutMs, evidenceDir, networkPolicy })
-        : () => executeTrustedProof({ projectRoot, commandRef, timeoutMs, evidenceDir, networkPolicy });
+        : () => {
+          const proofRoot = guardedProof?.root ?? projectRoot;
+          const assertProofSource = () => {
+            if (guardedProof && observeWorkspaceIdentity({ projectRoot: proofRoot }).identity !== guardedProof.identity) {
+              throw Object.assign(new Error('Guarded report proof workspace differs from the delivered source'), {
+                code: 'guarded_report_proof_source_mismatch',
+              });
+            }
+          };
+          assertProofSource();
+          const proof = executeTrustedProof({
+            projectRoot: proofRoot, commandRef, timeoutMs, evidenceDir, networkPolicy,
+            ...(guardedProof ? { writeScope: proofRoot } : {}),
+          });
+          assertProofSource();
+          if (guardedProof && proof.status === 'passed' && !proof.writeContainment) {
+            throw Object.assign(new Error('Guarded report proof did not establish write containment'), {
+              code: 'guarded_report_proof_containment_missing',
+            });
+          }
+          return proof;
+        };
       const execution: ProofExecutionResult & { flaky?: boolean } = flakyRerun ? executeWithFlakyRerun(runner) : runner();
       finishVerificationTelemetry(execution);
 
@@ -3772,7 +3801,7 @@ export const createKernelControlPlane = async ({
     // already committed before this method is entered; the worker receipt is
     // checked against its pre-delivery attempt lineage and is never replayed
     // through a refreshed capsule.
-    async settleParallelResult(runId: string, payload: RawReport = {}, { deliveryMutation = null, result = null }: { deliveryMutation?: (UnknownRecord | null) | undefined; result?: UnknownRecord | null } = {}) {
+    async settleParallelResult(runId: string, payload: RawReport = {}, { deliveryMutation = null, result = null, guardedProofRoot = null }: { deliveryMutation?: (UnknownRecord | null) | undefined; result?: UnknownRecord | null; guardedProofRoot?: string | null } = {}) {
       try {
         preflight(runId, 'report');
       } catch (error) {
@@ -3965,6 +3994,10 @@ export const createKernelControlPlane = async ({
       try {
         const reportResult = await this.reportUnderLease(runId, payload, {
           fencingToken,
+          guardedProof: guardedProofRoot === null ? null : {
+            root: guardedProofRoot,
+            identity: String(deliveryWorkspaceIdentity),
+          },
           parallelSettlement: {
             expectedMutationRevision: Number(snapshot.expectedMutationRevision),
             expectedWorkspaceIdentity: String(snapshot.expectedWorkspaceIdentity),
@@ -4025,7 +4058,7 @@ export const createKernelControlPlane = async ({
       }
     },
 
-    async reportUnderLease(runId: string, payload: RawReport, { fencingToken, parallelSettlement = null }: { fencingToken: number; parallelSettlement?: ParallelSettlement | null }) {
+    async reportUnderLease(runId: string, payload: RawReport, { fencingToken, parallelSettlement = null, guardedProof = null }: { fencingToken: number; parallelSettlement?: ParallelSettlement | null; guardedProof?: GuardedProofWorkspace | null }) {
       const run = requireRun(runId);
       const incomingOperation = inspectReportOperation(runId, payload);
       let reportKey = incomingOperation.reportKey;
@@ -4683,7 +4716,8 @@ export const createKernelControlPlane = async ({
                   flakyRerun: request.flakyRerun === true,
                   acceptanceCoverage: request.acceptanceCoverage || [],
                   networkPolicy: request.networkPolicy || 'inherited',
-                  allowEvidenceReuse: request.allowEvidenceReuse !== false,
+                  allowEvidenceReuse: !guardedProof && request.allowEvidenceReuse !== false,
+                  [guardedProofRequest]: guardedProof,
                   sharedExecution: cachedExecution,
                   [proofExecutionCacheRequest]: proofExecutionCacheContext,
                 }));
@@ -4702,7 +4736,8 @@ export const createKernelControlPlane = async ({
                 flakyRerun: request.flakyRerun === true,
                 acceptanceCoverage: request.acceptanceCoverage || [],
                 networkPolicy: request.networkPolicy || 'inherited',
-                allowEvidenceReuse: request.allowEvidenceReuse !== false,
+                allowEvidenceReuse: !guardedProof && request.allowEvidenceReuse !== false,
+                [guardedProofRequest]: guardedProof,
                 [proofExecutionCacheRequest]: proofExecutionCacheContext,
               }));
             }

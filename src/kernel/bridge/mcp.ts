@@ -464,6 +464,13 @@ export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, 
       const callArgs = toolArgs || {};
       const resolvedRuntimeHome = runtimeHome || resolveKernelRuntimeHome({ env });
       try {
+        const worker = asRecord(callArgs.worker);
+        const startsWorker = name === 'kernel_next' && worker.action === 'start';
+        // Reject an unverified Native start before kernel_next can create
+        // or advance a Run. Only the Host supplies the capability.
+        if (startsWorker && verifiedNativeWriterIsolation !== true) {
+          throw Object.assign(new Error('host_worker_native_isolation_unverified'), { code: 'host_worker_native_isolation_unverified' });
+        }
         const resultData = await handleMcpToolCall({
           name,
           parameters: callArgs,
@@ -472,16 +479,9 @@ export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, 
           hostBridge,
           nativeHost,
         });
-        const worker = asRecord(callArgs.worker);
         const modelInput = asRecord(resultData);
         let resultWithWorker: unknown = resultData;
-        if (worker.action === 'start' && name === 'kernel_next') {
-          // Host-side capability, never accepted from a Main/model argument.
-          // Same-SID and hardlink late Writer counterexamples still block
-          // production Native dispatch until physical exclusion is verified.
-          if (verifiedNativeWriterIsolation !== true) {
-            throw Object.assign(new Error('host_worker_native_isolation_unverified'), { code: 'host_worker_native_isolation_unverified' });
-          }
+        if (startsWorker) {
           if (typeof callArgs.workspaceRoot !== 'string') throw new Error('host_worker_workspace_required');
           const runId = String(modelInput.runId || callArgs.runId || '');
           if (!runId || typeof worker.model !== 'string' || typeof worker.effort !== 'string') {

@@ -1137,6 +1137,9 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
   const settlementFailures: Array<{ stepId: string; reportResult: UnknownRecord | null }> = [];
   try {
   if (integration.status === 'integrated') {
+    if (guardedIntegration && !integrationWorkspace?.workspaceRoot) {
+      throw new Error('Guarded settlement requires the integration workspace');
+    }
     for (const item of successful) {
       if (guardedOwnerFence) {
         // After CAS the expected revision and identity must advance. Renew
@@ -1160,6 +1163,7 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
           actorSessionId: optionalText(item.outcome.result?.actorSessionId || item.outcome.attempt?.actorSessionId || workerReport.actorSessionId),
         }, {
           deliveryMutation: integration.deliveryMutation,
+          ...(guardedIntegration ? { guardedProofRoot: integrationWorkspace!.workspaceRoot } : {}),
           result: {
             attemptId: optionalText(item.outcome.attempt?.attemptId || workerReport.attemptId || null),
             executionWorkspaceId: item.workspace.workspaceId,
