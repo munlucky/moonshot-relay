@@ -91,6 +91,7 @@
 | T43-A macOS intermittent weak-proof Host exit follow-up | **Mac 기준선 전체 7 PASS·수정 후 전체 7 PASS, Linux 15 PASS/2 OS SKIP / 기존 실패 원인 미확정** | [T43-A](W0_T43A_WEAK_PROOF_HOST_EXIT_DIAGNOSTICS_2026-11-05.md): 조기 종료 signal/PID 관측 및 테스트 OS 자식 정착 개선, G0 PARTIAL 유지. |
 | T44 Native hardlink alias boundary | **Mac Native 1 PASS·Linux 7 PASS/2 OS SKIP, 사전 생성 외부 하드링크 100회 우회 확인 / Native Delivery 불승인** | [T44](W0_T44_NATIVE_HARDLINK_ALIAS_WRITE_ISOLATION_2026-11-05.md): 경로 격리와 외부 inode 보호 차이, 새 Git Worktree 파일은 독립 inode. |
 | T45 clean Worktree hardlink reuse trust boundary | **Linux 5 PASS·Mac 5 PASS / 재사용 Git 검사만으로 외부 inode 안전성 불충분** | [T45](W0_T45_CLEAN_WORKTREE_HARDLINK_ADMISSION_2026-11-05.md): 새 Git Worktree는 별도 inode, 외부 Host의 동일 내용 하드링크 치환 후 clean 재사용 허용. Native 자동 합류 DEFER. |
+| T46 same-account external process Worktree mutation | **Linux 6 PASS·확대 11 PASS/1 OS SKIP·Mac 6 PASS / Native Delivery 불승인** | [T46](W0_T46_SAME_ACCOUNT_EXTERNAL_WORKTREE_MUTATION_2026-11-05.md): OS 파일 쓰기와 Kernel Writer 예약의 독립 신뢰 경계 실측. |
 | G0 전체 | **PARTIAL** | **W1 live worker 구현 중단**, 미완료 Native 실험부터 계속 |
 
 **다음 단계 (이미 결정된 경로):** 정상 동작하는 Native Host에서 격리 프로세스/Thread를 만들어 (1) start handle (2) 상태 재조회 (3) Main 독립성 (4) cancel/approval (5) old writer 안전 정지를 입증한다. Live Worker가 안 되지만 안전 중단·새 Thread 재개만 가능하다면 원래 계획의 B가 아니라 **degraded-safe-resume 별도 제한 채택**으로 분류한다. 원래 `E` authority-only resume을 먼저 검증하고, `C` Handoff는 추가 효용 입증 전 도입하지 않는다.

@@ -33,6 +33,7 @@
 | T43-A — Mac split-weak-proof 간헐 종료 원인 추적 | **기준선 전체 7 PASS·관측 개선 후 전체 7 PASS·Linux 15 PASS/2 OS SKIP; 기존 단발 FAIL 원인 미확정** | [T43-A](W0_T43A_WEAK_PROOF_HOST_EXIT_DIAGNOSTICS_2026-11-05.md): Host signal/PID 기록 및 조기 실패 시 자식 Promise 정착 보강, 제품 코드 미변경. |
 | T44 — Native Sandbox 하드링크·경로 별칭 격리 | **Mac Native 1 PASS·Linux 7 PASS/2 OS SKIP; 사전 존재 하드링크 외부 쓰기 100회 확인 / 자동 합류 DEFER** | [T44](W0_T44_NATIVE_HARDLINK_ALIAS_WRITE_ISOLATION_2026-11-05.md): 새로운 외부 하드링크 생성과 심볼릭 링크 쓰기 거부, 사전 존재 외부 inode 하드링크 우회 발견. |
 | T45 — Git clean Worktree의 외부 inode 별칭·Native 재사용 | **Linux 5 PASS·Mac 5 PASS / Git clean으로 하드링크 비존재 증명 불가 / Native 자동 합류 DEFER** | [T45](W0_T45_CLEAN_WORKTREE_HARDLINK_ADMISSION_2026-11-05.md): 추적 파일을 동일 내용 외부 하드링크로 교체해도 Git clean과 같은 Attempt 재사용 통과, 이후 Owner inode 변경. 기존 Reservation은 별개. |
+| T46 — 동일 OS 계정 외부 Writer의 Worktree 생성 후·실행 중 변경 | **Linux 6 PASS·확대 11 PASS/1 SKIP·Mac 6 PASS / 자동 합류 DEFER** | [T46](W0_T46_SAME_ACCOUNT_EXTERNAL_WORKTREE_MUTATION_2026-11-05.md): 외부 OS 프로세스가 생성 직후와 Writer 실행 중 Worktree를 변경하지만 중복 Host 예약은 거부됨. |
 | W0-Fix — ContextReceipt | **SOURCE PASS** | T23 재현 → 최소 수정, focused 17/17, typecheck/build/boundaries PASS. 확장 test:source-runtime timeout |
 | W1 — Host-owned Worker | **DEFER / 실제 Attempt-Writer Gate 대기** | Host 소유 Native commandExecution handle과 격리 Worktree/기존 Owner CAS를 연결해 종료·격리 증거 확인 전 같은 Workspace 재할당 금지 필요 |
 | W2 — status/signal/reconnect | NOT STARTED | W1 생존·Owner 경계 필요 |
