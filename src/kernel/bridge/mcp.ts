@@ -304,6 +304,19 @@ export const handleMcpToolCall = async ({
   const lifecycleBridge = configuredHostBridge;
 
   try {
+    if (name === 'kernel_attach' && parameters.worker?.action === 'interrupt') {
+      // A signal is not a new task invocation. Never ensure/start/successor
+      // the Run or dispatch a review just to interrupt an existing Turn.
+      if (parameters.contractJson) throw new Error('host_worker_signal_contract_not_allowed');
+      const runId = parameters.runId || await cp.resolveRunId({
+        explicitRunId: null,
+        envRunId: env.MOON_RELAY_KERNEL_RUN_ID || null,
+      });
+      const run = await cp.getRun(runId);
+      return run
+        ? { schemaVersion: 1, runId, status: 'attached', runStatus: run.status }
+        : { schemaVersion: 1, runId, status: 'not_found' };
+    }
     if (name === 'kernel_attach' || name === 'kernel_next') {
       const taskContract = parameters.contractJson || null;
       const explicitRunId = parameters.runId || null;
@@ -497,12 +510,16 @@ export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, 
           });
           resultWithWorker = { ...modelInput, hostWorker: running };
         } else if (worker.action === 'interrupt' && name === 'kernel_attach') {
-          if (typeof callArgs.workspaceRoot !== 'string' || typeof worker.attemptId !== 'string') {
-            throw new Error('host_worker_signal_invalid');
+          if (modelInput.status === 'not_found') {
+            resultWithWorker = modelInput;
+          } else {
+            if (typeof callArgs.workspaceRoot !== 'string' || typeof worker.attemptId !== 'string') {
+              throw new Error('host_worker_signal_invalid');
+            }
+            const runId = String(modelInput.runId || callArgs.runId || '');
+            const signal = await workerSessions.interrupt(callArgs.workspaceRoot, runId, worker.attemptId);
+            resultWithWorker = { ...modelInput, hostWorkerSignal: signal };
           }
-          const runId = String(modelInput.runId || callArgs.runId || '');
-          const signal = await workerSessions.interrupt(callArgs.workspaceRoot, runId, worker.attemptId);
-          resultWithWorker = { ...modelInput, hostWorkerSignal: signal };
         } else if (Object.keys(worker).length > 0) {
           throw new Error('host_worker_action_unsupported');
         } else if (name === 'kernel_status' && typeof callArgs.workspaceRoot === 'string') {

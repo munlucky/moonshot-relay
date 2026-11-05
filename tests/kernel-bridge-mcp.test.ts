@@ -657,6 +657,12 @@ input.on('line', (line) => {
   const call = (client: typeof handler, id: number, name: string, args: Record<string, unknown>) =>
     client({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: { workspaceRoot, runId, ...args } } });
   const defaultHost = createMcpBridgeHandler({ runtimeHome });
+  const unknownSignalId = 'run-no-existing-host-worker';
+  const unknownSignal = parseToolText(await call(handler, 190, 'kernel_attach', {
+    runId: unknownSignalId,
+    worker: { action: 'interrupt', attemptId: 'attempt-00000000-0000-0000-0000-000000000000' },
+  }));
+  assert.equal(unknownSignal.status, 'not_found', 'a signal must not create a new Run');
   const rejectedRunId = 'run-mcp-unverified-native-worker';
   const rejected = await call(defaultHost, 102, 'kernel_next', {
     runId: rejectedRunId,
@@ -667,6 +673,7 @@ input.on('line', (line) => {
   const verificationPlane = await createKernelControlPlane({ projectRoot: workspaceRoot, runtimeHome });
   try {
     assert.ok(!(await verificationPlane.getRun(rejectedRunId)), 'a rejected Worker start must not create a Run');
+    assert.ok(!(await verificationPlane.getRun(unknownSignalId)), 'an unknown signal must not create a Run');
   } finally {
     await verificationPlane.close();
   }
@@ -711,11 +718,19 @@ input.on('line', (line) => {
   assert.equal(external.liveWorker, null, 'a different Host may not claim a live handle');
   assert.ok(assertTestArray(external.workerAttempts).some(item => assertTestRecord(item).attemptId === attemptId));
 
+  const beforeSignal = await createKernelControlPlane({ projectRoot: workspaceRoot, runtimeHome });
+  const revisionBeforeSignal = (await beforeSignal.getRun(runId))?.revision;
+  await beforeSignal.close();
   const signaled = await call(handler, 151, 'kernel_attach', {
     worker: { action: 'interrupt', attemptId },
   });
   assert.equal(assertTestRecord(assertTestRecord(signaled).result).isError, false, JSON.stringify(signaled));
   assert.equal(assertTestRecord(parseToolText(signaled).hostWorkerSignal).status, 'requested');
+  const afterSignal = await createKernelControlPlane({ projectRoot: workspaceRoot, runtimeHome });
+  try {
+    assert.equal((await afterSignal.getRun(runId))?.revision, revisionBeforeSignal,
+      'signal-only attach must not advance the canonical Run');
+  } finally { await afterSignal.close(); }
   let after = parseToolText(await call(handler, 152, 'kernel_status', {}));
   for (let i = 0; i < 20 && assertTestRecord(after.liveWorker).turnStatus === 'pending'; i++) {
     await new Promise(resolve => setTimeout(resolve, 20));
