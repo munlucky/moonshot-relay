@@ -47,7 +47,7 @@ export interface CodexAppServerTurnObservation {
 }
 
 export interface CodexAppServerInterruptResult {
-  status: 'requested' | 'not-running' | 'not-addressable' | 'unavailable' | 'unknown';
+  status: 'requested' | 'queued' | 'not-running' | 'not-addressable' | 'unavailable' | 'unknown';
   writerExitVerified: false;
 }
 
@@ -256,13 +256,22 @@ export async function createCodexAppServerTransport({
     throw cause;
   }
 
+  const sendInterrupt = (): Promise<CodexAppServerInterruptResult> => {
+    if (interruptRequest) return interruptRequest;
+    if (!activeTurn) return Promise.resolve({ status: 'not-addressable', writerExitVerified: false });
+    interruptRequest = rpc('turn/interrupt', { threadId: activeTurn.threadId, turnId: activeTurn.turnId })
+      .then(() => ({ status: 'requested' as const, writerExitVerified: false as const }))
+      .catch(() => ({ status: 'unknown' as const, writerExitVerified: false as const }));
+    return interruptRequest;
+  };
+
   return {
     observeTurn() {
       const available = !closed && !poisoned && !exited;
       return {
         connection: available ? 'connected' as const : 'unavailable' as const,
         turn: !available ? 'unknown' as const
-          : interruptRequested && activeTurn ? 'interrupt-requested' as const
+          : interruptRequested ? 'interrupt-requested' as const
           : activeTurn ? 'running' as const
           : active ? 'starting' as const : 'idle' as const,
         threadId: activeTurn?.threadId || null,
@@ -274,16 +283,12 @@ export async function createCodexAppServerTransport({
     interruptActiveTurn() {
       if (closed || poisoned || exited) return Promise.resolve({ status: 'unavailable' as const, writerExitVerified: false as const });
       if (!active) return Promise.resolve({ status: 'not-running' as const, writerExitVerified: false as const });
-      // Never interrupt an unidentified Turn. A delayed turn/start ACK can
-      // otherwise cancel a different provider Turn after a connection loss.
-      if (!activeTurn) return Promise.resolve({ status: 'not-addressable' as const, writerExitVerified: false as const });
-      if (interruptRequest) return interruptRequest;
+      // Keep the request on this exact Host Turn until turn/start returns its
+      // identity. The Host must never cancel an unspecified or later Turn.
       interruptRequested = true;
-      interruptRequest = rpc('turn/interrupt', { threadId: activeTurn.threadId, turnId: activeTurn.turnId })
-        .then(() => ({ status: 'requested' as const, writerExitVerified: false as const }))
-        .catch(() => ({ status: 'unknown' as const, writerExitVerified: false as const }));
-      // An RPC ACK is not a Turn interrupt event and never proves OS Writer exit.
-      return interruptRequest;
+      if (!activeTurn) return Promise.resolve({ status: 'queued' as const, writerExitVerified: false as const });
+      // An RPC ACK is not a Turn interrupt event or an OS Writer exit proof.
+      return sendInterrupt();
     },
 
     async runTurn({ cwd: requestedCwd, prompt, model, effort, timeoutMs: turnTimeout, executionOwner = null, onNativeExecution = null, writableWorker = null }) {
@@ -389,6 +394,7 @@ export async function createCodexAppServerTransport({
         if (!turnId) throw error('codex_app_server_turn_missing');
         startedTurn = { threadId, turnId };
         activeTurn = startedTurn;
+        if (interruptRequested) void sendInterrupt();
         for (const message of buffered) observe(message);
         buffered = [];
         const turnTimer = setTimeout(() => {

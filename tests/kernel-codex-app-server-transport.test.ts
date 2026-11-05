@@ -244,6 +244,31 @@ test('Host observes the active Native Turn and requests one interrupt without tr
   });
 });
 
+test('Host queues an early cancel until the same Turn is addressable without claiming Writer exit', async () => {
+  await withFixture(async ({ workspace, server }) => {
+    const transport = await createCodexAppServerTransport({
+      executable: process.execPath, args: [server], requestTimeoutMs: 1500,
+      env: { ...process.env, TEST_MODE: 'stall-turn' },
+    });
+    try {
+      const running = transport.runTurn({ ...turn(workspace), timeoutMs: 2500 });
+      const first = await transport.interruptActiveTurn();
+      const second = await transport.interruptActiveTurn();
+      assert.deepEqual([first, second], [
+        { status: 'queued', writerExitVerified: false },
+        { status: 'queued', writerExitVerified: false },
+      ]);
+      assert.equal(transport.observeTurn().turn, 'interrupt-requested');
+      const finished = await running;
+      assert.equal(finished.turnStatus, 'interrupted');
+      assert.equal(finished.writerExitVerified, false);
+      assert.equal(transport.observeTurn().turn, 'idle');
+    } finally {
+      await transport.close();
+    }
+  });
+});
+
 test('Initialize failure retires its owned App Server even when SIGTERM is ignored', {
   skip: process.platform === 'win32' && 'POSIX signal fixture',
 }, async () => {
