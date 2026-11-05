@@ -7,6 +7,7 @@ import { startHostOwnedWritableAttempt, type HostOwnedWritableAttemptHandle } fr
 import { reserveHostWorkspaceWriter } from './workspace-writer-reservation.js';
 import { buildModelVisiblePromptMessage, buildModelVisiblePromptView } from './model-capsule-view.js';
 import { runGit } from '../../shared/git-safe.js';
+import { verifyHostOwnedWorkerCandidate } from './parallel-dispatcher.js';
 import type { CodexAppServerTransportOptions } from './codex-app-server-transport.js';
 
 type RecordValue = Record<string, unknown>;
@@ -19,8 +20,8 @@ interface Job {
   handle: HostOwnedWritableAttemptHandle;
   completedTurn: { threadId: string; turnId: string; workspaceId: string; turnStatus: 'completed' | 'failed' | 'interrupted' | 'unknown' } | null;
   resultCandidate: Awaited<HostOwnedWritableAttemptHandle['result']>['resultCandidate'];
-  resultPatch: string | null;
   resultCaptureStatus: 'not-attempted' | 'captured' | 'inconsistent';
+  preflight: { status: string; failureCode: string | null; patchDigest: string | null } | null;
   turnStatus: 'pending' | 'completed' | 'failed' | 'interrupted' | 'unknown';
 }
 export interface HostWorkerStartInput {
@@ -54,6 +55,7 @@ export function createHostWorkerSessions({
     completedTurn: job.completedTurn,
     resultCandidate: job.resultCandidate,
     resultCaptureStatus: job.resultCaptureStatus,
+    preflight: job.preflight,
     writerExitVerified: false as const,
     deliveryAuthorized: false as const,
   });
@@ -131,20 +133,62 @@ export function createHostWorkerSessions({
             attemptId: attempt.attemptId, prompt, model, effort,
             ...(transportOptions ? { transportOptions } : {}),
           });
-          const job: Job = { runId, stepId, attemptId: attempt.attemptId, model, effort, handle, completedTurn: null, resultCandidate: null, resultPatch: null, resultCaptureStatus: 'not-attempted', turnStatus: 'pending' };
+          const job: Job = { runId, stepId, attemptId: attempt.attemptId, model, effort, handle, completedTurn: null, resultCandidate: null, resultCaptureStatus: 'not-attempted', preflight: null, turnStatus: 'pending' };
           jobs.set(jobKey, job);
           owned = true;
-          void handle.result.then((result) => {
+          void handle.result.then(async (result) => {
             job.turnStatus = result.nativeTurn.turnStatus;
             job.resultCandidate = result.resultCandidate;
-            job.resultPatch = result.resultPatch;
             job.resultCaptureStatus = result.resultCaptureStatus;
             job.completedTurn = {
               threadId: result.nativeTurn.threadId, turnId: result.nativeTurn.turnId,
               workspaceId: result.workspaceId, turnStatus: result.nativeTurn.turnStatus,
             };
+            const candidate = result.resultCandidate;
+            if (!candidate || result.resultCaptureStatus !== 'captured') {
+              job.preflight = { status: 'blocked',
+                failureCode: result.resultCaptureStatus === 'inconsistent'
+                  ? 'host_worker_snapshot_inconsistent' : 'host_worker_result_unavailable',
+                patchDigest: null };
+              return;
+            }
+            if (candidate.outsideStepScope.length > 0 || candidate.ownerApplyCheck !== 'passed') {
+              job.preflight = { status: 'blocked', failureCode: 'host_worker_result_scope_or_apply_rejected',
+                patchDigest: null };
+              return;
+            }
+            // The verification command is selected from existing Kernel hard
+            // obligations and the Host's trusted project command manifest.
+            // No model text or caller-supplied command may become a proof.
+            const manifest = new Set(cp.discoverProjectCommands().map(item => item.commandRef));
+            const commandRef = cp.getRunObligations(runId)
+              .filter(item => item.evidenceClass === 'hard')
+              .flatMap(item => item.allowedCommandRefs || [])
+              .find(ref => manifest.has(ref));
+            if (!commandRef) {
+              job.preflight = { status: 'blocked', failureCode: 'host_worker_bound_proof_unavailable',
+                patchDigest: null };
+              return;
+            }
+            job.preflight = { status: 'running', failureCode: null, patchDigest: null };
+            const proof = await verifyHostOwnedWorkerCandidate({
+              controlPlane: cp, projectRoot: ownerRoot, runtimeHome: runtimeRoot,
+              runId, stepId, attemptId: job.attemptId, workspaceId: result.workspaceId,
+              workspaceRoot: result.workspaceRoot, baseWorkspaceIdentity: result.baseWorkspaceIdentity,
+              resultCommitSha: candidate.resultCommitSha,
+              patchDigest: candidate.patchDigest, changedPaths: candidate.changedPaths,
+              resultWorkspaceIdentity: candidate.workspaceIdentity, commandRef,
+            });
+            job.preflight = {
+              status: String(proof.status || 'blocked'),
+              failureCode: typeof proof.failureCode === 'string' ? proof.failureCode : null,
+              patchDigest: typeof record(proof.candidate).patchDigest === 'string'
+                ? String(record(proof.candidate).patchDigest) : null,
+            };
           }, () => {
             job.turnStatus = 'unknown';
+          }).catch(() => {
+            job.preflight = { status: 'blocked', failureCode: 'host_worker_preflight_unknown', patchDigest: null };
           }).finally(async () => { await cp.close(); }).catch(() => {
             // Closing the Host DB is not an OS Writer termination observation.
           });

@@ -11,6 +11,7 @@ import { createKernelControlPlane } from '../src/host/kernel/control-plane-runti
 import { runHostOwnedWritableAttempt, startHostOwnedWritableAttempt } from '../src/host/kernel/host-owned-writable-attempt.js';
 import { prepareHostWriterAttemptWorktree, snapshotHostWorkerPatch } from '../src/host/kernel/workspace/physical-worktree.js';
 import { reserveHostWorkspaceWriter } from '../src/host/kernel/workspace-writer-reservation.js';
+import { verifyHostOwnedWorkerCandidate } from '../src/host/kernel/parallel-dispatcher.js';
 
 const fakeServer = String.raw`
 const readline = require('node:readline');
@@ -614,8 +615,11 @@ test('Explicit Host-owned Writable runner binds a real Kernel Attempt and a sepa
       },
     };
     try {
-      await cp.startRun({ runId, objective: 'canonical Host-owned writable attempt test' });
-      const a = cp.beginAttempt(runId);
+      await cp.startRun({ runId, objective: 'canonical Host-owned writable attempt test',
+        taskContract: { objective: 'write fixture', acceptance: ['fixture is written'],
+          allowedPaths: ['mock-writer-started.txt'] },
+      });
+      const a = cp.beginAttempt(runId, { provenanceKind: 'host-owned-worker' });
       assert.ok(a?.attemptId && a.stepId);
       const active = startHostOwnedWritableAttempt({ ...input, stepId: a.stepId, attemptId: a.attemptId });
       assert.equal(active.attemptId, a.attemptId);
@@ -637,7 +641,6 @@ test('Explicit Host-owned Writable runner binds a real Kernel Attempt and a sepa
       assert.match(first.resultCandidate?.patchDigest || '', /^sha256:[a-f\d]{64}$/);
       assert.match(first.resultCandidate?.resultCommitSha || '', /^[a-f\d]{40,64}$/);
       assert.equal(first.resultCandidate?.ownerApplyCheck, 'passed');
-      assert.match(first.resultPatch || '', /diff --git a\/mock-writer-started\.txt/);
       assert.equal(first.resultCandidate?.deliveryAuthorized, false);
       assert.equal(first.resultCandidate?.writerExitVerified, false);
       assert.equal(cp.getAttemptById(runId, a.attemptId)?.resultCommitSha, null,
@@ -651,6 +654,59 @@ test('Explicit Host-owned Writable runner binds a real Kernel Attempt and a sepa
       assert.equal(cp.getAttemptById(runId, a.attemptId)?.status, 'started');
       assert.equal((await readdir(reservationRoot)).length, 1);
       assert.equal(git('status', '--porcelain'), '', 'the Owner may not be modified by a Writable Worker');
+      const candidate = first.resultCandidate;
+      assert.ok(candidate);
+      // The existing integration verifier consumes this single Host-owned
+      // result commit without ever mutating the Owner or settling the Step.
+      const ready = await verifyHostOwnedWorkerCandidate({
+        controlPlane: cp, projectRoot: workspace, runtimeHome, runId,
+        stepId: a.stepId, attemptId: a.attemptId,
+        workspaceId: first.workspaceId, workspaceRoot: first.workspaceRoot,
+        baseWorkspaceIdentity: first.baseWorkspaceIdentity,
+        resultCommitSha: candidate.resultCommitSha,
+        patchDigest: candidate.patchDigest, changedPaths: candidate.changedPaths,
+        resultWorkspaceIdentity: candidate.workspaceIdentity,
+        commandRef: 'test:fixture',
+        verificationRunner: async ({ workspaceRoot }) => {
+          assert.equal(await readFile(path.join(workspaceRoot, 'mock-writer-started.txt'), 'utf8'), 'started');
+          return { status: 'passed', passed: true, verificationRef: 'fixture-only' };
+        },
+      });
+      assert.equal(ready.status, 'verified', JSON.stringify(ready));
+      assert.equal(ready.writerExitVerified, false);
+      assert.equal(ready.deliveryAuthorized, false);
+      assert.equal(cp.stateStore.getWorkspaceMutationLockV2((await cp.getRun(runId))!.workspaceId!), null,
+        'read-only preflight must release the existing Owner fence');
+      assert.equal(cp.getAttemptById(runId, a.attemptId)?.status, 'started');
+      assert.equal(cp.getAttemptById(runId, a.attemptId)?.resultCommitSha, null,
+        'proof-only preflight cannot mint a canonical delivery receipt');
+      assert.equal(git('status', '--porcelain'), '', 'verified candidate cannot mutate Owner');
+      const refused = await verifyHostOwnedWorkerCandidate({
+        controlPlane: cp, projectRoot: workspace, runtimeHome, runId,
+        stepId: a.stepId, attemptId: a.attemptId,
+        workspaceId: first.workspaceId, workspaceRoot: first.workspaceRoot,
+        baseWorkspaceIdentity: first.baseWorkspaceIdentity,
+        resultCommitSha: 'f'.repeat(40),
+        patchDigest: candidate.patchDigest, changedPaths: candidate.changedPaths,
+        resultWorkspaceIdentity: candidate.workspaceIdentity,
+        commandRef: 'test:fixture',
+        verificationRunner: async () => ({ status: 'passed', passed: true }),
+      });
+      assert.equal(refused.status, 'blocked', 'a forged result commit cannot be verified');
+      const failedProof = await verifyHostOwnedWorkerCandidate({
+        controlPlane: cp, projectRoot: workspace, runtimeHome, runId,
+        stepId: a.stepId, attemptId: a.attemptId,
+        workspaceId: first.workspaceId, workspaceRoot: first.workspaceRoot,
+        baseWorkspaceIdentity: first.baseWorkspaceIdentity,
+        resultCommitSha: candidate.resultCommitSha,
+        patchDigest: candidate.patchDigest, changedPaths: candidate.changedPaths,
+        resultWorkspaceIdentity: candidate.workspaceIdentity,
+        commandRef: 'test:fixture',
+        verificationRunner: async () => ({ status: 'failed', passed: false }),
+      });
+      assert.equal(failedProof.status, 'blocked', 'a failing trusted proof must not authorize Delivery');
+      assert.equal(cp.getAttemptById(runId, a.attemptId)?.status, 'started');
+      assert.equal(git('status', '--porcelain'), '');
 
       await assert.rejects(runHostOwnedWritableAttempt({
         ...input, stepId: a.stepId, attemptId: a.attemptId,

@@ -65,8 +65,6 @@ export interface HostOwnedWritableAttemptObservation {
     writerExitVerified: false;
     deliveryAuthorized: false;
   } | null;
-  // Host-only snapshot bytes; never surfaced to Main or persisted as trusted evidence.
-  resultPatch: string | null;
   resultCaptureStatus: 'not-attempted' | 'captured' | 'inconsistent';
   // The only sources of completion/review/Delivery authority are the
   // existing Kernel report, proof verification and Owner CAS paths.
@@ -232,7 +230,6 @@ export async function runHostOwnedWritableAttempt({
       nativeTurn,
       commandEvents,
       resultCandidate,
-      resultPatch: patch,
       resultCaptureStatus,
       writerExitVerified: false,
       reportAuthority: 'none',

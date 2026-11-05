@@ -917,6 +917,15 @@ input.on('line', line => {
   assert.match(assertTestString(candidate.patchDigest), /^sha256:[a-f\d]{64}$/);
   assert.equal(candidate.ownerApplyCheck, 'passed');
   assert.ok(!JSON.stringify(live).includes('diff --git'), 'raw patch bytes stay Host-private');
+  // The Host automatically handles pre-delivery proof selection. It does not
+  // turn an unsupported Native isolation environment into Owner delivery.
+  let preflight = optionalTestRecord(live.preflight);
+  for (let n = 0; n < 40 && !preflight; n++) {
+    await new Promise(resolve => setTimeout(resolve, 20));
+    preflight = optionalTestRecord(assertTestRecord(parseToolText(await independentMain(100 + n, 'kernel_status')).liveWorker).preflight);
+  }
+  assert.ok(preflight && typeof preflight.status === 'string');
+  assert.notEqual(preflight.status, 'delivered');
   assert.equal(candidate.writerExitVerified, false);
   assert.equal(candidate.deliveryAuthorized, false);
   assert.equal(await readFile(path.join(workspaceRoot, 'README.md'), 'utf8'), '# Bridge Fixture\n',

@@ -1254,6 +1254,177 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
 
 export const dispatchKernelRun = (options: DispatchKernelParallelInput = {} as DispatchKernelParallelInput) => dispatchKernelParallel(options);
 
+// One Host-owned Worker result enters the SAME integration verifier used by
+// parallel results. Proof-only: no Owner mutation, CAS, Report or automatic
+// Step transition. Native Writer retirement is a separate requirement.
+export const verifyHostOwnedWorkerCandidate = async ({
+  controlPlane, projectRoot, runtimeHome, runId, stepId, attemptId,
+  workspaceId, workspaceRoot, baseWorkspaceIdentity,
+  resultCommitSha, patchDigest, changedPaths, resultWorkspaceIdentity,
+  commandRef, verificationRunner = null,
+}: {
+  controlPlane: ControlPlaneLike;
+  projectRoot: string;
+  runtimeHome: string;
+  runId: string;
+  stepId: string;
+  attemptId: string;
+  workspaceId: string;
+  workspaceRoot: string;
+  baseWorkspaceIdentity: string;
+  resultCommitSha: string;
+  patchDigest: string;
+  changedPaths: string[];
+  resultWorkspaceIdentity: string;
+  commandRef: string;
+  // Only direct, isolated fixture calls may supply an alternate proof runner.
+  // This method NEVER grants Delivery authority, even after a passing proof.
+  verificationRunner?: ((input: VerificationRunnerInput) => UnknownRecord | Promise<UnknownRecord>) | null;
+}): Promise<UnknownRecord> => {
+  const blocked = (failureCode: string): UnknownRecord => ({
+    schemaVersion: 1, runId, status: 'blocked', failureCode,
+    writerExitVerified: false, deliveryAuthorized: false,
+  });
+  if (!commandRef || !resultCommitSha || changedPaths.length === 0 || !patchDigest
+    || !baseWorkspaceIdentity || !resultWorkspaceIdentity) return blocked('host_worker_result_incomplete');
+  // A product proof runner requires OS-scoped protection for the integration
+  // Worktree. An injected fixture runner cannot become a Delivery authority.
+  if (!verificationRunner && process.platform !== 'darwin') return blocked('host_worker_proof_write_scope_unavailable');
+  const run = await controlPlane.getRun(runId);
+  const step = controlPlane.getRunSteps(runId).find((row) => row.stepId === stepId);
+  const attempt = controlPlane.getAttemptById(runId, attemptId);
+  if (!run?.projectId || run.status !== 'active' || !run.workspaceId
+    || !step || step.planRevision !== run.planRevision
+    || !attempt || attempt.provenanceKind !== 'host-owned-worker'
+    || attempt.status !== 'started' || attempt.stepId !== stepId
+    || attempt.workspaceId !== workspaceId
+    || attempt.baseWorkspaceIdentity !== baseWorkspaceIdentity
+    || Number(attempt.mutationRevision) !== Number(run.mutationRevision)
+    || (step.executionWorkspaceId && step.executionWorkspaceId !== workspaceId)) {
+    return blocked('host_worker_canonical_attempt_changed');
+  }
+  if (changedPaths.some((file) =>
+    !(step.allowedPaths || []).some((scope) => pathWithin(file, scope))
+    || (step.forbiddenPaths || []).some((scope) => pathWithin(file, scope)))) {
+    return blocked('host_worker_result_scope_rejected');
+  }
+  const ownerHead = baseCommit(projectRoot);
+  const workerHead = baseCommit(workspaceRoot);
+  const ownerIdentity = observeWorkspaceIdentity({ projectRoot }).identity;
+  if (!ownerHead || ownerHead !== workerHead || (run.baseCommitSha && ownerHead !== run.baseCommitSha)
+    || (run.currentWorkspaceIdentity && run.currentWorkspaceIdentity !== ownerIdentity)
+    || observeWorkspaceIdentity({ projectRoot: workspaceRoot }).identity !== resultWorkspaceIdentity) {
+    return blocked('host_worker_result_workspace_drift');
+  }
+  const commit = runGit(workspaceRoot, ['rev-list', '--parents', '-n', '1', resultCommitSha]);
+  const patch = runGit(workspaceRoot, ['show', '--format=', '--binary', resultCommitSha], { maxBuffer: 64 * 1024 * 1024 });
+  const files = runGit(workspaceRoot, ['diff-tree', '--no-commit-id', '--name-only', '-z', '-r', resultCommitSha]);
+  if (commit.error || commit.status !== 0 || patch.error || patch.status !== 0
+    || files.error || files.status !== 0
+    || String(commit.stdout || '').trim().split(/\s+/u)[1] !== ownerHead
+    || digest(String(patch.stdout || '')) !== patchDigest
+    || JSON.stringify(String(files.stdout || '').split('\0').filter(Boolean).sort()) !== JSON.stringify([...changedPaths].sort())) {
+    return blocked('host_worker_result_commit_drift');
+  }
+  const expected = {
+    expectedMutationRevision: Number(run.mutationRevision ?? -1),
+    expectedWorkspaceIdentity: ownerIdentity,
+    expectedHeadCommitSha: ownerHead,
+    expectedProjectId: run.projectId,
+    expectedWorktreeId: run.worktreeId,
+    expectedWorkspaceId: run.workspaceId,
+  };
+  let fence: OwnerFenceLike | null = null;
+  let outcome: UnknownRecord = blocked('host_worker_integration_not_started');
+  try {
+    // Reuse the Kernel Owner fence across ALL integration writes and Proof.
+    // This is cooperating-Host serialization, never OS Writer retirement.
+    fence = await controlPlane.acquireOwnerWorkspaceMutationFence(runId, expected);
+    const renew = async (): Promise<void> => {
+      if (!fence) throw Object.assign(new Error('host_worker_fence_missing'), { code: 'delivery_mutation_fence_lost' });
+      const updated = await controlPlane.renewOwnerWorkspaceMutationFence(runId, {
+        ...expected, workspaceId: fence.lock.workspaceId,
+        fencingToken: fence.lock.fencingToken,
+        sessionToken: fence.lock.sessionToken,
+      });
+      if (!updated.lock) throw Object.assign(new Error('host_worker_fence_lost'), { code: 'delivery_mutation_fence_lost' });
+      fence = { lock: updated.lock };
+    };
+    const prepared = await prepareRecoveryIntegrationWorktree({
+      repoRoot: projectRoot, baseCommit: ownerHead,
+      runtimeHome, runId, projectId: run.projectId,
+    });
+    const registered = controlPlane.registerExecutionWorkspace(runId, prepared.workspaceRoot);
+    if (!registered?.workspaceId) return blocked('host_worker_integration_workspace_missing');
+    const integration: RegisteredWorkspace = { ...prepared, ...registered } as RegisteredWorkspace;
+    const result: IntegrationReceipt = {
+      stepId, step: step as StepLike,
+      workspace: { workspaceId, workspaceRoot },
+      outcome: { status: 'passed' }, resultCommitSha,
+      changedPaths, patchDigest, resultWorkspaceIdentity,
+    };
+    const integrationResult = await integrateParallelResults({
+      run: { ...run, baseCommitSha: ownerHead },
+      steps: [step as StepLike], results: [result],
+      integrationWorkspace: integration,
+      deliveryWorkspace: { workspaceRoot: projectRoot },
+      integrationVerification: { commandRef },
+      executeIntegrationVerification: verificationRunner || (async ({ commandRef: proofRef, workspaceRoot: proofRoot }) => {
+        const execution = executeTrustedProof({
+          projectRoot: proofRoot, commandRef: proofRef,
+          writeScope: proofRoot,
+          evidenceDir: path.join(runtimeHome, 'evidence', run.projectId!, runId, 'host-worker-preflight'),
+        });
+        const protectedProof = execution.writeContainment?.mechanism === 'macos-seatbelt';
+        return { status: protectedProof ? execution.status : 'failed',
+          passed: protectedProof && execution.status === 'passed',
+          verificationRef: execution.evidenceRef, execution };
+      }),
+      // The integration engine must not attempt an Owner delivery even if
+      // a fixture verification returns passed.
+      beforeCherryPick: renew,
+      materializeDelivery: () => { throw new Error('host_worker_preflight_has_no_delivery_authority'); },
+      verifyOnly: true, runtimeHome, projectRoot, runId,
+    });
+    await renew();
+    const lastRun = await controlPlane.getRun(runId);
+    const afterAttempt = controlPlane.getAttemptById(runId, attemptId);
+    if (lastRun?.mutationRevision !== run.mutationRevision
+      || observeWorkspaceIdentity({ projectRoot }).identity !== ownerIdentity
+      || observeWorkspaceIdentity({ projectRoot: workspaceRoot }).identity !== resultWorkspaceIdentity
+      || afterAttempt?.status !== 'started') return blocked('host_worker_preflight_drift');
+    outcome = integrationResult.status === 'verified'
+      ? { schemaVersion: 1, runId, status: 'verified',
+        candidate: {
+          patchDigest: integrationResult.patchDigest,
+          changedPaths: integrationResult.changedPaths,
+          integrationWorkspaceIdentity: integrationResult.integrationWorkspaceIdentity,
+        },
+        verification: integrationResult.verification,
+        writerExitVerified: false, deliveryAuthorized: false,
+      }
+      : blocked(String(integrationResult.failureCode || 'host_worker_integration_failed'));
+  } catch (error: unknown) {
+    outcome = blocked(String(errorRecord(error).code || 'host_worker_preflight_failed'));
+  } finally {
+    if (fence) {
+      try {
+        await controlPlane.releaseOwnerWorkspaceMutationFence(runId, {
+          workspaceId: fence.lock.workspaceId,
+          fencingToken: fence.lock.fencingToken,
+          sessionToken: fence.lock.sessionToken,
+        });
+      } catch {
+        outcome = blocked('host_worker_owner_fence_release_unconfirmed');
+      }
+    }
+  }
+  // Do not reuse/cleanup the physical Worktree: a detached Proof process
+  // might still be alive even if the outer proof invocation returned.
+  return outcome;
+};
+
+
 // T42-B preflight: assemble and verify old canonical Worker results without
 // claiming that the old Native Writer or any detached descendant has exited.
 // The caller cannot turn this result into a Delivery authorization.
