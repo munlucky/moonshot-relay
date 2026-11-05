@@ -93,6 +93,7 @@
 | T45 clean Worktree hardlink reuse trust boundary | **Linux 5 PASS·Mac 5 PASS / 재사용 Git 검사만으로 외부 inode 안전성 불충분** | [T45](W0_T45_CLEAN_WORKTREE_HARDLINK_ADMISSION_2026-11-05.md): 새 Git Worktree는 별도 inode, 외부 Host의 동일 내용 하드링크 치환 후 clean 재사용 허용. Native 자동 합류 DEFER. |
 | T46 same-account external process Worktree mutation | **Linux 6 PASS·확대 11 PASS/1 OS SKIP·Mac 6 PASS / Native Delivery 불승인** | [T46](W0_T46_SAME_ACCOUNT_EXTERNAL_WORKTREE_MUTATION_2026-11-05.md): OS 파일 쓰기와 Kernel Writer 예약의 독립 신뢰 경계 실측. |
 | T47 OS Writer ownership/permission feasibility | **Linux DAC/namespace·macOS chmod/Seatbelt 실측 / Native Delivery 불승인** | [T47](W0_T47_OS_WRITER_OWNERSHIP_ISOLATION_FEASIBILITY_2026-11-05.md): 같은 UID 권한 복구와 Sandbox 비참여 프로세스 쓰기를 확인, 전역 강제 격리 미구현. |
+| T48 Native App Server security domain initialization | **Mac 실제 App Server 임시 CODEX_HOME·Seatbelt initialize PASS / 전체 Native Delivery 불승인** | [T48](W0_T48_NATIVE_APP_SERVER_SECURITY_DOMAIN_2026-11-05.md): 외부 읽기 허용·쓰기 거부, 전체 Tool/후손 종료·비참여 프로세스 격리는 미증명. |
 | G0 전체 | **PARTIAL** | **W1 live worker 구현 중단**, 미완료 Native 실험부터 계속 |
 
 **다음 단계 (이미 결정된 경로):** 정상 동작하는 Native Host에서 격리 프로세스/Thread를 만들어 (1) start handle (2) 상태 재조회 (3) Main 독립성 (4) cancel/approval (5) old writer 안전 정지를 입증한다. Live Worker가 안 되지만 안전 중단·새 Thread 재개만 가능하다면 원래 계획의 B가 아니라 **degraded-safe-resume 별도 제한 채택**으로 분류한다. 원래 `E` authority-only resume을 먼저 검증하고, `C` Handoff는 추가 효용 입증 전 도입하지 않는다.
