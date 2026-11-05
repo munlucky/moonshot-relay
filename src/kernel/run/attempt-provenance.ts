@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 export const ATTEMPT_PROVENANCE_KINDS = Object.freeze([
   'routed',
   'owner-session',
+  'host-owned-worker',
   'kernel-owned',
   'legacy-unattributed',
 ] as const);

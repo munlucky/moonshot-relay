@@ -110,7 +110,7 @@ export function createHostWorkerSessions({
             workspaceRoot: ownerRoot, reservationRoot, runId,
             attemptId: 'owner-scope:' + runId, workspaceId: run.workspaceId,
           });
-          const attempt = cp.beginAttempt(runId, { stepId: stepId });
+          const attempt = cp.beginAttempt(runId, { stepId, provenanceKind: 'host-owned-worker' });
           if (!attempt?.attemptId || attempt.stepId !== stepId) throw deny('host_worker_attempt_unavailable');
           const handle = startHostOwnedWritableAttempt({
             controlPlane: cp, repoRoot: ownerRoot, runtimeHome: runtimeRoot,

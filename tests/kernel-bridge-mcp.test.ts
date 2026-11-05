@@ -680,6 +680,16 @@ input.on('line', (line) => {
   const attemptId = assertTestString(started.attemptId);
   assert.equal(started.writerExitVerified, false);
   assert.equal(started.deliveryAuthorized, false);
+  const prematureReport = parseToolText(await call(otherHost, 103, 'kernel_report', {
+    report: { summary: 'claiming a finished Worker', changedPaths: [] },
+  }));
+  assert.equal(prematureReport.status, 'worker-reconciliation-required');
+  assert.equal(prematureReport.errorCode, 'WORKER_RESULT_NOT_RECONCILED');
+  assert.equal(prematureReport.attemptId, attemptId);
+  assert.ok(assertTestArray(parseToolText(await call(otherHost, 104, 'kernel_status', {})).workerAttempts)
+    .some(item => assertTestRecord(item).attemptId === attemptId && assertTestRecord(item).provenanceKind === 'host-owned-worker'));
+  assert.equal(prematureReport.writerExitVerified, false);
+  assert.equal(prematureReport.next, null, 'an unverified Worker cannot advance report.next');
   const denied = await call(defaultHost, 101, 'kernel_next', {
     worker: { action: 'start', model: 'test-model', effort: 'high' },
   });
@@ -712,6 +722,12 @@ input.on('line', (line) => {
     after = parseToolText(await call(handler, 153 + i, 'kernel_status', {}));
   }
   assert.equal(assertTestRecord(after.liveWorker).turnStatus, 'interrupted');
+  const lateReport = parseToolText(await call(otherHost, 174, 'kernel_report', {
+    report: { summary: 'Turn ended, but OS Writer exit remains unknown', changedPaths: [] },
+  }));
+  assert.equal(lateReport.status, 'worker-reconciliation-required');
+  assert.equal(lateReport.writerExitVerified, false);
+  assert.equal(lateReport.next, null);
   assert.equal(assertTestRecord(assertTestRecord(after.liveWorker).completedTurn).threadId, 'thread-owned');
   assert.equal(assertTestRecord(assertTestRecord(after.liveWorker).completedTurn).turnId, 'turn-owned');
   assert.equal(assertTestRecord(assertTestRecord(after.liveWorker).completedTurn).turnStatus, 'interrupted');

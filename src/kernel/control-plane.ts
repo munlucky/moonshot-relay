@@ -4032,6 +4032,24 @@ export const createKernelControlPlane = async ({
         settleDurableReportReplay(incomingOperation.stored);
         return { ...asRecord(incomingOperation.comparison.reportResult), idempotentReplay: true };
       }
+      // A Host-owned Writer Attempt is recorded before its physical Worktree
+      // is prepared or assigned. Provenance, not the later Workspace ID, is
+      // the durable admission boundary against a new Main's premature report.
+      // Only existing verified Owner Delivery can settle external Worker work.
+      const unreportedWorker = store.getStepAttempts(runId).find((attempt) => (
+        attempt.provenanceKind === 'host-owned-worker'
+        && attempt.status === 'started'
+      ));
+      if (unreportedWorker) {
+        return {
+          schemaVersion: 1, runId,
+          status: 'worker-reconciliation-required',
+          errorCode: 'WORKER_RESULT_NOT_RECONCILED',
+          attemptId: unreportedWorker.attemptId,
+          writerExitVerified: false,
+          next: null,
+        };
+      }
       // A completed run is only *done* when finalization also completed
       // (P0-7); a partial finalization stays retryable instead of reporting a
       // success the Kernel did not actually achieve.
