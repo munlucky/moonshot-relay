@@ -5,6 +5,7 @@
 // rather than growing per-service boundary exceptions.
 
 export { createKernelControlPlane } from './control-plane-runtime.js';
+export { createHostWorkerSessions } from './host-worker-sessions.js';
 export { resolveKernelWorktreeIdentity } from './workspace/worktree-resolution.js';
 export {
   createKernelHostReviewBridge,

@@ -7,6 +7,7 @@ import { resolveKernelRuntimeHome } from '../runtime-home.js';
 import { projectKernelModelView } from '../run/model-view.js';
 import {
   createKernelControlPlane,
+  createHostWorkerSessions,
   createKernelHostReviewBridge,
   createKernelRecoveryContinuity,
   isKernelReviewAction,
@@ -29,6 +30,7 @@ interface McpParameters extends UnknownRecord {
   surface?: string | null;
   verbose?: boolean;
   report?: UnknownRecord | null;
+  worker?: { action?: 'start' | 'interrupt'; model?: string; effort?: string; attemptId?: string } | null;
 }
 
 type HostBridgeFactory = (input: { surface: string | null }) => HostReviewBridge | null;
@@ -101,6 +103,7 @@ export const KERNEL_MCP_TOOLS = [
         runId: { type: 'string', description: 'Explicit run id to attach to' },
         surface: { type: 'string', description: 'Surface identifier (e.g. codex_app, claude_app, qwen_code_cli)' },
         verbose: { type: 'boolean', description: 'Return full diagnostic snapshots instead of the compact model view' },
+        worker: { type: 'object', description: 'Optional signal to an existing attached Host-owned Attempt; never grants Kernel completion', properties: { action: { type: 'string', enum: ['interrupt'] }, attemptId: { type: 'string' } }, required: ['action', 'attemptId'] },
       },
       required: ['workspaceRoot'],
     },
@@ -116,6 +119,7 @@ export const KERNEL_MCP_TOOLS = [
         runId: { type: 'string', description: 'Explicit run id' },
         surface: { type: 'string', description: 'Surface identifier' },
         verbose: { type: 'boolean', description: 'Return full diagnostic snapshots instead of the compact model view' },
+        worker: { type: 'object', description: 'Explicitly start one Host-owned writable Worker for the canonical implementation Step; no automatic Owner Delivery', properties: { action: { type: 'string', enum: ['start'] }, model: { type: 'string' }, effort: { type: 'string' } }, required: ['action', 'model', 'effort'] },
       },
       required: ['workspaceRoot'],
     },
@@ -413,8 +417,10 @@ export const handleMcpToolCall = async ({
   }
 };
 
-export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, hostBridge = null, nativeHost = globalThis }: Omit<HandleMcpToolCallInput, 'name' | 'parameters'> = {}) => {
+export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, hostBridge = null, nativeHost = globalThis, workerTransportOptions = undefined, verifiedNativeWriterIsolation = false }: Omit<HandleMcpToolCallInput, 'name' | 'parameters'> & { workerTransportOptions?: NonNullable<Parameters<typeof createHostWorkerSessions>[0]>['transportOptions']; verifiedNativeWriterIsolation?: boolean } = {}) => {
   const recoveryContinuity = createKernelRecoveryContinuity();
+  // The MCP server is the Host lifecycle owner, not the individual Main call.
+  const workerSessions = createHostWorkerSessions(workerTransportOptions ? { transportOptions: workerTransportOptions } : {});
   return async (request: McpRequest) => {
     const { id, method, params } = request || {};
 
@@ -466,6 +472,44 @@ export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, 
           hostBridge,
           nativeHost,
         });
+        const worker = asRecord(callArgs.worker);
+        const modelInput = asRecord(resultData);
+        let resultWithWorker: unknown = resultData;
+        if (worker.action === 'start' && name === 'kernel_next') {
+          // Host-side capability, never accepted from a Main/model argument.
+          // Same-SID and hardlink late Writer counterexamples still block
+          // production Native dispatch until physical exclusion is verified.
+          if (verifiedNativeWriterIsolation !== true) {
+            throw Object.assign(new Error('host_worker_native_isolation_unverified'), { code: 'host_worker_native_isolation_unverified' });
+          }
+          if (typeof callArgs.workspaceRoot !== 'string') throw new Error('host_worker_workspace_required');
+          const runId = String(modelInput.runId || callArgs.runId || '');
+          if (!runId || typeof worker.model !== 'string' || typeof worker.effort !== 'string') {
+            throw new Error('host_worker_request_invalid');
+          }
+          const running = await workerSessions.start({
+            projectRoot: callArgs.workspaceRoot,
+            runtimeHome: resolvedRuntimeHome,
+            runId,
+            model: worker.model,
+            effort: worker.effort,
+            modelInput,
+          });
+          resultWithWorker = { ...modelInput, hostWorker: running };
+        } else if (worker.action === 'interrupt' && name === 'kernel_attach') {
+          if (typeof callArgs.workspaceRoot !== 'string' || typeof worker.attemptId !== 'string') {
+            throw new Error('host_worker_signal_invalid');
+          }
+          const runId = String(modelInput.runId || callArgs.runId || '');
+          const signal = await workerSessions.interrupt(callArgs.workspaceRoot, runId, worker.attemptId);
+          resultWithWorker = { ...modelInput, hostWorkerSignal: signal };
+        } else if (Object.keys(worker).length > 0) {
+          throw new Error('host_worker_action_unsupported');
+        } else if (name === 'kernel_status' && typeof callArgs.workspaceRoot === 'string') {
+          const runId = String(asRecord(modelInput.run).runId || callArgs.runId || '');
+          const live = runId ? await workerSessions.status(callArgs.workspaceRoot, runId) : null;
+          resultWithWorker = { ...modelInput, liveWorker: live };
+        }
         const recoveryInput = typeof callArgs.workspaceRoot === 'string'
           ? {
               projectRoot: callArgs.workspaceRoot,
@@ -476,8 +520,8 @@ export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, 
             }
           : null;
         const decoratedResult = recoveryInput
-          ? recoveryContinuity.decorate(resultData, recoveryInput)
-          : resultData;
+          ? recoveryContinuity.decorate(resultWithWorker, recoveryInput)
+          : resultWithWorker;
         if (recoveryInput && !recoveryContinuity.hasRecovery(decoratedResult)) recoveryContinuity.clear(recoveryInput);
         return {
           jsonrpc: '2.0',

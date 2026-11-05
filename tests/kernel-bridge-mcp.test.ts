@@ -614,3 +614,97 @@ test('mcp Host carries recovery continuity across retries without model-supplied
   assert.deepEqual(attempts.map((entry) => entry.unchangedAttempts), [0, 1, 2, 3]);
   assert.equal(attempts[3].mode, 'escalate');
 });
+
+test('W1/W2: a second Main reads and interrupts the same Host-owned Attempt without re-running or delivering it', async (t) => {
+  const workspaceRoot = await createFixtureRepo();
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-host-worker-mcp-'));
+  const server = path.join(runtimeHome, 'mock-app-server.cjs');
+  t.after(async () => {
+    await Promise.all([workspaceRoot, runtimeHome].map(root => rm(root, { recursive: true, force: true })));
+  });
+  await writeFile(server, String.raw`
+const readline = require('node:readline');
+const send = (data) => process.stdout.write(JSON.stringify(data) + '\n');
+const input = readline.createInterface({ input: process.stdin });
+let thread = null;
+let turn = null;
+input.on('line', (line) => {
+  const item = JSON.parse(line);
+  if (item.method === 'initialize') send({ id: item.id, result: { userAgent: 'fixture' } });
+  if (item.method === 'thread/start') {
+    thread = 'thread-owned';
+    send({ id: item.id, result: { thread: { id: thread } } });
+  }
+  if (item.method === 'turn/start') {
+    turn = 'turn-owned';
+    send({ id: item.id, result: { turn: { id: turn, status: 'inProgress' } } });
+  }
+  if (item.method === 'turn/interrupt') {
+    if (item.params.threadId === thread && item.params.turnId === turn) {
+      send({ id: item.id, result: {} });
+      send({ method: 'turn/completed', params: { threadId: thread, turn: { id: turn, status: 'interrupted' } } });
+    }
+  }
+});
+`);
+  // Fake App Server runs only against disposable fixture Worktrees; no native
+  // operating-system isolation claim is exported to the default MCP server.
+  const settings = { runtimeHome, verifiedNativeWriterIsolation: true, workerTransportOptions: { executable: process.execPath, args: [server], requestTimeoutMs: 1500 } };
+  const handler = createMcpBridgeHandler(settings);
+  const otherHost = createMcpBridgeHandler(settings);
+  const runId = 'run-mcp-host-owned-worker';
+  const call = (client: typeof handler, id: number, name: string, args: Record<string, unknown>) =>
+    client({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: { workspaceRoot, runId, ...args } } });
+  const began = await call(handler, 100, 'kernel_next', {
+    contractJson: { objective: 'implement README change', acceptance: ['README contains a new sentence'], allowedPaths: ['README.md'] },
+    worker: { action: 'start', model: 'test-model', effort: 'high' },
+  });
+  assert.equal(assertTestRecord(assertTestRecord(began).result).isError, false, JSON.stringify(began));
+  const started = assertTestRecord(parseToolText(began).hostWorker);
+  assert.equal(started.runId, runId);
+  const attemptId = assertTestString(started.attemptId);
+  assert.equal(started.writerExitVerified, false);
+  assert.equal(started.deliveryAuthorized, false);
+  const defaultHost = createMcpBridgeHandler({ runtimeHome });
+  const denied = await call(defaultHost, 101, 'kernel_next', {
+    worker: { action: 'start', model: 'test-model', effort: 'high' },
+  });
+  assert.equal(assertTestRecord(assertTestRecord(denied).result).isError, true);
+  assert.equal(parseToolText(denied).code, 'host_worker_native_isolation_unverified',
+    'an ordinary product Host must never opt into unsafe Native Writer execution');
+
+  let live: Record<string, unknown> = {};
+  for (let i = 0; i < 30; i++) {
+    const response = await call(handler, 110 + i, 'kernel_status', {});
+    assert.equal(assertTestRecord(assertTestRecord(response).result).isError, false);
+    const status = parseToolText(response);
+    live = assertTestRecord(status.liveWorker);
+    if (live.nativeTurn && assertTestRecord(live.nativeTurn).turnId === 'turn-owned') break;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.equal(live.nativeTurn && assertTestRecord(live.nativeTurn).turnId, 'turn-owned', JSON.stringify(live));
+  const external = parseToolText(await call(otherHost, 150, 'kernel_status', {}));
+  assert.equal(external.liveWorker, null, 'a different Host may not claim a live handle');
+  assert.ok(assertTestArray(external.workerAttempts).some(item => assertTestRecord(item).attemptId === attemptId));
+
+  const signaled = await call(handler, 151, 'kernel_attach', {
+    worker: { action: 'interrupt', attemptId },
+  });
+  assert.equal(assertTestRecord(assertTestRecord(signaled).result).isError, false, JSON.stringify(signaled));
+  assert.equal(assertTestRecord(parseToolText(signaled).hostWorkerSignal).status, 'requested');
+  let after = parseToolText(await call(handler, 152, 'kernel_status', {}));
+  for (let i = 0; i < 20 && assertTestRecord(after.liveWorker).turnStatus === 'pending'; i++) {
+    await new Promise(resolve => setTimeout(resolve, 20));
+    after = parseToolText(await call(handler, 153 + i, 'kernel_status', {}));
+  }
+  assert.equal(assertTestRecord(after.liveWorker).turnStatus, 'interrupted');
+  assert.equal(assertTestRecord(after.liveWorker).writerExitVerified, false);
+  assert.ok(assertTestArray(after.workerAttempts).some(item =>
+    assertTestRecord(item).attemptId === attemptId && assertTestRecord(item).status === 'started'),
+  'MCP Turn interrupt cannot finish or deliver the Kernel Attempt');
+  const blocked = await call(otherHost, 180, 'kernel_next', {
+    worker: { action: 'start', model: 'test-model', effort: 'high' },
+  });
+  assert.equal(assertTestRecord(assertTestRecord(blocked).result).isError, true,
+    'a new Host must not start a second Worker after losing its process-local handle');
+});

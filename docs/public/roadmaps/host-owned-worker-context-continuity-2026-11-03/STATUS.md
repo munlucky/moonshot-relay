@@ -41,8 +41,8 @@
 | T47 — OS 사용자 권한·Sandbox 지속 격리 비교 | **Linux 비특권 다른 UID DAC 쓰기 거부·Mac chmod 동일 UID 복구·Seatbelt 비참여 형제 쓰기 허용 / Native 자동 합류 DEFER** | [T47](W0_T47_OS_WRITER_OWNERSHIP_ISOLATION_FEASIBILITY_2026-11-05.md): 현재 Native 실행 계약에 지속 OS 쓰기 배타성 미증명. |
 | T48 — Native Codex App Server OS 격리 도메인 초기화 | **Mac 격리 CODEX_HOME + canonical Seatbelt initialize PASS / 모델 Turn·전체 후손 종료 미증명, 자동 합류 DEFER** | [T48](W0_T48_NATIVE_APP_SERVER_SECURITY_DOMAIN_2026-11-05.md): App Server 초기화 전역 쓰기 Scope 실측. Turn Sandbox는 별개이며 외부 비참여 Writer는 제한하지 못함. |
 | W0-Fix — ContextReceipt | **SOURCE PASS** | T23 재현 → 최소 수정, focused 17/17, typecheck/build/boundaries PASS. 확장 test:source-runtime timeout |
-| W1 — Host-owned Worker | **DEFER / 실제 Attempt-Writer Gate 대기** | Host 소유 Native commandExecution handle과 격리 Worktree/기존 Owner CAS를 연결해 종료·격리 증거 확인 전 같은 Workspace 재할당 금지 필요 |
-| W2 — status/signal/reconnect | NOT STARTED | W1 생존·Owner 경계 필요 |
+| W1 — Host-owned Worker | **CODE/WIRED PARTIAL · G1 Native DEFER** | 기존 MCP `kernel_next`에 Host-검증 Capability로 제한한 단일 Writable Attempt 시작 경로 연결, Owner 범위 단일 예약·Canonical Attempt 유지. Main 호출 후 Turn 지속·중복 시작은 격리 Fixture 통과. 일반 제품 Host에서는 OS 격리 미증명으로 시작 차단. 실제 Main 종료 후 독립 Host 생존, OS Writer 후손 차단·자동 Owner 합류는 미검증/보류 |
+| W2 — status/signal/reconnect | **CODE/WIRED PARTIAL · G2 Native PARTIAL** | 기존 `kernel_status`로 영속 Attempt와 동일 Host 실시간 Turn 조회, 기존 `kernel_attach`에서 Turn interrupt 요청 연결. 다른 Main 호출의 조회·중단, 다른 Host의 미보유 핸들 거부 Fixture 통과. 실제 Native Main 교체·승인 전달·Host 비정상 종료 후 재연결은 미완료 |
 | W3 — Kernel loop 결합 | NOT STARTED | 기존 Dispatcher/Goals 중복 먼저 확인 |
 | W4 — E/C/D Continuity | NOT STARTED | E(요약 없는 Resume) 먼저 |
 | W5 — 장애/경쟁/보안 | NOT STARTED | 각 Wave 집중 테스트 후 종합 수용 |
