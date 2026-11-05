@@ -15,12 +15,14 @@ import {
   type CodexAppServerTurnResult,
 } from './codex-app-server-transport.js';
 import type { NativeExecutionObservation, NativeExecutionObserver } from './adapter-dispatch.js';
-import { prepareHostWriterAttemptWorktree } from './workspace/physical-worktree.js';
+import { listChangedPaths, prepareHostWriterAttemptWorktree } from './workspace/physical-worktree.js';
+import { observeWorkspaceIdentity } from './workspace/workspace-identity.js';
+import { matchPathScope } from '../../shared/path-scope.js';
 
 type KernelControlPlane = Awaited<ReturnType<typeof createKernelControlPlane>>;
 type KernelWriterAuthority = Pick<
   KernelControlPlane,
-  'projectRoot' | 'getRun' | 'getAttemptById' | 'registerExecutionWorkspace' | 'updateStepAttempt'
+  'projectRoot' | 'getRun' | 'getRunSteps' | 'getAttemptById' | 'registerExecutionWorkspace' | 'updateStepAttempt'
 >;
 
 export interface HostOwnedWritableAttemptInput {
@@ -51,6 +53,15 @@ export interface HostOwnedWritableAttemptObservation {
   baseWorkspaceIdentity: string;
   nativeTurn: CodexAppServerTurnResult;
   commandEvents: NativeExecutionObservation[];
+  // A read-only snapshot of Worktree changes. This is not a durable Worker
+  // receipt: an unretired OS descendant may continue writing afterwards.
+  resultCandidate: {
+    changedPaths: string[];
+    outsideStepScope: string[];
+    workspaceIdentity: string;
+    writerExitVerified: false;
+    deliveryAuthorized: false;
+  } | null;
   // The only sources of completion/review/Delivery authority are the
   // existing Kernel report, proof verification and Owner CAS paths.
   writerExitVerified: false;
@@ -167,6 +178,26 @@ export async function runHostOwnedWritableAttempt({
       },
       writableWorker: { reservationRoot },
     });
+    // Inspect actual Git changes rather than trusting the model Turn text.
+    // This is a candidate only: even a completed Turn does not prove a
+    // detached command or grandchild can no longer mutate this Worktree.
+    const step = controlPlane.getRunSteps(runId).find((item) => item.stepId === stepId);
+    const changedPaths = nativeTurn.turnStatus === 'completed'
+      ? listChangedPaths(prepared.workspaceRoot)
+      : [];
+    const allowedPaths = step?.allowedPaths || [];
+    const forbiddenPaths = step?.forbiddenPaths || [];
+    const resultCandidate = nativeTurn.turnStatus === 'completed' && changedPaths.length > 0
+      ? {
+          changedPaths,
+          outsideStepScope: changedPaths.filter((file) => (
+            !matchPathScope(file, allowedPaths) || (forbiddenPaths.length > 0 && matchPathScope(file, forbiddenPaths))
+          )),
+          workspaceIdentity: observeWorkspaceIdentity({ projectRoot: prepared.workspaceRoot }).identity,
+          writerExitVerified: false as const,
+          deliveryAuthorized: false as const,
+        }
+      : null;
     return {
       attemptId,
       stepId,
@@ -175,6 +206,7 @@ export async function runHostOwnedWritableAttempt({
       baseWorkspaceIdentity: prepared.baseWorkspaceIdentity,
       nativeTurn,
       commandEvents,
+      resultCandidate,
       writerExitVerified: false,
       reportAuthority: 'none',
     };

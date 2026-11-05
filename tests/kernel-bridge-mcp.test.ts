@@ -1,7 +1,7 @@
 import { assertTestArray, assertTestPresent, assertTestRecord, assertTestString, optionalTestRecord } from './helpers/assert-value.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -858,4 +858,74 @@ input.on('line', line => {
   } finally {
     await cp.close();
   }
+});
+
+
+test('W3: Host-owned Worker source delta is observable by a different Main without false Owner Delivery', async (t) => {
+  const workspaceRoot = await createFixtureRepo();
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-worker-result-'));
+  const server = path.join(runtimeHome, 'mock-app-server.cjs');
+  t.after(async () => {
+    await Promise.all([workspaceRoot, runtimeHome].map(root => rm(root, { recursive: true, force: true })));
+  });
+  await writeFile(server, String.raw`
+const readline = require('node:readline');
+const fs = require('node:fs');
+const path = require('node:path');
+const send = message => process.stdout.write(JSON.stringify(message) + '\n');
+const input = readline.createInterface({ input: process.stdin });
+input.on('line', line => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') send({ id: message.id, result: { userAgent: 'fixture' } });
+  if (message.method === 'thread/start') send({ id: message.id, result: { thread: { id: 'thread-write' } } });
+  if (message.method === 'turn/start') {
+    if (message.params.sandboxPolicy.type !== 'workspaceWrite') throw Error('fixture is not writable');
+    fs.writeFileSync(path.join(message.params.cwd, 'README.md'), '# Updated by Host Worker\n');
+    send({ id: message.id, result: { turn: { id: 'turn-write', status: 'inProgress' } } });
+    setTimeout(() => send({ method: 'turn/completed', params: {
+      threadId: message.params.threadId, turn: { id: 'turn-write', status: 'completed' },
+    } }), 10);
+  }
+});
+`);
+  const runId = 'run-host-worker-result';
+  // Fixture-only capability. This does not enable Native delivery in the product.
+  const host = createMcpBridgeHandler({ runtimeHome, verifiedNativeWriterIsolation: true,
+    workerTransportOptions: { executable: process.execPath, args: [server], requestTimeoutMs: 1500 } });
+  const independentMain = (id: number, name: string, extra: Record<string, unknown> = {}) =>
+    host({ jsonrpc: '2.0', id, method: 'tools/call', params: {
+      name, arguments: { workspaceRoot, runId, ...extra },
+    } });
+  const began = await independentMain(1, 'kernel_next', {
+    contractJson: { objective: 'update README', acceptance: ['README is updated'], allowedPaths: ['README.md'] },
+    worker: { action: 'start', model: 'test-model', effort: 'high' },
+  });
+  assert.equal(assertTestRecord(assertTestRecord(began).result).isError, false, JSON.stringify(began));
+  const attemptId = assertTestString(assertTestRecord(parseToolText(began).hostWorker).attemptId);
+  let status = parseToolText(await independentMain(2, 'kernel_status'));
+  for (let n = 0; n < 80 && assertTestRecord(status.liveWorker).turnStatus === 'pending'; n++) {
+    await new Promise(resolve => setTimeout(resolve, 20));
+    status = parseToolText(await independentMain(3 + n, 'kernel_status'));
+  }
+  const live = assertTestRecord(status.liveWorker);
+  assert.equal(live.turnStatus, 'completed');
+  assert.equal(assertTestRecord(live.completedTurn).turnId, 'turn-write');
+  const candidate = assertTestRecord(live.resultCandidate);
+  assert.deepEqual(candidate.changedPaths, ['README.md']);
+  assert.deepEqual(candidate.outsideStepScope, []);
+  assert.match(assertTestString(candidate.workspaceIdentity), /^sha256:/);
+  assert.equal(candidate.writerExitVerified, false);
+  assert.equal(candidate.deliveryAuthorized, false);
+  assert.equal(await readFile(path.join(workspaceRoot, 'README.md'), 'utf8'), '# Bridge Fixture\n',
+    'the Owner repository remains unchanged until verified Delivery');
+  const cp = await createKernelControlPlane({ projectRoot: workspaceRoot, runtimeHome });
+  try {
+    const attempt = cp.getAttemptById(runId, attemptId);
+    assert.equal(attempt?.status, 'started');
+    assert.equal(attempt?.resultCommitSha, null);
+    assert.notEqual(cp.getCurrentStep(runId)?.state, 'passed');
+  } finally { await cp.close(); }
+  const next = parseToolText(await independentMain(90, 'kernel_next'));
+  assert.equal(next.status, 'worker-reconciliation-required');
+  assert.equal(next.attemptId, attemptId);
 });

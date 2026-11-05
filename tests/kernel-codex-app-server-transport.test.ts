@@ -581,6 +581,14 @@ test('Explicit Host-owned Writable runner binds a real Kernel Attempt and a sepa
       assert.equal(first.reportAuthority, 'none');
       assert.equal(first.writerExitVerified, false);
       assert.equal(first.nativeTurn.writerExitVerified, false);
+      assert.deepEqual(first.resultCandidate?.changedPaths, ['mock-writer-started.txt'],
+        'the Host observes the Worker Git delta, not a model summary');
+      assert.deepEqual(first.resultCandidate?.outsideStepScope, []);
+      assert.match(first.resultCandidate?.workspaceIdentity || '', /^sha256:/);
+      assert.equal(first.resultCandidate?.deliveryAuthorized, false);
+      assert.equal(first.resultCandidate?.writerExitVerified, false);
+      assert.equal(cp.getAttemptById(runId, a.attemptId)?.resultCommitSha, null,
+        'an unretired Writer observation cannot become a canonical immutable delivery receipt');
       assert.notEqual(first.workspaceRoot, workspace);
       assert.equal(first.commandEvents.length, 2);
       assert.ok(first.commandEvents.every(item => item.runId === runId
@@ -613,6 +621,7 @@ test('Explicit Host-owned Writable runner binds a real Kernel Attempt and a sepa
       assert.notEqual(second.workspaceRoot, first.workspaceRoot);
       assert.notEqual(second.workspaceId, first.workspaceId);
       assert.equal(second.nativeTurn.turnStatus, 'completed');
+      assert.deepEqual(second.resultCandidate?.changedPaths, ['mock-writer-started.txt']);
       assert.equal(second.reportAuthority, 'none');
       assert.equal(cp.getAttemptById(runId, b.attemptId)?.status, 'started');
       assert.equal(cp.getAttemptById(runId, a.attemptId)?.status, 'failed');

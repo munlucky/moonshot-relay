@@ -18,6 +18,7 @@ interface Job {
   effort: string;
   handle: HostOwnedWritableAttemptHandle;
   completedTurn: { threadId: string; turnId: string; workspaceId: string; turnStatus: 'completed' | 'failed' | 'interrupted' | 'unknown' } | null;
+  resultCandidate: Awaited<HostOwnedWritableAttemptHandle['result']>['resultCandidate'];
   turnStatus: 'pending' | 'completed' | 'failed' | 'interrupted' | 'unknown';
 }
 export interface HostWorkerStartInput {
@@ -49,6 +50,7 @@ export function createHostWorkerSessions({
     nativeTurn: job.handle.observe().nativeTurn,
     turnStatus: job.turnStatus,
     completedTurn: job.completedTurn,
+    resultCandidate: job.resultCandidate,
     writerExitVerified: false as const,
     deliveryAuthorized: false as const,
   });
@@ -126,11 +128,12 @@ export function createHostWorkerSessions({
             attemptId: attempt.attemptId, prompt, model, effort,
             ...(transportOptions ? { transportOptions } : {}),
           });
-          const job: Job = { runId, stepId, attemptId: attempt.attemptId, model, effort, handle, completedTurn: null, turnStatus: 'pending' };
+          const job: Job = { runId, stepId, attemptId: attempt.attemptId, model, effort, handle, completedTurn: null, resultCandidate: null, turnStatus: 'pending' };
           jobs.set(jobKey, job);
           owned = true;
           void handle.result.then((result) => {
             job.turnStatus = result.nativeTurn.turnStatus;
+            job.resultCandidate = result.resultCandidate;
             job.completedTurn = {
               threadId: result.nativeTurn.threadId, turnId: result.nativeTurn.turnId,
               workspaceId: result.workspaceId, turnStatus: result.nativeTurn.turnStatus,
