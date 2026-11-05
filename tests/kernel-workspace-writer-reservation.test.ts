@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { once } from 'node:events';
 import { readFile, readdir, mkdtemp, mkdir, rm, writeFile, link, unlink, stat } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -328,6 +329,109 @@ test('T45 clean reused Native Worktree can conceal a pre-existing Owner hardlink
         cwd: owner, encoding: 'utf8',
       });
       assert.equal(r.status, 0, r.stderr);
+    }
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+
+// T46 isolates filesystem authority from Kernel's reservation authority.
+// An independent process under the same OS account can replace a file after
+// admission, including while the admitted Writer is running. No Native
+// auto-recovery authorization follows from this negative physical test.
+test('T46 same-account external process can replace a fresh Native Worktree file before and during reserved Writer execution', async () => {
+  const temp = await mkdtemp(path.join(tmpdir(), 't46-native-external-writer-'));
+  const owner = path.join(temp, 'owner');
+  const runtimeHome = path.join(temp, 'runtime');
+  const reservationRoot = path.join(temp, 'reservations');
+  let candidate: string | null = null;
+  let child: ReturnType<typeof spawn> | null = null;
+  try {
+    await Promise.all([mkdir(owner), mkdir(runtimeHome), mkdir(reservationRoot)]);
+    git(owner, 'init');
+    git(owner, 'config', 'user.name', 'T46 Fixture');
+    git(owner, 'config', 'user.email', 't46@example.invalid');
+    await writeFile(path.join(owner, 'tracked.txt'), 'INITIAL_BYTES\n');
+    git(owner, 'add', '--all');
+    git(owner, 'commit', '-m', 't46 baseline');
+    const sha = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: owner, encoding: 'utf8' }).stdout.trim();
+    const coords = {
+      repoRoot: owner, runtimeHome, baseCommit: sha, projectId: 't46-project',
+      runId: 't46-run', stepId: 't46-step', attemptId: 't46-attempt',
+    };
+    const prepared = await prepareHostWriterAttemptWorktree(coords);
+    candidate = prepared.workspaceRoot;
+    assert.equal(prepared.reused, false);
+    const ownerFile = path.join(owner, 'tracked.txt');
+    const attemptFile = path.join(candidate, 'tracked.txt');
+    assert.notEqual((await stat(ownerFile)).ino, (await stat(attemptFile)).ino);
+
+    // First independent OS process modifies the fresh Worktree after Git
+    // checkout. Kernel did not authorize this process as a Writer.
+    const overwrite = [
+      "const fs=require('node:fs');",
+      "const [owner,worktree]=process.argv.slice(1);",
+      "fs.unlinkSync(worktree);fs.linkSync(owner,worktree);",
+    ].join('\n');
+    const first = spawnSync(process.execPath, ['-e', overwrite, ownerFile, attemptFile], {
+      cwd: owner, encoding: 'utf8', timeout: 10000,
+    });
+    assert.equal(first.status, 0, first.stderr);
+    assert.equal((await stat(ownerFile)).ino, (await stat(attemptFile)).ino);
+    assert.equal(inspectGitWorkspace(candidate).ready, true,
+      'the injected hardlink is byte-identical and Git still considers the Worktree clean');
+
+    await reserveHostWorkspaceWriter({
+      workspaceRoot: candidate, reservationRoot,
+      runId: coords.runId, attemptId: coords.attemptId, workspaceId: 't46-workspace',
+    });
+    assert.equal(attemptFromAnotherHostProcess(candidate, reservationRoot), 29,
+      'outside filesystem mutation does not bypass Kernel Writer reservation');
+
+    const ready = path.join(temp, 'admitted-writer-ready');
+    const proceed = path.join(temp, 'admitted-writer-proceed');
+    const writerScript = [
+      "const fs=require('node:fs');",
+      "const [target,ready,proceed]=process.argv.slice(1);",
+      "fs.writeFileSync(ready,'READY');",
+      "const timer=setInterval(()=>{if(!fs.existsSync(proceed))return;",
+      "clearInterval(timer);fs.writeFileSync(target,'WRITTEN_AFTER_EXTERNAL_CHANGE\\n');},15);",
+      "setTimeout(()=>{clearInterval(timer);process.exit(46)},9000).unref();",
+    ].join('\n');
+    child = spawn(process.execPath, ['-e', writerScript, attemptFile, ready, proceed], {
+      cwd: candidate, stdio: 'ignore',
+    });
+    const started = Date.now();
+    while (!existsSync(ready) && Date.now()-started < 5000) await sleep(25);
+    assert.ok(existsSync(ready), 'admitted test Writer must be running before outside mutation');
+
+    // A second independent OS process modifies the SAME physical Worktree
+    // while an admitted Writer is alive. The reservation does not gate raw
+    // filesystem syscalls from that unregistered process.
+    const outside = spawnSync(process.execPath, ['-e', [
+      "const fs=require('node:fs');",
+      "const [target]=process.argv.slice(1);",
+      "fs.writeFileSync(target,'EXTERNAL_DURING_WRITER\\n');",
+    ].join('\n'), attemptFile], { cwd: owner, encoding: 'utf8', timeout: 10000 });
+    assert.equal(outside.status, 0, outside.stderr);
+    assert.equal(await readFile(ownerFile,'utf8'), 'EXTERNAL_DURING_WRITER\n');
+    const exited = once(child, 'exit');
+    await writeFile(proceed,'GO');
+    const [exitCode] = await exited;
+    assert.equal(exitCode, 0, 'bounded admitted Writer must exit cleanly');
+    assert.equal(await readFile(ownerFile,'utf8'), 'WRITTEN_AFTER_EXTERNAL_CHANGE\n');
+    assert.equal(attemptFromAnotherHostProcess(candidate, reservationRoot), 29,
+      'reservation remains exclusive despite out-of-band inode mutation');
+  } finally {
+    if (child && child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGKILL');
+      await once(child, 'exit');
+    }
+    if (candidate) {
+      const removed = spawnSync('git', ['worktree', 'remove', '--force', candidate], {
+        cwd: owner, encoding: 'utf8', timeout: 10000,
+      });
+      assert.equal(removed.status, 0, removed.stderr);
     }
     await rm(temp, { recursive: true, force: true });
   }
