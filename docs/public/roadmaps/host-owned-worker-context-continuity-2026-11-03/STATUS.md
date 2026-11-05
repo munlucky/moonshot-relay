@@ -1,6 +1,7 @@
 # Host-owned Worker / Context Continuity 진행 현황
 
-- 최종 갱신: 2026-11-05 (KST) — **Windows 로컬 L0~L6 증거 MCP 수신 완료 / Native 전체 HOLD_SAFE / G0 PARTIAL**
+- 최종 갱신: 2026-11-05 (KST) — **Windows Native Host 실행기 실측 PASS / 별도 OS 권한 격리 DEFER / HOLD_SAFE**
+- Windows Host 후속: [Native MCP 실행 연결 확인](WINDOWS_NATIVE_HOST_EXECUTOR_FOLLOWUP_2026-11-05.md). `executionTarget=host`에서 Windows 10.0.19045, `C:\\dev\\moonshot-relay`, 실제 출력/exit 0 관측. 보안 토큰·권한 조사 요청은 도구 안전 검사로 차단됨. 실제 별도 토큰 프로세스/Owner 쓰기 배제 미증명으로 제품 자동 합류 미승인.
 - Windows Native 로컬 인계: [MCP 인계 증거·해시·판정](LOCAL_NATIVE_VERIFICATION_MCP_HANDOFF_2026-11-05.md). ZIP 28개 파일 무결성 및 11개 evidence SHA 일치. L0 PASS, L1 PARTIAL(동일 SID 직접·하드링크 쓰기 허용), L2~L5 DEFER, Kernel blocked/external-dependency. 실제 보안 주체·Native Tool 권한 상속 미검증으로 자동 합류 미승인.
 - T50 후속: [Native OS 격리 실행 가능성·최종 판정](T50_NATIVE_OS_ISOLATION_FEASIBILITY_AND_FINAL_DECISION_2026-11-05.md). WSL2 namespace EPERM/cgroup 비쓰기, checkout 777 확인. 별도 UID 아래 Owner 직접·symlink·사전 hardlink 및 분리 후손 늦은 쓰기 차단 관측. 실제 Native App Server/Tool 전체 보안 경계와 macOS·Windows Native 미검증으로 자동 합류 계속 비활성.
 - T49 실행 결과: [A–E 증거 매트릭스](T49_PARALLEL_EVIDENCE_MATRIX.md) · [P2 기술 결정](T49_DECISION.md) · [G0–G6 수용 판정](T49_FINAL_ACCEPTANCE.md). **후속 Linux Kernel 집중 회귀 12 PASS / 0 FAIL / 2 macOS SKIP**, 타입·모듈 경계 검사 PASS. OS Native 쓰기 배제 미증명으로 P2 HOLD_SAFE 및 W1 DEFER 유지.
