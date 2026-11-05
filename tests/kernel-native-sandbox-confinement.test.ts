@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -31,6 +31,8 @@ test('Native workspaceWrite confines a detached Writer after App Server exit', {
   const host = path.join(root, 'host-only');
   const markerB = path.join(b, 'b.marker');
   const markerHost = path.join(host, 'reservation.marker');
+  const dynamicHardlink = path.join(a, 'out-of-scope-hardlink');
+  const externalSymlink = path.join(a, 'out-of-scope-symlink');
   let server: ChildProcessWithoutNullStreams | null = null;
   let pending = new Map<number, RpcPending>();
   let nextId = 0;
@@ -61,16 +63,21 @@ test('Native workspaceWrite confines a detached Writer after App Server exit', {
     await mkdir(a); await mkdir(b); await mkdir(host);
     await writeFile(markerB, 'B_ONLY\n');
     await writeFile(markerHost, 'HOST_ONLY\n');
+    // The test Host may prepare this alias, but an in-sandbox Writer must
+    // not follow it outside its physical writable root.
+    await symlink(markerHost, externalSymlink);
     await writeFile(path.join(a, 'writer.cjs'), [
       "const fs=require('node:fs');",
-      'const [heartbeat,results,bMarker,hMarker,pidfile]=process.argv.slice(2);',
+      'const [heartbeat,results,bMarker,hMarker,pidfile,hardlinkTarget,symlinkTarget]=process.argv.slice(2);',
       'fs.writeFileSync(pidfile,String(process.pid));',
-      'let n=0,deniedB=0,deniedHost=0,allowedB=0,allowedHost=0;',
+      'let n=0,deniedB=0,deniedHost=0,allowedB=0,allowedHost=0,deniedLink=0,allowedLink=0,deniedSymlink=0,allowedSymlink=0;',
       'const timer=setInterval(()=>{',
       " const fd=fs.openSync(heartbeat,'a');try{fs.writeSync(fd,String(++n)+'\\n');fs.fsyncSync(fd)}finally{fs.closeSync(fd)}",
       " try{fs.writeFileSync(bMarker,'ILLEGAL');allowedB++}catch{deniedB++}",
       " try{fs.writeFileSync(hMarker,'ILLEGAL');allowedHost++}catch{deniedHost++}",
-      ' fs.writeFileSync(results,JSON.stringify({n,deniedB,deniedHost,allowedB,allowedHost}));',
+      " try{fs.linkSync(bMarker,hardlinkTarget);allowedLink++}catch{deniedLink++}",
+      " try{fs.writeFileSync(symlinkTarget,'ILLEGAL');allowedSymlink++}catch{deniedSymlink++}",
+      ' fs.writeFileSync(results,JSON.stringify({n,deniedB,deniedHost,allowedB,allowedHost,deniedLink,allowedLink,deniedSymlink,allowedSymlink}));',
       ' if(n>=100){clearInterval(timer);process.exit(0)}',
       '},30);',
     ].join('\n') + '\n');
@@ -79,14 +86,14 @@ test('Native workspaceWrite confines a detached Writer after App Server exit', {
     await writeFile(path.join(a, 'supervisor.cjs'), [
       "const fs=require('node:fs');const path=require('node:path');const {spawn}=require('node:child_process');",
       "fs.writeFileSync(path.join(__dirname,'supervisor.pid'),String(process.pid));",
-      "const child=spawn(process.execPath,[path.join(__dirname,'writer.cjs'),path.join(__dirname,'heartbeat.log'),path.join(__dirname,'writer-results.json'),process.argv[2],process.argv[3],path.join(__dirname,'writer.pid')],{detached:true,stdio:'ignore'});",
+      "const child=spawn(process.execPath,[path.join(__dirname,'writer.cjs'),path.join(__dirname,'heartbeat.log'),path.join(__dirname,'writer-results.json'),process.argv[2],process.argv[3],path.join(__dirname,'writer.pid'),process.argv[4],process.argv[5]],{detached:true,stdio:'ignore'});",
       "child.unref();process.stdout.write('GRANDCHILD_PID='+child.pid+'\\n');",
     ].join('\n') + '\n');
     const launch = path.join(a, 'spawn.cjs');
     await writeFile(launch, [
       "const {spawn}=require('node:child_process');",
       "const path=require('node:path');",
-      "const child=spawn(process.execPath,[path.join(__dirname,'supervisor.cjs'),process.argv[2],process.argv[3]],{detached:true,stdio:'ignore'});",
+      "const child=spawn(process.execPath,[path.join(__dirname,'supervisor.cjs'),process.argv[2],process.argv[3],process.argv[4],process.argv[5]],{detached:true,stdio:'ignore'});",
       "child.unref();process.stdout.write('SUPERVISOR_PID='+child.pid+'\\n');",
     ].join('\n') + '\n');
 
@@ -136,7 +143,7 @@ test('Native workspaceWrite confines a detached Writer after App Server exit', {
     });
     server.stdin.write(JSON.stringify({ method: 'initialized', params: {} }) + '\n');
     const result = await rpc('command/exec', {
-      command: [process.execPath, launch, markerB, markerHost],
+      command: [process.execPath, launch, markerB, markerHost, dynamicHardlink, externalSymlink],
       cwd: a,
       timeoutMs: 10_000,
       sandboxPolicy: {
@@ -201,9 +208,11 @@ test('Native workspaceWrite confines a detached Writer after App Server exit', {
     const outcome = JSON.parse(await readFile(path.join(a, 'writer-results.json'), 'utf8')) as {
       n: number; deniedB: number; deniedHost: number;
       allowedB: number; allowedHost: number;
+      deniedLink: number; allowedLink: number; deniedSymlink: number; allowedSymlink: number;
     };
     assert.deepEqual(outcome, {
       n: 100, deniedB: 100, deniedHost: 100, allowedB: 0, allowedHost: 0,
+      deniedLink: 100, allowedLink: 0, deniedSymlink: 100, allowedSymlink: 0,
     });
     assert.equal(await readFile(markerB, 'utf8'), 'B_ONLY\n');
     assert.equal(await readFile(markerHost, 'utf8'), 'HOST_ONLY\n');
