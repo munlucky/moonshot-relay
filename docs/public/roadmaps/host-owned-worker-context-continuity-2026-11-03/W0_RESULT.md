@@ -88,6 +88,7 @@
 | T42-B2-B Historical Split-Host Post-CAS Crash | **Linux 38 PASS·Mac 4 PASS / Native Delivery 불승인** | [T42-B2-B](W0_T42B2_POST_CAS_CRASH_2026-11-04.md): 역사적 두 Host Result로 CAS 직후 물리 Host 종료, 재진입 차단. |
 | T42-B2-C Historical Recovery Contention + Proof TTL | **Linux 6 PASS·확대 27 PASS/2 OS SKIP·Mac 6 PASS / Native Delivery 불승인** | [T42-B2-C](W0_T42B2C_RECOVERY_CONTENTION_TTL_2026-11-05.md): 실제 복구 Host 경합에서 1 CAS·2 Report, Proof 중 TTL 만료 뒤 오래된 Epoch의 CAS 차단과 새 물리 Worktree 확인. |
 | T43 Proof-time stale Worker receipt drift | **Linux 집중 7 PASS·확대 28 PASS/2 OS SKIP·Mac 신규 1 PASS·전체 6 PASS/1 FAIL / Native Delivery 불승인** | [T43](W0_T43_PROOF_TIME_STALE_WRITER_RECEIPT_DRIFT_2026-11-05.md): Proof 중 원래 Step Worktree 지연 쓰기 발견 후 CAS·Report 차단. |
+| T43-A macOS intermittent weak-proof Host exit follow-up | **Mac 기준선 전체 7 PASS·수정 후 전체 7 PASS, Linux 15 PASS/2 OS SKIP / 기존 실패 원인 미확정** | [T43-A](W0_T43A_WEAK_PROOF_HOST_EXIT_DIAGNOSTICS_2026-11-05.md): 조기 종료 signal/PID 관측 및 테스트 OS 자식 정착 개선, G0 PARTIAL 유지. |
 | G0 전체 | **PARTIAL** | **W1 live worker 구현 중단**, 미완료 Native 실험부터 계속 |
 
 **다음 단계 (이미 결정된 경로):** 정상 동작하는 Native Host에서 격리 프로세스/Thread를 만들어 (1) start handle (2) 상태 재조회 (3) Main 독립성 (4) cancel/approval (5) old writer 안전 정지를 입증한다. Live Worker가 안 되지만 안전 중단·새 Thread 재개만 가능하다면 원래 계획의 B가 아니라 **degraded-safe-resume 별도 제한 채택**으로 분류한다. 원래 `E` authority-only resume을 먼저 검증하고, `C` Handoff는 추가 효용 입증 전 도입하지 않는다.
