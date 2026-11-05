@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { readFile, readdir, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { readFile, readdir, mkdtemp, mkdir, rm, writeFile, link, unlink, stat } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { reserveHostWorkspaceWriter } from '../src/host/kernel/workspace-writer-reservation.js';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
-import { prepareHostWriterAttemptWorktree, prepareStepWorktree, cleanupExecutionWorkspaces } from '../src/host/kernel/workspace/physical-worktree.js';
+import { prepareHostWriterAttemptWorktree, prepareStepWorktree, cleanupExecutionWorkspaces, inspectGitWorkspace } from '../src/host/kernel/workspace/physical-worktree.js';
 
 const git = (cwd: string, ...args: string[]) => {
   const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
@@ -266,5 +266,69 @@ test('Host Writer Attempt Worktrees cannot be placed inside the Owner repository
     assert.deepEqual(await readdir(runtimeHome), [], 'rejected allocation creates no Writer Worktree');
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+
+// T45: Git cleanliness proves bytes/index, not ownership of the underlying
+// inode. This is a deliberately negative trust-boundary probe. The already
+// shipped Native Writer reservation remains single-use and automatic Native
+// recovery must not be enabled based on a clean same-Attempt Worktree alone.
+test('T45 clean reused Native Worktree can conceal a pre-existing Owner hardlink alias', async () => {
+  const temp = await mkdtemp(path.join(tmpdir(), 't45-native-hardlink-admission-'));
+  const owner = path.join(temp, 'owner');
+  const runtimeHome = path.join(temp, 'runtime');
+  let candidate: string | null = null;
+  try {
+    await mkdir(owner);
+    await mkdir(runtimeHome);
+    git(owner, 'init');
+    git(owner, 'config', 'user.name', 'T45 Fixture');
+    git(owner, 'config', 'user.email', 't45@example.invalid');
+    await writeFile(path.join(owner, 'tracked.txt'), 'IDENTICAL_BASE\n');
+    git(owner, 'add', '--all');
+    git(owner, 'commit', '-m', 't45 baseline');
+    const sha = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: owner, encoding: 'utf8' }).stdout.trim();
+    const coords = {
+      repoRoot: owner, runtimeHome, baseCommit: sha, projectId: 't45-project',
+      runId: 't45-run', stepId: 't45-step', attemptId: 't45-attempt',
+    };
+    const initial = await prepareHostWriterAttemptWorktree(coords);
+    candidate = initial.workspaceRoot;
+    assert.equal(initial.reused, false);
+    const ownerFile = path.join(owner, 'tracked.txt');
+    const attemptFile = path.join(candidate, 'tracked.txt');
+    const beforeOwner = await stat(ownerFile), beforeAttempt = await stat(attemptFile);
+    assert.notEqual(beforeOwner.ino, beforeAttempt.ino, 'fresh Git checkout must materialize a distinct inode');
+
+    // An out-of-sandbox process can replace a tracked file with an Owner
+    // hardlink before the new Native Host inspects the already existing root.
+    await unlink(attemptFile);
+    await link(ownerFile, attemptFile);
+    const aliased = await stat(attemptFile);
+    assert.equal(aliased.ino, (await stat(ownerFile)).ino);
+    assert.ok(aliased.nlink >= 2);
+    assert.equal(inspectGitWorkspace(candidate).ready, true,
+      'Git clean status cannot prove physical file ownership');
+    const resumed = await prepareHostWriterAttemptWorktree(coords);
+    assert.equal(resumed.reused, true,
+      'same-Attempt preparation currently accepts this clean inode alias');
+
+    // An ordinary write through that in-scope pathname mutates the Owner.
+    // T44 already proved the same operation can happen within macOS Native
+    // workspaceWrite when the external hardlink pre-exists.
+    await writeFile(attemptFile, 'OUTSIDE_MUTATED\n');
+    assert.equal(await readFile(ownerFile, 'utf8'), 'OUTSIDE_MUTATED\n');
+    assert.equal(inspectGitWorkspace(candidate).ready, false,
+      'post-write Git state detects drift only AFTER external mutation');
+  } finally {
+    if (candidate) {
+      // Fixture is intentionally finite and owns no native descendants.
+      const r = spawnSync('git', ['worktree', 'remove', '--force', candidate], {
+        cwd: owner, encoding: 'utf8',
+      });
+      assert.equal(r.status, 0, r.stderr);
+    }
+    await rm(temp, { recursive: true, force: true });
   }
 });
