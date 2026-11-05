@@ -9,7 +9,7 @@ import { createCodexAppServerTransport } from '../src/host/kernel/codex-app-serv
 import { type NativeExecutionObservation } from '../src/host/kernel/adapter-dispatch.js';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
 import { runHostOwnedWritableAttempt, startHostOwnedWritableAttempt } from '../src/host/kernel/host-owned-writable-attempt.js';
-import { prepareHostWriterAttemptWorktree } from '../src/host/kernel/workspace/physical-worktree.js';
+import { prepareHostWriterAttemptWorktree, snapshotHostWorkerPatch } from '../src/host/kernel/workspace/physical-worktree.js';
 import { reserveHostWorkspaceWriter } from '../src/host/kernel/workspace-writer-reservation.js';
 
 const fakeServer = String.raw`
@@ -528,6 +528,55 @@ test('A Canonical Kernel Attempt owns an opt-in writable Turn without granting K
 });
 
 
+test('Host snapshots tracked, deleted and untracked Worker changes without changing the Worker index', async () => {
+  await withFixture(async ({ workspace, alternative }) => {
+    const git = (...args: string[]) => {
+      const result = spawnSync('git', args, { cwd: workspace, encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr);
+      return String(result.stdout || '').trim();
+    };
+    git('init');
+    git('config', 'user.name', 'Snapshot Fixture');
+    git('config', 'user.email', 'snapshot@example.invalid');
+    await writeFile(path.join(workspace, 'README.md'), 'before\n');
+    await writeFile(path.join(workspace, 'remove.txt'), 'removed\n');
+    git('add', '--all');
+    git('commit', '-m', 'baseline');
+    await writeFile(path.join(workspace, 'README.md'), 'after\n');
+    await rm(path.join(workspace, 'remove.txt'));
+    await writeFile(path.join(workspace, 'new.txt'), 'new\n');
+    await writeFile(path.join(workspace, 'image.bin'), Buffer.from([0, 1, 2, 255]));
+    const originalStatus = git('status', '--porcelain=v1', '--untracked-files=all');
+    const originalIndex = git('ls-files', '--stage');
+    const snap = await snapshotHostWorkerPatch({ workspaceRoot: workspace, runtimeHome: path.dirname(workspace) });
+    assert.deepEqual(snap.changedPaths, ['README.md', 'image.bin', 'new.txt', 'remove.txt']);
+    assert.match(snap.patchDigest, /^sha256:[a-f\d]{64}$/);
+    assert.match(snap.resultCommitSha || '', /^[a-f\d]{40,64}$/);
+    assert.equal(git('rev-parse', 'HEAD'), git('rev-list', '--parents', '-n', '1', snap.resultCommitSha!).split(' ')[1],
+      'the candidate commit has the original HEAD as parent without advancing HEAD');
+    assert.equal(git('show', '--format=', '--binary', snap.resultCommitSha!), snap.patch.trim());
+    assert.match(snap.workspaceIdentity, /^sha256:/);
+    assert.match(snap.patch, /diff --git a\/README.md b\/README.md/);
+    assert.equal(git('status', '--porcelain=v1', '--untracked-files=all'), originalStatus);
+    assert.equal(git('ls-files', '--stage'), originalIndex, 'worker index was not modified');
+    const worktree = spawnSync('git', ['worktree', 'add', '--detach', alternative, 'HEAD'], { cwd: workspace, encoding: 'utf8' });
+    assert.equal(worktree.status, 0, worktree.stderr);
+    try {
+      const checked = spawnSync('git', ['apply', '--check', '--binary', '-'], { cwd: alternative, input: snap.patch, encoding: 'utf8' });
+      assert.equal(checked.status, 0, checked.stderr);
+      const applied = spawnSync('git', ['apply', '--binary', '-'], { cwd: alternative, input: snap.patch, encoding: 'utf8' });
+      assert.equal(applied.status, 0, applied.stderr);
+      assert.equal(await readFile(path.join(alternative, 'README.md'), 'utf8'), 'after\n');
+      assert.equal(await readFile(path.join(alternative, 'new.txt'), 'utf8'), 'new\n');
+      assert.deepEqual(await readFile(path.join(alternative, 'image.bin')), Buffer.from([0, 1, 2, 255]));
+      await assert.rejects(readFile(path.join(alternative, 'remove.txt')));
+    } finally {
+      const removed = spawnSync('git', ['worktree', 'remove', '--force', alternative], { cwd: workspace, encoding: 'utf8' });
+      assert.equal(removed.status, 0, removed.stderr);
+    }
+  });
+});
+
 test('Explicit Host-owned Writable runner binds a real Kernel Attempt and a separate physical Worktree without creating a completion Receipt', async () => {
   await withFixture(async ({ workspace, alternative, server, reservationRoot }) => {
     const git = (...args: string[]) => {
@@ -585,6 +634,10 @@ test('Explicit Host-owned Writable runner binds a real Kernel Attempt and a sepa
         'the Host observes the Worker Git delta, not a model summary');
       assert.deepEqual(first.resultCandidate?.outsideStepScope, []);
       assert.match(first.resultCandidate?.workspaceIdentity || '', /^sha256:/);
+      assert.match(first.resultCandidate?.patchDigest || '', /^sha256:[a-f\d]{64}$/);
+      assert.match(first.resultCandidate?.resultCommitSha || '', /^[a-f\d]{40,64}$/);
+      assert.equal(first.resultCandidate?.ownerApplyCheck, 'passed');
+      assert.match(first.resultPatch || '', /diff --git a\/mock-writer-started\.txt/);
       assert.equal(first.resultCandidate?.deliveryAuthorized, false);
       assert.equal(first.resultCandidate?.writerExitVerified, false);
       assert.equal(cp.getAttemptById(runId, a.attemptId)?.resultCommitSha, null,

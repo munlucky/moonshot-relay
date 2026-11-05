@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { mkdir, realpath, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import {
@@ -524,6 +524,66 @@ export const listChangedPaths = (workspaceRoot: string): string[] => {
       .filter(Boolean)
       .map((line) => line.slice(3).replaceAll('\\', '/')),
   )].sort();
+};
+
+// Capture the actual staged/tracked/untracked content as an immutable patch
+// candidate, without changing a live Worker's index or Worktree. An alternate
+// index is the same isolation primitive used by the existing Git closeout.
+// The result is NOT a Writer-exit proof, durable receipt, or Owner CAS authority.
+export const snapshotHostWorkerPatch = async ({
+  workspaceRoot,
+  runtimeHome,
+}: { workspaceRoot: string; runtimeHome: string }): Promise<{
+  patch: string;
+  patchDigest: string;
+  resultCommitSha: string | null;
+  changedPaths: string[];
+  workspaceIdentity: string;
+}> => {
+  const tempRoot = await mkdtemp(path.join(runtimeHome, 'host-worker-index-'));
+  const env: NodeJS.ProcessEnv = {
+    ...process.env, GIT_INDEX_FILE: path.join(tempRoot, 'index'),
+  };
+  const git = (args: string[], { altIndex = true }: { altIndex?: boolean } = {}): string => {
+    const response = runGit(workspaceRoot, args, {
+      ...(altIndex ? { env } : {}), maxBuffer: 64 * 1024 * 1024,
+    });
+    if (response.error || response.status !== 0) throw commandError('worker-patch-snapshot', response);
+    return String(response.stdout || '');
+  };
+  try {
+    const before = observeWorkspaceIdentity({ projectRoot: workspaceRoot }).identity;
+    const head = git(['rev-parse', '--verify', 'HEAD'], { altIndex: false }).trim();
+    if (!/^[a-f\d]{40,64}$/iu.test(head)) throw new Error('host_worker_snapshot_head_missing');
+    git(['read-tree', head]);
+    git(['add', '--all', '--']);
+    const changedPaths = git(['diff', '--cached', '--name-only', '-z', head])
+      .split('\0').filter(Boolean).sort();
+    // Create a detached commit object for the existing integration engine.
+    // Never move a Worktree HEAD/ref or the Worker's own index. A commit
+    // candidate is NOT a canonical receipt until OS Writer exclusion is proven.
+    const resultCommitSha = changedPaths.length > 0
+      ? git(['commit-tree', git(['write-tree']).trim(), '-p', head,
+        '-m', 'Host-owned Worker unverified result snapshot']).trim()
+      : null;
+    const patch = resultCommitSha
+      ? git(['show', '--format=', '--binary', resultCommitSha])
+      : '';
+    const after = observeWorkspaceIdentity({ projectRoot: workspaceRoot }).identity;
+    const endingHead = git(['rev-parse', '--verify', 'HEAD'], { altIndex: false }).trim();
+    if (before !== after || endingHead !== head) {
+      throw Object.assign(new Error('host_worker_snapshot_workspace_changed'), {
+        code: 'host_worker_snapshot_workspace_changed',
+      });
+    }
+    if ((patch.length === 0) !== (changedPaths.length === 0)) {
+      throw new Error('host_worker_snapshot_patch_paths_mismatch');
+    }
+    return { patch, patchDigest: 'sha256:' + createHash('sha256').update(patch).digest('hex'),
+      resultCommitSha, changedPaths, workspaceIdentity: after };
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
 };
 
 export const createStepResultCommit = ({

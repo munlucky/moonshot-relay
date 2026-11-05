@@ -15,8 +15,8 @@ import {
   type CodexAppServerTurnResult,
 } from './codex-app-server-transport.js';
 import type { NativeExecutionObservation, NativeExecutionObserver } from './adapter-dispatch.js';
-import { listChangedPaths, prepareHostWriterAttemptWorktree } from './workspace/physical-worktree.js';
-import { observeWorkspaceIdentity } from './workspace/workspace-identity.js';
+import { prepareHostWriterAttemptWorktree, snapshotHostWorkerPatch } from './workspace/physical-worktree.js';
+import { runGit } from '../../shared/git-safe.js';
 import { matchPathScope } from '../../shared/path-scope.js';
 
 type KernelControlPlane = Awaited<ReturnType<typeof createKernelControlPlane>>;
@@ -59,9 +59,15 @@ export interface HostOwnedWritableAttemptObservation {
     changedPaths: string[];
     outsideStepScope: string[];
     workspaceIdentity: string;
+    patchDigest: string;
+    resultCommitSha: string;
+    ownerApplyCheck: 'passed' | 'failed';
     writerExitVerified: false;
     deliveryAuthorized: false;
   } | null;
+  // Host-only snapshot bytes; never surfaced to Main or persisted as trusted evidence.
+  resultPatch: string | null;
+  resultCaptureStatus: 'not-attempted' | 'captured' | 'inconsistent';
   // The only sources of completion/review/Delivery authority are the
   // existing Kernel report, proof verification and Owner CAS paths.
   writerExitVerified: false;
@@ -182,18 +188,37 @@ export async function runHostOwnedWritableAttempt({
     // This is a candidate only: even a completed Turn does not prove a
     // detached command or grandchild can no longer mutate this Worktree.
     const step = controlPlane.getRunSteps(runId).find((item) => item.stepId === stepId);
-    const changedPaths = nativeTurn.turnStatus === 'completed'
-      ? listChangedPaths(prepared.workspaceRoot)
-      : [];
+    let snapshot: Awaited<ReturnType<typeof snapshotHostWorkerPatch>> | null = null;
+    let resultCaptureStatus: HostOwnedWritableAttemptObservation['resultCaptureStatus'] = 'not-attempted';
+    if (nativeTurn.turnStatus === 'completed') {
+      try {
+        snapshot = await snapshotHostWorkerPatch({ workspaceRoot: prepared.workspaceRoot, runtimeHome });
+        resultCaptureStatus = 'captured';
+      } catch (error) {
+        // The old OS Writer can outlive a completed model Turn. A racing
+        // snapshot is not an execution failure or a verified result: leave
+        // the Attempt started and explicitly mark its readback inconsistent.
+        if ((error as { code?: string }).code !== 'host_worker_snapshot_workspace_changed') throw error;
+        resultCaptureStatus = 'inconsistent';
+      }
+    }
+    const changedPaths = snapshot?.changedPaths || [];
     const allowedPaths = step?.allowedPaths || [];
     const forbiddenPaths = step?.forbiddenPaths || [];
-    const resultCandidate = nativeTurn.turnStatus === 'completed' && changedPaths.length > 0
+    const patch = snapshot?.patch || null;
+    const check = patch ? runGit(ownerRoot, ['apply', '--check', '--binary', '-'], {
+      input: patch, maxBuffer: 64 * 1024 * 1024,
+    }) : null;
+    const resultCandidate = snapshot && changedPaths.length > 0
       ? {
           changedPaths,
           outsideStepScope: changedPaths.filter((file) => (
             !matchPathScope(file, allowedPaths) || (forbiddenPaths.length > 0 && matchPathScope(file, forbiddenPaths))
           )),
-          workspaceIdentity: observeWorkspaceIdentity({ projectRoot: prepared.workspaceRoot }).identity,
+          workspaceIdentity: snapshot.workspaceIdentity,
+          patchDigest: snapshot.patchDigest,
+          resultCommitSha: snapshot.resultCommitSha!,
+          ownerApplyCheck: check?.status === 0 && !check.error ? 'passed' as const : 'failed' as const,
           writerExitVerified: false as const,
           deliveryAuthorized: false as const,
         }
@@ -207,6 +232,8 @@ export async function runHostOwnedWritableAttempt({
       nativeTurn,
       commandEvents,
       resultCandidate,
+      resultPatch: patch,
+      resultCaptureStatus,
       writerExitVerified: false,
       reportAuthority: 'none',
     };

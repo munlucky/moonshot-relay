@@ -19,6 +19,8 @@ interface Job {
   handle: HostOwnedWritableAttemptHandle;
   completedTurn: { threadId: string; turnId: string; workspaceId: string; turnStatus: 'completed' | 'failed' | 'interrupted' | 'unknown' } | null;
   resultCandidate: Awaited<HostOwnedWritableAttemptHandle['result']>['resultCandidate'];
+  resultPatch: string | null;
+  resultCaptureStatus: 'not-attempted' | 'captured' | 'inconsistent';
   turnStatus: 'pending' | 'completed' | 'failed' | 'interrupted' | 'unknown';
 }
 export interface HostWorkerStartInput {
@@ -51,6 +53,7 @@ export function createHostWorkerSessions({
     turnStatus: job.turnStatus,
     completedTurn: job.completedTurn,
     resultCandidate: job.resultCandidate,
+    resultCaptureStatus: job.resultCaptureStatus,
     writerExitVerified: false as const,
     deliveryAuthorized: false as const,
   });
@@ -128,12 +131,14 @@ export function createHostWorkerSessions({
             attemptId: attempt.attemptId, prompt, model, effort,
             ...(transportOptions ? { transportOptions } : {}),
           });
-          const job: Job = { runId, stepId, attemptId: attempt.attemptId, model, effort, handle, completedTurn: null, resultCandidate: null, turnStatus: 'pending' };
+          const job: Job = { runId, stepId, attemptId: attempt.attemptId, model, effort, handle, completedTurn: null, resultCandidate: null, resultPatch: null, resultCaptureStatus: 'not-attempted', turnStatus: 'pending' };
           jobs.set(jobKey, job);
           owned = true;
           void handle.result.then((result) => {
             job.turnStatus = result.nativeTurn.turnStatus;
             job.resultCandidate = result.resultCandidate;
+            job.resultPatch = result.resultPatch;
+            job.resultCaptureStatus = result.resultCaptureStatus;
             job.completedTurn = {
               threadId: result.nativeTurn.threadId, turnId: result.nativeTurn.turnId,
               workspaceId: result.workspaceId, turnStatus: result.nativeTurn.turnStatus,

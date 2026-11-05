@@ -914,6 +914,9 @@ input.on('line', line => {
   assert.deepEqual(candidate.changedPaths, ['README.md']);
   assert.deepEqual(candidate.outsideStepScope, []);
   assert.match(assertTestString(candidate.workspaceIdentity), /^sha256:/);
+  assert.match(assertTestString(candidate.patchDigest), /^sha256:[a-f\d]{64}$/);
+  assert.equal(candidate.ownerApplyCheck, 'passed');
+  assert.ok(!JSON.stringify(live).includes('diff --git'), 'raw patch bytes stay Host-private');
   assert.equal(candidate.writerExitVerified, false);
   assert.equal(candidate.deliveryAuthorized, false);
   assert.equal(await readFile(path.join(workspaceRoot, 'README.md'), 'utf8'), '# Bridge Fixture\n',
