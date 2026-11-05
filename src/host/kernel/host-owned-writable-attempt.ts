@@ -8,6 +8,9 @@ import { realpath } from 'node:fs/promises';
 import type { createKernelControlPlane } from './control-plane-runtime.js';
 import {
   createCodexAppServerTransport,
+  type CodexAppServerTransport,
+  type CodexAppServerInterruptResult,
+  type CodexAppServerTurnObservation,
   type CodexAppServerTransportOptions,
   type CodexAppServerTurnResult,
 } from './codex-app-server-transport.js';
@@ -35,6 +38,9 @@ export interface HostOwnedWritableAttemptInput {
   turnTimeoutMs?: number;
   onNativeExecution?: NativeExecutionObserver;
   transportOptions?: CodexAppServerTransportOptions;
+  // Host-only, process-local control while this exact Attempt is running.
+  // The handle is not durable and cannot prove OS Writer termination.
+  onHostControl?: (control: Pick<CodexAppServerTransport, 'observeTurn' | 'interruptActiveTurn'>) => void;
 }
 
 export interface HostOwnedWritableAttemptObservation {
@@ -79,6 +85,7 @@ export async function runHostOwnedWritableAttempt({
   turnTimeoutMs,
   onNativeExecution = undefined,
   transportOptions = undefined,
+  onHostControl = undefined,
 }: HostOwnedWritableAttemptInput): Promise<HostOwnedWritableAttemptObservation> {
   if (![repoRoot, runtimeHome, reservationRoot, baseCommit, runId, stepId, attemptId, prompt, model, effort].every(required)) {
     throw deny('host_writable_attempt_input_missing');
@@ -141,6 +148,12 @@ export async function runHostOwnedWritableAttempt({
       || currentAttempt.baseWorkspaceIdentity !== prepared.baseWorkspaceIdentity) {
       throw deny('host_writable_attempt_authority_changed');
     }
+    // A supervising Host may observe or signal this live connection without
+    // obtaining Kernel Report/Owner Delivery authority or a durable resume claim.
+    onHostControl?.({
+      observeTurn: () => transport.observeTurn(),
+      interruptActiveTurn: () => transport.interruptActiveTurn(),
+    });
     const nativeTurn = await transport.runTurn({
       cwd: prepared.workspaceRoot,
       prompt,
@@ -169,4 +182,59 @@ export async function runHostOwnedWritableAttempt({
     // App Server process exit is not evidence that OS Writer descendants exited.
     await transport.close();
   }
+}
+
+export interface HostOwnedWritableAttemptHandle {
+  runId: string;
+  attemptId: string;
+  // Settling this Promise proves only the result of the model Turn, not Delivery.
+  result: Promise<HostOwnedWritableAttemptObservation>;
+  observe(): {
+    state: 'starting' | 'turn-running' | 'turn-settled' | 'unknown';
+    nativeTurn: CodexAppServerTurnObservation | null;
+    writerExitVerified: false;
+  };
+  interrupt(): Promise<CodexAppServerInterruptResult>;
+}
+
+/**
+ * Start an existing Kernel Attempt without tying its lifetime to the calling
+ * Main request. This handle lives only in the owning Host process. After a
+ * Host crash the Canonical Attempt remains authoritative and unobserved;
+ * the caller must never infer a safe retry from the lost in-memory handle.
+ */
+export function startHostOwnedWritableAttempt(
+  input: HostOwnedWritableAttemptInput,
+): HostOwnedWritableAttemptHandle {
+  let nativeControl: Pick<CodexAppServerTransport, 'observeTurn' | 'interruptActiveTurn'> | null = null;
+  let state: 'starting' | 'turn-running' | 'turn-settled' | 'unknown' = 'starting';
+  const result = runHostOwnedWritableAttempt({
+    ...input,
+    onHostControl: (control) => {
+      nativeControl = control;
+      state = 'turn-running';
+      input.onHostControl?.(control);
+    },
+  }).then((value) => {
+    state = 'turn-settled';
+    return value;
+  }, (error: unknown) => {
+    state = 'unknown';
+    throw error;
+  });
+  // A Main may disconnect without awaiting result. Keep the rejection handled
+  // while leaving the original Promise for an attached Host to inspect.
+  void result.catch(() => undefined);
+  return {
+    runId: input.runId,
+    attemptId: input.attemptId,
+    result,
+    observe: () => ({
+      state,
+      nativeTurn: nativeControl?.observeTurn() || null,
+      writerExitVerified: false,
+    }),
+    interrupt: () => nativeControl?.interruptActiveTurn()
+      || Promise.resolve({ status: 'not-addressable' as const, writerExitVerified: false as const }),
+  };
 }

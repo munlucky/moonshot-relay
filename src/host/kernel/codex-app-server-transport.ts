@@ -37,8 +37,24 @@ export interface CodexAppServerTurnResult {
   writerExitVerified: false;
 }
 
+export interface CodexAppServerTurnObservation {
+  connection: 'connected' | 'unavailable';
+  turn: 'idle' | 'starting' | 'running' | 'interrupt-requested' | 'unknown';
+  threadId: string | null;
+  turnId: string | null;
+  // This observes only the owned App Server connection, never OS descendants.
+  writerExitVerified: false;
+}
+
+export interface CodexAppServerInterruptResult {
+  status: 'requested' | 'not-running' | 'not-addressable' | 'unavailable' | 'unknown';
+  writerExitVerified: false;
+}
+
 export interface CodexAppServerTransport {
   runTurn(input: CodexAppServerTurn): Promise<CodexAppServerTurnResult>;
+  observeTurn(): CodexAppServerTurnObservation;
+  interruptActiveTurn(): Promise<CodexAppServerInterruptResult>;
   close(): Promise<{ appServerExited: boolean; writerExitVerified: false }>;
 }
 
@@ -99,6 +115,9 @@ export async function createCodexAppServerTransport({
   let nextId = 1;
   let buffer = '';
   let active = false;
+  let activeTurn: { threadId: string; turnId: string } | null = null;
+  let interruptRequest: Promise<CodexAppServerInterruptResult> | null = null;
+  let interruptRequested = false;
   let shutdown: Promise<boolean> | null = null;
   const attemptedWorkspaces = new Set<string>();
   const pending = new Map<number, Pending>();
@@ -238,6 +257,35 @@ export async function createCodexAppServerTransport({
   }
 
   return {
+    observeTurn() {
+      const available = !closed && !poisoned && !exited;
+      return {
+        connection: available ? 'connected' as const : 'unavailable' as const,
+        turn: !available ? 'unknown' as const
+          : interruptRequested && activeTurn ? 'interrupt-requested' as const
+          : activeTurn ? 'running' as const
+          : active ? 'starting' as const : 'idle' as const,
+        threadId: activeTurn?.threadId || null,
+        turnId: activeTurn?.turnId || null,
+        writerExitVerified: false as const,
+      };
+    },
+
+    interruptActiveTurn() {
+      if (closed || poisoned || exited) return Promise.resolve({ status: 'unavailable' as const, writerExitVerified: false as const });
+      if (!active) return Promise.resolve({ status: 'not-running' as const, writerExitVerified: false as const });
+      // Never interrupt an unidentified Turn. A delayed turn/start ACK can
+      // otherwise cancel a different provider Turn after a connection loss.
+      if (!activeTurn) return Promise.resolve({ status: 'not-addressable' as const, writerExitVerified: false as const });
+      if (interruptRequest) return interruptRequest;
+      interruptRequested = true;
+      interruptRequest = rpc('turn/interrupt', { threadId: activeTurn.threadId, turnId: activeTurn.turnId })
+        .then(() => ({ status: 'requested' as const, writerExitVerified: false as const }))
+        .catch(() => ({ status: 'unknown' as const, writerExitVerified: false as const }));
+      // An RPC ACK is not a Turn interrupt event and never proves OS Writer exit.
+      return interruptRequest;
+    },
+
     async runTurn({ cwd: requestedCwd, prompt, model, effort, timeoutMs: turnTimeout, executionOwner = null, onNativeExecution = null, writableWorker = null }) {
       if (closed || poisoned || exited) throw error('codex_app_server_unavailable');
       if (active) throw error('codex_app_server_turn_already_running');
@@ -252,6 +300,9 @@ export async function createCodexAppServerTransport({
       // Reserve before the first await so concurrent callers cannot both
       // pass the admission check while resolving the same Workspace.
       active = true;
+      activeTurn = null;
+      interruptRequest = null;
+      interruptRequested = false;
       let workspace: string;
       try {
         workspace = await realpath(requestedCwd);
@@ -337,6 +388,7 @@ export async function createCodexAppServerTransport({
         const turnId = name(object(turn.turn)?.id);
         if (!turnId) throw error('codex_app_server_turn_missing');
         startedTurn = { threadId, turnId };
+        activeTurn = startedTurn;
         for (const message of buffered) observe(message);
         buffered = [];
         const turnTimer = setTimeout(() => {
@@ -355,6 +407,9 @@ export async function createCodexAppServerTransport({
         listeners.delete(observe);
         // Unknown/incomplete execution poisons the connection. Even completed
         // turns do not release their Workspace for another Writer.
+        activeTurn = null;
+        interruptRequest = null;
+        interruptRequested = false;
         active = false;
       }
     },

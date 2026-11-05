@@ -8,7 +8,7 @@ import path from 'node:path';
 import { createCodexAppServerTransport } from '../src/host/kernel/codex-app-server-transport.js';
 import { type NativeExecutionObservation } from '../src/host/kernel/adapter-dispatch.js';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
-import { runHostOwnedWritableAttempt } from '../src/host/kernel/host-owned-writable-attempt.js';
+import { runHostOwnedWritableAttempt, startHostOwnedWritableAttempt } from '../src/host/kernel/host-owned-writable-attempt.js';
 import { prepareHostWriterAttemptWorktree } from '../src/host/kernel/workspace/physical-worktree.js';
 import { reserveHostWorkspaceWriter } from '../src/host/kernel/workspace-writer-reservation.js';
 
@@ -76,7 +76,7 @@ input.on('line', (line) => {
       ], { cwd: message.params.cwd, stdio: 'ignore', detached: true });
       child.unref();
     }
-    if (process.env.TEST_MODE === 'stall-turn') {
+    if (process.env.TEST_MODE === 'stall-turn' || process.env.TEST_MODE === 'writable-stall-turn') {
       send({ id, result: { turn: { id: turnId, status: 'inProgress' } } });
       return;
     }
@@ -91,6 +91,16 @@ input.on('line', (line) => {
       send({ method: 'turn/completed', params: { threadId, turn: { id: 'wrong-turn', status: 'interrupted' } } });
       send({ method: 'turn/completed', params: { threadId, turn: { id: turnId, status: 'completed' } } });
     }, 25);
+  } else if (message.method === 'turn/interrupt') {
+    if (process.env.TEST_MODE === 'stall-turn' || process.env.TEST_MODE === 'writable-stall-turn') {
+      send({ id, result: {} });
+      send({ method: 'turn/completed', params: {
+        threadId: message.params.threadId,
+        turn: { id: message.params.turnId, status: 'interrupted' },
+      } });
+    } else {
+      send({ id, error: { code: -1, message: 'turn not interruptible' } });
+    }
   }
 });
 `;
@@ -191,6 +201,45 @@ test('An unfinished Turn times out and prevents another dispatch on the same con
     } finally {
       const closed = await transport.close();
       assert.equal(closed.writerExitVerified, false);
+    }
+  });
+});
+
+test('Host observes the active Native Turn and requests one interrupt without treating ACK as Writer exit', async () => {
+  await withFixture(async ({ workspace, server }) => {
+    const transport = await createCodexAppServerTransport({
+      executable: process.execPath, args: [server], requestTimeoutMs: 1500,
+      env: { ...process.env, TEST_MODE: 'stall-turn' },
+    });
+    try {
+      assert.equal(transport.observeTurn().turn, 'idle');
+      assert.equal((await transport.interruptActiveTurn()).status, 'not-running');
+      const running = transport.runTurn({ ...turn(workspace), timeoutMs: 2500 });
+      let observation = transport.observeTurn();
+      for (let i = 0; i < 100 && observation.turn !== 'running'; i++) {
+        await sleep(10);
+        observation = transport.observeTurn();
+      }
+      assert.equal(observation.connection, 'connected');
+      assert.equal(observation.turn, 'running');
+      assert.equal(observation.threadId, 'thr-1');
+      assert.equal(observation.turnId, 'turn-1');
+      assert.equal(observation.writerExitVerified, false);
+      const signals = await Promise.all([transport.interruptActiveTurn(), transport.interruptActiveTurn()]);
+      assert.deepEqual(signals, [
+        { status: 'requested', writerExitVerified: false },
+        { status: 'requested', writerExitVerified: false },
+      ]);
+      const result = await running;
+      assert.equal(result.turnStatus, 'interrupted');
+      assert.equal(result.writerExitVerified, false);
+      assert.equal(transport.observeTurn().turn, 'idle');
+      assert.equal((await transport.interruptActiveTurn()).status, 'not-running');
+    } finally {
+      await transport.close();
+      assert.equal(transport.observeTurn().connection, 'unavailable');
+      assert.equal(transport.observeTurn().turn, 'unknown');
+      assert.equal((await transport.interruptActiveTurn()).status, 'unavailable');
     }
   });
 });
@@ -494,8 +543,15 @@ test('Explicit Host-owned Writable runner binds a real Kernel Attempt and a sepa
       await cp.startRun({ runId, objective: 'canonical Host-owned writable attempt test' });
       const a = cp.beginAttempt(runId);
       assert.ok(a?.attemptId && a.stepId);
-      const first = await runHostOwnedWritableAttempt({ ...input, stepId: a.stepId, attemptId: a.attemptId });
+      const active = startHostOwnedWritableAttempt({ ...input, stepId: a.stepId, attemptId: a.attemptId });
+      assert.equal(active.attemptId, a.attemptId);
+      assert.equal(active.observe().state, 'starting', 'Host start does not wait for the model Turn');
+      assert.equal(active.observe().writerExitVerified, false);
+      const first = await active.result;
       ownedWorktrees.push(first.workspaceRoot);
+      assert.equal(active.observe().state, 'turn-settled');
+      assert.equal(active.observe().nativeTurn?.connection, 'unavailable');
+      assert.equal((await active.interrupt()).status, 'unavailable');
       assert.equal(first.nativeTurn.turnStatus, 'completed');
       assert.equal(first.reportAuthority, 'none');
       assert.equal(first.writerExitVerified, false);
