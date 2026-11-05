@@ -2,7 +2,7 @@
 
 - 최종 갱신: 2026-11-05 (KST) — **W0 Context SOURCE PASS / G0 Native Capability PARTIAL**
 - 기준 소스: `main / c35979c408da120e4827791700ccb5a4c06ab78f` (W0-Fix 커밋·푸시 확인)
-- 문서: [PLAN](PLAN.md) · [W0 착수](W0_START.md) · [검증 계약](VERIFICATION.md)
+- 문서: [PLAN](PLAN.md) · [W0 착수](W0_START.md) · [검증 계약](VERIFICATION.md) · [T49 이후 병렬 통합 실행계획](T49_END_TO_END_PARALLEL_VERIFICATION_EXECUTION_PLAN_2026-11-05.md)
 - 이 파일의 상태는 **새 제품 기능의 PASS가 아니다.**
 
 | 항목 | 상태 | 증거·다음 조치 |
