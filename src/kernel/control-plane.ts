@@ -2740,7 +2740,27 @@ export const createKernelControlPlane = async ({
       // receipt is the other durable marker for the crash window. This keeps
       // the incomplete-marker guard fail-closed without repeatedly blocking on
       // a stale historical owner mutation during a normal PROVE retry.
-      const preparedDeliveryMarker = Boolean(provenance && !provenance.attemptId);
+      // Proof can advance the workspace revision before an owner report settles.
+      // Its older provenance then cannot be linked by current-revision
+      // reconciliation. A canonical settled owner receipt still identifies that
+      // historical mutation; it does not make the failed proof valid.
+      const settledOwnerMutation = provenance && store.getStepAttempts(runId).some((attempt) => {
+        const receipt = asRecord(attempt.reportResult);
+        return attempt.provenanceKind === 'owner-session'
+          && ['passed', 'failed'].includes(attempt.status)
+          && Boolean(attempt.attemptId && attempt.reportKey && attempt.reportPayloadDigest && attempt.finishedAt)
+          && attempt.bindingId === run.ownerBindingId
+          && provenance.projectId === run.projectId
+          && provenance.sourceIdentity === run.sourceIdentity
+          && (attempt.workspaceId || run.workspaceId || null) === (provenance.workspaceId || null)
+          && Number(attempt.mutationRevision) === Number(provenance.mutationRevision)
+          && attempt.workspaceIdentityEnd === provenance.workspaceIdentity
+          && attempt.resultWorkspaceIdentity === provenance.workspaceIdentity
+          && receipt.runId === runId && receipt.reportKey === attempt.reportKey
+          && receiptValuesEqual(attempt.changedPaths, provenance.changedPaths, { paths: true })
+          && receiptValuesEqual(receipt.actualChangedPaths, provenance.changedPaths, { paths: true });
+      });
+      const preparedDeliveryMarker = Boolean(provenance && !provenance.attemptId && !settledOwnerMutation);
       if (!pendingApply && relevantAttempts.length === 0 && !preparedDeliveryMarker) return { status: 'none', run };
       const ownerFence = run.workspaceId ? store.getWorkspaceMutationLockV2(run.workspaceId) : null;
       const ownerApplying = ownerFence?.holderRunId === runId && Date.parse(ownerFence.expiresAt) > Date.now();

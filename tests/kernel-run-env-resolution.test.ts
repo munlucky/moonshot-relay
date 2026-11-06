@@ -12,6 +12,50 @@ import { recoveryForKernelError } from '../src/kernel/run/binding-preflight.js';
 import './kernel-isolation-wave0.fixture.js';
 import './kernel-stable-workspace-identity.fixture.js';
 
+test('owner proof mutation remains failed but does not become a prepared parallel delivery on restart', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-owner-proof-reentry-'));
+  const projectRoot = path.join(root, 'project');
+  const runtimeHome = path.join(root, 'runtime');
+  const runId = 'owner-proof-reentry';
+  const env = { ...process.env, MOON_RELAY_KERNEL_SESSION_ID: 'codex:owner-proof-reentry', MOON_RELAY_KERNEL_PROVIDER: 'codex' };
+  await mkdir(path.join(projectRoot, '.moon-relay'), { recursive: true });
+  await writeFile(path.join(projectRoot, '.moon-relay', 'track.yaml'), 'track: kernel\n');
+  await writeFile(path.join(projectRoot, 'package.json'), JSON.stringify({ scripts: {
+    'test:generate': 'node -e "require(\'node:fs\').writeFileSync(\'generated.txt\', \'generated\\n\')"',
+  } }));
+  await writeFile(path.join(projectRoot, 'input.txt'), 'before\n');
+  await writeFile(path.join(projectRoot, 'generated.txt'), 'before\n');
+  for (const args of [['init', '-b', 'main'], ['add', '.'], ['-c', 'user.name=Recovery Test', '-c', 'user.email=recovery@example.invalid', 'commit', '-m', 'fixture']]) {
+    const git = spawnSync('git', args, { cwd: projectRoot, encoding: 'utf8' });
+    assert.equal(git.status, 0, git.stderr);
+  }
+  let cp = await createKernelControlPlane({ runtimeHome, projectRoot, env, requireHostBinding: true });
+  try {
+    await cp.ensureRun({ runId, objective: 'retry generated proof safely', taskContract: {
+      allowedPaths: ['input.txt', 'generated.txt'],
+      acceptance: [{ acceptance: 'fresh proof passes', evidencePlan: {
+        class: 'hard', method: 'unit-test', commandRefs: ['test:generate'], obligationId: 'default',
+      } }],
+    } });
+    await writeFile(path.join(projectRoot, 'input.txt'), 'after\n');
+    const first = await cp.report(runId, { summary: 'first owner report', changedPaths: ['input.txt'],
+      verifications: [{ obligationId: 'default', commandRef: 'test:generate', acceptanceCoverage: ['AC-1'] }] });
+    assert.equal(assertTestPresent(first).status, 'evidence-failed');
+    assert.equal(cp.stateStore.getVerifications(runId).at(-1)?.status, 'failed');
+    await cp.close();
+    cp = await createKernelControlPlane({ runtimeHome, projectRoot, env, requireHostBinding: true });
+    const resumed = await cp.ensureRun({ runId });
+    assert.notEqual(assertTestRecord(resumed.next).status, 'blocked', JSON.stringify(resumed.next));
+    assert.equal(cp.stateStore.getVerifications(runId).at(-1)?.status, 'failed');
+    const retried = await cp.report(runId, { summary: 'fresh proof for generated workspace', changedPaths: ['generated.txt', 'input.txt'],
+      verifications: [{ obligationId: 'default', commandRef: 'test:generate', acceptanceCoverage: ['AC-1'] }] });
+    assert.equal(assertTestPresent(retried).status, 'completed', JSON.stringify(retried));
+  } finally {
+    await cp.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('run selection rejects conflicting explicit/environment identities before fallback resolution', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-run-resolution-'));
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-run-resolution-state-'));

@@ -65,6 +65,11 @@ Safety denials remain inspect-only. A workspace or authority change produces
 a fresh fingerprint and invalidates the old description; native next/report
 then decides which proof must be rerun.
 
+A settled canonical owner report can identify an older owner mutation even
+when proof has advanced the workspace revision. This distinguishes that report
+from a prepared parallel Delivery. It does not approve proof that changed files;
+the owner must report the resulting workspace and run fresh bound proof.
+
 ## Successor lineage after contract revision
 
 A successor key binds the contract used when the successor was created. The
