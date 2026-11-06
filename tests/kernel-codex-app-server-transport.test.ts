@@ -12,6 +12,7 @@ import { runHostOwnedWritableAttempt, startHostOwnedWritableAttempt } from '../s
 import { prepareHostWriterAttemptWorktree, snapshotHostWorkerPatch } from '../src/host/kernel/workspace/physical-worktree.js';
 import { reserveHostWorkspaceWriter } from '../src/host/kernel/workspace-writer-reservation.js';
 import { verifyHostOwnedWorkerCandidate } from '../src/host/kernel/parallel-dispatcher.js';
+import { CODEX_WORKER_OUTPUT_SCHEMA } from '../src/host/kernel/adapters/codex.js';
 
 const fakeServer = String.raw`
 const readline = require('node:readline');
@@ -58,8 +59,26 @@ input.on('line', (line) => {
       send({ id, error: { code: -1, message: 'unsafe turn' } });
       return;
     }
-    if (process.env.TEST_MODE === 'writable') {
+    if (process.env.TEST_MODE === 'writable' || process.env.TEST_MODE?.startsWith('writable-report')) {
       fs.writeFileSync(path.join(message.params.cwd, 'mock-writer-started.txt'), 'started');
+    }
+    const reportEvent = (thread, itemId = 'final-report', text = process.env.TEST_REPORT_TEXT) => ({
+      method: 'item/completed', params: { threadId: thread, turnId,
+        item: { type: 'agentMessage', id: itemId, phase: 'final_answer', text: text || JSON.stringify({
+          status: 'completed', summary: 'Actual fixture Worker report',
+          changedPaths: ['mock-writer-started.txt'], risks: [],
+          verifications: [{ obligationId: 'default', commandRef: 'test:fixture', acceptanceCoverage: ['AC-1'] }],
+          requestedVerifications: [], judgments: [], knowledgeObservations: [], blocker: null,
+        }) } },
+    });
+    if (process.env.TEST_MODE?.includes('report')) {
+      if (!message.params.outputSchema || message.params.outputSchema.additionalProperties !== false) throw Error('missing output schema');
+      send(reportEvent('other-thread', 'forged-report', '{"status":"completed"}'));
+      send({ method: 'item/completed', params: { threadId, turnId,
+        item: { type: 'agentMessage', id: 'commentary', phase: 'commentary', text: 'Not a report' } } });
+      send(reportEvent(threadId)); // Before the turn/start ACK.
+      if (process.env.TEST_MODE === 'writable-report-ambiguous') send(reportEvent(threadId, 'different-report'));
+      else send(reportEvent(threadId)); // Exact event replay is harmless.
     }
     if (process.env.TEST_MODE === 'writable-detached-descendant') {
       // Real OS child with its own process group. The fake server completes
@@ -99,6 +118,7 @@ input.on('line', (line) => {
       // item notifications which include params.turnId.
       send({ method: 'turn/completed', params: { threadId, turn: { id: 'wrong-turn', status: 'interrupted' } } });
       send({ method: 'turn/completed', params: { threadId, turn: { id: turnId, status: 'completed' } } });
+      if (process.env.TEST_MODE?.includes('report')) send(reportEvent(threadId, 'late-report', '{"status":"failed"}'));
     }, 25);
   } else if (message.method === 'turn/interrupt') {
     if (process.env.TEST_MODE === 'stall-turn' || process.env.TEST_MODE === 'writable-stall-turn') {
@@ -117,7 +137,7 @@ input.on('line', (line) => {
 const withFixture = async <T>(
   fn: (input: { workspace: string; alternative: string; server: string; reservationRoot: string }) => Promise<T>,
 ): Promise<T> => {
-  const root = await mkdtemp(path.join(tmpdir(), 'codex-app-server-fixture-'));
+  const root = await mkdtemp(path.join(tmpdir(), 'kas-'));
   try {
     const workspace = path.join(root, 'first');
     const alternative = path.join(root, 'second');
@@ -546,6 +566,7 @@ test('Host snapshots tracked, deleted and untracked Worker changes without chang
     };
     git('init');
     git('config', 'user.name', 'Snapshot Fixture');
+    git('config', 'core.autocrlf', 'false');
     git('config', 'user.email', 'snapshot@example.invalid');
     await writeFile(path.join(workspace, 'README.md'), 'before\n');
     await writeFile(path.join(workspace, 'remove.txt'), 'removed\n');
@@ -596,7 +617,8 @@ test('Explicit Host-owned Writable runner binds a real Kernel Attempt and a sepa
     git('init');
     git('config', 'user.name', 'Kernel Host Writer Fixture');
     git('config', 'user.email', 'host-writer@example.invalid');
-    await writeFile(path.join(workspace, 'package.json'), '{"name":"host-owned-writable-fixture"}');
+    await writeFile(path.join(workspace, 'package.json'), JSON.stringify({ name: 'host-owned-writable-fixture',
+      scripts: { 'test:fixture': 'node --version' } }));
     git('add', '--all');
     git('commit', '-m', 'baseline');
     const baseCommit = git('rev-parse', 'HEAD');
@@ -619,7 +641,7 @@ test('Explicit Host-owned Writable runner binds a real Kernel Attempt and a sepa
       onNativeExecution: (item: NativeExecutionObservation) => { seen.push(item); },
       transportOptions: {
         executable: process.execPath, args: [server], requestTimeoutMs: 1500,
-        env: { ...process.env, TEST_MODE: 'writable' },
+        env: { ...process.env, TEST_MODE: 'writable-report' },
       },
     };
     try {
@@ -651,8 +673,11 @@ test('Explicit Host-owned Writable runner binds a real Kernel Attempt and a sepa
       assert.equal(first.resultCandidate?.ownerApplyCheck, 'passed');
       assert.equal(first.resultCandidate?.deliveryAuthorized, false);
       assert.equal(first.resultCandidate?.writerExitVerified, false);
-      assert.equal(cp.getAttemptById(runId, a.attemptId)?.resultCommitSha, null,
-        'an unretired Writer observation cannot become a canonical immutable delivery receipt');
+      assert.equal(first.resultHandoff.status, 'recorded', JSON.stringify(first.resultHandoff));
+      assert.equal(cp.getAttemptById(runId, a.attemptId)?.resultCommitSha, first.resultCandidate?.resultCommitSha,
+        'the canonical receipt records the observed candidate without granting Delivery');
+      assert.equal(cp.stateStore.getMutationProvenance(runId), null,
+        'candidate handoff cannot mint Owner mutation provenance');
       assert.notEqual(first.workspaceRoot, workspace);
       assert.equal(first.commandEvents.length, 2);
       assert.ok(first.commandEvents.every(item => item.runId === runId
@@ -686,8 +711,8 @@ test('Explicit Host-owned Writable runner binds a real Kernel Attempt and a sepa
       assert.equal(cp.stateStore.getWorkspaceMutationLockV2((await cp.getRun(runId))!.workspaceId!), null,
         'read-only preflight must release the existing Owner fence');
       assert.equal(cp.getAttemptById(runId, a.attemptId)?.status, 'started');
-      assert.equal(cp.getAttemptById(runId, a.attemptId)?.resultCommitSha, null,
-        'proof-only preflight cannot mint a canonical delivery receipt');
+      assert.equal(cp.getAttemptById(runId, a.attemptId)?.resultCommitSha, candidate.resultCommitSha,
+        'proof-only preflight preserves the original candidate receipt');
       assert.equal(git('status', '--porcelain'), '', 'verified candidate cannot mutate Owner');
       const refused = await verifyHostOwnedWorkerCandidate({
         controlPlane: cp, projectRoot: workspace, runtimeHome, runId,
@@ -759,6 +784,95 @@ test('Explicit Host-owned Writable runner binds a real Kernel Attempt and a sepa
   });
 });
 
+
+for (const [scenario, failureCode] of [
+  ['missing', 'host_worker_report_missing'],
+  ['malformed', 'host_worker_report_invalid'],
+  ['forged-owner', 'host_worker_report_invalid'],
+  ['omitted-path', 'host_worker_report_paths_mismatch'],
+  ['unbound-proof', 'host_worker_report_verification_unbound'],
+  ['blocked-output', 'host_worker_report_not_completed'],
+  ['stale-attempt', 'host_worker_result_lineage_changed'],
+  ['owner-drift', 'host_worker_result_lineage_changed'],
+] as const) test(`A2-1: ${scenario} actual App Server result cannot create a canonical candidate or Report`, async () => {
+  await withFixture(async ({ workspace, server, reservationRoot }) => {
+    const git = (...args: string[]) => {
+      const result = spawnSync('git', args, { cwd: workspace, encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr);
+      return result.stdout.trim();
+    };
+    git('init');
+    git('config', 'user.name', 'Host Result Fixture');
+    git('config', 'user.email', 'result@example.invalid');
+    await writeFile(path.join(workspace, 'package.json'), JSON.stringify({ scripts: { 'test:fixture': 'node --version' } }));
+    git('add', '.'); git('commit', '-m', 'baseline');
+    const runtimeHome = path.join(path.dirname(workspace), 'kernel-runtime');
+    const cp = await createKernelControlPlane({ runtimeHome, projectRoot: workspace });
+    let workerRoot: string | null = null;
+    try {
+      const runId = 'negative-handoff';
+      await cp.startRun({ runId, objective: 'observe candidate only', taskContract: {
+        acceptance: ['fixture written'], allowedPaths: ['mock-writer-started.txt'],
+      } });
+      const attempt = cp.beginAttempt(runId, { provenanceKind: 'host-owned-worker' });
+      assert.ok(attempt?.attemptId);
+      const output: Record<string, unknown> = {
+        status: 'completed', summary: 'Worker result', changedPaths: ['mock-writer-started.txt'], risks: [],
+        verifications: [{ obligationId: 'default', commandRef: 'test:fixture', acceptanceCoverage: ['AC-1'] }],
+        requestedVerifications: [], judgments: [], knowledgeObservations: [], blocker: null,
+      };
+      if (scenario === 'forged-owner') output.attemptId = 'forged';
+      if (scenario === 'omitted-path') output.changedPaths = [];
+      if (scenario === 'unbound-proof') output.verifications = [{ obligationId: 'default', commandRef: 'untrusted', acceptanceCoverage: ['AC-1'] }];
+      if (scenario === 'blocked-output') { output.status = 'blocked'; output.blocker = 'not done'; }
+      const result = await runHostOwnedWritableAttempt({
+        controlPlane: cp, repoRoot: workspace, runtimeHome, reservationRoot, baseCommit: git('rev-parse', 'HEAD'),
+        runId, stepId: attempt.stepId, attemptId: attempt.attemptId,
+        prompt: 'bounded result fixture', model: 'test-model', effort: 'high', turnTimeoutMs: 3000,
+        transportOptions: { executable: process.execPath, args: [server], requestTimeoutMs: 1500,
+          env: { ...process.env, TEST_MODE: scenario === 'missing' ? 'writable' : 'writable-report',
+            TEST_REPORT_TEXT: scenario === 'malformed' ? '{invalid JSON' : JSON.stringify(output) } },
+        onNativeExecution: event => {
+          if (event.method !== 'item/started') return;
+          if (scenario === 'stale-attempt') cp.failStepAttempt(runId, attempt.stepId, { code: 'old_attempt_failed' });
+          if (scenario === 'owner-drift') {
+            const changed = spawnSync(process.execPath, ['-e', "require('node:fs').writeFileSync('owner-change.txt','concurrent owner edit')"], { cwd: workspace });
+            assert.equal(changed.status, 0);
+          }
+        },
+      });
+      workerRoot = result.workspaceRoot;
+      assert.equal(result.nativeTurn.turnStatus, 'completed');
+      assert.deepEqual(result.resultHandoff, { status: 'blocked', failureCode });
+      const canonical = cp.getAttemptById(runId, attempt.attemptId);
+      assert.equal(canonical?.resultCommitSha, null);
+      assert.equal(canonical?.workerReport, null);
+      assert.equal(canonical?.reportResult, null);
+      assert.equal((await cp.getRun(runId))?.mutationRevision, 0);
+      assert.equal(cp.stateStore.getMutationProvenance(runId), null);
+      assert.notEqual(cp.getCurrentStep(runId)?.state, 'passed');
+      assert.equal(result.writerExitVerified, false);
+      assert.equal(result.resultCandidate?.deliveryAuthorized, false);
+      assert.equal(git('status', '--porcelain'), scenario === 'owner-drift' ? '?? owner-change.txt' : '');
+    } finally {
+      await cp.close();
+      if (workerRoot) git('worktree', 'remove', '--force', workerRoot);
+    }
+  });
+});
+
+test('A2-1: two different terminal agent messages poison the transport instead of choosing a report', async () => {
+  await withFixture(async ({ workspace, server, reservationRoot }) => {
+    const transport = await createCodexAppServerTransport({ executable: process.execPath, args: [server],
+      env: { ...process.env, TEST_MODE: 'writable-report-ambiguous' }, requestTimeoutMs: 1500 });
+    try {
+      await assert.rejects(transport.runTurn({ ...turn(workspace),
+        executionOwner: { runId: 'run-a', stepId: 'step-a', attemptId: 'attempt-a', workspaceId: 'workspace-a' },
+        onNativeExecution: () => {}, writableWorker: { reservationRoot }, outputSchema: CODEX_WORKER_OUTPUT_SCHEMA,
+      }), { code: 'codex_app_server_final_message_ambiguous' });
+    } finally { await transport.close(); }
+  });
+});
 
 test('T26: disconnected Writable Turn keeps canonical Attempt unknown and rejects another Host on the same physical Workspace', async () => {
   await withFixture(async ({ workspace, server, reservationRoot }) => {

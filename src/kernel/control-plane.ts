@@ -2568,7 +2568,8 @@ export const createKernelControlPlane = async ({
       const steps = store.getRunSteps(runId, { planRevision: run.planRevision });
       const stepById = new Map(steps.map((step) => [step.stepId, step]));
       const workerAttempts = store.getStepAttempts(runId)
-        .filter((attempt) => attempt.provenanceKind === 'routed')
+        .filter((attempt) => attempt.provenanceKind === 'routed'
+          || (attempt.provenanceKind === 'host-owned-worker' && attempt.resultCommitSha && attempt.workerReport))
         .filter((attempt) => activeStatuses.has(attempt.status))
         .filter((attempt) => {
           const step = stepById.get(attempt.stepId);

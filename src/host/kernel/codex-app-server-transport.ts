@@ -27,6 +27,9 @@ export interface CodexAppServerTurn {
   // Host may attach its pending cancel only after this exact Turn becomes
   // active; the transport queues cancellation until the Turn ID is known.
   onReady?: () => void;
+  // Host-selected schema. The matching final agent message remains a model
+  // claim; neither JSON shape nor Turn completion grants Report authority.
+  outputSchema?: RecordValue;
   // Explicit Host-only opt-in. The reservation root must be inaccessible to
   // the Worker sandbox; this does not change the default read-only transport.
   writableWorker?: { reservationRoot: string } | null;
@@ -38,6 +41,7 @@ export interface CodexAppServerTurnResult {
   turnStatus: 'completed' | 'failed' | 'interrupted' | 'unknown';
   // A completed model turn is NOT proof that command descendants have exited.
   writerExitVerified: false;
+  finalMessage?: string | null;
 }
 
 export interface CodexAppServerTurnObservation {
@@ -299,7 +303,7 @@ export async function createCodexAppServerTransport({
       return sendInterrupt();
     },
 
-    async runTurn({ cwd: requestedCwd, prompt, model, effort, timeoutMs: turnTimeout, executionOwner = null, onNativeExecution = null, onReady = undefined, writableWorker = null }) {
+    async runTurn({ cwd: requestedCwd, prompt, model, effort, timeoutMs: turnTimeout, executionOwner = null, onNativeExecution = null, onReady = undefined, outputSchema = undefined, writableWorker = null }) {
       if (closed || poisoned || exited) throw error('codex_app_server_unavailable');
       if (active) throw error('codex_app_server_turn_already_running');
       if (!name(prompt) || !name(model) || !name(effort) || !name(requestedCwd)) {
@@ -340,6 +344,9 @@ export async function createCodexAppServerTransport({
       }
       let startedTurn: { threadId: string; turnId: string } | null = null;
       let buffered: ServerMessage[] = [];
+      let finalMessage: { id: string; text: string } | null = null;
+      const finalText = (): string | null => finalMessage?.text ?? null;
+      let turnCompleted = false;
       let completionResolve: ((status: CodexAppServerTurnResult['turnStatus']) => void) | null = null;
       let completionReject: ((e: Error) => void) | null = null;
       const completed = new Promise<CodexAppServerTurnResult['turnStatus']>((resolve, reject) => {
@@ -350,6 +357,7 @@ export async function createCodexAppServerTransport({
       // Attach a rejection observer before making any RPC requests.
       void completed.catch(() => undefined);
       const observe = (message: ServerMessage): void => {
+        if (turnCompleted) return;
         if (!startedTurn) {
           if (buffered.length === MAX_BEFORE_ACK) {
             fail('codex_app_server_early_events_overflow');
@@ -364,6 +372,19 @@ export async function createCodexAppServerTransport({
           : name(params?.turnId);
         if (params?.threadId !== startedTurn.threadId || observedTurnId !== startedTurn.turnId) return;
         if (message.method === 'item/started' || message.method === 'item/completed') {
+          const item = object(params?.item);
+          if (outputSchema && message.method === 'item/completed' && item?.type === 'agentMessage'
+            && (item.phase === 'final_answer' || item.phase === null || item.phase === undefined)) {
+            if (!name(item.id) || typeof item.text !== 'string') {
+              fail('codex_app_server_final_message_invalid');
+              return;
+            }
+            if (finalMessage && (finalMessage.id !== item.id || finalMessage.text !== item.text)) {
+              fail('codex_app_server_final_message_ambiguous');
+              return;
+            }
+            finalMessage = { id: item.id as string, text: item.text };
+          }
           if (executionOwner && onNativeExecution) {
             const observation = bindNativeCommandEvent(executionOwner, message, startedTurn);
             if (observation) {
@@ -372,6 +393,7 @@ export async function createCodexAppServerTransport({
             }
           }
         } else if (message.method === 'turn/completed') {
+          turnCompleted = true;
           const rawStatus = object(params?.turn)?.status;
           const turnStatus = rawStatus === 'completed' || rawStatus === 'failed' || rawStatus === 'interrupted'
             ? rawStatus : 'unknown';
@@ -394,6 +416,7 @@ export async function createCodexAppServerTransport({
         const turn = await rpc('turn/start', {
           threadId, input: [{ type: 'text', text: prompt }],
           model, effort, cwd: workspace,
+          ...(outputSchema ? { outputSchema } : {}),
           sandboxPolicy: writableWorker
             ? { type: 'workspaceWrite', writableRoots: [workspace], networkAccess: false,
               excludeSlashTmp: true, excludeTmpdirEnvVar: true }
@@ -412,7 +435,8 @@ export async function createCodexAppServerTransport({
         try {
           const turnStatus = await completed;
           settled = true;
-          return { threadId, turnId, turnStatus, writerExitVerified: false };
+          return { threadId, turnId, turnStatus, writerExitVerified: false,
+            ...(outputSchema ? { finalMessage: finalText() } : {}) };
         } finally {
           clearTimeout(turnTimer);
         }

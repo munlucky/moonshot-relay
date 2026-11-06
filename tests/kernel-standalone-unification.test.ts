@@ -185,7 +185,9 @@ test('kernel commit admission rejects unknown, foreign, and drifted provenance',
     const foreignIdentity = foreignObservation.identity;
     run.currentWorkspaceIdentity = foreignIdentity;
     provenance.workspaceIdentity = foreignIdentity;
-    baselineWorkspaceEntries = foreignObservation.changeEntries.filter((entry) => entry.path === 'foreign.txt');
+    // A successor baseline can contain a predecessor's already-approved
+    // pending change. Preserve only the unrelated user file, not App.txt.
+    baselineWorkspaceEntries = foreignObservation.changeEntries;
     const preserved = admitKernelMutation({
       stateStore,
       project,

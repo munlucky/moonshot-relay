@@ -561,7 +561,8 @@ export const snapshotHostWorkerPatch = async ({
       .split('\0').filter(Boolean).sort();
     // Create a detached commit object for the existing integration engine.
     // Never move a Worktree HEAD/ref or the Worker's own index. A commit
-    // candidate is NOT a canonical receipt until OS Writer exclusion is proven.
+    // candidate may be recorded as an immutable observation. It grants no
+    // Delivery authority while OS Writer exclusion remains unproven.
     const resultCommitSha = changedPaths.length > 0
       ? git(['commit-tree', git(['write-tree']).trim(), '-p', head,
         '-m', 'Host-owned Worker unverified result snapshot']).trim()

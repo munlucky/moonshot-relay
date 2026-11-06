@@ -101,6 +101,7 @@
 - **복잡도:** 기존 Worker 스키마·Attempt/Step 테이블·트랜잭션·통합 검증기·Owner 복구 권위를 재사용했다. 새 DB·Queue·Scheduler·상태 머신·OS 관리 계층·프로젝트 전용 정책·Native true 플래그 없음.
 - **커밋 경계 복구:** 관리형 `kernel-commit`이 Windows에서 `INVALID_GIT_PATH`로 중단됐다. 실제 원인은 `admitKernelMutation`이 대소문자 비교용 키를 스테이징 경로로 반환해 추적된 `STATUS.md`를 `status.md`로 바꾼 기존 결함이다. 원래 Git 경로를 스테이징에 보존하고 비교에만 정규화 키를 사용하도록 수정했다. 외부 변경·기준선 제외·경로 검증 정책은 유지하며, 기존 admission 회귀를 대소문자가 섞인 실제 추적 파일로 보강했다. 일반 Git 커밋 우회나 런타임 상태 수정은 하지 않는다.
 - **추가 Git 검사:** admission·경로 검증·사전 스테이징 보호·중복 커밋 방지·재푸시·authority audit **14/14 PASS**. 타입·Production/Tests Build·Boundary도 PASS다. 별도 스테이징 정적 검사에서는 스냅샷 함수의 직접 `git add` 호출을 금지하는 기존 검사 1건이 실패했으며, 변경 전 `a9576033`에서도 동일하게 재현됐다. 이번 Worker 인계·커밋 경로 수정이 만든 실패가 아니다. 관리형 실행 파일의 standalone lock은 기존 생성기로 재생성했다. 위 108건 PASS 집계와 이 추가 Git 정적 검사의 기존 실패를 구분한다.
+- **승인 계보의 커밋 누락 복구:** 첫 관리형 커밋은 복구 코드·문서 4개만 포함했고, 승인된 이전 Run의 Worker 소스를 기준선 보존 대상으로 제외했다. 이전 Run의 실제 승인 경로는 보존 대상에서 제외하고 미승인 사용자 기준선만 유지하도록 기존 admission을 수정했다. 실제 격리 Worktree의 새 Kernel 작업 단위에서 원본 패치를 재인계해 검증·커밋한다. 완료 후의 HEAD 변경 때문에 발생한 successor continuity 불일치를 사용자 승인으로 위장하거나 DB/Receipt를 수정하지 않는다.
 
 ## 재개 지점
 

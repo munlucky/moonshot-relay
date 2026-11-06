@@ -408,6 +408,7 @@ test('an isolated old Writer stays alive during Owner Delivery without bypassing
   fs.mkdirSync(projectRoot, { recursive: true });
   runGit(projectRoot, ['init', '-b', 'main']);
   runGit(projectRoot, ['config', 'user.name', 'Kernel Live Writer Test']);
+  runGit(projectRoot, ['config', 'core.autocrlf', 'false']);
   runGit(projectRoot, ['config', 'user.email', 'kernel-writer@example.invalid']);
   fs.writeFileSync(path.join(projectRoot, 'package.json'), JSON.stringify({
     name: 'kernel-live-writer-fixture', scripts: { 'test:ok': 'node --version' },

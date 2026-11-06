@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
@@ -505,7 +506,7 @@ for(const mode of ['one-owner','split-owners','split-cas-crash','split-dual-reco
   const hostOutcomes:Promise<Record<string,unknown>>[]=[];
   let nativeSettled=false;
   try{
-   await mkdir(projectRoot);if(nativeEnabled)await mkdir(path.join(root,'reservations'));git(projectRoot,['init','-b','main']);git(projectRoot,['config','user.name','T24 Test']);git(projectRoot,['config','user.email','t24@example.invalid']);
+   await mkdir(projectRoot);if(nativeEnabled)await mkdir(path.join(root,'reservations'));git(projectRoot,['init','-b','main']);git(projectRoot,['config','user.name','T24 Test']);git(projectRoot,['config','user.email','t24@example.invalid']);git(projectRoot,['config','core.autocrlf','false']);
    await mkdir(path.join(projectRoot,'src'));
    await writeFile(path.join(projectRoot,'package.json'),JSON.stringify({name:'t24-positive',scripts:{'test:ok':'node verify.cjs'}}));
    await writeFile(path.join(projectRoot,'verify.cjs'),mode==='split-weak-proof'
@@ -805,7 +806,7 @@ for(;;){
        // B either loses the contention or supersedes an expired Proof epoch.
        const recover=(kind:'dual-winner'|'dual-loser'|'ttl-stale'|'ttl-new')=>{
         const child=spawn(process.execPath,['--input-type=module','-e',
-         "import("+JSON.stringify(path.resolve(process.argv[1]!))+")"],{
+         "import("+JSON.stringify(pathToFileURL(path.resolve(process.argv[1]!)).href)+")"],{
          cwd:process.cwd(),env:{...process.env,T42_RECOVERY_HOST_MODE:kind,
           T42_PROJECT_ROOT:projectRoot,T42_RUNTIME_HOME:runtimeHome,T42_RUN_ID:runId,
           T42_RECOVERY_ROOT:root,
@@ -865,7 +866,7 @@ for(;;){
       }else if(mode==='split-cas-crash'){
        const casMarker=path.join(root,'historical-cas-crashed.json');
        const crash=spawnSync(process.execPath,['--input-type=module','-e',
-        "import("+JSON.stringify(path.resolve(process.argv[1]!))+")"],{
+        "import("+JSON.stringify(pathToFileURL(path.resolve(process.argv[1]!)).href)+")"],{
         cwd:process.cwd(),encoding:'utf8',timeout:75000,
         env:{...process.env,T42_RECOVERY_HOST_MODE:'cas-crash',T42_PROJECT_ROOT:projectRoot,
          T42_RUNTIME_HOME:runtimeHome,T42_RUN_ID:runId,T42_RECOVERY_MARKER:casMarker},

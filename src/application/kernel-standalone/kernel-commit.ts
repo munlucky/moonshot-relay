@@ -571,7 +571,7 @@ export function admitKernelMutation({ stateStore, project, statusEntries = [], s
     approvedPaths.sort();
   }
   const preservedBaseline = initialPaths.length === 0 && readGitHead(project.projectRoot)
-    ? preservedBaselinePaths(run, currentObservation.changeEntries)
+    ? preservedBaselinePaths(run, currentObservation.changeEntries).filter((candidate) => !approvedSet.has(candidate))
     : [];
   const preservedBaselineSet = new Set(preservedBaseline);
   // Comparison keys may fold case on Windows; Git pathspecs must retain the

@@ -121,6 +121,11 @@
   ],
   "externalImports": [
     {
+      "from": "src/host/kernel/host-owned-writable-attempt.ts",
+      "specifier": "ajv",
+      "reason": "Validate App Server Worker claims against the existing Codex Worker output schema before canonical candidate handoff."
+    },
+    {
       "from": "src/contracts/schema-codec.ts",
       "specifier": "ajv",
       "reason": "Finite JSON Schema validator SDK boundary; canonical schema and generated DTO drift are checked before emit."

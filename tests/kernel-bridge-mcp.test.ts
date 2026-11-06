@@ -1016,6 +1016,114 @@ input.on('line', line => {
   assert.equal(next.attemptId, attemptId);
 });
 
+test('A2-1: Host result handoff survives Main replacement without Delivery flags or a new Attempt', async (t) => {
+  const workspaceRoot = await createFixtureRepo();
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-host-result-handoff-'));
+  const server = path.join(runtimeHome, 'finite-writer.cjs');
+  t.after(async () => {
+    await Promise.all([workspaceRoot, runtimeHome].map(root => rm(root, { recursive: true, force: true })));
+  });
+  // Finite fixture: one synchronous write and JSON notifications, no tools or
+  // descendants. No Native isolation or Writer exit capability is asserted.
+  await writeFile(server, String.raw`
+const fs = require('node:fs');
+const path = require('node:path');
+const send = value => process.stdout.write(JSON.stringify(value)+'\n');
+require('node:readline').createInterface({input:process.stdin}).on('line', line => {
+  const message = JSON.parse(line);
+  if(message.method==='initialize') send({id:message.id,result:{}});
+  if(message.method==='thread/start') send({id:message.id,result:{thread:{id:'host-result-thread'}}});
+  if(message.method==='turn/start') {
+    if(!message.params.outputSchema) throw Error('missing Worker schema');
+    fs.writeFileSync(path.join(message.params.cwd,'README.md'),'# Worker candidate\n');
+    send({id:message.id,result:{turn:{id:'host-result-turn',status:'inProgress'}}});
+    send({method:'item/completed',params:{threadId:message.params.threadId,turnId:'host-result-turn',
+      item:{type:'agentMessage',id:'worker-final',phase:'final_answer',text:JSON.stringify({
+        status:'completed',summary:'Worker changed README',changedPaths:['README.md'],risks:[],
+        verifications:[{obligationId:'default',commandRef:'test',acceptanceCoverage:['AC-1']}],
+        requestedVerifications:[],judgments:[],knowledgeObservations:[],blocker:null,
+      })}}});
+    send({method:'turn/completed',params:{threadId:message.params.threadId,turn:{id:'host-result-turn',status:'completed'}}});
+  }
+});
+`);
+  const sessions = createHostWorkerSessions({ transportOptions: {
+    executable: process.execPath, args: [server], requestTimeoutMs: 1500,
+  } });
+  const firstMain = createMcpBridgeHandler({ runtimeHome, hostWorkerSessions: sessions });
+  const secondMain = createMcpBridgeHandler({ runtimeHome, hostWorkerSessions: sessions });
+  const runId = 'run-durable-host-handoff';
+  const call = (handler: ReturnType<typeof createMcpBridgeHandler>, id: number, name: string, extra: Record<string, unknown> = {}) =>
+    handler({ jsonrpc: '2.0', id, method: 'tools/call', params: {
+      name, arguments: { workspaceRoot, runId, ...extra },
+    } });
+  const next = parseToolText(await call(firstMain, 1, 'kernel_next', {
+    contractJson: { objective: 'Host candidate only', acceptance: ['README updated'], allowedPaths: ['README.md'] },
+  }));
+  // Invoke the production Host composition boundary directly. The public MCP
+  // Native start gate stays closed; the test supplies no capability booleans.
+  const started = await sessions.start({ projectRoot: workspaceRoot, runtimeHome, runId,
+    model: 'test-model', effort: 'high', modelInput: next });
+  let live: Record<string, unknown> = {};
+  for (let n = 0; n < 100; n++) {
+    live = assertTestRecord(parseToolText(await call(secondMain, n + 2, 'kernel_status')).liveWorker);
+    if (live.preflight && optionalTestRecord(live.preflight)?.status !== 'running') break;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.deepEqual(live.resultHandoff, { status: 'recorded', failureCode: null });
+  assert.equal(live.attemptId, started.attemptId);
+  assert.equal(live.writerExitVerified, false);
+  assert.equal(live.deliveryAuthorized, false);
+  const reader = await createKernelControlPlane({ projectRoot: workspaceRoot, runtimeHome });
+  try {
+    const attempt = assertTestPresent(reader.getAttemptById(runId, started.attemptId));
+    assert.equal(attempt.status, 'started');
+    assert.equal(attempt.resultCommitSha, assertTestRecord(live.resultCandidate).resultCommitSha);
+    assert.equal(assertTestRecord(attempt.workerReport).summary, 'Worker changed README');
+    assert.equal(assertTestRecord(attempt.workerReport).attemptId, started.attemptId);
+    assert.equal(reader.getCurrentStep(runId)?.executionWorkspaceId, attempt.workspaceId);
+    assert.equal(reader.stateStore.getMutationProvenance(runId), null);
+    assert.equal(attempt.reportResult, null);
+    assert.equal((await reader.getRun(runId))?.mutationRevision, 0);
+    const exactReceipt = { attemptId: started.attemptId, executionWorkspaceId: attempt.workspaceId,
+      expectedContractRevision: (await reader.getRun(runId))!.contractRevision,
+      mutationRevision: attempt.mutationRevision, resultCommitSha: attempt.resultCommitSha,
+      resultWorkspaceIdentity: attempt.resultWorkspaceIdentity, patchDigest: attempt.patchDigest,
+      changedPaths: attempt.changedPaths, workerReport: attempt.workerReport, recordMutationProvenance: false };
+    reader.recordStepResult(runId, attempt.stepId, exactReceipt);
+    assert.throws(() => reader.recordStepResult(runId, attempt.stepId, { ...exactReceipt, patchDigest: 'sha256:forged' }),
+      { code: 'STEP_RESULT_IMMUTABLE_CONFLICT' });
+    assert.throws(() => reader.recordStepResult(runId, attempt.stepId, { ...exactReceipt, expectedContractRevision: 0 }),
+      { code: 'host_worker_result_lineage_changed' });
+    assert.deepEqual(reader.getAttemptById(runId, started.attemptId), attempt, 'replay and rejected changes leave the receipt intact');
+  } finally { await reader.close(); }
+  const attached = parseToolText(await call(secondMain, 120, 'kernel_attach'));
+  assert.ok(JSON.stringify(attached).includes(started.attemptId));
+  const rejected = parseToolText(await call(secondMain, 121, 'kernel_report', { report: {
+    summary: 'premature settlement', attemptId: started.attemptId, changedPaths: ['README.md'],
+  } }));
+  assert.equal(rejected.status, 'worker-reconciliation-required');
+  const continuation = parseToolText(await call(secondMain, 122, 'kernel_next'));
+  const reused = await sessions.start({ projectRoot: workspaceRoot, runtimeHome, runId,
+    model: 'test-model', effort: 'high', modelInput: continuation });
+  assert.equal(reused.attemptId, started.attemptId);
+  assert.equal(await readFile(path.join(workspaceRoot, 'README.md'), 'utf8'), '# Bridge Fixture\n');
+  // The existing recovery path must recognize the durable Host candidate as
+  // well as routed parallel receipts. An ambiguous Owner change cannot cause
+  // a new Worker or a second apply on reconnect.
+  await writeFile(path.join(workspaceRoot, 'README.md'), '# Unexplained Owner change\n');
+  const recoveryReader = await createKernelControlPlane({ projectRoot: workspaceRoot, runtimeHome });
+  try {
+    const recovered = await recoveryReader.recoverPendingDeliveryMaterialization(runId);
+    assert.equal(recovered.status, 'blocked');
+    assert.equal((await recoveryReader.getRun(runId))?.blockedReason, 'delivery_materialization_recovery_required');
+    assert.equal((await recoveryReader.getRun(runId))?.mutationRevision, 0);
+    assert.equal(recoveryReader.getHostRoutingSnapshot(runId).stepAttempts.length, 1);
+    assert.equal(recoveryReader.getAttemptById(runId, started.attemptId)?.reportResult, null);
+    assert.equal(recoveryReader.getAttemptById(runId, started.attemptId)?.status, 'started');
+  } finally { await recoveryReader.close(); }
+});
+
 test('W1: failed Host Turn exposes blocked preflight without re-execution or false Writer retirement', async (t) => {
   const workspaceRoot = await createFixtureRepo();
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-worker-failed-turn-'));

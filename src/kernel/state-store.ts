@@ -3814,112 +3814,137 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
     // replay is exact-only: a different worker receipt cannot overwrite the
     // bytes or lineage that the recovery path relies on.
     recordStepResult(runId: string, stepId: string, result: UnknownRecord = {}) {
-      const step = this.getRunStep(runId, stepId);
-      if (!step) throw Object.assign(new Error('step-not-found'), { code: 'STEP_NOT_FOUND' });
+      return db.transaction(() => {
+        const step = this.getRunStep(runId, stepId);
+        if (!step) throw Object.assign(new Error('step-not-found'), { code: 'STEP_NOT_FOUND' });
 
-      const attempts = this.getStepAttempts(runId, { stepId });
-      const attempt = result.attemptId
-        ? this.getStepAttemptByAttemptId(result.attemptId, { runId })
-        : this.getActiveStepAttempt(runId, { stepId }) || attempts.at(-1) || null;
-      if (result.attemptId && (!attempt || attempt.stepId !== stepId)) {
-        throw Object.assign(new Error(`worker result attempt ${result.attemptId} does not belong to step ${stepId}`), {
-          code: 'STEP_RESULT_ATTEMPT_MISMATCH',
-          errorCode: 'STEP_RESULT_ATTEMPT_MISMATCH',
-        });
-      }
-      const latestAttempt = attempts.at(-1) || null;
-      if (result.attemptId && latestAttempt && attempt && attempt.id !== latestAttempt.id) {
-        throw Object.assign(new Error(`worker result attempt ${result.attemptId} is not the current canonical attempt`), {
-          code: 'STEP_RESULT_IMMUTABLE_CONFLICT',
-          errorCode: 'STEP_RESULT_IMMUTABLE_CONFLICT',
-          field: 'attemptId',
-        });
-      }
+        const attempts = this.getStepAttempts(runId, { stepId });
+        const attempt = result.attemptId
+          ? this.getStepAttemptByAttemptId(result.attemptId, { runId })
+          : this.getActiveStepAttempt(runId, { stepId }) || attempts.at(-1) || null;
+        if (result.attemptId && (!attempt || attempt.stepId !== stepId)) {
+          throw Object.assign(new Error(`worker result attempt ${result.attemptId} does not belong to step ${stepId}`), {
+            code: 'STEP_RESULT_ATTEMPT_MISMATCH',
+            errorCode: 'STEP_RESULT_ATTEMPT_MISMATCH',
+          });
+        }
+        const latestAttempt = attempts.at(-1) || null;
+        if (result.attemptId && latestAttempt && attempt && attempt.id !== latestAttempt.id) {
+          throw Object.assign(new Error(`worker result attempt ${result.attemptId} is not the current canonical attempt`), {
+            code: 'STEP_RESULT_IMMUTABLE_CONFLICT',
+            errorCode: 'STEP_RESULT_IMMUTABLE_CONFLICT',
+            field: 'attemptId',
+          });
+        }
+        if (attempt?.provenanceKind === 'host-owned-worker') {
+          const run = this.getRun(runId);
+          const report = asRecord(result.workerReport);
+          // A stored Host candidate is not Owner Delivery or proof. Check its
+          // original lineage atomically with both receipt updates. In
+          // particular, do not mint Owner mutation provenance for this snapshot.
+          if (!run || run.status !== 'active' || attempt.status !== 'started'
+            || step.state !== 'running' || step.planRevision !== run.planRevision
+            || attempt.planRevision !== run.planRevision || report.planRevision !== run.planRevision
+            || result.expectedContractRevision !== run.contractRevision || report.contractRevision !== run.contractRevision
+            || attempt.mutationRevision !== run.mutationRevision || result.mutationRevision !== run.mutationRevision
+            || !attempt.workspaceId || result.executionWorkspaceId !== attempt.workspaceId
+            || report.workspaceId !== attempt.workspaceId
+            || report.attemptId !== attempt.attemptId || report.stepId !== stepId
+            || !result.resultCommitSha || !result.patchDigest || !result.resultWorkspaceIdentity
+            || !Array.isArray(result.changedPaths) || result.changedPaths.length === 0
+            || JSON.stringify(canonicalReceiptPaths(report.changedPaths)) !== JSON.stringify(canonicalReceiptPaths(result.changedPaths))
+            || result.recordMutationProvenance !== false) {
+            throw Object.assign(new Error('host_worker_result_lineage_changed'), { code: 'host_worker_result_lineage_changed' });
+          }
+        }
 
-      const resultDigest = result.receiptDigest || result.resultDigest;
-      const attemptResult = {
-        changedPaths: result.changedPaths,
-        mutationRevision: result.mutationRevision,
-        workspaceIdentityEnd: result.resultWorkspaceIdentity,
-        resultWorkspaceIdentity: result.resultWorkspaceIdentity,
-        resultCommitSha: result.resultCommitSha,
-        patchDigest: result.patchDigest,
-        resultDigest,
-        verificationRefs: result.verificationRefs,
-        knowledgeObservationRefs: result.knowledgeObservationRefs,
-        workerReport: result.workerReport,
-      };
-      const canonicalAttemptId = result.attemptId || attempt?.attemptId || null;
-      const replacingStepReceipt = Boolean(
-        canonicalAttemptId
-        && step.resultAttemptId
-        && step.resultAttemptId !== canonicalAttemptId,
-      );
-      if (replacingStepReceipt && step.state === 'passed') {
-        throw Object.assign(new Error(`step ${stepId} already has an immutable passed result`), {
-          code: 'STEP_RESULT_IMMUTABLE_CONFLICT',
-          errorCode: 'STEP_RESULT_IMMUTABLE_CONFLICT',
-          field: 'resultAttemptId',
-        });
-      }
-      let updatedAttempt = attempt;
-      if (attempt) {
-        const attemptPatch = mergeImmutableReceiptFields(attempt, attemptResult, [
-          'changedPaths',
-          'mutationRevision',
-          'workspaceIdentityEnd',
-          'resultWorkspaceIdentity',
-          'resultCommitSha',
-          'patchDigest',
-          'resultDigest',
-          'verificationRefs',
-          'knowledgeObservationRefs',
-          'workerReport',
-        ]);
-        updatedAttempt = Object.keys(attemptPatch).length > 0
-          ? this.updateStepAttempt(attempt.id, attemptPatch)
-          : attempt;
-      }
+        const resultDigest = result.receiptDigest || result.resultDigest;
+        const attemptResult = {
+          changedPaths: result.changedPaths,
+          mutationRevision: result.mutationRevision,
+          workspaceIdentityEnd: result.resultWorkspaceIdentity,
+          resultWorkspaceIdentity: result.resultWorkspaceIdentity,
+          resultCommitSha: result.resultCommitSha,
+          patchDigest: result.patchDigest,
+          resultDigest,
+          verificationRefs: result.verificationRefs,
+          knowledgeObservationRefs: result.knowledgeObservationRefs,
+          workerReport: result.workerReport,
+        };
+        const canonicalAttemptId = result.attemptId || attempt?.attemptId || null;
+        const replacingStepReceipt = Boolean(
+          canonicalAttemptId
+          && step.resultAttemptId
+          && step.resultAttemptId !== canonicalAttemptId,
+        );
+        if (replacingStepReceipt && step.state === 'passed') {
+          throw Object.assign(new Error(`step ${stepId} already has an immutable passed result`), {
+            code: 'STEP_RESULT_IMMUTABLE_CONFLICT',
+            errorCode: 'STEP_RESULT_IMMUTABLE_CONFLICT',
+            field: 'resultAttemptId',
+          });
+        }
+        let updatedAttempt = attempt;
+        if (attempt) {
+          const attemptPatch = mergeImmutableReceiptFields(attempt, attemptResult, [
+            'changedPaths',
+            'mutationRevision',
+            'workspaceIdentityEnd',
+            'resultWorkspaceIdentity',
+            'resultCommitSha',
+            'patchDigest',
+            'resultDigest',
+            'verificationRefs',
+            'knowledgeObservationRefs',
+            'workerReport',
+          ]);
+          updatedAttempt = Object.keys(attemptPatch).length > 0
+            ? this.updateStepAttempt(attempt.id, attemptPatch)
+            : attempt;
+        }
 
-      const stepResult = {
-        resultAttemptId: canonicalAttemptId,
-        resultWorkspaceIdentity: result.resultWorkspaceIdentity,
-        resultCommitSha: result.resultCommitSha,
-        patchDigest: result.patchDigest,
-        resultDigest,
-        workspaceIdentityEnd: result.resultWorkspaceIdentity,
-      };
-      const stepPatch = replacingStepReceipt
-        ? Object.fromEntries(Object.entries(stepResult).filter(([, value]) => value !== null && value !== undefined))
-        : mergeImmutableReceiptFields(step, stepResult, [
-          'resultAttemptId',
-          'resultWorkspaceIdentity',
-          'resultCommitSha',
-          'patchDigest',
-          'resultDigest',
-          'workspaceIdentityEnd',
-        ]);
-      const updated = Object.keys(stepPatch).length > 0
-        ? this.updateRunStep(runId, stepId, stepPatch)
-        : step;
+        const stepResult = {
+          ...(attempt?.provenanceKind === 'host-owned-worker' ? { executionWorkspaceId: attempt.workspaceId } : {}),
+          resultAttemptId: canonicalAttemptId,
+          resultWorkspaceIdentity: result.resultWorkspaceIdentity,
+          resultCommitSha: result.resultCommitSha,
+          patchDigest: result.patchDigest,
+          resultDigest,
+          workspaceIdentityEnd: result.resultWorkspaceIdentity,
+        };
+        const stepPatch = replacingStepReceipt
+          ? Object.fromEntries(Object.entries(stepResult).filter(([, value]) => value !== null && value !== undefined))
+          : mergeImmutableReceiptFields(step, stepResult, [
+            'executionWorkspaceId',
+            'resultAttemptId',
+            'resultWorkspaceIdentity',
+            'resultCommitSha',
+            'patchDigest',
+            'resultDigest',
+            'workspaceIdentityEnd',
+          ]);
+        const updated = Object.keys(stepPatch).length > 0
+          ? this.updateRunStep(runId, stepId, stepPatch)
+          : step;
 
-      if (result.recordMutationProvenance !== false
-        && updatedAttempt && Array.isArray(updatedAttempt.changedPaths) && updatedAttempt.changedPaths.length > 0 && updatedAttempt.resultWorkspaceIdentity) {
-        const run = this.getRun(runId);
-        const mutationRevision = result.mutationRevision ?? updatedAttempt.mutationRevision ?? run?.mutationRevision ?? 0;
-        this.recordMutationProvenance(runId, {
-          projectId: run?.projectId,
-          workspaceId: result.executionWorkspaceId || updatedAttempt.workspaceId || run?.workspaceId || null,
-          sourceIdentity: run?.sourceIdentity,
-          baseSourceIdentity: run?.sourceIdentity,
-          mutationRevision,
-          changedPaths: updatedAttempt.changedPaths,
-          workspaceIdentity: updatedAttempt.resultWorkspaceIdentity,
-          mutationDigest: result.patchDigest || result.receiptDigest || result.resultDigest || updatedAttempt.resultWorkspaceIdentity,
-          attemptId: updatedAttempt.attemptId || null,
-        });
-      }
-      return updated;
+        if (result.recordMutationProvenance !== false
+          && updatedAttempt && Array.isArray(updatedAttempt.changedPaths) && updatedAttempt.changedPaths.length > 0 && updatedAttempt.resultWorkspaceIdentity) {
+          const run = this.getRun(runId);
+          const mutationRevision = result.mutationRevision ?? updatedAttempt.mutationRevision ?? run?.mutationRevision ?? 0;
+          this.recordMutationProvenance(runId, {
+            projectId: run?.projectId,
+            workspaceId: result.executionWorkspaceId || updatedAttempt.workspaceId || run?.workspaceId || null,
+            sourceIdentity: run?.sourceIdentity,
+            baseSourceIdentity: run?.sourceIdentity,
+            mutationRevision,
+            changedPaths: updatedAttempt.changedPaths,
+            workspaceIdentity: updatedAttempt.resultWorkspaceIdentity,
+            mutationDigest: result.patchDigest || result.receiptDigest || result.resultDigest || updatedAttempt.resultWorkspaceIdentity,
+            attemptId: updatedAttempt.attemptId || null,
+          });
+        }
+        return updated;
+      })();
     },
 
     getActiveStepAttempt(runId: string, { stepId = null, attemptId = null, capsuleId = null }: { stepId?: string | null; attemptId?: (string | null) | undefined; capsuleId?: (unknown | null) | undefined } = {}) {

@@ -21,6 +21,7 @@ interface Job {
   completedTurn: { threadId: string; turnId: string; workspaceId: string; turnStatus: 'completed' | 'failed' | 'interrupted' | 'unknown' } | null;
   resultCandidate: Awaited<HostOwnedWritableAttemptHandle['result']>['resultCandidate'];
   resultCaptureStatus: 'not-attempted' | 'captured' | 'inconsistent';
+  resultHandoff: Awaited<HostOwnedWritableAttemptHandle['result']>['resultHandoff'] | null;
   preflight: { status: string; failureCode: string | null; patchDigest: string | null } | null;
   turnStatus: 'pending' | 'completed' | 'failed' | 'interrupted' | 'unknown';
 }
@@ -57,6 +58,7 @@ export function createHostWorkerSessions({
     completedTurn: job.completedTurn,
     resultCandidate: job.resultCandidate,
     resultCaptureStatus: job.resultCaptureStatus,
+    resultHandoff: job.resultHandoff,
     preflight: job.preflight,
     writerExitVerified: false as const,
     deliveryAuthorized: false as const,
@@ -135,13 +137,14 @@ export function createHostWorkerSessions({
             attemptId: attempt.attemptId, prompt, model, effort,
             ...(transportOptions ? { transportOptions } : {}),
           });
-          const job: Job = { runId, stepId, attemptId: attempt.attemptId, model, effort, handle, completedTurn: null, resultCandidate: null, resultCaptureStatus: 'not-attempted', preflight: null, turnStatus: 'pending' };
+          const job: Job = { runId, stepId, attemptId: attempt.attemptId, model, effort, handle, completedTurn: null, resultCandidate: null, resultCaptureStatus: 'not-attempted', resultHandoff: null, preflight: null, turnStatus: 'pending' };
           jobs.set(jobKey, job);
           owned = true;
           void handle.result.then(async (result) => {
             job.turnStatus = result.nativeTurn.turnStatus;
             job.resultCandidate = result.resultCandidate;
             job.resultCaptureStatus = result.resultCaptureStatus;
+            job.resultHandoff = result.resultHandoff;
             job.completedTurn = {
               threadId: result.nativeTurn.threadId, turnId: result.nativeTurn.turnId,
               workspaceId: result.workspaceId, turnStatus: result.nativeTurn.turnStatus,
@@ -167,12 +170,17 @@ export function createHostWorkerSessions({
                 patchDigest: null };
               return;
             }
+            if (result.resultHandoff.status !== 'recorded') {
+              job.preflight = { status: 'blocked', failureCode: result.resultHandoff.failureCode, patchDigest: null };
+              return;
+            }
             // The verification command is selected from existing Kernel hard
             // obligations and the Host's trusted project command manifest.
             // No model text or caller-supplied command may become a proof.
             const manifest = new Set(cp.discoverProjectCommands().map(item => item.commandRef));
             const commandRef = cp.getRunObligations(runId)
-              .filter(item => item.evidenceClass === 'hard')
+              .filter(item => item.evidenceClass === 'hard'
+                && (cp.getRunSteps(runId).find(step => step.stepId === stepId)?.obligationIds || []).includes(item.obligationId))
               .flatMap(item => item.allowedCommandRefs || [])
               .find(ref => manifest.has(ref));
             if (!commandRef) {

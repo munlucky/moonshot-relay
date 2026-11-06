@@ -1,7 +1,7 @@
 // Explicit Host-owned Native Writable Attempt runner.
 // This joins existing Kernel identity, physical Worktree isolation and the
-// App Server admission boundary. It observes command identities ONLY; model
-// Turn completion is not a Worker Outcome, Kernel Report, Delivery or OS exit.
+// App Server admission boundary. Model claims are bound to measured Git and
+// canonical identity; Turn completion is not Kernel Report, Delivery or OS exit.
 
 import path from 'node:path';
 import { realpath } from 'node:fs/promises';
@@ -18,12 +18,18 @@ import type { NativeExecutionObservation, NativeExecutionObserver } from './adap
 import { prepareHostWriterAttemptWorktree, snapshotHostWorkerPatch } from './workspace/physical-worktree.js';
 import { runGit } from '../../shared/git-safe.js';
 import { matchPathScope } from '../../shared/path-scope.js';
+import { Ajv } from 'ajv';
+import { CODEX_WORKER_OUTPUT_SCHEMA } from './adapters/codex.js';
+import { sanitizePersistentPayload } from '../../shared/persistent-sanitizer.js';
+import { observeWorkspaceIdentity } from './workspace/workspace-identity.js';
 
 type KernelControlPlane = Awaited<ReturnType<typeof createKernelControlPlane>>;
 type KernelWriterAuthority = Pick<
   KernelControlPlane,
-  'projectRoot' | 'getRun' | 'getRunSteps' | 'getAttemptById' | 'registerExecutionWorkspace' | 'updateStepAttempt'
+  'projectRoot' | 'getRun' | 'getRunSteps' | 'getRunObligations' | 'discoverProjectCommands'
+  | 'getAttemptById' | 'registerExecutionWorkspace' | 'updateStepAttempt' | 'recordStepResult'
 >;
+const validateWorkerOutput = new Ajv({ strict: false }).compile<Record<string, unknown>>(CODEX_WORKER_OUTPUT_SCHEMA);
 
 export interface HostOwnedWritableAttemptInput {
   controlPlane: KernelWriterAuthority;
@@ -53,8 +59,8 @@ export interface HostOwnedWritableAttemptObservation {
   baseWorkspaceIdentity: string;
   nativeTurn: CodexAppServerTurnResult;
   commandEvents: NativeExecutionObservation[];
-  // A read-only snapshot of Worktree changes. This is not a durable Worker
-  // receipt: an unretired OS descendant may continue writing afterwards.
+  // A read-only snapshot of Worktree changes. This is not a Delivery receipt:
+  // an unretired OS descendant may continue writing afterwards.
   resultCandidate: {
     changedPaths: string[];
     outsideStepScope: string[];
@@ -66,6 +72,9 @@ export interface HostOwnedWritableAttemptObservation {
     deliveryAuthorized: false;
   } | null;
   resultCaptureStatus: 'not-attempted' | 'captured' | 'inconsistent';
+  // Durable observation of this exact candidate and model claim. The Attempt
+  // stays started and no Owner mutation provenance or proof is created.
+  resultHandoff: { status: 'recorded' | 'blocked'; failureCode: string | null };
   // The only sources of completion/review/Delivery authority are the
   // existing Kernel report, proof verification and Owner CAS paths.
   writerExitVerified: false;
@@ -174,6 +183,7 @@ export async function runHostOwnedWritableAttempt({
       prompt,
       model,
       effort,
+      outputSchema: CODEX_WORKER_OUTPUT_SCHEMA,
       ...(turnTimeoutMs === undefined ? {} : { timeoutMs: turnTimeoutMs }),
       executionOwner: { runId, stepId, attemptId, workspaceId: registered.workspaceId },
       onNativeExecution: (observation) => {
@@ -221,6 +231,84 @@ export async function runHostOwnedWritableAttempt({
           deliveryAuthorized: false as const,
         }
       : null;
+    let resultHandoff: HostOwnedWritableAttemptObservation['resultHandoff'] = {
+      status: 'blocked', failureCode: 'host_worker_turn_not_completed',
+    };
+    if (nativeTurn.turnStatus === 'completed') {
+      try {
+        if (!resultCandidate || resultCandidate.outsideStepScope.length > 0
+          || resultCandidate.ownerApplyCheck !== 'passed') throw deny('host_worker_result_scope_or_apply_rejected');
+        if (!nativeTurn.finalMessage) throw deny('host_worker_report_missing');
+        let output: unknown;
+        try { output = JSON.parse(nativeTurn.finalMessage); }
+        catch { throw deny('host_worker_report_invalid'); }
+        if (!validateWorkerOutput(output)) throw deny('host_worker_report_invalid');
+        if (output.status !== 'completed' || output.blocker !== null || !String(output.summary).trim()) {
+          throw deny('host_worker_report_not_completed');
+        }
+        // Use the established schema, but compare paths and command bindings
+        // with observed Git and Kernel authority before persisting the claim.
+        const reportedPaths = output.changedPaths as string[];
+        if (new Set(reportedPaths).size !== reportedPaths.length
+          || JSON.stringify([...reportedPaths].sort()) !== JSON.stringify(changedPaths)) {
+          throw deny('host_worker_report_paths_mismatch');
+        }
+        const obligations = controlPlane.getRunObligations(runId);
+        const manifest = new Set(controlPlane.discoverProjectCommands().map(item => item.commandRef));
+        const verifications = output.verifications as Array<Record<string, unknown>>;
+        if (verifications.length === 0 || verifications.some(request => {
+          const obligation = obligations.find(item => item.obligationId === request.obligationId);
+          return !obligation || obligation.evidenceClass !== 'hard'
+            || !(step?.obligationIds || []).includes(obligation.obligationId)
+            || !obligation.allowedCommandRefs.includes(String(request.commandRef))
+            || !manifest.has(String(request.commandRef))
+            || (request.acceptanceCoverage as string[]).some(id => !obligation.acceptanceIds.includes(id));
+        })) throw deny('host_worker_report_verification_unbound');
+        const currentRun = await controlPlane.getRun(runId);
+        const currentAttempt = controlPlane.getAttemptById(runId, attemptId);
+        const currentStep = controlPlane.getRunSteps(runId).find(item => item.stepId === stepId);
+        if (!currentRun || currentRun.status !== 'active'
+          || currentRun.contractRevision !== run.contractRevision || currentRun.planRevision !== run.planRevision
+          || currentRun.mutationRevision !== run.mutationRevision
+          || currentRun.currentWorkspaceIdentity !== run.currentWorkspaceIdentity
+          || !currentStep || currentStep.planRevision !== run.planRevision || currentStep.state !== 'running'
+          || !currentAttempt || currentAttempt.status !== 'started' || currentAttempt.provenanceKind !== 'host-owned-worker'
+          || currentAttempt.planRevision !== run.planRevision || currentAttempt.mutationRevision !== run.mutationRevision
+          || currentAttempt.workspaceId !== registered.workspaceId
+          || currentAttempt.baseWorkspaceIdentity !== prepared.baseWorkspaceIdentity
+          || observeWorkspaceIdentity({ projectRoot: ownerRoot }).identity !== run.currentWorkspaceIdentity
+          || observeWorkspaceIdentity({ projectRoot: prepared.workspaceRoot }).identity !== resultCandidate.workspaceIdentity) {
+          throw deny('host_worker_result_lineage_changed');
+        }
+        const workerReport = sanitizePersistentPayload({
+          summary: output.summary, changedPaths, risks: output.risks, verifications,
+          judgments: output.judgments, knowledgeObservations: output.knowledgeObservations,
+          stepId, attemptId, planRevision: run.planRevision, contractRevision: run.contractRevision,
+          workspaceId: registered.workspaceId,
+          bindingId: currentAttempt.bindingId, capsuleId: currentAttempt.capsuleId,
+          actorSessionId: currentAttempt.actorSessionId,
+        });
+        controlPlane.recordStepResult(runId, stepId, {
+          attemptId, executionWorkspaceId: registered.workspaceId,
+          expectedContractRevision: run.contractRevision,
+          mutationRevision: run.mutationRevision,
+          resultWorkspaceIdentity: resultCandidate.workspaceIdentity,
+          resultCommitSha: resultCandidate.resultCommitSha, patchDigest: resultCandidate.patchDigest,
+          changedPaths, workerReport, recordMutationProvenance: false,
+        });
+        const receipt = controlPlane.getAttemptById(runId, attemptId);
+        if (receipt?.resultCommitSha !== resultCandidate.resultCommitSha
+          || receipt.patchDigest !== resultCandidate.patchDigest
+          || receipt.resultWorkspaceIdentity !== resultCandidate.workspaceIdentity
+          || JSON.stringify(receipt.changedPaths) !== JSON.stringify(changedPaths)
+          || JSON.stringify(receipt.workerReport) !== JSON.stringify(workerReport)) {
+          throw deny('host_worker_result_persistence_failed');
+        }
+        resultHandoff = { status: 'recorded', failureCode: null };
+      } catch (error) {
+        resultHandoff = { status: 'blocked', failureCode: (error as { code?: string }).code || 'host_worker_result_handoff_failed' };
+      }
+    }
     return {
       attemptId,
       stepId,
@@ -231,6 +319,7 @@ export async function runHostOwnedWritableAttempt({
       commandEvents,
       resultCandidate,
       resultCaptureStatus,
+      resultHandoff,
       writerExitVerified: false,
       reportAuthority: 'none',
     };

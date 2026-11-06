@@ -1285,7 +1285,7 @@ export const verifyHostOwnedWorkerCandidate = async ({
     schemaVersion: 1, runId, status: 'blocked', failureCode,
     writerExitVerified: false, deliveryAuthorized: false,
   });
-  if (!commandRef || !resultCommitSha || changedPaths.length === 0 || !patchDigest
+  if (!commandRef || !/^[a-f\d]{40,64}$/i.test(resultCommitSha) || changedPaths.length === 0 || !patchDigest
     || !baseWorkspaceIdentity || !resultWorkspaceIdentity) return blocked('host_worker_result_incomplete');
   // A product proof runner requires OS-scoped protection for the integration
   // Worktree. An injected fixture runner cannot become a Delivery authority.
@@ -1297,11 +1297,30 @@ export const verifyHostOwnedWorkerCandidate = async ({
     || !step || step.planRevision !== run.planRevision
     || !attempt || attempt.provenanceKind !== 'host-owned-worker'
     || attempt.status !== 'started' || attempt.stepId !== stepId
+    || attempt.planRevision !== run.planRevision
     || attempt.workspaceId !== workspaceId
     || attempt.baseWorkspaceIdentity !== baseWorkspaceIdentity
     || Number(attempt.mutationRevision) !== Number(run.mutationRevision)
     || (step.executionWorkspaceId && step.executionWorkspaceId !== workspaceId)) {
     return blocked('host_worker_canonical_attempt_changed');
+  }
+  // Verify the durable handoff, rather than accepting a second in-memory
+  // candidate that can differ from the original Worker report or snapshot.
+  const workerReport = asRecord(attempt.workerReport);
+  if (attempt.resultCommitSha !== resultCommitSha || attempt.patchDigest !== patchDigest
+    || attempt.resultWorkspaceIdentity !== resultWorkspaceIdentity
+    || JSON.stringify(normalizePaths(attempt.changedPaths || [])) !== JSON.stringify(normalizePaths(changedPaths))
+    || workerReport.attemptId !== attemptId || workerReport.stepId !== stepId
+    || workerReport.workspaceId !== workspaceId || workerReport.planRevision !== run.planRevision
+    || workerReport.contractRevision !== run.contractRevision
+    || JSON.stringify(normalizePaths(Array.isArray(workerReport.changedPaths) ? workerReport.changedPaths as string[] : [])) !== JSON.stringify(normalizePaths(changedPaths))) {
+    return blocked('host_worker_canonical_result_mismatch');
+  }
+  const obligation = controlPlane.getRunObligations(runId).find(item =>
+    (step.obligationIds || []).includes(item.obligationId) && item.evidenceClass === 'hard'
+    && item.allowedCommandRefs.includes(commandRef));
+  if (!obligation || !controlPlane.discoverProjectCommands().some(item => item.commandRef === commandRef)) {
+    return blocked('host_worker_bound_proof_unavailable');
   }
   if (changedPaths.some((file) =>
     !(step.allowedPaths || []).some((scope) => pathWithin(file, scope))
@@ -1321,6 +1340,7 @@ export const verifyHostOwnedWorkerCandidate = async ({
   const files = runGit(workspaceRoot, ['diff-tree', '--no-commit-id', '--name-only', '-z', '-r', resultCommitSha]);
   if (commit.error || commit.status !== 0 || patch.error || patch.status !== 0
     || files.error || files.status !== 0
+    || String(commit.stdout || '').trim().split(/\s+/u).length !== 2
     || String(commit.stdout || '').trim().split(/\s+/u)[1] !== ownerHead
     || digest(String(patch.stdout || '')) !== patchDigest
     || JSON.stringify(String(files.stdout || '').split('\0').filter(Boolean).sort()) !== JSON.stringify([...changedPaths].sort())) {
@@ -1392,7 +1412,10 @@ export const verifyHostOwnedWorkerCandidate = async ({
     if (lastRun?.mutationRevision !== run.mutationRevision
       || observeWorkspaceIdentity({ projectRoot }).identity !== ownerIdentity
       || observeWorkspaceIdentity({ projectRoot: workspaceRoot }).identity !== resultWorkspaceIdentity
-      || afterAttempt?.status !== 'started') return blocked('host_worker_preflight_drift');
+      || lastRun?.contractRevision !== run.contractRevision || lastRun?.planRevision !== run.planRevision
+      || afterAttempt?.status !== 'started' || afterAttempt.resultCommitSha !== resultCommitSha
+      || afterAttempt.patchDigest !== patchDigest
+      || JSON.stringify(afterAttempt.workerReport) !== JSON.stringify(attempt.workerReport)) return blocked('host_worker_preflight_drift');
     outcome = integrationResult.status === 'verified'
       ? { schemaVersion: 1, runId, status: 'verified',
         candidate: {
