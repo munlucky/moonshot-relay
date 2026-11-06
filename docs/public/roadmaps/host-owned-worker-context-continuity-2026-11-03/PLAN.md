@@ -228,14 +228,21 @@ Wave별 focused tests를 먼저 실행하고, 범위에 따라 `npm run test:sou
 
 **I03의 의미:** 동일 mutation scope에서 실제 Writer가 동시에 유효해선 안 된다. Worktree 구분·DB Attempt·Lease/CAS·Turn 완료만으로, 동등 권한의 분리 후손이 Owner 파일에 늦게 쓰지 못한다는 보장이 생기지는 않는다. 그렇다고 이를 위해 새 OS 권한 관리 시스템을 선행 구현하지 않는다. **증명되지 않은 자동 적용만 차단**하고, 독립적인 실행 관리·재연결·Proof·Owner-direct 흐름은 계속 개발한다. 안전성 없는 “신뢰된 단일 Writer” 가정이나 테스트 옵션 `verifiedNativeWriterIsolation=true`로 제품 Gate를 열지 않는다.
 
-### 묶음 A — 실제 Host-owned 개발 흐름 (W1/W3, G1/G3)
+### 묶음 A — A1 재사용, A2/A3 실제 연결 구현 (W1/W3, G1/G3)
 
-**개발 순서 A1 → A2 → A3를 한 기능 묶음으로 연속 구현·검증한다. 중간 작은 패치별 종료 금지.**
+**기준선:** `main/b0dc153e`. A1의 Host 소유 `HostWorkerSessions`·두 MCP Main 스트림 연결·Runtime Home 격리는 **CODE/MCP PASS**다. 다시 구현하지 않는다. 기존 Host-owned Proof-only 검증과 Owner-direct 3-Step PASS도 유지한다. **남은 목표는 A2/A3를 실사용 코드에서 같은 경로로 관통시키는 것**이며, OS 격리 구축을 선행하지 않는다.
 
-1. **A1 Host 수명·단일 실행 제어:** `mcp.ts`, `host-worker-sessions.ts`, `host-owned-writable-attempt.ts`, `codex-app-server-transport.ts`와 기존 Host 실행 경계를 재사용한다. Main **연결만** 교체하고 Host가 살아 있는 상황에서 기존 Turn/Attempt의 상태를 조회·취소하도록 연결한다. MCP 프로세스 자체가 Host이면 프로세스 종료 후 live handle 복구를 주장하지 않는다. Host가 유지되지 않는 제품 표면에서는 기존 Canonical Attempt 관측과 재실행 차단을 명확히 반환한다. 새 Daemon/Queue/Scheduler/영속 Worker 제어 DB를 만들지 않는다.
-2. **A2 후보→검증→기존 정착 엔진 연결:** 이미 구현된 실제 Git 후보(변경·삭제·바이너리·Scope)와 `verifyHostOwnedWorkerCandidate`를 사용한다. `parallel-dispatcher.ts`의 Owner Fence/CAS, `control-plane.ts`의 `settleParallelResult`/`reportUnderLease` 및 Report replay를 **동일 Attempt/Receipt**로 연결한다. 우선 격리 fixture에서 실제 파일 변경·신뢰된 Manifest Proof·Owner 반영·CAS 후 장애 복구·Report 중복 0을 관통 검증한다. **실사용 Native 정착 함수의 Gate는 Writer 배제 증거가 없으면 열지 않는다.** 별도 정착 권위나 임시 폴백 금지.
-3. **A3 개발 루프 단일 소비:** 기존 `turn-dispatcher.ts`, `host-turn.ts`, Kernel `run-loop.ts`의 `report.next`를 한 실행 주체만 소비하도록 연결한다. 격리된 진짜 Git/Proof fixture에서 **3~5 Step, 실패 1회 이상→같은 Step 수정·재검증, stale Evidence 갱신, 중복 Worker/Report/Step 0, Kernel completed**를 확인한다. 원래 Owner-direct 경로는 변경하지 않는다.
-4. **A 기술/제품 분리 판정:** A1의 실제 Main 교체·동일 Host 조회, A2/A3의 CODE·MCP/fixture 통합 수용을 각각 기록한다. G1/G3 **Native 제품 PASS는 지원 Runtime의 Writer 배제·실제 Owner 적용과 3-Step이 모두 관측될 때만** 가능하다. 그 전에는 Native 자동 정착을 HOLD_SAFE로 두고, 이 이유로 독립 개발을 멈추지 않는다.
+| 순서 | 파일·기존 계약 | 반드시 구현할 최소 기능 | 완료·반례 |
+| --- | --- | --- | --- |
+| **A2-1 결과 인계** | `host-worker-sessions.ts`, `host-owned-writable-attempt.ts`, `parallel-dispatcher.ts` | 완료된 Worker의 `resultCommitSha/patchDigest/changedPaths`, 원본 `Run/Step/Attempt/Workspace Identity/Revision`, 검증된 `workerReport`를 기존 Canonical Attempt에 귀속. 현재 `verifyHostOwnedWorkerCandidate`의 `verifyOnly`는 완료 영수증이 아니다. `settleParallelResult`가 요구하는 `workerReport`·provenance가 실제로 존재하는지 먼저 대조해 빈 필드/임의 Host 요약을 채워 넣지 않는다 | 올바른 Worker 후보만 접수. 누락·stale·위조·scope 위반·`failed/interrupted/unknown`·기존 Attempt 불일치는 **Owner 변경 0, Report 0, 다음 Step 0** |
+| **A2-2 공통 검증·정착 접합** | `parallel-dispatcher.ts`의 기존 `integrateParallelResults`(`verifyOnly`/ `materializeDelivery`), `control-plane.ts`의 Owner Fence/CAS·`settleParallelResult`·`reportUnderLease` | 단일 Worker 후보도 기존 병렬 엔진의 **검증·Mutation Receipt·정착 권위**를 재사용할 수 있도록 공유 진입점을 최소 정리. Git Commit/패치 동일성 확인 → 격리 Workspace cherry-pick → 프로젝트 Manifest Proof → staged patch·경로 재확인 → **실제 Writer 배제 증거가 확인된 경우에만** 기존 Owner mutation/CAS 호출 → 같은 Attempt의 Report 정착. 별도 완료 엔진·임시 패치 적용·새 DB·두 Worker 강제 구성 없음 | 지원된 통제 환경에서 실제 Owner 파일 변경 1회, Mutation Revision 1회, 검증된 동일 Attempt Report 1회. Proof 실패·CAS 충돌·늦은 쓰기 미증명은 Fail-closed |
+| **A2-3 중단·중복 복구** | `settleParallelResult`, 기존 materialization recovery·Report replay·mutation provenance | CAS 이전/직후·Report 직전 중단을 **기존 기록으로 재조회**. 정착 재실행과 새 Worker 재시작을 구별. 동일 결과 재요청 시 기존 완료 기록 재사용; 불확실하면 Hold | 중복 파일 적용 0, 중복 Report 0, 미확인 상태의 새 Writer 0. 장애 시 원래 실패 근거 보존 |
+| **A3-1 단일 후속 실행자** | `turn-dispatcher.ts`, `host-turn.ts`, 기존 Kernel `run-loop.ts`, MCP `report.next` | A2의 **실제 정착 Report 결과**에 있는 `next`만 한 실행 주체가 소비한다. 이전 Main·다른 Host의 별도 `kernel_next` 중복 소비 방지. `fix`는 같은 Step의 다음 Attempt, `done`은 Kernel 최종 증거로만 판정 | 보고 결과의 Step/Attempt/Revision 일치, 중복 실행·완료 위조 0 |
+| **A3-2 관통 수용** | 기존 MCP·실제 Git/Manifest Proof 격리 fixture | 같은 Run의 3~5 Step에서 실제 파일 변경, 의도한 신뢰된 Proof 실패 1회, 수정·재검증, stale Evidence 갱신, 최종 `completed`를 **Host-owned 후보→정착→Report→`next` 경로**로 확인 | Owner-direct 테스트를 재사용한 척하지 않고 별도 Host-owned 증거로 판정 |
+
+**코드와 제품 활성화의 분리:** 검증 코드는 기존 **동일한 제품 진입점**으로 작성하고, 통제된 테스트에서는 실제 종료·쓰기 가능 범위를 관측한 격리 Worker만 사용한다. 허위 `writerExitVerified=true`·`verifiedNativeWriterIsolation=true`, 모의 Owner Delivery Receipt, 테스트 전용 자동 적용 루틴으로 PASS를 만들어서는 안 된다. 제품의 Native Worker 후손 쓰기 배제가 미확인인 동안 **Native 자동 Owner CAS/Report/새 Writer 시작은 HOLD_SAFE**이며 CODE/Fixture PASS도 그 안전 Gate를 열지 않는다. 실제 안전한 격리 fixture를 구성할 수 없으면 A2/A3의 해당 단계도 **미수용**으로 남기고, 이미 검증된 Proof-only 기능과 B의 독립 기능을 진행한다.
+
+**실행·커밋 원칙:** A2-1~A3-2는 하나의 기능 완성 묶음이다. 구현 도중 개별 테스트/예외 처리만으로 종료하지 않는다. 다만 Native 수용 불가 상태에서 비활성화된 접합 코드만 추가하는 방식은 완료로 간주하지 않는다. 실제 호출 관계와 영향·유지 비용을 점검하고, 테스트·검증된 연결만 기능 단위 한글 상세 커밋에 포함한다.
 
 ### 묶음 B — Main 연속성·승인·Fresh Resume (W2/W4, G2/G4)
 

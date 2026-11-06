@@ -70,6 +70,12 @@
 - **제품 판정:** **A1 CODE/MCP fixture PASS, Native 실제 사용자 Host 재연결 PARTIAL.** MCP/Host 프로세스 자체가 종료된 뒤 실행 핸들 복구까지 보장하지 않으며, 다른 Host의 live Worker를 원격 제어한다고 주장하지 않는다. A2의 검증된 후보→Owner CAS/Report 자동 정착과 A3의 Host-owned 3~5 Step 연속 제품 실행은 여전히 미연결/미수용. 기존 Proof-only 후보·Owner-direct 3-Step·Report replay는 재사용하며, Native 쓰기 배제(I03) 미증명으로 자동 Owner 적용은 HOLD_SAFE. 지원 안 되는 사용자 승인 왕복·Fresh Writable Thread와 W6 B/E/C/D는 DEFER/NOT_RUN 유지.
 - **복잡도:** 최소한의 Host 결합 주입과 Runtime 키 보강만 추가. 새 OS 격리, 보안 사용자/ACL, 임시 true 플래그, 임의 폴백, 새로운 영속 상태 없음.
 
+## 2026-11-06 A2/A3 잔여 실행계획 구체화 — 문서 작업만 수행
+
+- [기존 PLAN.md의 묶음 A](PLAN.md#묶음-a--a1-재사용-a2a3-실제-연결-구현-w1w3-g1g3)에 A2-1 Worker 후보·원본 Canonical Attempt/`workerReport` 인계, A2-2 기존 `integrateParallelResults`와 Owner CAS·`settleParallelResult` 접합, A2-3 CAS/Report 중단 복구, A3-1 `report.next` 단일 소비, A3-2 Host-owned 3~5-Step 수용을 **기존 하나의 기능 묶음**으로 정리했다. 실제 API/Receipt 필수 필드, 실패 시 Owner 변경 0/Report 0, 정확히 한 번 정착/재실행 0의 완료 조건을 명시했다.
+- **현재 코드 판정은 불변:** A1 CODE/MCP PASS, Host-owned Proof-only 경로 기존 구현, A2/A3 **제품·코드 관통 미수용**, Native 자동 Delivery와 새 Writable Thread는 I03 미증명으로 HOLD_SAFE/DEFER. B의 승인 왕복·E Fresh Resume은 기존 Host 채널/Writer 배제 조건에 종속, C의 B/E/C/D 실측 NOT_RUN. 이번 작업은 제품 코드/테스트/Native 실행을 변경하지 않았다.
+- **다음 개발 원칙:** 테스트 성공을 위해 `verifiedNativeWriterIsolation`·`writerExitVerified`를 가짜로 올리거나 별도 완료 엔진/OS 보안 관리 시스템을 추가하지 않는다. 기존 같은 생산 코드 경로에 연결하고, 실제 Writer 종료·쓰기 권한 증거가 있는 환경에서만 Owner 자동 적용을 수용한다. 안전한 Fixture 구성이 불가능하면 해당 기능은 PASS 대신 미수용으로 남기고 독립 기능을 진행한다.
+
 ## 재개 지점
 
 [PLAN.md의 개정 실행 기준](PLAN.md#2026-11-06-잔여-개발-실행-기준--hostkernel-중심-os-관리-기능-제외-개정)을 유지한다. **A1의 Host 공유 객체와 MCP 스트림 재연결 코드는 구현/격리 검증 완료**했으므로 반복 개발하지 않는다. 남은 A2/A3의 Host-owned 자동 Owner CAS·Report·3~5-Step은 **기존 Proof-only 경로와 병렬 Owner 정착 엔진이 아직 연결되지 않았으며**, 실제 Writer의 늦은 쓰기가 배제되지 않은 현재 Native Runtime에서는 연결해 제품 실행을 허용할 수 없다. Writer 배제 조건을 충족하지 않는 한 단순한 fixture 전용 Delivery 승인·추가 폴백·더 큰 OS 보안 플랫폼을 만들어 이를 숨기지 않는다. B의 실제 사용자 승인 왕복과 새 Writable Thread는 지원 채널/Writer 안전 조건 전까지 DEFER, C의 B/E/C/D 성능 평가는 NOT_RUN을 유지한다. 기존 Owner-direct 3-Step·Report replay와 관련 66건 PASS는 보존한다.
