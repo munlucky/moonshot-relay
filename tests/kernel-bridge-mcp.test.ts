@@ -941,3 +941,54 @@ input.on('line', line => {
   assert.equal(next.status, 'worker-reconciliation-required');
   assert.equal(next.attemptId, attemptId);
 });
+
+test('W1: failed Host Turn exposes blocked preflight without re-execution or false Writer retirement', async (t) => {
+  const workspaceRoot = await createFixtureRepo();
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-worker-failed-turn-'));
+  const server = path.join(runtimeHome, 'fail-turn.cjs');
+  t.after(async () => {
+    await Promise.all([workspaceRoot, runtimeHome].map(root => rm(root, { recursive: true, force: true })));
+  });
+  await writeFile(server, String.raw`
+const readline = require('node:readline');
+const send = value => process.stdout.write(JSON.stringify(value) + '\\n');
+readline.createInterface({ input: process.stdin }).on('line', line => {
+  const item = JSON.parse(line);
+  if (item.method === 'initialize') send({ id: item.id, result: { userAgent: 'fixture' } });
+  if (item.method === 'thread/start') send({ id: item.id, result: { thread: { id: 'thread-failed' } } });
+  if (item.method === 'turn/start') process.exit(21);
+});
+`);
+  const runId = 'run-host-failed-turn';
+  const handler = createMcpBridgeHandler({
+    runtimeHome, verifiedNativeWriterIsolation: true,
+    workerTransportOptions: { executable: process.execPath, args: [server], requestTimeoutMs: 1500 },
+  });
+  const call = (id: number, name: string, args: Record<string, unknown> = {}) =>
+    handler({ jsonrpc: '2.0', id, method: 'tools/call', params: {
+      name, arguments: { workspaceRoot, runId, ...args },
+    } });
+  const started = parseToolText(await call(1, 'kernel_next', {
+    contractJson: { objective: 'change README', acceptance: ['README changed'], allowedPaths: ['README.md'] },
+    worker: { action: 'start', model: 'test-model', effort: 'high' },
+  }));
+  const attemptId = assertTestString(assertTestRecord(started.hostWorker).attemptId);
+  let live: Record<string, unknown> = {};
+  for (let i = 0; i < 100; i++) {
+    const status = parseToolText(await call(2 + i, 'kernel_status'));
+    live = assertTestRecord(status.liveWorker);
+    if (optionalTestRecord(live.preflight)?.failureCode === 'host_worker_turn_unknown') break;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.equal(live.turnStatus, 'unknown');
+  assert.equal(assertTestRecord(live.preflight).status, 'blocked');
+  assert.equal(assertTestRecord(live.preflight).failureCode, 'host_worker_turn_unknown');
+  assert.equal(live.writerExitVerified, false);
+  assert.equal(live.deliveryAuthorized, false);
+  assert.equal(assertTestRecord(parseToolText(await call(200, 'kernel_next'))).attemptId, attemptId);
+  const plane = await createKernelControlPlane({ projectRoot: workspaceRoot, runtimeHome });
+  try {
+    assert.equal(plane.getHostRoutingSnapshot(runId).stepAttempts.length, 1);
+    assert.equal(plane.getAttemptById(runId, attemptId)?.status, 'started');
+  } finally { await plane.close(); }
+});

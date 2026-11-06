@@ -25,6 +25,13 @@
 - **미채택 실험 코드:** `guardedIntegration`/Canonical recovery/OS Proof 관련 분기는 원본 보안 증거를 파괴하지 않도록 실제 호출자와 소유권을 확인한 뒤 보존·통합·정리를 결정한다. 존재 자체는 W3~W6 진척이 아니다.
 - **Git 정리 상태:** Windows Guarded Report/Proof 수정과 검증 결과는 `46b68ceb`로 분리 보존했다. 생성된 테스트 래퍼는 canonical TypeScript 빌드와 일치함을 검사하고 기존 저장소 규칙대로 추적한다. 다른 Windows Worktree가 이 환경에서 `prunable`로 표시되더라도 실제 Windows 원본을 확인하지 않고 강제 정리하지 않는다.
 
+## 2026-11-06 실행 단위 1 부분 구현 — Host Turn 실패 관측
+
+- `host-worker-sessions.ts`: Native Turn 실행 Promise가 거부될 때 `turnStatus=unknown`과 `preflight=blocked (host_worker_turn_unknown)`을 함께 기록한다. 비동기 검증 파이프라인 예외는 기존 `host_worker_preflight_unknown`으로 구분한다. 어느 경우에도 Canonical Attempt 종료·Writer 퇴장·Owner Delivery를 주장하지 않는다.
+- `kernel-bridge-mcp.test.ts`: App Server가 Turn 시작 중 종료되는 격리 회귀에서 동일 Attempt 유지, blocked preflight, Owner 미정착, Writer 종료 미검증을 확인한다.
+- 검증: `npm run typecheck` PASS, `npm run build` PASS, `npm run build:tests` PASS, 기존 MCP/App Server focused 28/28 PASS, 신규 장애 반례 focused 1/1 PASS, `git diff --check` PASS.
+- **판정:** 오류 상태의 관측 가능성만 개선된 **W1/G1 PARTIAL**. 지원 Native Worker의 물리적 Writer 퇴장 증거와 G1 실제 수용, W3 Owner Delivery·Report·3-Step은 미완료. OS 계층 추가, 안전 Gate 완화, 추가 DB·Queue·Scheduler 없음.
+
 ## 재개 지점
 
 다음 작업은 [원본 PLAN.md의 2026-11-06 잔여 구현 우선순위](PLAN.md#2026-11-06-잔여-구현-우선순위--원본-w0w6g0g6-실행-구체화) 중 **실행 단위 1 → 2 → 3**이다. 지원되는 Host 실행 경계를 먼저 확정하고 W3의 기존 `kernel next → execute → report.next` 3-Step·실패 수정까지 실제 제품 경로로 완성한다. 이후 W2 Main 재연결 → W4-E → W5 → W6. Writer 미증명 Native 자동 정착만 HOLD_SAFE하고 별도 OS 격리 연구·중복 마스터플랜을 추가하지 않는다.

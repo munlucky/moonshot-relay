@@ -186,8 +186,14 @@ export function createHostWorkerSessions({
                 ? String(record(proof.candidate).patchDigest) : null,
             };
           }, () => {
+            // A failed Host Turn never provides a usable result. Preserve the
+            // canonical Attempt for reconciliation, and expose a definite
+            // blocked preflight rather than leaving status pending forever.
             job.turnStatus = 'unknown';
+            job.preflight = { status: 'blocked', failureCode: 'host_worker_turn_unknown', patchDigest: null };
           }).catch(() => {
+            // Failure of the result verification pipeline is distinct from
+            // Writer retirement. Neither outcome permits Owner Delivery.
             job.preflight = { status: 'blocked', failureCode: 'host_worker_preflight_unknown', patchDigest: null };
           }).finally(async () => { await cp.close(); }).catch(() => {
             // Closing the Host DB is not an OS Writer termination observation.
