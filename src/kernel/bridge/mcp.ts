@@ -62,6 +62,7 @@ interface McpRequest extends UnknownRecord {
 interface StartMcpBridgeServerInput {
   stdin?: NodeJS.ReadableStream;
   stdout?: NodeJS.WritableStream;
+  hostWorkerSessions?: ReturnType<typeof createHostWorkerSessions>;
   runtimeHome?: (string | null) | undefined;
   env?: NodeJS.ProcessEnv;
   hostBridge?: HostLifecycleBridge | HostBridgeFactory | null;
@@ -456,10 +457,11 @@ export const handleMcpToolCall = async ({
   }
 };
 
-export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, hostBridge = null, nativeHost = globalThis, workerTransportOptions = undefined, verifiedNativeWriterIsolation = false }: Omit<HandleMcpToolCallInput, 'name' | 'parameters'> & { workerTransportOptions?: NonNullable<Parameters<typeof createHostWorkerSessions>[0]>['transportOptions']; verifiedNativeWriterIsolation?: boolean } = {}) => {
+export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, hostBridge = null, nativeHost = globalThis, workerTransportOptions = undefined, hostWorkerSessions = undefined, verifiedNativeWriterIsolation = false }: Omit<HandleMcpToolCallInput, 'name' | 'parameters'> & { workerTransportOptions?: NonNullable<Parameters<typeof createHostWorkerSessions>[0]>['transportOptions']; hostWorkerSessions?: ReturnType<typeof createHostWorkerSessions>; verifiedNativeWriterIsolation?: boolean } = {}) => {
   const recoveryContinuity = createKernelRecoveryContinuity();
-  // The MCP server is the Host lifecycle owner, not the individual Main call.
-  const workerSessions = createHostWorkerSessions(workerTransportOptions ? { transportOptions: workerTransportOptions } : {});
+  // The owning Host may reuse this exact control surface across Main
+  // connections. An isolated Handler still owns its local sessions by default.
+  const workerSessions = hostWorkerSessions || createHostWorkerSessions(workerTransportOptions ? { transportOptions: workerTransportOptions } : {});
   return async (request: McpRequest) => {
     const { id, method, params } = request || {};
 
@@ -543,7 +545,7 @@ export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, 
               throw new Error('host_worker_signal_invalid');
             }
             const runId = String(modelInput.runId || callArgs.runId || '');
-            const signal = await workerSessions.interrupt(callArgs.workspaceRoot, runId, worker.attemptId);
+            const signal = await workerSessions.interrupt(callArgs.workspaceRoot, resolvedRuntimeHome, runId, worker.attemptId);
             resultWithWorker = { ...modelInput, hostWorkerSignal: signal };
           }
         } else if (Object.keys(worker).length > 0) {
@@ -553,7 +555,7 @@ export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, 
           && (name !== 'kernel_attach' || !callArgs.contractJson)) {
           const runId = String(asRecord(modelInput.run).runId || modelInput.runId || callArgs.runId || '');
           const live = modelInput.status !== 'not_found' && runId
-            ? await workerSessions.status(callArgs.workspaceRoot, runId) : null;
+            ? await workerSessions.status(callArgs.workspaceRoot, resolvedRuntimeHome, runId) : null;
           resultWithWorker = { ...modelInput, liveWorker: live };
         }
         const recoveryInput = typeof callArgs.workspaceRoot === 'string'
@@ -633,8 +635,11 @@ export const startMcpBridgeServer = ({
   env = process.env,
   hostBridge = null,
   nativeHost = globalThis,
+  hostWorkerSessions = undefined,
 }: StartMcpBridgeServerInput = {}) => {
-  const handler = createMcpBridgeHandler({ runtimeHome, env, hostBridge, nativeHost });
+  const handler = createMcpBridgeHandler({ runtimeHome, env, hostBridge, nativeHost,
+    ...(hostWorkerSessions ? { hostWorkerSessions } : {}),
+  });
   const rl = readline.createInterface({ input: stdin, output: stdout, terminal: false });
 
   rl.on('line', async (line: string) => {

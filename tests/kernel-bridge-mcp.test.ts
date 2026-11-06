@@ -5,7 +5,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { createMcpBridgeHandler } from '../src/kernel/bridge/mcp.js';
+import { PassThrough } from 'node:stream';
+import { createMcpBridgeHandler, startMcpBridgeServer } from '../src/kernel/bridge/mcp.js';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
 import { createHostWorkerSessions } from '../src/host/kernel/host-worker-sessions.js';
 import { dispatchKernelTurn } from '../src/host/kernel/turn-dispatcher.js';
@@ -866,14 +867,58 @@ input.on('line', line => {
     assert.equal(left.attemptId, right.attemptId);
     assert.equal(cp.getHostRoutingSnapshot(runId).stepAttempts.length, 1, 'no duplicate canonical Attempt');
     await assert.rejects(sessions.start({ ...request, model: 'conflicting-model' }), /host_worker_start_conflict/);
-    // Cancel immediately after start, before the App Server has initialized
-    // or assigned a Turn ID. Previously this was lost as not-addressable.
-    const earlyCancel = await sessions.interrupt(workspaceRoot, runId, left.attemptId);
-    assert.equal(earlyCancel.status, 'queued');
-    let live = await sessions.status(workspaceRoot, runId);
+    const otherRuntime = await mkdtemp(path.join(os.tmpdir(), 'kernel-other-runtime-'));
+    t.after(() => rm(otherRuntime, { recursive: true, force: true }));
+    assert.equal(await sessions.status(workspaceRoot, otherRuntime, runId), null,
+      'a shared Host must not attach to a different Kernel Runtime with the same Run ID');
+    assert.equal((await sessions.interrupt(workspaceRoot, otherRuntime, runId, left.attemptId)).status, 'not-attached');
+    // Two separate MCP client streams share only the owning Host's existing
+    // WorkerSessions. Closing one Main stream must not close its live Worker.
+    const connectMain = () => {
+      const stdin = new PassThrough();
+      const stdout = new PassThrough();
+      const service = startMcpBridgeServer({ stdin, stdout, runtimeHome, hostWorkerSessions: sessions });
+      return {
+        call: (id: number, name: string, extra: Record<string, unknown> = {}) => {
+          const response = new Promise<unknown>((resolve, reject) => {
+            let buffer = '';
+            const onData = (chunk: Buffer) => {
+              buffer += chunk.toString('utf8');
+              const end = buffer.indexOf('\n');
+              if (end < 0) return;
+              stdout.off('data', onData);
+              try { resolve(JSON.parse(buffer.slice(0, end))); } catch (error) { reject(error); }
+            };
+            stdout.on('data', onData);
+          });
+          stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call',
+            params: { name, arguments: { workspaceRoot, runId, ...extra } } }) + '\n');
+          return response;
+        },
+        close: () => { service.close(); stdin.destroy(); stdout.destroy(); },
+      };
+    };
+    const originalMain = connectMain();
+    const original = parseToolText(await originalMain.call(99, 'kernel_attach'));
+    assert.equal(assertTestRecord(original.liveWorker).attemptId, left.attemptId);
+    originalMain.close();
+    const replacementMain = connectMain();
+    const observed = parseToolText(await replacementMain.call(100, 'kernel_attach'));
+    assert.equal(assertTestRecord(observed.liveWorker).attemptId, left.attemptId);
+    assert.equal(observed.next, undefined);
+    assert.equal(cp.getHostRoutingSnapshot(runId).stepAttempts.length, 1);
+    // Cancel from the replacement Main. It may arrive either before Turn
+    // ID allocation (queued) or after the Turn becomes addressable (requested).
+    const signaled = parseToolText(await replacementMain.call(101, 'kernel_attach', {
+      worker: { action: 'interrupt', attemptId: left.attemptId },
+    }));
+    replacementMain.close();
+    assert.ok(['queued', 'requested'].includes(String(assertTestRecord(signaled.hostWorkerSignal).status)));
+    assert.equal(cp.getHostRoutingSnapshot(runId).stepAttempts.length, 1);
+    let live = await sessions.status(workspaceRoot, runtimeHome, runId);
     for (let n = 0; n < 100 && live?.turnStatus === 'pending'; n++) {
       await new Promise(resolve => setTimeout(resolve, 10));
-      live = await sessions.status(workspaceRoot, runId);
+      live = await sessions.status(workspaceRoot, runtimeHome, runId);
     }
     assert.equal(live?.completedTurn?.threadId, 'thread-once');
     assert.equal(live?.completedTurn?.turnId, 'turn-once');

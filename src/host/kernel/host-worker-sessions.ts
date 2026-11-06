@@ -44,7 +44,9 @@ export function createHostWorkerSessions({
 }: { transportOptions?: CodexAppServerTransportOptions } = {}) {
   const jobs = new Map<string, Job>();
   const starting = new Map<string, { stepId: string; model: string; effort: string; result: Promise<{runId: string; attemptId: string; stepId: string}> }>();
-  const key = (root: string, runId: string) => JSON.stringify([root, runId]);
+  // A long-lived Host can serve multiple Kernel Runtime Homes. Never reuse a
+  // live Attempt handle across distinct state stores sharing a Run ID.
+  const key = (root: string, runtimeRoot: string, runId: string) => JSON.stringify([root, runtimeRoot, runId]);
   const view = (job: Job) => ({
     runId: job.runId,
     stepId: job.stepId,
@@ -65,7 +67,7 @@ export function createHostWorkerSessions({
       const ownerRoot = await realpath(projectRoot);
       const runtimeRoot = await realpath(runtimeHome);
       if (within(ownerRoot, runtimeRoot)) throw deny('host_worker_runtime_overlaps_owner');
-      const jobKey = key(ownerRoot, runId);
+      const jobKey = key(ownerRoot, runtimeRoot, runId);
       const existing = jobs.get(jobKey);
       const action = record(modelInput.action);
       const step = record(action.step);
@@ -217,12 +219,14 @@ export function createHostWorkerSessions({
       starting.set(jobKey, { stepId, model, effort, result });
       try { return await result; } finally { starting.delete(jobKey); }
     },
-    async status(projectRoot: string, runId: string) {
-      const job = jobs.get(key(await realpath(projectRoot), runId));
+    async status(projectRoot: string, runtimeHome: string, runId: string) {
+      const [ownerRoot, runtimeRoot] = await Promise.all([realpath(projectRoot), realpath(runtimeHome)]);
+      const job = jobs.get(key(ownerRoot, runtimeRoot, runId));
       return job ? view(job) : null;
     },
-    async interrupt(projectRoot: string, runId: string, attemptId: string) {
-      const job = jobs.get(key(await realpath(projectRoot), runId));
+    async interrupt(projectRoot: string, runtimeHome: string, runId: string, attemptId: string) {
+      const [ownerRoot, runtimeRoot] = await Promise.all([realpath(projectRoot), realpath(runtimeHome)]);
+      const job = jobs.get(key(ownerRoot, runtimeRoot, runId));
       if (!job || job.attemptId !== attemptId) {
         return { status: 'not-attached' as const, writerExitVerified: false as const };
       }
