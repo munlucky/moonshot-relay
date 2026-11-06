@@ -209,3 +209,66 @@ Wave별 focused tests를 먼저 실행하고, 범위에 따라 `npm run test:sou
 - 기존 `verifiedNativeWriterIsolation`, `writerExitVerified` 값은 근거 없는 Native 지원으로 올리지 않는다. OS 사용자·ACL·Job Object 등 별도 안전 아키텍처를 선행 과제로 만들지 않는다.
 - 각 묶음에서 **실제 사용자가 호출하는 경로를 관통하는 테스트**를 우선한다. 이미 PASS한 증거와 기존 코드를 재사용하고 무의미한 반례 증식, 새 Plan, 새 DB·Queue·Scheduler, 세부 단계별 문서/커밋을 만들지 않는다.
 - 변경된 운영 묶음은 원래 Gate를 완화하지 않는다. A 기술 수용이 불가능하면 B의 안전한 읽기/세션 제어는 독립적으로 진행할 수 있지만 W6의 미지원 B/E Arm을 실행한 것으로 간주하지 않는다.
+
+## 2026-11-06 잔여 개발 완료 실행 기준 — 기존 A/B/C 묶음의 재개 조건과 구현 경계
+
+> **이 절은 기존 W0~W6·G0~G6·I01~I12·T01~T27을 대체하지 않는다.** 위 실행 단위와 검증 조건을 `main/1258ca08`의 현재 구현·[STATUS.md](STATUS.md)·[T49 최종 수용](T49_FINAL_ACCEPTANCE.md)·[T50 Native 격리 결정](T50_NATIVE_OS_ISOLATION_FEASIBILITY_AND_FINAL_DECISION_2026-11-05.md)에 대조한 **남은 작업만의 실행 절차**다. 기존 1~7과 A/B/C 묶음을 유지하며 별도 Wave·Master Plan·필수 Gate를 만들지 않는다. 본 절 작성은 신규 제품 코드 구현이나 Native Gate PASS가 아니다.
+
+### 1. 이미 완료된 범위와 재구현 금지
+
+- **W0:** T23 ContextReceipt 계약 절단 수정과 Source 검증은 [W0_RESULT](W0_RESULT.md) 재사용. Native 전 플랫폼 G0 PASS와 동일하지 않다.
+- **W1/W2:** Canonical Attempt·별도 Worktree/Reservation, Host-local Turn start/status/interrupt, 조기 취소 큐잉, 중복 시작 차단, `failed/interrupted/unknown` preflight 차단을 재사용한다. 다른 MCP 프로세스의 `kernel_attach`는 같은 Run/Step과 `resume`·`workAuthority`·`trustAuthority`를 **읽기 전용**으로 복구한다. 실제 살아 있는 다른 Host의 Worker 제어를 이미 지원하는 것으로 주장하지 않는다.
+- **W3:** Git 후보 캡처·범위 검사·격리 Proof preflight와 기존 `integrateParallelResults`·Owner Fence/CAS·`settleParallelResult`·`reportUnderLease`·`report.next`를 재사용한다. Owner-direct MCP 3-Step/실패 수정/Proof stale 재검증 및 Report replay는 통과했지만 **Host-owned Native Owner 정착은 미구현**이다.
+- **W5:** 2026-11-06 영향 범위 MCP/App Server/Host loop/Report replay/Step resume **66/66 PASS**, Boundary·TypeScript·Build PASS. 동일 조건에서 재실행하지 않는다. 독립 MCP 프로세스 테스트도 Native Worker·Host Writer 격리 수용은 아니다.
+- **W6:** [W0_BASELINE](W0_BASELINE.md)의 A/B/E/C/D 비교군·6개 Pilot·통제 변수는 유효한 사전 기준이다. B/E/C/D는 여전히 NOT_RUN.
+
+### 2. 남은 범위·선행 조건·최종 산출물
+
+| 기존 묶음 / Gate | 실질 미완료 | 필요한 선행 증거 | 완료 조건 및 산출물 |
+| --- | --- | --- | --- |
+| **A / W0·G0, W1·G1** | 실제 Native App Server + Tool + 분리 후손의 쓰기 경계, Host 생존/퇴장·재연결 및 실행 권위 판정 | 동일 mutation scope에 **두 Writer가 실제로 동시에 쓰지 못한다는 OS/Host 증거**. PID/Turn 종료·Lease·CAS·시험용 boolean은 불충분 | 지원 Native Host에서 Worker 1회 실행·종료/보호·재조회, 외부 Main 종료와 Host 종료 구분, Worker 중복 0. 미지원 플랫폼 DEFER |
+| **A / W3·G3** | Host-owned 결과 후보 → 기존 Owner Fence/CAS → Canonical Report → `report.next` 연속 소비 | A의 Writer 보호와 불변 결과/Workspace Identity·Proof 유효성 | 지원 Native에서 단일 Step 실제 Owner 파일 변경·정착·Proof/Report, 이후 3~5 Step·실패 후 같은 Step 수정·중복 실행/Report 0·최종 completed |
+| **B / W2·G2** | 실제 Native Host 생존 상태에서 Main 교체, 권한 요청/승인·거부 왕복, 취소·완료 경합 | 실제 Host 원본 이벤트와 사용자 인증 승인 채널. 채널이 없으면 자동 승인 금지 | 원래 Turn/Attempt를 다시 관측, 승인 대기 시 진행 0, 사용자 명시 결정만 원래 요청에 적용, 취소 경합 정합. 미지원 승인 기능은 DEFER |
+| **B / W4-E·G4-E** | 요약 없는 **새 Native Thread**에서 동일 Run/Step의 후속 작업 재개 | A의 old Writer 쓰기 배제 + B의 동일 Run/Contract/Evidence 원본 재조회 + 기존 실행 결말 | Thread ID는 바뀌고 Run/Step/계약·Proof 출처는 보존, running/unknown 신규 Writer 0, 실제 Host 호출에서 안전한 재개 |
+| **B / W4-C/D·G4-C/D** | E 대비 Handoff 순효과·경계 전환 트리거 비교 | E 제품 경로 수용 후 기존 [W0_BASELINE](W0_BASELINE.md) 비교에서 추가 이점 증거 | 추가 효과가 없으면 **미도입** 결정으로 종결. 자동 압축 전 신호를 관측할 수 없으면 해당 트리거 DEFER |
+| **C / W5·G5** | 지원 Native Host의 I01~I12 실제 수용과 종료·경쟁·Writer late-write 공격 | 변경한 A/B 기능이 실제 실행 가능해야 함 | T05/T06/T07/T14/T15/T17/T25/T26의 영향 범위와 G5 필수 불변식 위반 0; 미관측 항목 PARTIAL/DEFER |
+| **C / W6·G6** | 동일 조건 A↔B, E↔C, B↔D의 비용·품질·복구·컨텍스트 비교/채택 | B·E 등 각 Arm의 기술 수용, 실측 요금·예산/표본 승인 | 기존 6개 Pilot, 원본 Acceptance·전 환경 조건 고정. 실측 Receipt 기반 채택·LIMITED·기각, 미지원 Arm NOT_RUN |
+
+### 3. 묶음 A — Native 안전 경계 확보 후 실제 개발 루프 연결
+
+**A-선행 판단 (코드 변경 없이 기존 증거부터):**
+
+1. [T49](T49_FINAL_ACCEPTANCE.md)·[T50](T50_NATIVE_OS_ISOLATION_FEASIBILITY_AND_FINAL_DECISION_2026-11-05.md)의 실패 원인을 그대로 사용한다. 현재 WSL checkout/동일 UID·분리 손자·공유 inode에선 Writer 퇴장을 입증할 수 없고, macOS/Windows Native 검증도 확보되지 않았다. **동일 환경·동일 반례의 재실험을 새 작업으로 만들지 않는다.**
+2. 실제 Native Host에 이미 *실행 가능한* OS 권한/쓰기 격리 능력이 생겼다는 새 증거가 있을 때만 해당 Host에서 최소 지원 모드를 검증한다. T50 §3의 Owner 보호 경계·별도 Worker 파일 객체·App Server/Tool/후손 권한 상속·검증 가능한 결과 취득을 만족해야 한다. 단순한 `verifiedNativeWriterIsolation=true` 또는 `writerExitVerified=true` 주입을 제품 근거로 쓰지 않는다.
+3. **현재 승인된 범위에는 신규 OS 사용자·DACL/ACL·Job Object·권한 상승 서비스·범용 Sandbox 구축이 없다.** 기존 Host 능력만으로 2번을 충족할 수 없으면 **A의 Native Writable 자동 실행/정착을 HOLD_SAFE/DEFER로 유지**한다. 원래 요구를 완성하려면 격리 실행 권한 또는 설계 범위 변경에 대한 **사용자의 별도 결정이 필요**하다. 이를 이유로 임의로 I03을 약화하거나 Owner-direct를 B로 위장하지 않는다.
+
+**A-실제 구현 (위 조건을 충족한 지원 Host에서만 실행):**
+
+1. 기존 `mcp.ts → host-worker-sessions.ts → host-owned-writable-attempt.ts → codex-app-server-transport.ts`의 실제 Host 시작/관측 지점을 쓰기 격리 능력과 연결한다. Owner 권위·Workspace Reservation·Canonical Attempt는 기존 경계를 그대로 사용한다. 요청 중단과 Worker 실행 중단/쓰기 배제를 별개의 결과로 유지한다.
+2. `resultCandidate`의 Commit SHA·Base SHA·Workspace Identity·Allowed/Forbidden Paths·Proof Receipt가 현재 Run/Attempt에 속하는지 재조회한 후, **Writer 배제 증거가 존재할 때에만** 기존 `parallel-dispatcher.ts`의 검증·Owner Fence/CAS 정착 코드를 호출한다. 병렬 두 Worker 전제를 단일 Worker에 강제로 복제하거나 새 Completion Authority를 만들지 않는다.
+3. `control-plane.ts`의 기존 `settleParallelResult`·`reportUnderLease`·Report replay/recovery를 사용해 **정착된 동일 결과**를 정확히 한 번 기록한다. CAS 직후 종료·Report 반복에도 새 Worker 시작/중복 파일 적용이 없도록 기존 Receipt를 재사용한다.
+4. 기존 `turn-dispatcher.ts`·`host-turn.ts`·Kernel `run-loop.ts`에서 `report.next`의 실행 지시를 **단일 소비자**가 받게 연결한다. 3~5 Step·의도적 실제 Proof 실패→같은 Run/Step 수정·증거 재검증·최종 Kernel completed를 관통 확인한다. Owner-direct 경로는 변경하지 않는다.
+5. Native 실제 경로를 통과해야 G1/G3 PASS. Fixture에서 CAS/Report를 성공시킨 경우는 CODE/FIXTURE PASS로만 기록한다. 미지원 Native Owner 정착은 계속 비활성화한다.
+
+### 4. 묶음 B — 승인·취소와 요약 없는 Fresh Resume
+
+1. **G2:** 기존 `kernel_attach/status`의 읽기 전용 재연결, Host-local live Turn 이벤트와 영속 Attempt 구분, 조기 취소를 재사용한다. 사용자 인증된 승인 입력을 전달하는 **기존 Host 호출 경로가 실제로 제공될 때만** App Server의 서버발 승인 이벤트와 응답을 원래 `threadId/turnId/requestId/attemptId`에 결합한다. 사용자 결정을 받기 전 자동 진행·자동 승인·가상 승인 응답은 금지한다. 연결이 없다면 현재 비인가 요청 실패 차단을 유지하고 승인 왕복만 DEFER한다.
+2. **G2 경쟁 수용:** 동일 Run의 Main 교체·동시 Start·시작 전 취소·Turn 완료 직후 취소·승인 대기 중 연결 상실을 함께 검증한다. 신호가 이전 실행에 소급 적용됐다는 상태를 반환하지 않으며, Host 종료 뒤 다른 Host가 live handle을 가진 것처럼 표시하지 않는다.
+3. **G4-E:** A의 old Writer 배제 및 원본 Kernel Contract/Evidence가 확인된 후에만 현재 Run/Step과 새 Thread를 연결한다. `agent-recovery.ts`, `work-cursor.ts`, 기존 Session Binding/Receipt를 우선 재사용한다. 연결하는 Thread ID는 권위가 아니며, `running/unknown`은 같은 Attempt를 먼저 조회하고 임의 재실행하지 않는다.
+4. **G4-C/D:** E가 실제 동작한 뒤 기존 사전 등록 비교를 통해 **추가 효용이 입증된 기능만** 채택한다. 새로운 Handoff DB·강제 압축 Proxy·규칙 기반 사전 전환은 만들지 않는다. 효과 없으면 명시적 미채택으로 종료한다.
+
+### 5. 묶음 C — 최종 Native 수용·A/B/E 실측·채택
+
+1. **G5:** [VERIFICATION](VERIFICATION.md)의 I01~I12를 그대로 적용한다. 이미 PASS한 TypeScript/빌드·66건 영향 회귀·T49/T50 부정 증거는 재사용한다. 새 A/B 코드를 수정한 경우의 실제 Native start, Main/MCP/App Server/Host 각각 종료, 두 Writer 경쟁, 늦은 OS 쓰기, 승인·취소, secret 노출과 CAS/Report 복구에 한정해 추가 수용한다. 실제 Native 미관측이면 PASS가 아니라 PARTIAL/DEFER.
+2. **G6:** [W0_BASELINE](W0_BASELINE.md)에 있는 동일 objective/acceptance/constraints/non-goals, Git 초기 SHA, model/effort, sandbox/approval, 6개 Pilot 과제를 재사용한다. **A↔B 안전·품질 선행 비교 → B 수용 후 E → E와 동일 전환 시점 C → B와 별도 전환 경계 D** 순서다. Provider 실제 Usage Receipt/비용/캐시·Reviewer·Main/Worker·wall clock·재탐색·복구 성공을 측정한다. 입력 토큰/요금이 없으면 null이지 추정치가 아니다.
+3. 실제 Native 사용량 과금과 실험 예산·표본 한도는 **시험 실행 전** 승인된 값으로 기록한다. 사용자 진행 중 계정/프로세스/DB를 건드리지 않고 격리 작업 공간에서 평가한다. 위반 1건이라도 있으면 해당 Arm의 채택을 중지하며, 성능이 좋아도 품질·단일 Writer 조건을 완화하지 않는다.
+4. 최종 판정은 `PASS`(지원 Native Gate/실측 채택), `LIMITED`(개선이 입증된 작업군만), `DEFER`(지원 능력 부재), `FAIL`(실제 불변식 위반), `NOT_RUN`(선행 조건 미충족)을 구분한다. G1 미지원이면 **B/E/C/D 기술·성능 채택은 미실행으로 종결**하고 기존 A를 유지한다. G6 수치나 완료율을 인위적으로 채우지 않는다.
+
+### 6. 구현 진행·중단·커밋/수용 절차
+
+- 기존 Moonremote `taskId`와 원본 Git 작업을 재사용한다. 매 착수 시 정확한 cwd의 체크포인트·`git status`·HEAD·실행 중 명령을 확인한다. 사용자 변경이나 실행 중 Writer를 건드리지 않는다.
+- **큰 기능 묶음 단위**로 `실제 연결 구현 → TypeScript/Build → 영향 범위 테스트 → 독립 MCP/Native 제품 수용 → Gate 판정 → STATUS.md 갱신 → 한글 상세 커밋·푸시`한다. 새 T번호·마스터플랜·작은 테스트마다 커밋을 만들지 않는다.
+- A의 Writer 경계가 미지원이면 **조건이 달라질 때까지 A Native 적용을 중지**하고, B 중 독립적으로 지원되는 제어·조회 기능만 진행한다. B 승인 채널이 미지원이면 승인 왕복만 DEFER한다. C의 미지원 Arm 비교는 수행하지 않는다. 이미 완료된 부분을 반복 개발해 진행률을 포장하지 않는다.
+- 필요 조건을 충족시키려면 신규 OS 격리/실행 권한을 도입해야 하는 경우, **사용자가 기존 범위 확장을 승인하기 전에는 구현하지 않는다.** 범위가 바뀌지 않는 한 원래 계획의 해당 Native 목표는 DEFER이며 완료로 선언하지 않는다.
+- 코드/테스트/문서 외 추가 영속 상태·DB·Queue·Scheduler·상시 Supervisor·Provider 전용 폴백 금지. 긴 작업도 추가 Worker 후손/프로세스가 기존 Owner 파일에 쓸 수 없는 조건을 통과해야 한다.
+- 모든 Gate의 현재 판정과 실제 증거는 **기존 [STATUS.md](STATUS.md)**에 계속 갱신한다. 이번 문서 보완만으로 완료되지 않은 제품 기능이나 검증 결과를 PASS로 바꾸지 않는다.
