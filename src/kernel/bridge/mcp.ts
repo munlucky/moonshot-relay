@@ -323,6 +323,11 @@ export const handleMcpToolCall = async ({
         schemaVersion: 1, runId, status: 'attached', runStatus: run.status,
         currentStep: step ? { stepId: step.stepId, state: step.state } : null,
         resume: status.resume ?? null,
+        // These are the same read-only Kernel authorities exposed by status.
+        // A replacement Main can inspect scope and proof freshness without
+        // issuing next or relying on a model-authored handoff summary.
+        workAuthority: status.workAuthority ?? null,
+        trustAuthority: status.trustAuthority ?? null,
         workerAttempts: attempts.map(attempt => ({
           attemptId: attempt.attemptId,
           stepId: attempt.stepId,

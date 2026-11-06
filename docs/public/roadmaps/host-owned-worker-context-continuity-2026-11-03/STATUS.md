@@ -49,6 +49,13 @@
 - **수용 구분:** MCP/Kernel 통합 경로 CODE/WIRED 및 격리 실행 PASS. 새 Native Thread 생성, Host-owned Worker의 Owner Delivery, 물리적 Writer 격리, W4-E 자동 Fresh Resume, G6 B/E 성능 비교는 **미완료 / HOLD_SAFE / NOT_RUN**. Owner-direct 증거를 Host-owned Native PASS로 간주하지 않는다.
 - **복잡도 검토:** 기존 `resume` 투영을 재사용하고 새로운 DB·Queue·Scheduler·별도 Handoff 구조·새 API 명령은 추가하지 않았다.
 
+## 2026-11-06 지원 가능한 잔여 개발 — Main 독립 프로세스 재연결 및 비인가 Turn 차단
+
+- **W2/G2 구현:** 계약 없는 `kernel_attach`가 `status.resume`와 함께 이미 존재하는 `workAuthority`·`trustAuthority`를 읽기 전용으로 제공한다. Main은 원래 Kernel의 Step·계약 범위·원본 Evidence 신선도·수용 권위를 참조할 수 있다. `next` 소비·Attempt 생성·Worker 시작·완료 권위 추가 없음. 서로 다른 두 실제 MCP 서버 프로세스가 동일 Runtime Home/Run을 조회해도 Run revision/Step/Attempt·Owner 파일은 변경되지 않는 통합 시험을 추가했다.
+- **W1/W2/G2·W5 안전 구현:** 완료되지 않은 Native Turn(`failed`/`interrupted`/`unknown`)은 Git 스냅샷과 별개로 `host_worker_turn_not_completed` 차단 preflight를 기록하며 Delivery를 허가하지 않는다. App Server의 서버발 JSON-RPC 승인·입력 요청은 사용자 승인 채널이 없으므로 명시적으로 거부하고 실행 연결을 실패 처리한다. 서버발 요청 ID와 Host RPC 응답 ID가 우연히 같더라도 요청을 응답으로 착각하지 않도록 JSON-RPC `method`를 먼저 판별한다. 승인 가능 기능을 허위로 제공하지 않는다.
+- **검증:** TypeScript·Production Build·Tests Build PASS, 실 실행 경로인 독립 MCP 서버 재접속·승인 요청 ID 충돌·조기 취소 집중 **5/5 PASS**, 관련 MCP/App Server·Host loop·Report replay·Step resume 통합 **66/66 PASS**, Boundary PASS, `git diff --check` PASS. 이 결과는 Source/격리 Fixture와 실제 MCP 프로세스 경계의 증거이며 Writer 격리 Native 제품 수용을 대신하지 않는다.
+- **지원 범위:** Owner-direct 원래 경로는 유지. 기존 W1/W3의 Native Writable 자동 정착과 W4-E 새 Writer Fresh Resume은 I03 쓰기 배제 미증명으로 `HOLD_SAFE/DEFER`. 실제 사용자 승인 전달은 지원 Host 권위/인터페이스 부재로 `DEFER`. W6의 B/E/C/D 비교는 `NOT_RUN`. 새 OS 계층, DB, Queue, Scheduler, 완료 권위, 별도 Handoff는 추가하지 않았다.
+
 ## 재개 지점
 
-[원본 PLAN.md의 실행 묶음](PLAN.md#개발-실행커밋-묶음-2026-11-06-운영-방식-변경) 기준 **A의 안전하게 지원 가능한 Host-owned Owner 정착·3-Step 구현**을 계속한다. 실제 Writer 퇴장 미확인 상태의 자동 Delivery만 HOLD_SAFE/DEFER한다. B에서 이미 연결한 Main 재연결·조기 취소 기능은 재구현하지 않으며, 승인·안전한 Fresh Resume의 실제 수용을 계속한다. C의 안전 영향 검증은 변경된 범위에만 적용하고, 미지원 B/E Arm의 W6 실측은 NOT_RUN으로 유지한다. 별도 OS 격리 연구나 마스터플랜은 추가하지 않는다.
+[원본 PLAN.md의 A/B/C 실행 묶음](PLAN.md#개발-실행커밋-묶음-2026-11-06-운영-방식-변경) 기준, 현재 안전하게 지원 가능한 **Main 재연결/기존 Kernel 연속성, 취소·비인가 승인 차단, Owner-direct 실행 루프와 영향 범위 회귀**를 구현·검증했다. 해당 부분은 반복 구현하지 않는다. 다음 단계에서 **새로 실행 가능한 미완료 기능은 확인되지 않았다.** A의 Host-owned Native 자동 Owner Delivery, B의 새 Writer Fresh Resume/실제 사용자 승인, C의 B/E/C/D 비교는 필요한 Writer 배제·Host 승인 채널·비교군 지원 조건을 갖추기 전까지 `HOLD_SAFE/DEFER/NOT_RUN`으로 유지한다. 조건 변화가 있을 때만 원래 G1/G2/G3/G4-E/G5/G6의 수용을 재개하며, OS 보안 설계·별도 DB/Queue/Scheduler·대체 마스터플랜이나 과거 실패 반복 시험을 선행 과제로 추가하지 않는다.

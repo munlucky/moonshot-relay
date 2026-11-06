@@ -200,6 +200,8 @@ test('mcp bridge provides initialize, ping, tools/list, and tool execution', asy
   assert.equal(reattached.status, 'attached');
   assert.equal(reattached.next, undefined);
   assert.deepEqual(reattached.resume, statusResult.resume);
+  assert.deepEqual(reattached.workAuthority, statusResult.workAuthority);
+  assert.deepEqual(reattached.trustAuthority, statusResult.trustAuthority);
   assert.deepEqual(reattached.workerAttempts, statusResult.workerAttempts);
   assert.equal(reattached.liveWorker, null);
 
@@ -876,6 +878,9 @@ input.on('line', line => {
     assert.equal(live?.completedTurn?.threadId, 'thread-once');
     assert.equal(live?.completedTurn?.turnId, 'turn-once');
     assert.equal(live?.completedTurn?.turnStatus, 'interrupted');
+    assert.equal(live?.preflight?.status, 'blocked');
+    assert.equal(live?.preflight?.failureCode, 'host_worker_turn_not_completed');
+    assert.equal(live?.resultCandidate, null);
     assert.equal(live?.writerExitVerified, false);
     assert.equal(live?.deliveryAuthorized, false);
     assert.equal(cp.getHostRoutingSnapshot(runId).stepAttempts[0]?.status, 'started');
@@ -1093,6 +1098,8 @@ if (fs.existsSync('third.md') && !fs.readFileSync('third.md', 'utf8').includes('
   assert.equal(reattached.next, undefined);
   assert.equal(assertTestRecord(reattached.currentStep).stepId, stepIds[1]);
   assert.deepEqual(reattached.resume, status.resume);
+  assert.deepEqual(reattached.workAuthority, status.workAuthority);
+  assert.deepEqual(reattached.trustAuthority, status.trustAuthority);
   assert.equal(assertTestRecord(assertTestRecord(reattached.resume).implementation).mutationRevision,
     assertTestRecord(assertTestRecord(status.resume).implementation).mutationRevision);
   const check = await createKernelControlPlane({ projectRoot: workspaceRoot, runtimeHome });
@@ -1136,4 +1143,73 @@ if (fs.existsSync('third.md') && !fs.readFileSync('third.md', 'utf8').includes('
     assert.equal((await finalPlane.getRun(runId))?.status, 'completed');
     assert.equal(finalPlane.getHostRoutingSnapshot(runId).stepAttempts.length, 4);
   } finally { await finalPlane.close(); }
+});
+
+test('G2: independent MCP server processes reattach read-only without advancing the canonical Run', async (t) => {
+  const workspaceRoot = await createFixtureRepo();
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-mcp-process-reattach-'));
+  t.after(async () => {
+    await Promise.all([workspaceRoot, runtimeHome].map(root => rm(root, { recursive: true, force: true })));
+  });
+  const runId = 'run-independent-main-reattach';
+  const cp = await createKernelControlPlane({ projectRoot: workspaceRoot, runtimeHome });
+  let beforeStatus: Record<string, unknown>;
+  let originalRevision: number | undefined;
+  try {
+    await cp.ensureRun({ runId, objective: 'Keep the original contract and evidence across Main process replacement',
+      taskContract: {
+        objective: 'Keep the original contract and evidence across Main process replacement',
+        acceptance: ['README remains within its allowed scope'],
+        allowedPaths: ['README.md'],
+        forbiddenPaths: ['private.txt'],
+      },
+    });
+    beforeStatus = assertTestRecord(await cp.status(runId));
+    originalRevision = (await cp.getRun(runId))?.revision;
+    assert.equal(cp.getHostRoutingSnapshot(runId).stepAttempts.length, 0);
+  } finally { await cp.close(); }
+
+  const invokeInNewProcess = (id: number, name: string) => {
+    const input = JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call',
+      params: { name, arguments: { workspaceRoot, runId } },
+    }) + '\n';
+    const child = spawnSync(process.execPath, [path.resolve('scripts/kernel/bridge/mcp.js')], {
+      cwd: workspaceRoot, input, encoding: 'utf8', timeout: 20000,
+      env: { ...process.env, MOON_RELAY_KERNEL_HOME: runtimeHome },
+    });
+    assert.equal(child.status, 0, child.stderr || child.error?.message || 'MCP server process failed');
+    const responses = child.stdout.split('\n').filter(Boolean);
+    assert.equal(responses.length, 1, child.stdout);
+    const response = assertTestRecord(JSON.parse(responses[0]!));
+    assert.equal(response.id, id);
+    assert.equal(assertTestRecord(response.result).isError, false);
+    return parseToolText(response);
+  };
+
+  const first = invokeInNewProcess(100, 'kernel_attach');
+  const second = invokeInNewProcess(101, 'kernel_attach');
+  const detachedStatus = invokeInNewProcess(102, 'kernel_status');
+  assert.equal(first.status, 'attached');
+  assert.equal(second.status, 'attached');
+  assert.equal(first.next, undefined);
+  assert.equal(second.next, undefined);
+  assert.equal(first.liveWorker, null);
+  assert.equal(second.liveWorker, null);
+  assert.deepEqual(first.resume, beforeStatus.resume);
+  assert.deepEqual(first.workAuthority, beforeStatus.workAuthority);
+  assert.deepEqual(first.trustAuthority, beforeStatus.trustAuthority);
+  assert.deepEqual(second.resume, first.resume);
+  assert.deepEqual(second.workAuthority, first.workAuthority);
+  assert.deepEqual(second.trustAuthority, first.trustAuthority);
+  assert.deepEqual(detachedStatus.resume, first.resume);
+
+  const after = await createKernelControlPlane({ projectRoot: workspaceRoot, runtimeHome });
+  try {
+    assert.equal((await after.getRun(runId))?.revision, originalRevision,
+      'read-only reattachment cannot mutate the Run');
+    assert.equal(after.getHostRoutingSnapshot(runId).stepAttempts.length, 0,
+      'reattachment cannot spawn an Attempt');
+    assert.equal(after.getCurrentStep(runId)?.stepId, assertTestRecord(first.currentStep).stepId);
+  } finally { await after.close(); }
+  assert.equal(await readFile(path.join(workspaceRoot, 'README.md'), 'utf8'), '# Bridge Fixture\n');
 });

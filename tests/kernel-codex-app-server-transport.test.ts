@@ -77,6 +77,14 @@ input.on('line', (line) => {
       ], { cwd: message.params.cwd, stdio: 'ignore', detached: true });
       child.unref();
     }
+    if (process.env.TEST_MODE === 'approval-request') {
+      // Server request and client turn/start may independently use the same
+      // ID. A request must never be mistaken for the successful Turn ACK.
+      send({ id, method: 'item/commandExecution/requestApproval',
+        params: { threadId, turnId, command: 'fixture-approval-request' } });
+      send({ id, result: { turn: { id: turnId, status: 'inProgress' } } });
+      return;
+    }
     if (process.env.TEST_MODE === 'stall-turn' || process.env.TEST_MODE === 'writable-stall-turn') {
       send({ id, result: { turn: { id: turnId, status: 'inProgress' } } });
       return;
@@ -913,6 +921,29 @@ test('T27: real detached OS Writer outlives completed Native Turn and App Server
         assert.equal(removed.status, 0, removed.stderr);
       }
       await cp.close();
+    }
+  });
+});
+
+test('G2/T14: a server-originated approval request blocks the Turn without automatic authorization', async () => {
+  await withFixture(async ({ workspace, alternative, server }) => {
+    const transport = await createCodexAppServerTransport({
+      executable: process.execPath, args: [server], requestTimeoutMs: 1500,
+      env: { ...process.env, TEST_MODE: 'approval-request' },
+    });
+    try {
+      await assert.rejects(transport.runTurn({ ...turn(workspace), timeoutMs: 2000 }), {
+        code: 'codex_app_server_unhandled_server_request',
+      });
+      assert.equal(transport.observeTurn().connection, 'unavailable');
+      assert.equal(transport.observeTurn().writerExitVerified, false);
+      await assert.rejects(transport.runTurn(turn(alternative)), {
+        code: 'codex_app_server_unavailable',
+      });
+    } finally {
+      const closed = await transport.close();
+      assert.equal(closed.writerExitVerified, false);
+      assert.equal(closed.appServerExited, true);
     }
   });
 });

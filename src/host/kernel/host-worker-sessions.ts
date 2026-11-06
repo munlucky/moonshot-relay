@@ -144,6 +144,14 @@ export function createHostWorkerSessions({
               threadId: result.nativeTurn.threadId, turnId: result.nativeTurn.turnId,
               workspaceId: result.workspaceId, turnStatus: result.nativeTurn.turnStatus,
             };
+            // A captured Git delta is only an observation. A failed,
+            // interrupted or unknown Turn cannot become a verified candidate,
+            // even if its final Worktree snapshot happens to apply cleanly.
+            if (result.nativeTurn.turnStatus !== 'completed') {
+              job.preflight = { status: 'blocked',
+                failureCode: 'host_worker_turn_not_completed', patchDigest: null };
+              return;
+            }
             const candidate = result.resultCandidate;
             if (!candidate || result.resultCaptureStatus !== 'captured') {
               job.preflight = { status: 'blocked',

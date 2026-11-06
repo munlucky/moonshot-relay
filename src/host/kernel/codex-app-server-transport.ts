@@ -202,17 +202,14 @@ export async function createCodexAppServerTransport({
         fail('codex_app_server_protocol_invalid');
         break;
       }
-      if (Number.isSafeInteger(message.id) && pending.has(message.id as number)) {
-        const found = pending.get(message.id as number)!;
-        pending.delete(message.id as number);
-        clearTimeout(found.timer);
-        if (message.error != null) found.reject(error('codex_app_server_rpc_failed'));
-        else if (object(message.result)) found.resolve(object(message.result)!);
-        else found.reject(error('codex_app_server_rpc_invalid'));
-      } else if (typeof message.method === 'string' && message.id === undefined) {
+      // JSON-RPC requests have a method; responses do not. Distinguish them
+      // before matching pending client request IDs: a server approval request
+      // can independently reuse the same numeric ID as an in-flight RPC.
+      if (typeof message.method === 'string' && message.id === undefined) {
         for (const listener of listeners) listener(message);
-      } else if (message.id !== undefined && typeof message.method === 'string') {
-        // Unexpected server-initiated requests are denied, never approved.
+      } else if (typeof message.method === 'string') {
+        // There is no user-authorized approval channel in this transport.
+        // Deny the request and poison the Turn rather than allow false success.
         try {
           child.stdin.write(JSON.stringify({
             id: message.id,
@@ -221,6 +218,14 @@ export async function createCodexAppServerTransport({
         } catch {
           fail('codex_app_server_stdin_failed');
         }
+        fail('codex_app_server_unhandled_server_request');
+      } else if (Number.isSafeInteger(message.id) && pending.has(message.id as number)) {
+        const found = pending.get(message.id as number)!;
+        pending.delete(message.id as number);
+        clearTimeout(found.timer);
+        if (message.error != null) found.reject(error('codex_app_server_rpc_failed'));
+        else if (object(message.result)) found.resolve(object(message.result)!);
+        else found.reject(error('codex_app_server_rpc_invalid'));
       }
     }
     if (Buffer.byteLength(buffer, 'utf8') > MAX_LINE_BYTES) fail('codex_app_server_frame_too_large');
