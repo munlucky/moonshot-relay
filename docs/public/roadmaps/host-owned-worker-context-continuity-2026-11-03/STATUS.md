@@ -56,11 +56,12 @@
 - **검증:** TypeScript·Production Build·Tests Build PASS, 실 실행 경로인 독립 MCP 서버 재접속·승인 요청 ID 충돌·조기 취소 집중 **5/5 PASS**, 관련 MCP/App Server·Host loop·Report replay·Step resume 통합 **66/66 PASS**, Boundary PASS, `git diff --check` PASS. 이 결과는 Source/격리 Fixture와 실제 MCP 프로세스 경계의 증거이며 Writer 격리 Native 제품 수용을 대신하지 않는다.
 - **지원 범위:** Owner-direct 원래 경로는 유지. 기존 W1/W3의 Native Writable 자동 정착과 W4-E 새 Writer Fresh Resume은 I03 쓰기 배제 미증명으로 `HOLD_SAFE/DEFER`. 실제 사용자 승인 전달은 지원 Host 권위/인터페이스 부재로 `DEFER`. W6의 B/E/C/D 비교는 `NOT_RUN`. 새 OS 계층, DB, Queue, Scheduler, 완료 권위, 별도 Handoff는 추가하지 않았다.
 
-## 2026-11-06 잔여 개발 실행 기준 보완 — 계획만 확정
+## 2026-11-06 실행계획 범위 조정 — OS 보안 플랫폼 제외
 
-- [원본 PLAN.md의 잔여 개발 완료 실행 기준](PLAN.md#2026-11-06-잔여-개발-완료-실행-기준--기존-abc-묶음의-재개-조건과-구현-경계)에 **A의 Writer 보호 선행 판단→기존 CAS/Report/3-Step 연결, B의 실제 승인·취소/새 Thread, C의 Native 수용·W0 Baseline 비교**에 대한 코드 경계·선행 증거·실패/DEFER 조건·커밋/수용 기준을 통합했다.
-- 이번 변경은 **계획 현행화만 수행**한다. `main/1258ca08`까지 검증된 기존 제품 코드와 G0~G6 현재 판정은 변경하지 않는다. T49/T50 Native Writer 미증명, 승인 Host 채널 부재, B/E/C/D NOT_RUN을 개발 완료로 승격하지 않는다. OS 권한 격리 또는 지원 Host 승인 채널이 새로 확보되지 않는 한 원래 Native 목표는 HOLD_SAFE/DEFER이며, 추가 OS 격리 아키텍처는 사용자 범위 승인 전 도입하지 않는다.
+- [원본 PLAN.md의 Host/Kernel 중심 잔여 실행 기준](PLAN.md#2026-11-06-잔여-개발-실행-기준--hostkernel-중심-os-관리-기능-제외-개정)으로 이전의 **“OS 격리 확보를 전체 개발의 필수 선행 조건으로 둔 순서”**를 교체했다. A(Host 실행 수명·Worker 후보·기존 Owner CAS/Report/3~5-Step CODE/격리 통합), B(Main 교체·취소·지원 시 승인·E Fresh Resume), C(영향 범위 Native 수용·실측 채택)를 기존 범위에서 진행한다.
+- **새로 개발 가능한 범위:** 독립 Host 실행 경계 연결, 후보 검증→기존 정착 엔진의 **격리 fixture 관통 연결**, `report.next` 단일 소비, Main 연결 수명/Worker 실행 수명 차이의 실제 MCP 검증. 현재 지원되지 않는 Native 자동 정착·Fresh Writable Thread는 I03 Writer 배제 증거가 확보되기 전까지 **HOLD_SAFE/DEFER**다. 원래 T49/T50 반례와 G0~G6 판정을 변경하거나 OS 사용자·ACL/DACL·Job Object·권한 상승 서비스 등 새로운 OS 관리 계층을 추가하지 않는다.
+- **이번 변경은 계획 문서 수정만 수행.** Source/Fixture/Native 제품 Gate는 이전 증거 수준 그대로이며, 이후 개발은 작은 수정 단위가 아닌 A/B/C 실제 기능 묶음으로 구현·검증·한글 상세 커밋·푸시한다.
 
 ## 재개 지점
 
-[원본 PLAN.md의 A/B/C 실행 묶음](PLAN.md#개발-실행커밋-묶음-2026-11-06-운영-방식-변경) 기준, 현재 안전하게 지원 가능한 **Main 재연결/기존 Kernel 연속성, 취소·비인가 승인 차단, Owner-direct 실행 루프와 영향 범위 회귀**를 구현·검증했다. 해당 부분은 반복 구현하지 않는다. 다음 단계에서 **새로 실행 가능한 미완료 기능은 확인되지 않았다.** A의 Host-owned Native 자동 Owner Delivery, B의 새 Writer Fresh Resume/실제 사용자 승인, C의 B/E/C/D 비교는 필요한 Writer 배제·Host 승인 채널·비교군 지원 조건을 갖추기 전까지 `HOLD_SAFE/DEFER/NOT_RUN`으로 유지한다. 조건 변화가 있을 때만 원래 G1/G2/G3/G4-E/G5/G6의 수용을 재개하며, OS 보안 설계·별도 DB/Queue/Scheduler·대체 마스터플랜이나 과거 실패 반복 시험을 선행 과제로 추가하지 않는다.
+[PLAN.md의 개정 실행 기준](PLAN.md#2026-11-06-잔여-개발-실행-기준--hostkernel-중심-os-관리-기능-제외-개정)에 따라 **A1 Host 실행 수명/단일 실행 상태 경계 → A2 기존 Proof·Owner CAS/Report의 안전한 코드·격리 통합 → A3 `report.next` 3~5-Step**을 한 묶음으로 구현한다. 기존 CODE PASS/66건 회귀는 변경 영향이 없는 범위에서 재사용하고, B의 지원 가능한 연결·취소·기존 Kernel 재개 기능은 계속 활용한다. OS 보안 플랫폼 자체는 개발하지 않는다. 실제 Native 자동 Delivery, 사용자 승인 왕복, Fresh Writable Thread, B/E 성능 평가는 각각 지원 조건이 확인된 때에만 수행하며 미지원일 때 제품 PASS로 선언하지 않는다.
