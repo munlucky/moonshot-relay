@@ -120,3 +120,77 @@ Wave별 focused tests를 먼저 실행하고, 범위에 따라 `npm run test:sou
 - **LIMITED**: 장기·대량 작업만 B/E 적용, 짧은 작업 owner-direct 유지. E 충분하면 C 기본 미도입.
 - **FAIL / DEFER**: 이중 Writer, 반복 명령, 무단 승인, 계약 손실, 거짓 완료, 유출 등은 FAIL. 실제 Runtime capability 미지원은 DEFER(지원으로 위장 금지). Host 실행이 사라진 경우 stale state를 성공으로 만들지 않는다.
 - **롤백**: 기존 A owner-direct 경로를 유지. Worker 전환 실패 시 실제 old Worker와 mutation 상태부터 reconcile 후 경로 복귀. 장애 중 코드·DB·사용자 Runtime을 임의로 복원/삭제하지 않는다.
+
+
+## 2026-11-06 잔여 구현 우선순위 — 원본 W0~W6/G0~G6 실행 구체화
+
+> 이 절은 **새로운 계획·Wave·Gate가 아니다.** 위 제품 경계·아키텍처, [VERIFICATION.md](VERIFICATION.md)의 I01~I12/G0~G6 및 [W0_BASELINE.md](W0_BASELINE.md)의 A/B/E/C/D 조건을 **변경하지 않고**, 현재 [STATUS.md](STATUS.md)의 미완료 항목을 구현 순서로만 구체화한다. 기존 코드/테스트/Native 증거는 재사용한다. 아래의 실행 번호는 커밋·검증 구분을 위한 식별자이지 추가 필수 기능이 아니다.
+
+### 현행 기준과 완료 판정
+
+- 기준 소스: `main / 359d2a1b` (2026-11-06 조회). 다음 구현 시작 시 `git status`, HEAD, 현재 테스트 산출물을 다시 확인하며 이 SHA를 코드에 고정하지 않는다.
+- **이미 연결된 경로:** Host-owned Attempt와 App Server Turn, `kernel_status` 재조회·중단·중복 시작 제어, 격리 Worktree 실제 Git 결과 → 분리 Commit/패치 → 기존 `integrateParallelResults`의 검증 전용 preflight. 완료·정착 권위는 여전히 Kernel만 갖는다.
+- **미연결 핵심:** 실제 지원 가능한 Host-owned 실행 수명 → 검증된 Owner 결과 정착 → Canonical `kernel report` → `report.next`로 3개 이상 Step 실행·실패 수정·최종 완료. 기존 owner-direct 3-Step 회귀 PASS를 Host-owned G3 PASS로 간주하지 않는다.
+- **기술 선택:** 별도 OS 사용자/UID·SID·ACL·Job Object·프로세스 트리 보안 엔진·범용 Sandbox 개발을 이 작업의 선행 단계로 만들지 않는다. 기존 Host 실행 수명/Workspace/Kernel 단일 Writer 계약에서 **입증된 지원 모드**만 사용한다. 기존 `verifiedNativeWriterIsolation=false`를 임의로 켜거나 테스트 Fixture의 `true`를 운영 승인으로 승격하지 않는다.
+- **안전한 중단:** I03의 실제 동시 Writer 금지와 I04/I05/I10은 유지한다. old Writer 종료·쓰기 배제가 미관측이면 해당 Owner CAS·자동 Fresh Resume만 `HOLD_SAFE`/`DEFER`; 독립적인 Host 조회/제어·단일 루프·증거 경로 개발을 멈추지 않는다. 지원 가능한 실행 모드가 끝내 없으면 G1/G3 전체를 억지로 PASS 처리하지 않고 지원 범위 결정을 요청한다.
+
+### 우선순위·선행 관계 (완료된 부분 재구현 금지)
+
+| 순위 | 원래 Wave/Gate | 구현 단위 및 목표 | 선행 관계 | 검증 단위/커밋 경계 |
+| --- | --- | --- | --- | --- |
+| **1 — 실행 경계** | W1/G1 + W3/G3 | 기존 Host가 소유하는 단일 Worker 실행/결과 소유권을 정리하고 지원 모드와 미지원 모드를 구분. 불명확한 Writer의 Delivery 차단 유지 | 현행 `359d2a1b` 코드 | 실제 호출 경계와 한 번의 Worker 실행·종료·상태 테스트가 PASS일 때 한국어 커밋 |
+| **2 — 정착/Report** | W3/G3 | 기존 검증 결과를 **한 번만** Owner Delivery/CAS·Kernel Report에 소비; 미확정 결과는 정착하지 않음 | 1의 지원된 안전 경계 | 단일 Step의 실제 파일 변경·Proof·Owner 정착·Report 결과 PASS일 때 커밋 |
+| **3 — 3-Step 개발 루프** | W3/G3 | 기존 `kernel next → execute → report.next`를 단일 소비자가 반복, 실패 검증 후 같은 Run 수정 | 2의 동작 가능한 제품 경로 | 3~5 Step·한 번의 실패/수정·중복 Report/실행 0을 관통 테스트하고 커밋 |
+| **4 — Main 재연결** | W2/G2 + W1/G1 | Main 교체 후 동일 Run/Attempt/Turn 조회, 시작 idempotence, 승인·취소 적용 시점 | 1의 Host 생존/안전 정지 의미 | 다른 Main 연결에서 status/signal/승인 정합성 검증 후 커밋 |
+| **5 — Fresh Resume** | W4-E/G4-E | 기존 Kernel/Workspace/Evidence만으로 같은 Run/Step을 새 Thread에 연결 | 1·3·4의 확인된 모드 | 이전 Writer 종료/보호 뒤 새 Thread·중복 0·계약/증거 보존 PASS일 때 커밋 |
+| **6 — 필수 수용** | W5/G5 | 변경 영향 범위 중심 I01~I12와 실제 장애·경쟁·권한 경계 수용, 기존 검증 증거 재사용 | 1~5 | Native 미확인은 PARTIAL/DEFER, 실제 PASS 조건은 원본 G5 그대로 |
+| **7 — 비교/채택** | W6/G6 | [W0_BASELINE.md](W0_BASELINE.md)의 A/B/E 동일 조건 비교, C/D는 추가 효과가 있는 때만 | B 구현·G1/G3/G5 지원 범위 확인 | paired 품질/전체 비용/지연/복구 자료와 제한 채택·기각 판정 |
+
+### 실행 단위 1 — W1/G1: 실제 Host 실행 수명과 단일 Writer 경계
+
+- **재사용/수정 대상:** `src/host/kernel/host-worker-sessions.ts`, `host-owned-writable-attempt.ts`, `codex-app-server-transport.ts`, 기존 `src/kernel/bridge/mcp.ts`, `src/kernel/control-plane.ts`. 기존 Worktree Reservation·Canonical Attempt·Owner Fence 외 새 Authority를 만들지 않는다.
+- **최소 구현:** Host/MCP 서버의 수명에 결부된 `start/status/signal` 경로에서 Main 호출이 끊겨도 **동일 실행**의 상태를 재조회; `running/unknown`은 기존 Attempt로만 확인한다. Worker의 결과/출력 종료와 실제 파일 Writer 퇴장 관측을 구분한다. 지원되는 실행 형태에서만 결과 정착 전 단일 Writer 조건을 만족시킨다. 기존 A owner-direct는 보존한다.
+- **검증:** `tests/kernel-codex-app-server-transport.test.ts`, `tests/kernel-bridge-mcp.test.ts`의 실제 App Server/Turn·중복 start·취소·Host 소유권 테스트를 재사용. Main 연결 종료 뒤 Host가 살아 있을 때 동일 Worker를 계속 조회하거나 안전 정지로 확인; Host 종료·old Writer 불명확 시 새 Writer를 시작하지 않는다. Fixture와 Native 판정은 분리.
+- **완료/차단:** G1은 실제 지원 모드의 Worker 수명/중복 Writer 0 관측이 있어야 PASS. 미증명 Native 범위는 정확히 DEFER. 지원 모드가 없는 경우 단위 2·3의 CODE/WIRED 개발과 owner-direct 검증은 계속하되 Host-owned Native G3를 통과로 취급하지 않는다.
+
+### 실행 단위 2 — W3/G3: 검증 결과에서 Kernel 정착으로 연결
+
+- **입력:** 이미 존재하는 `resultCandidate`(`resultCommitSha`, `patchDigest`, `changedPaths`, Workspace Identity)와 `preflight`. **모델 응답·Host status를 Completion 영수증으로 사용하지 않는다.**
+- **재사용/수정 대상:** `src/host/kernel/parallel-dispatcher.ts`의 `verifyHostOwnedWorkerCandidate`/`integrateParallelResults`와 기존 Owner CAS·Delivery 경로, `src/kernel/control-plane.ts`의 `settleParallelResult`/`reportUnderLease`, `host-worker-sessions.ts`. 단일 Host-owned Attempt를 병렬 두 Worker 계약에 억지로 맞추지 말고 기존 검증·정착 권위를 공유하는 최소 어댑터만 만든다.
+- **구현 순서:** (1) Canonical Run/Step/Attempt·provenance·기반 SHA/Identity·Proof를 재조회, (2) 현재 지원 모드에서 Writer 퇴장/쓰기가 중복되지 않는다는 증거가 있을 때만 기존 Owner Fence로 변경 적용·CAS, (3) 기존 Kernel Report/Review/Evidence로 정확히 한 번 정착, (4) Report가 반환한 `next`를 그대로 소비. CAS 뒤 Report 실패·재접속은 기존 결과 영수증과 Report Replay/Recovery로 처리하고 새 Worker로 재실행하지 않는다.
+- **집중 검증:** `tests/kernel-bridge-mcp.test.ts`, `tests/kernel-codex-app-server-transport.test.ts`, 기존 `tests/kernel-parallel-positive-two-hosts.test.ts`, `tests/kernel-report-replay.test.ts`, `tests/kernel-host-loop-e2e.test.ts`에서 1개 Step의 실제 파일 변경 → Proof → Owner 파일 반영 → Kernel 정착을 확인. **Proof 실패 / 위조·stale Commit / 범위 위반 / Writer 불명확**이면 Owner Mutation Revision·Report·다음 Step은 증가하지 않아야 한다.
+- **완료/차단:** Fixture의 결정적 Writer 종료에서 전체 흐름 CODE PASS가 되더라도 Native G3는 별도. 지원 불가 Native에 `writerExitVerified=true`를 주입하지 않으며, 미지원 Owner 자동 정착만 HOLD_SAFE한다.
+
+### 실행 단위 3 — W3/G3: 실사용 3-Step과 검증 실패 수정
+
+- **재사용/수정 대상:** `src/host/kernel/turn-dispatcher.ts`, `host-turn.ts`, 기존 `src/kernel/run/run-loop.ts` 및 MCP bridge의 현재 `kernel next/report` 계약. 이미 존재하는 루프를 연결하고 범용 Scheduler나 Worker Queue를 만들지 않는다.
+- **동작:** Host가 받은 최초 `next`로 한 Step만 실행. Report/Settlement 결과의 `next`가 실행 지시이면 **단일 주체가 한 번만 소비**; 그 시점에 별도 `kernel_next` 중복 호출·Codex Goals 자동 루프를 동시에 실행하지 않는다. 실패 Proof는 성공으로 진행하지 않고 기존 Kernel Step/Contract/Evidence에 따라 수정 후 재검증한다.
+- **수용 시나리오:** 같은 Run에서 3개 이상의 Work Unit 완료(T02), 필수 Proof가 한 번 실패한 뒤 같은 Step의 수정·재검증(T08), 충돌/중단 중 Writer 이중 생성 0, 중복 `report.next` 소비 0, false done 0. 사용자 기능에서 실행되지 않는 독립 Test Helper만 추가하면 G3 완료가 아니다.
+- **커밋 경계:** 단일 루프 실제 동작과 집중 회귀가 PASS인 구현 단위로만 묶는다. 결정적 Fixture E2E·실제 지원 Native E2E 판정을 각각 기록한다.
+
+### 실행 단위 4 — W2/G2: Main 교체·승인·취소 경계
+
+- **재사용/수정 대상:** `src/kernel/bridge/mcp.ts`, 기존 Host/MCP composition, `host-worker-sessions.ts`, `src/kernel/run/agent-recovery.ts`. 다른 Main은 새로운 Run/Attempt를 만들지 않고 기존 Kernel 상태와 동일 Host의 Live Turn/원본 이벤트를 조회한다.
+- **검증:** 다른 Main에서 Run/Step/Attempt/Turn 조회(T03/T04), 동시 시작 1회(T05), 승인 대기 중 자동 진행 금지(T14), 취소 직후와 Turn 종료의 경합(T15). `kernel_attach` signal이 Run을 생성하거나 `next`를 소비하지 않음을 확인한다. 재연결된 Main에 승인 우회를 허용하지 않고 원본 이벤트의 관측 가능 범위를 정확히 보고한다.
+- **완료:** 요청과 실행 상태가 분리되고 승인/취소 적용 시점을 관측한 경우에만 G2 PASS. Host 자체가 죽은 경우 같은 live Turn handle 재연결을 보장하는 것으로 표현하지 않는다.
+
+### 실행 단위 5 — W4-E/G4-E: 권위 기반 Fresh Resume만 우선
+
+- **재사용/수정 대상:** `src/kernel/run/agent-recovery.ts`, `work-cursor.ts`, 기존 Session Binding·Workspace/Receipt. `Run/Step/Contract/Evidence`를 Source of Truth로 삼고 새 Thread는 **실행 권위가 아닌** 연결 정보로 저장한다.
+- **검증:** 같은 Run/Step에서 새 Thread(T09/T21), 이전 Writer가 실제 중단/보호됐거나 미지원 범위가 차단됨(I03/I04), revision·금지 조건·원본 증거/Transcript 보존(T10~T13/T18). `running/unknown`이면 Fresh Resume 명목으로 새 실행하지 않는다.
+- **선택 기능:** W4-C의 구조화 Handoff는 E보다 뚜렷한 추가 효과가 입증된 경우만, W4-D의 경계 Reset은 별도 트리거 효과가 있을 때만 도입한다. 지원되지 않는 Provider 압축 사전 신호는 DEFER.
+
+### 실행 단위 6·7 — W5/G5와 W6/G6: 기존 증거 재사용 및 채택
+
+- **W5:** [VERIFICATION.md](VERIFICATION.md) I01~I12와 T05/T06/T07/T14/T15/T17/T25/T26의 **실제 수정 영향 범위**만 검증한다. 원인/코드/환경 변화가 없는 과거 T번호 실험을 다시 확장하지 않는다. Source PASS, Fixture PASS, Native PARTIAL/DEFER와 제품 수용을 혼동하지 않는다. 실패하면 해당 구현에 직접 필요한 최소 수정만 한다.
+- **W6:** [W0_BASELINE.md](W0_BASELINE.md)의 고정 Task/Arm/Acceptance/모델/effort/권한/초기 SHA와 기존 Usage Receipt를 재사용한다. 지원 모드에서 A↔B를 먼저 확인하고 B 기술 수용이 없으면 E/C/D는 NOT_RUN으로 둔다. E는 요약 없이 Kernel 권위만 사용하며, C는 E와 동일 시점 비교, D는 경계 전환 효과만 별도로 측정. 토큰·비용·지연·재탐색·완료/품질 지표를 실제 관측값으로 기록한다.
+- **채택 조건:** 품질·안전 비열화 없이 장기 작업의 실질 이점이 확인된 작업군만 B/E 적용. 이점 없는 단순 작업에는 A 유지. 새로운 Telemetry DB/평가 플랫폼은 만들지 않는다.
+
+### 공통 실행·커밋·중단 규칙
+
+1. 작업 시작 전 **기존** Moonremote `get_work_context(cwd="/shared/moonshot-relay")`, `main` HEAD·Git 변경·기존 코드·증거 조회. 활성 `taskId` 재사용, 각 명령 별 `operationId` 사용; 미확정 실행의 중복 재시도 금지.
+2. **개발 먼저 → 해당 기능 단위 TypeScript/Build → 영향 범위 테스트 → 실제 MCP/Kernel 경로 확인 → PASS/ PARTIAL 판정 → 한글 상세 커밋·푸시 → 다음 단위.** 계획 작성 자체나 PASS 테스트 개수를 기능 완료로 계산하지 않는다.
+3. 테스트 원본은 `tests/**/*.ts`; 빌드 생성 `tests/*.test.mjs` 직접 편집 금지. `npm run typecheck`, `npm run build`, `npm run build:tests`, `npm run check:boundaries`와 각 단위 Focused Test를 우선하고, `build:check`/`build:tests:check`는 필요한 변경에 대해 확인. 기존 PASS 로그는 변경 영향이 없으면 재사용.
+4. 커밋 경계는 위 실행 단위의 **작동하는 기능**이며 모든 하위 작업마다 문서/커밋을 생성하지 않는다. 각 커밋 메시지에는 실제 기능, 수정 이유, 회귀 결과, 미검증 Native 범위와 롤백 조건을 한국어로 상세히 기록한다. 기존 [STATUS.md](STATUS.md)만 진행 상황에 맞춰 갱신하고 새 대체 마스터플랜/T번호를 만들지 않는다.
+5. 중단 판단: I01~I12 위반이 실제 발생하면 해당 위험 기능만 HOLD_SAFE. 외부 Capability가 없어 필수 G1/G3/G4를 실증할 수 없으면 지원되지 않는 경로를 **DEFER**로 닫고 안전한 독립 기능은 계속 진행한다. 별도 OS 보안 계층이나 필수 Gate 축소가 필요해지는 순간에는 임의 구현하지 않고 범위 결정을 요청한다.
+6. **최종 완료**는 원본 G0~G6 중 지원 범위의 실제 제품 수용과 G6 실측 채택 판단에 따라 결정한다. Native 미관측 기능이 남아 있으면 전체를 PASS로 표현하지 않으며, 기능 완료/부분 완료/미지원/NOT_RUN을 명확히 구분한다.
