@@ -12,7 +12,7 @@
 | W0 / G0 | ContextReceipt 무음 절단 방지 **구현됨** | 필수 계약 집중 테스트 SOURCE PASS, Native Capability **PARTIAL** | [W0_RESULT](W0_RESULT.md)에서 증거 재사용. OS 격리 추가 반례 연구는 진행 조건이 바뀌지 않는 한 반복하지 않음 |
 | W1 / G1 | Host-owned App Server/Attempt, Worktree 예약, 비동기 Turn·중단, 기존 MCP의 명시적 start **부분 연결** | 격리 Fixture PASS, 일반 제품 Native start **HOLD_SAFE**, 실제 Main 종료 후 Native Worker 생존 미수용 | 안전한 실행 수명 경계를 실제 제품 Dispatcher와 연결하고 Writer 격리 필요 기능만 차단 |
 | W2 / G2 | `kernel_status` Canonical Attempt 조회, `kernel_attach`의 **기존 Run/Step/Attempt 읽기 전용 재연결**, 동일 Host live Turn 조회, 시작 전 취소 요청 큐잉 **부분 연결** | 다른 Main/독립 Host 조회, 동일 Attempt 유지, 조기 취소→정확한 Turn 신호, 중복 실행 방지 Fixture PASS. 실제 Main 교체·승인 전체 경계·Native 제품 수용 미확인 | 승인/취소 경쟁의 실제 제품 수용 및 안전한 Fresh Resume 연결 |
-| W3 / G3 | **CODE/WIRED PARTIAL:** Host-owned Worker의 실제 Git 변경을 기존 임시 Git 인덱스로 **추가·수정·삭제·바이너리 패치 + 분리된 Commit 객체**로 캡처(HEAD·Worker 인덱스 불변). Owner `git apply --check`로 비변경 적용 가능성 확인. 패치 원문은 Host에만 보존하고 경로·Digest·Commit SHA·Step 범위 위반만 `kernel_status`에 노출. 동일 기존 통합 검증기에서 단일 Worker의 별도 통합 Worktree `cherry-pick --no-commit`·Manifest 바인딩 Proof를 검증 전용으로 호출하고 preflight 상태 재조회. Owner 변경·Receipt·Report는 미실행. 미정착 Attempt의 거짓 Report, 중복 Step 지시·Contract 변경은 차단. Worker 결과→검증된 Owner CAS→Report→다음 Step 연동은 **미완료** | 실제 격리 Worktree 파일 변경→다른 Main 조회 Fixture PASS. Owner-direct 3-Step·Report 회귀 PASS. Native Writer 종료 증명·Host-owned 3-Step 제품 수용은 **미완료** | 기존 `integrateParallelResults`의 검증 전용 경로에 단일 Host Worker Commit 후보 연결 및 Host 자동 검증 명령 선택 CODE/WIRED. 미정착 Writer의 Owner CAS 적용·Report·다음 Step은 HOLD_SAFE; 실제 3-Step 수용은 별도 필요 |
+| W3 / G3 | **CODE/WIRED PARTIAL:** Host-owned Worker의 실제 Git 변경을 기존 임시 Git 인덱스로 **추가·수정·삭제·바이너리 패치 + 분리된 Commit 객체**로 캡처(HEAD·Worker 인덱스 불변). Owner `git apply --check`로 비변경 적용 가능성 확인. 패치 원문은 Host에만 보존하고 경로·Digest·Commit SHA·Step 범위 위반만 `kernel_status`에 노출. 동일 기존 통합 검증기에서 단일 Worker의 별도 통합 Worktree `cherry-pick --no-commit`·Manifest 바인딩 Proof를 검증 전용으로 호출하고 preflight 상태 재조회. 실제 Worker 보고서·Git 후보는 원본 Attempt에 귀속. Owner Delivery·Report는 미실행. 미정착 Attempt의 거짓 Report, 중복 Step 지시·Contract 변경은 차단. Worker 결과→검증된 Owner CAS→Report→다음 Step 연동은 **미완료** | 실제 격리 Worktree 파일 변경→다른 Main 조회 Fixture PASS. Owner-direct 3-Step·Report 회귀 PASS. Native Writer 종료 증명·Host-owned 3-Step 제품 수용은 **미완료** | 기존 `integrateParallelResults`의 검증 전용 경로에 단일 Host Worker Commit 후보 연결 및 Host 자동 검증 명령 선택 CODE/WIRED. 미정착 Writer의 Owner CAS 적용·Report·다음 Step은 HOLD_SAFE; 실제 3-Step 수용은 별도 필요 |
 | W4 / G4 | 같은 Run/Step Fresh Resume의 제품 통합 **미완료** | 이전 Writer 미확정 자동 재시작은 **HOLD_SAFE**. C/D는 효과 증명 전 미채택 | 안전한 실행 경계와 동일 Run 연속성 우선, 미지원 항목 DEFER |
 | W5 / G5 | 안전 불변식 관련 수정·증거 존재 | 개별 반례·Fixture 다수 PASS, I01~I12의 전체 Native 제품 수용은 **PARTIAL** | 기존 증거를 재사용하고 새 구현 영향 범위만 검증 |
 | W6 / G6 | 동일 조건 A/B/E/C/D 제품 실험 **미수행** | **NOT_RUN**, 제품 채택 PASS 아님 | 실행 가능한 Arm만 사전 고정된 조건에서 비교, 불가능한 Arm은 NOT_RUN |
@@ -76,6 +76,32 @@
 - **현재 코드 판정은 불변:** A1 CODE/MCP PASS, Host-owned Proof-only 경로 기존 구현, A2/A3 **제품·코드 관통 미수용**, Native 자동 Delivery와 새 Writable Thread는 I03 미증명으로 HOLD_SAFE/DEFER. B의 승인 왕복·E Fresh Resume은 기존 Host 채널/Writer 배제 조건에 종속, C의 B/E/C/D 실측 NOT_RUN. 이번 작업은 제품 코드/테스트/Native 실행을 변경하지 않았다.
 - **다음 개발 원칙:** 테스트 성공을 위해 `verifiedNativeWriterIsolation`·`writerExitVerified`를 가짜로 올리거나 별도 완료 엔진/OS 보안 관리 시스템을 추가하지 않는다. 기존 같은 생산 코드 경로에 연결하고, 실제 Writer 종료·쓰기 권한 증거가 있는 환경에서만 Owner 자동 적용을 수용한다. 안전한 Fixture 구성이 불가능하면 해당 기능은 PASS 대신 미수용으로 남기고 독립 기능을 진행한다.
 
+## 2026-11-06 A2 결과 인계 구현 및 기존 정착 경계 검증
+
+- **A2-1 CODE / 격리 통합 PASS:** App Server의 실제 `item/completed` 최종 응답을 원래 Thread/Turn에 결합하고 기존 `CODEX_WORKER_OUTPUT_SCHEMA`로 검사한다. 다른 Turn·중간 응답은 제외한다. 서로 다른 최종 응답, 누락·잘못된 JSON·위조 소유자 필드·누락 경로·Manifest에 묶이지 않은 Proof 요청·blocked 결과는 거부한다. 모델이 요청한 검증은 증거가 아니며 Kernel의 기존 검증 명령만 사용할 수 있다.
+- **Canonical 인계:** 실제 Git Commit·패치 Digest·경로·Workspace Identity와 모델 보고서를 기존 `recordStepResult`로 원본 Attempt에 함께 저장한다. 기존 SQLite 트랜잭션에서 Contract/Plan/Mutation Revision·실행 Workspace·현재 Step/Attempt를 검사한다. 동일 결과 재요청은 그대로 재사용하며 다른 결과로 덮어쓰지 않는다. 이 기록은 **관측된 후보**다. Attempt 완료, Owner Mutation Provenance, Proof PASS, Delivery Receipt, Report를 생성하지 않는다.
+- **기존 검증·복구 재사용:** `verifyHostOwnedWorkerCandidate`가 메모리 후보와 영속 `workerReport`의 일치를 검사하고 기존 `integrateParallelResults(verifyOnly)`에 연결한다. 검증 전후 Revision·결과·Workspace를 재확인한다. 기존 `recoverPendingDeliveryMaterialization`도 Host-owned 후보를 인식한다. Owner 변경 후 CAS 기록이 없는 불명확한 중단은 기존 차단 상태로 전환하며 파일 재적용·새 Worker·Report를 만들지 않는다.
+- **B의 독립 경계 PASS:** 같은 Host의 Main 교체 후 원래 Attempt/후보를 조회하고 중복 start가 같은 Attempt를 재사용한다. 조기 Report는 `worker-reconciliation-required`로 거부한다. 인증된 사용자 승인 채널은 없으므로 승인 왕복은 DEFER다. 이전 Writer 미확정 상태의 Fresh Writable Resume도 DEFER다.
+
+### A2/A3 미수용 근거와 다음 연결 조건
+
+| 항목 | 이번 판정 | 코드에서 확인한 제한 |
+| --- | --- | --- |
+| A2-1 실제 결과→Canonical Attempt | CODE / 격리 PASS | 기존 결과 스키마와 상태 저장소를 재사용. Native 완료 권한은 추가하지 않음 |
+| A2-2 Proof→Owner CAS→Report | 미연결 / Native HOLD_SAFE | `codex-app-server-transport.close()`는 App Server 종료만 관측하며 `writerExitVerified=false`를 반환. 완료 Turn 뒤 실제 분리 Writer가 계속 쓰는 기존 T27 반례도 재현됨. 제품 Host의 Writer 퇴장 증거 생성자가 없음 |
+| A2-3 CAS/Report 중단 복구 | 후보 인식·모호한 중단 차단 구현. Host-owned 관통 수용 미완료 | 기존 병렬 CAS 직후 중단·Report replay·복구 경쟁 회귀를 재사용. 이를 Host-owned 자동 정착 성공으로 바꾸지 않음 |
+| A3-1 `report.next` 단일 후속 실행 | Host-owned 미연결 | A2-2의 실제 정착 Report가 없으므로 소비할 Host-owned `next`가 없음. 별도 `next` 호출이나 가짜 완료로 진행하지 않음 |
+| A3-2 Host-owned 3~5-Step | 미수용 | 기존 Owner-direct 3-Step 성공과 구분. Writer 배제 확인 없이 두 번째 Worker를 시작하지 않음 |
+| C I01~I12 / A·B·E 비교 | 영향 범위 회귀 PASS / 전체 Native PARTIAL / B·E·C·D NOT_RUN | 미지원 Arm의 성능·비용 수치를 만들지 않음 |
+
+현재 유한 동기 Writer Fixture는 실제 파일 변경·원본 결과 인계·Proof-only 검사까지 검증한다. 제품 API에는 이 Fixture와 Native의 **후손 Writer 배제**를 증명하는 공통 실행 수명 경계가 없다. App Server 종료를 Writer 퇴장으로 바꾸거나 테스트 전용 승인 bool/가짜 Delivery Receipt/별도 적용 루틴을 추가하면 PLAN의 금지 조건을 위반한다. 따라서 A2-2 이후를 PASS로 처리하지 않으며 호출자 없는 정착 어댑터도 추가하지 않았다. 이는 OS 플랫폼 추가를 전체 개발의 선행 과제로 새로 요구하는 결정이 아니다. 기존 제품 경계에서 확인한 미지원 조건이다.
+
+- **검증:** TypeScript·Production Build·Tests Build·Boundary·`git diff --check` PASS. 관련 MCP/App Server·Host loop·Report replay·Step resume·병렬 정착/복구 회귀 **108 PASS / 0 FAIL / 2 POSIX 전용 SKIP**. 실제 분리 Writer 생존, Proof 실패, CAS 직후 Host 종료, 두 Host 복구 경쟁, stale Proof, Report 재실행 차단을 포함한다. 기존 병렬·Owner-direct 성공은 Host-owned A3-2 수용을 대신하지 않는다.
+- **Windows 검사 복구:** 최초 확장 회귀의 실패 8건을 변경 전 `a9576033`에서도 재현했다. 원인은 Fixture의 CRLF 변환, 긴 임시 Git 경로, Windows 절대 경로의 ESM import였다. 해당 테스트에만 LF 설정·짧은 임시 경로·`pathToFileURL`을 적용했다. 제품 코드의 OS 우회나 전역 Git 설정은 추가하지 않았다.
+- **복잡도:** 기존 Worker 스키마·Attempt/Step 테이블·트랜잭션·통합 검증기·Owner 복구 권위를 재사용했다. 새 DB·Queue·Scheduler·상태 머신·OS 관리 계층·프로젝트 전용 정책·Native true 플래그 없음.
+- **커밋 경계 복구:** 관리형 `kernel-commit`이 Windows에서 `INVALID_GIT_PATH`로 중단됐다. 실제 원인은 `admitKernelMutation`이 대소문자 비교용 키를 스테이징 경로로 반환해 추적된 `STATUS.md`를 `status.md`로 바꾼 기존 결함이다. 원래 Git 경로를 스테이징에 보존하고 비교에만 정규화 키를 사용하도록 수정했다. 외부 변경·기준선 제외·경로 검증 정책은 유지하며, 기존 admission 회귀를 대소문자가 섞인 실제 추적 파일로 보강했다. 일반 Git 커밋 우회나 런타임 상태 수정은 하지 않는다.
+- **추가 Git 검사:** admission·경로 검증·사전 스테이징 보호·중복 커밋 방지·재푸시·authority audit **14/14 PASS**. 타입·Production/Tests Build·Boundary도 PASS다. 별도 스테이징 정적 검사에서는 스냅샷 함수의 직접 `git add` 호출을 금지하는 기존 검사 1건이 실패했으며, 변경 전 `a9576033`에서도 동일하게 재현됐다. 이번 Worker 인계·커밋 경로 수정이 만든 실패가 아니다. 관리형 실행 파일의 standalone lock은 기존 생성기로 재생성했다. 위 108건 PASS 집계와 이 추가 Git 정적 검사의 기존 실패를 구분한다.
+
 ## 재개 지점
 
-[PLAN.md의 개정 실행 기준](PLAN.md#2026-11-06-잔여-개발-실행-기준--hostkernel-중심-os-관리-기능-제외-개정)을 유지한다. **A1의 Host 공유 객체와 MCP 스트림 재연결 코드는 구현/격리 검증 완료**했으므로 반복 개발하지 않는다. 남은 A2/A3의 Host-owned 자동 Owner CAS·Report·3~5-Step은 **기존 Proof-only 경로와 병렬 Owner 정착 엔진이 아직 연결되지 않았으며**, 실제 Writer의 늦은 쓰기가 배제되지 않은 현재 Native Runtime에서는 연결해 제품 실행을 허용할 수 없다. Writer 배제 조건을 충족하지 않는 한 단순한 fixture 전용 Delivery 승인·추가 폴백·더 큰 OS 보안 플랫폼을 만들어 이를 숨기지 않는다. B의 실제 사용자 승인 왕복과 새 Writable Thread는 지원 채널/Writer 안전 조건 전까지 DEFER, C의 B/E/C/D 성능 평가는 NOT_RUN을 유지한다. 기존 Owner-direct 3-Step·Report replay와 관련 66건 PASS는 보존한다.
+[PLAN.md의 개정 실행 기준](PLAN.md#2026-11-06-잔여-개발-실행-기준--hostkernel-중심-os-관리-기능-제외-개정)을 유지한다. A1과 **A2-1 실제 Worker 보고서·Git 후보의 Canonical 인계**는 구현/격리 검증 완료다. 다음 개발 대상은 A2-2의 기존 정착 엔진 연결이다. 실제 Host가 원래 Writer의 종료·쓰기 배제 증거를 제공할 수 있을 때만 같은 Attempt의 Owner CAS·Report·`report.next`로 연결한다. A2-3~A3-2의 Host-owned 관통 수용은 아직 미완료다. Fixture 전용 Delivery 승인·가짜 true 플래그·새 OS 플랫폼으로 이 제한을 숨기지 않는다. B의 승인 왕복·Fresh Writable Thread는 DEFER, C의 B/E/C/D 비교는 NOT_RUN이다. 기존 Owner-direct 3-Step과 Report replay 증거는 보존한다.

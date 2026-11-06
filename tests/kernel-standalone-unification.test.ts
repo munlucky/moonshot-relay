@@ -13,6 +13,7 @@ import { resolveDomainPolicies } from '../src/kernel/proof/domain-policy.js';
 import { runUnificationAudit } from '../src/host-tooling/kernel-public/unification-audit.js';
 import { resolveStableWorkspaceIdentity } from '../src/host/kernel/workspace/stable-workspace.js';
 import { observeWorkspaceIdentity } from '../src/host/kernel/workspace/workspace-identity.js';
+import { validateGitCloseoutPath } from '../src/kernel/git/staging-policy.js';
 
 const root = process.cwd();
 const git = (cwd: string, args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -87,17 +88,17 @@ test('kernel commit admission rejects unknown, foreign, and drifted provenance',
     git(temp, ['init', '-q']);
     git(temp, ['config', 'user.email', 'kernel@test.invalid']);
     git(temp, ['config', 'user.name', 'Kernel Test']);
-    await writeFile(path.join(temp, 'app.txt'), 'base\n', 'utf8');
-    git(temp, ['add', 'app.txt']);
+    await writeFile(path.join(temp, 'App.txt'), 'base\n', 'utf8');
+    git(temp, ['add', 'App.txt']);
     git(temp, ['commit', '-qm', 'base']);
-    await writeFile(path.join(temp, 'app.txt'), 'kernel mutation\n', 'utf8');
+    await writeFile(path.join(temp, 'App.txt'), 'kernel mutation\n', 'utf8');
     const project = { projectId: 'fixture-project', projectRoot: temp };
     const workspaceIdentity = observeWorkspaceIdentity({ projectRoot: temp }).identity;
     const stable = resolveStableWorkspaceIdentity({ projectId: project.projectId, workspaceRoot: temp });
     const sourceIdentity = 'sha256:' + 'c'.repeat(64);
     const run = { runId: 'run-valid', projectId: project.projectId, workspaceId: stable.workspaceId, worktreeId: 'worktree-fixture', status: 'completed', currentState: 'CLOSE', finalizationStatus: 'completed', mutationRevision: 1, sourceIdentity, currentWorkspaceIdentity: workspaceIdentity };
     const completion = { runId: run.runId, decision: 'accepted', sourceIdentity, mutationRevision: 1 };
-    const provenance = { runId: run.runId, projectId: project.projectId, workspaceId: stable.workspaceId, sourceIdentity, mutationRevision: 1, changedPaths: ['app.txt'], workspaceIdentity, mutationDigest: 'sha256:' + 'd'.repeat(64), status: 'passed' };
+    const provenance = { runId: run.runId, projectId: project.projectId, workspaceId: stable.workspaceId, sourceIdentity, mutationRevision: 1, changedPaths: ['App.txt'], workspaceIdentity, mutationDigest: 'sha256:' + 'd'.repeat(64), status: 'passed' };
     let baselineWorkspaceEntries: ReturnType<typeof observeWorkspaceIdentity>['changeEntries'] = [];
     const stateStore = {
       registerProjectWorkspace: () => ({ workspaceId: stable.workspaceId, canonicalRoot: stable.canonicalRoot }),
@@ -107,7 +108,10 @@ test('kernel commit admission rejects unknown, foreign, and drifted provenance',
       getMutationProvenance: () => provenance,
       getLatestImplementationAttempt: () => null,
     };
-    assert.equal(admitKernelMutation({ stateStore, project, statusEntries: [{ status: ' M', path: 'app.txt' }], selected: ['app.txt'], runId: run.runId }).run.runId, run.runId);
+    const admitted = admitKernelMutation({ stateStore, project, statusEntries: [{ status: ' M', path: 'App.txt' }], selected: ['App.txt'], runId: run.runId });
+    assert.equal(admitted.run.runId, run.runId);
+    assert.deepEqual(admitted.stagingPaths, ['App.txt'], 'Git must receive the observed case rather than the Windows comparison key');
+    assert.doesNotThrow(() => validateGitCloseoutPath(temp, admitted.stagingPaths[0], { changedPathsInGit: ['App.txt'] }));
     assert.throws(() => resolveKernelCloseoutRun({ stateStore, projectId: project.projectId, workspaceId: stable.workspaceId, runId: 'unknown' }), (error) => { assert.ok(error && typeof error === 'object'); assert.ok(error && typeof error === 'object' && 'code' in error);
     return error.code === 'UNKNOWN_RUN_ID'; });
 
@@ -130,8 +134,8 @@ test('kernel commit admission rejects unknown, foreign, and drifted provenance',
       projectId: project.projectId,
       workspaceId: stable.workspaceId,
       currentWorkspaceIdentity: workspaceIdentity,
-      currentPaths: ['app.txt'],
-      selectedPaths: ['app.txt'],
+      currentPaths: ['App.txt'],
+      selectedPaths: ['App.txt'],
     }), (error) => { assert.ok(error && typeof error === 'object'); assert.ok(error && typeof error === 'object' && 'code' in error);
     return error.code === 'RUN_PROVENANCE_AMBIGUOUS'; });
 
@@ -152,8 +156,8 @@ test('kernel commit admission rejects unknown, foreign, and drifted provenance',
       projectId: project.projectId,
       workspaceId: stable.workspaceId,
       currentWorkspaceIdentity: workspaceIdentity,
-      currentPaths: ['app.txt'],
-      selectedPaths: ['app.txt'],
+      currentPaths: ['App.txt'],
+      selectedPaths: ['App.txt'],
     });
     assert.equal(resolvedRunA.run.runId, 'run-a');
 
@@ -163,7 +167,7 @@ test('kernel commit admission rejects unknown, foreign, and drifted provenance',
       projectId: project.projectId,
       workspaceId: stable.workspaceId,
       currentWorkspaceIdentity: workspaceIdentity,
-      currentPaths: ['app.txt'],
+      currentPaths: ['App.txt'],
       selectedPaths: ['outside.txt'],
     }), (error) => { assert.ok(error && typeof error === 'object'); assert.ok(error && typeof error === 'object' && 'code' in error);
     return error.code === 'RUN_PROVENANCE_REQUIRED'; });
@@ -185,21 +189,21 @@ test('kernel commit admission rejects unknown, foreign, and drifted provenance',
     const preserved = admitKernelMutation({
       stateStore,
       project,
-      statusEntries: [{ status: ' M', path: 'app.txt' }, { status: '??', path: 'foreign.txt' }],
-      selected: ['app.txt', 'foreign.txt'],
+      statusEntries: [{ status: ' M', path: 'App.txt' }, { status: '??', path: 'foreign.txt' }],
+      selected: ['App.txt', 'foreign.txt'],
       runId: run.runId,
     });
-    assert.deepEqual(preserved.stagingPaths, ['app.txt']);
+    assert.deepEqual(preserved.stagingPaths, ['App.txt']);
     assert.deepEqual(preserved.preservedBaselinePaths, ['foreign.txt']);
 
     baselineWorkspaceEntries = [];
-    assert.throws(() => admitKernelMutation({ stateStore, project, statusEntries: [{ status: ' M', path: 'app.txt' }, { status: '??', path: 'foreign.txt' }], selected: ['app.txt', 'foreign.txt'], runId: run.runId }), (error) => { assert.ok(error && typeof error === 'object'); assert.ok(error && typeof error === 'object' && 'code' in error);
+    assert.throws(() => admitKernelMutation({ stateStore, project, statusEntries: [{ status: ' M', path: 'App.txt' }, { status: '??', path: 'foreign.txt' }], selected: ['App.txt', 'foreign.txt'], runId: run.runId }), (error) => { assert.ok(error && typeof error === 'object'); assert.ok(error && typeof error === 'object' && 'code' in error);
     return error.code === 'FOREIGN_MUTATION'; });
     await rm(path.join(temp, 'foreign.txt'));
     run.currentWorkspaceIdentity = workspaceIdentity;
     provenance.workspaceIdentity = workspaceIdentity;
-    await writeFile(path.join(temp, 'app.txt'), 'post-kernel edit\n', 'utf8');
-    assert.throws(() => admitKernelMutation({ stateStore, project, statusEntries: [{ status: ' M', path: 'app.txt' }], selected: ['app.txt'], runId: run.runId }), (error) => { assert.ok(error && typeof error === 'object'); assert.ok(error && typeof error === 'object' && 'code' in error);
+    await writeFile(path.join(temp, 'App.txt'), 'post-kernel edit\n', 'utf8');
+    assert.throws(() => admitKernelMutation({ stateStore, project, statusEntries: [{ status: ' M', path: 'App.txt' }], selected: ['App.txt'], runId: run.runId }), (error) => { assert.ok(error && typeof error === 'object'); assert.ok(error && typeof error === 'object' && 'code' in error);
     return error.code === 'MUTATION_PROVENANCE_DRIFT'; });
   } finally {
     await rm(temp, { recursive: true, force: true });

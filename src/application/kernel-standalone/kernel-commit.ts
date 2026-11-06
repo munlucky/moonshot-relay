@@ -574,9 +574,11 @@ export function admitKernelMutation({ stateStore, project, statusEntries = [], s
     ? preservedBaselinePaths(run, currentObservation.changeEntries)
     : [];
   const preservedBaselineSet = new Set(preservedBaseline);
-  const stagingPaths = selectedPaths.filter((candidate) => !preservedBaselineSet.has(candidate));
+  // Comparison keys may fold case on Windows; Git pathspecs must retain the
+  // exact spelling observed in status, including tracked deletions.
+  const stagingPaths = [...new Set(selected)].filter((candidate) => !preservedBaselineSet.has(pathKey(candidate)));
   const foreignPaths = currentPaths.filter((candidate) => !approvedSet.has(candidate) && !preservedBaselineSet.has(candidate));
-  const unapprovedSelectedPaths = stagingPaths.filter((candidate) => !approvedSet.has(candidate));
+  const unapprovedSelectedPaths = stagingPaths.filter((candidate) => !approvedSet.has(pathKey(candidate)));
   if (foreignPaths.length > 0 || unapprovedSelectedPaths.length > 0) {
     throw admissionError('FOREIGN_MUTATION', {
       runId: run.runId,
