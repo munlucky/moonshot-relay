@@ -24,6 +24,9 @@ export interface CodexAppServerTurn {
   timeoutMs?: number;
   executionOwner?: NativeExecutionOwner | null;
   onNativeExecution?: NativeExecutionObserver | null;
+  // Host may attach its pending cancel only after this exact Turn becomes
+  // active; the transport queues cancellation until the Turn ID is known.
+  onReady?: () => void;
   // Explicit Host-only opt-in. The reservation root must be inaccessible to
   // the Worker sandbox; this does not change the default read-only transport.
   writableWorker?: { reservationRoot: string } | null;
@@ -291,7 +294,7 @@ export async function createCodexAppServerTransport({
       return sendInterrupt();
     },
 
-    async runTurn({ cwd: requestedCwd, prompt, model, effort, timeoutMs: turnTimeout, executionOwner = null, onNativeExecution = null, writableWorker = null }) {
+    async runTurn({ cwd: requestedCwd, prompt, model, effort, timeoutMs: turnTimeout, executionOwner = null, onNativeExecution = null, onReady = undefined, writableWorker = null }) {
       if (closed || poisoned || exited) throw error('codex_app_server_unavailable');
       if (active) throw error('codex_app_server_turn_already_running');
       if (!name(prompt) || !name(model) || !name(effort) || !name(requestedCwd)) {
@@ -310,6 +313,7 @@ export async function createCodexAppServerTransport({
       interruptRequested = false;
       let workspace: string;
       try {
+        onReady?.();
         workspace = await realpath(requestedCwd);
         if (attemptedWorkspaces.has(workspace)) {
           throw error('codex_app_server_workspace_reuse_unverified');

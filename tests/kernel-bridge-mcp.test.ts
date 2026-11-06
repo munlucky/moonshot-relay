@@ -687,6 +687,18 @@ input.on('line', (line) => {
   const attemptId = assertTestString(started.attemptId);
   assert.equal(started.writerExitVerified, false);
   assert.equal(started.deliveryAuthorized, false);
+  // A new Main attaches without preparing next or launching another Worker.
+  // The same Host exposes the live handle, while a different Host can only
+  // read the durable Attempt and must not claim live control.
+  const attachedMain = parseToolText(await call(handler, 201, 'kernel_attach', {}));
+  assert.equal(attachedMain.status, 'attached');
+  assert.equal(assertTestRecord(attachedMain.liveWorker).attemptId, attemptId);
+  assert.ok(assertTestArray(attachedMain.workerAttempts).some(item => assertTestRecord(item).attemptId === attemptId));
+  const detachedMain = parseToolText(await call(otherHost, 202, 'kernel_attach', {}));
+  assert.equal(detachedMain.status, 'attached');
+  assert.equal(detachedMain.liveWorker, null);
+  assert.ok(assertTestArray(detachedMain.workerAttempts).some(item => assertTestRecord(item).attemptId === attemptId));
+  assert.equal(detachedMain.next, undefined, 'reattachment does not consume a next action');
   // W3: a new Main must not be handed the same executable Step while the
   // Host-owned Worker is still writing (including before Workspace bind).
   const inFlightNext = parseToolText(await call(otherHost, 105, 'kernel_next', {}));
@@ -838,13 +850,11 @@ input.on('line', line => {
     assert.equal(left.attemptId, right.attemptId);
     assert.equal(cp.getHostRoutingSnapshot(runId).stepAttempts.length, 1, 'no duplicate canonical Attempt');
     await assert.rejects(sessions.start({ ...request, model: 'conflicting-model' }), /host_worker_start_conflict/);
+    // Cancel immediately after start, before the App Server has initialized
+    // or assigned a Turn ID. Previously this was lost as not-addressable.
+    const earlyCancel = await sessions.interrupt(workspaceRoot, runId, left.attemptId);
+    assert.equal(earlyCancel.status, 'queued');
     let live = await sessions.status(workspaceRoot, runId);
-    for (let n = 0; n < 100 && live?.nativeTurn?.turnId !== 'turn-once'; n++) {
-      await new Promise(resolve => setTimeout(resolve, 10));
-      live = await sessions.status(workspaceRoot, runId);
-    }
-    assert.equal(live?.nativeTurn?.turnId, 'turn-once');
-    assert.equal((await sessions.interrupt(workspaceRoot, runId, left.attemptId)).status, 'requested');
     for (let n = 0; n < 100 && live?.turnStatus === 'pending'; n++) {
       await new Promise(resolve => setTimeout(resolve, 10));
       live = await sessions.status(workspaceRoot, runId);

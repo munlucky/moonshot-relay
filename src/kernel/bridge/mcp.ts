@@ -304,18 +304,34 @@ export const handleMcpToolCall = async ({
   const lifecycleBridge = configuredHostBridge;
 
   try {
-    if (name === 'kernel_attach' && parameters.worker?.action === 'interrupt') {
-      // A signal is not a new task invocation. Never ensure/start/successor
-      // the Run or dispatch a review just to interrupt an existing Turn.
-      if (parameters.contractJson) throw new Error('host_worker_signal_contract_not_allowed');
+    if (name === 'kernel_attach' && !parameters.contractJson) {
+      // Reconnecting a Main is observation, not a new invocation. Never
+      // ensure/successor the Run, consume next, or dispatch a reviewer.
       const runId = parameters.runId || await cp.resolveRunId({
         explicitRunId: null,
         envRunId: env.MOON_RELAY_KERNEL_RUN_ID || null,
       });
       const run = await cp.getRun(runId);
-      return run
-        ? { schemaVersion: 1, runId, status: 'attached', runStatus: run.status }
-        : { schemaVersion: 1, runId, status: 'not_found' };
+      if (!run) return { schemaVersion: 1, runId, status: 'not_found' };
+      const step = cp.getCurrentStep(runId);
+      const attempts = cp.getHostRoutingSnapshot(runId).stepAttempts;
+      return {
+        schemaVersion: 1, runId, status: 'attached', runStatus: run.status,
+        currentStep: step ? { stepId: step.stepId, state: step.state } : null,
+        workerAttempts: attempts.map(attempt => ({
+          attemptId: attempt.attemptId,
+          stepId: attempt.stepId,
+          status: attempt.status,
+          workspaceId: attempt.workspaceId,
+          provenanceKind: attempt.provenanceKind,
+          liveState: 'unobserved' as const,
+          writerExitVerified: false as const,
+        })),
+      };
+    }
+    if (name === 'kernel_attach' && parameters.worker?.action === 'interrupt') {
+      // A signal must never bootstrap a task or smuggle a contract revision.
+      throw new Error('host_worker_signal_contract_not_allowed');
     }
     if (name === 'kernel_attach' || name === 'kernel_next') {
       const taskContract = parameters.contractJson || null;
@@ -522,9 +538,12 @@ export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, 
           }
         } else if (Object.keys(worker).length > 0) {
           throw new Error('host_worker_action_unsupported');
-        } else if (name === 'kernel_status' && typeof callArgs.workspaceRoot === 'string') {
-          const runId = String(asRecord(modelInput.run).runId || callArgs.runId || '');
-          const live = runId ? await workerSessions.status(callArgs.workspaceRoot, runId) : null;
+        } else if ((name === 'kernel_status' || name === 'kernel_attach')
+          && typeof callArgs.workspaceRoot === 'string'
+          && (name !== 'kernel_attach' || !callArgs.contractJson)) {
+          const runId = String(asRecord(modelInput.run).runId || modelInput.runId || callArgs.runId || '');
+          const live = modelInput.status !== 'not_found' && runId
+            ? await workerSessions.status(callArgs.workspaceRoot, runId) : null;
           resultWithWorker = { ...modelInput, liveWorker: live };
         }
         const recoveryInput = typeof callArgs.workspaceRoot === 'string'

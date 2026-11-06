@@ -163,13 +163,13 @@ export async function runHostOwnedWritableAttempt({
       || currentAttempt.baseWorkspaceIdentity !== prepared.baseWorkspaceIdentity) {
       throw deny('host_writable_attempt_authority_changed');
     }
-    // A supervising Host may observe or signal this live connection without
-    // obtaining Kernel Report/Owner Delivery authority or a durable resume claim.
-    onHostControl?.({
-      observeTurn: () => transport.observeTurn(),
-      interruptActiveTurn: () => transport.interruptActiveTurn(),
-    });
     const nativeTurn = await transport.runTurn({
+      // Bind cancellation after the transport marks this exact Turn active.
+      // An early Main signal is queued until turn/start yields its identity.
+      onReady: () => onHostControl?.({
+        observeTurn: () => transport.observeTurn(),
+        interruptActiveTurn: () => transport.interruptActiveTurn(),
+      }),
       cwd: prepared.workspaceRoot,
       prompt,
       model,
@@ -263,12 +263,14 @@ export function startHostOwnedWritableAttempt(
   input: HostOwnedWritableAttemptInput,
 ): HostOwnedWritableAttemptHandle {
   let nativeControl: Pick<CodexAppServerTransport, 'observeTurn' | 'interruptActiveTurn'> | null = null;
+  let cancelQueued = false;
   let state: 'starting' | 'turn-running' | 'turn-settled' | 'unknown' = 'starting';
   const result = runHostOwnedWritableAttempt({
     ...input,
     onHostControl: (control) => {
       nativeControl = control;
       state = 'turn-running';
+      if (cancelQueued) void control.interruptActiveTurn();
       input.onHostControl?.(control);
     },
   }).then((value) => {
@@ -290,7 +292,13 @@ export function startHostOwnedWritableAttempt(
       nativeTurn: nativeControl?.observeTurn() || null,
       writerExitVerified: false,
     }),
-    interrupt: () => nativeControl?.interruptActiveTurn()
-      || Promise.resolve({ status: 'not-addressable' as const, writerExitVerified: false as const }),
+    interrupt: () => {
+      if (state === 'starting') {
+        cancelQueued = true;
+        return Promise.resolve({ status: 'queued' as const, writerExitVerified: false as const });
+      }
+      return nativeControl?.interruptActiveTurn()
+        || Promise.resolve({ status: 'not-addressable' as const, writerExitVerified: false as const });
+    },
   };
 }
