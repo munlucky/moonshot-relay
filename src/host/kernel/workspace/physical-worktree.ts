@@ -38,6 +38,7 @@ interface PrepareExecutionWorkspacesInput extends WorktreeCoordinates {
 
 interface PrepareHostWriterAttemptWorktreeInput extends PrepareWorktreeInput {
   attemptId?: string;
+  ownerSnapshot?: { patch: string; workspaceIdentity: string };
 }
 
 interface CreateStepResultCommitInput {
@@ -327,6 +328,7 @@ export const prepareHostWriterAttemptWorktree = async ({
   attemptId,
   projectId,
   runtimeHome = null,
+  ownerSnapshot,
 }: PrepareHostWriterAttemptWorktreeInput = {}): Promise<PreparedHostWriterAttemptWorkspace> => {
   const activeRepoRoot = requiredString(repoRoot, 'repoRoot');
   const activeBaseCommit = requiredString(baseCommit, 'baseCommit');
@@ -363,7 +365,21 @@ export const prepareHostWriterAttemptWorktree = async ({
     baseCommit: activeBaseCommit,
     containmentRoot: root,
   });
+  // Carry the observed Owner baseline into a fresh Attempt without touching
+  // the Owner index or moving either HEAD. Prior Step deliveries may still
+  // be uncommitted. An old Writer's checkout is never reset for this purpose.
+  if (ownerSnapshot && !prepared.reused && ownerSnapshot.patch) {
+    const applied = runGit(target, ['apply', '--binary', '-'], {
+      input: ownerSnapshot.patch, maxBuffer: 64 * 1024 * 1024,
+    });
+    if (applied.error || applied.status !== 0) throw commandError('host-writer-baseline', applied);
+  }
   const identity = observeWorkspaceIdentity({ projectRoot: target });
+  if (ownerSnapshot && identity.identity !== ownerSnapshot.workspaceIdentity) {
+    throw Object.assign(new Error('Host Worker baseline differs from the observed Owner snapshot'), {
+      code: 'WORKTREE_HOST_WRITER_BASELINE_MISMATCH',
+    });
+  }
   return {
     kind: 'step',
     stepId: activeStepId,
@@ -533,12 +549,14 @@ export const listChangedPaths = (workspaceRoot: string): string[] => {
 export const snapshotHostWorkerPatch = async ({
   workspaceRoot,
   runtimeHome,
-}: { workspaceRoot: string; runtimeHome: string }): Promise<{
+  baseCommit = null,
+}: { workspaceRoot: string; runtimeHome: string; baseCommit?: string | null }): Promise<{
   patch: string;
   patchDigest: string;
   resultCommitSha: string | null;
   changedPaths: string[];
   workspaceIdentity: string;
+  indexDigest: string;
 }> => {
   const tempRoot = await mkdtemp(path.join(runtimeHome, 'host-worker-index-'));
   const env: NodeJS.ProcessEnv = {
@@ -552,19 +570,24 @@ export const snapshotHostWorkerPatch = async ({
     return String(response.stdout || '');
   };
   try {
-    const before = observeWorkspaceIdentity({ projectRoot: workspaceRoot }).identity;
+    const observed = observeWorkspaceIdentity({ projectRoot: workspaceRoot });
+    const before = observed.identity;
+    const beforeIndex = git(['ls-files', '--stage', '-z'], { altIndex: false });
     const head = git(['rev-parse', '--verify', 'HEAD'], { altIndex: false }).trim();
     if (!/^[a-f\d]{40,64}$/iu.test(head)) throw new Error('host_worker_snapshot_head_missing');
+    const base = baseCommit || head;
+    if (!/^[a-f\d]{40,64}$/iu.test(base)) throw new Error('host_worker_snapshot_base_invalid');
     git(['read-tree', head]);
-    git(['add', '--all', '--']);
-    const changedPaths = git(['diff', '--cached', '--name-only', '-z', head])
+    if (observed.method !== 'git' || !observed.changedPaths) throw new Error('host_worker_snapshot_paths_unavailable');
+    stageSelectedPaths({ repoRoot: workspaceRoot, paths: observed.changedPaths, env });
+    const changedPaths = git(['diff', '--cached', '--name-only', '-z', base])
       .split('\0').filter(Boolean).sort();
     // Create a detached commit object for the existing integration engine.
     // Never move a Worktree HEAD/ref or the Worker's own index. A commit
     // candidate may be recorded as an immutable observation. It grants no
     // Delivery authority while OS Writer exclusion remains unproven.
     const resultCommitSha = changedPaths.length > 0
-      ? git(['commit-tree', git(['write-tree']).trim(), '-p', head,
+      ? git(['commit-tree', git(['write-tree']).trim(), '-p', base,
         '-m', 'Host-owned Worker unverified result snapshot']).trim()
       : null;
     const patch = resultCommitSha
@@ -572,7 +595,8 @@ export const snapshotHostWorkerPatch = async ({
       : '';
     const after = observeWorkspaceIdentity({ projectRoot: workspaceRoot }).identity;
     const endingHead = git(['rev-parse', '--verify', 'HEAD'], { altIndex: false }).trim();
-    if (before !== after || endingHead !== head) {
+    if (before !== after || endingHead !== head
+      || beforeIndex !== git(['ls-files', '--stage', '-z'], { altIndex: false })) {
       throw Object.assign(new Error('host_worker_snapshot_workspace_changed'), {
         code: 'host_worker_snapshot_workspace_changed',
       });
@@ -581,7 +605,8 @@ export const snapshotHostWorkerPatch = async ({
       throw new Error('host_worker_snapshot_patch_paths_mismatch');
     }
     return { patch, patchDigest: 'sha256:' + createHash('sha256').update(patch).digest('hex'),
-      resultCommitSha, changedPaths, workspaceIdentity: after };
+      resultCommitSha, changedPaths, workspaceIdentity: after,
+      indexDigest: 'sha256:' + createHash('sha256').update(beforeIndex).digest('hex') };
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }

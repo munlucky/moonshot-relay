@@ -240,7 +240,14 @@ export async function createCodexAppServerTransport({
     const id = nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        fail('codex_app_server_rpc_timeout');
+        // Interrupt is advisory and bound to one known Turn. A missing ACK
+        // cannot override a terminal event or poison a different Turn.
+        if (method === 'turn/interrupt') {
+          pending.delete(id);
+          reject(error('codex_app_server_rpc_timeout'));
+        } else {
+          fail('codex_app_server_rpc_timeout');
+        }
       }, timeout);
       pending.set(id, { resolve, reject, timer });
       try {
@@ -426,9 +433,9 @@ export async function createCodexAppServerTransport({
         if (!turnId) throw error('codex_app_server_turn_missing');
         startedTurn = { threadId, turnId };
         activeTurn = startedTurn;
-        if (interruptRequested) void sendInterrupt();
         for (const message of buffered) observe(message);
         buffered = [];
+        if (interruptRequested && !turnCompleted) void sendInterrupt();
         const turnTimer = setTimeout(() => {
           fail('codex_app_server_turn_timeout');
         }, effectiveTimeout);

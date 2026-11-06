@@ -347,6 +347,7 @@ export const handleMcpToolCall = async ({
     if (name === 'kernel_attach' || name === 'kernel_next') {
       const taskContract = parameters.contractJson || null;
       const explicitRunId = parameters.runId || null;
+      const startsWorker = name === 'kernel_next' && parameters.worker?.action === 'start';
       let res: UnknownRecord;
       if (taskContract) {
         const invocation = cp.resolveBoundInvocation({
@@ -359,7 +360,9 @@ export const handleMcpToolCall = async ({
             invocation,
             objective: typeof taskContract.objective === 'string' ? taskContract.objective : undefined,
             taskContract,
+            includeNext: !startsWorker,
           }));
+          if (startsWorker) return { runId: invocation.runId };
           res = asRecord(successor.next);
         } else if (invocation.mode === 'finalization-retry') {
           throw Object.assign(new Error('finalization_incomplete'), {
@@ -375,7 +378,9 @@ export const handleMcpToolCall = async ({
             runId: invocation.runId,
             objective: typeof taskContract.objective === 'string' ? taskContract.objective : undefined,
             taskContract,
+            includeNext: !startsWorker,
           }));
+          if (startsWorker) return { runId: invocation.runId };
           res = asRecord(ensured.next);
         }
       } else {
@@ -383,6 +388,11 @@ export const handleMcpToolCall = async ({
           explicitRunId,
           envRunId: env.MOON_RELAY_KERNEL_RUN_ID || null,
         });
+        if (startsWorker) {
+          // Resolve the same Run/Worktree binding without preparing next.
+          // HostWorkerSessions decides whether this is a start or a reattach.
+          return { runId };
+        }
         const ensured = asRecord(await cp.ensureRun({ runId }));
         res = asRecord(ensured.next);
       }
@@ -457,11 +467,11 @@ export const handleMcpToolCall = async ({
   }
 };
 
-export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, hostBridge = null, nativeHost = globalThis, workerTransportOptions = undefined, hostWorkerSessions = undefined, verifiedNativeWriterIsolation = false }: Omit<HandleMcpToolCallInput, 'name' | 'parameters'> & { workerTransportOptions?: NonNullable<Parameters<typeof createHostWorkerSessions>[0]>['transportOptions']; hostWorkerSessions?: ReturnType<typeof createHostWorkerSessions>; verifiedNativeWriterIsolation?: boolean } = {}) => {
+export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, hostBridge = null, nativeHost = globalThis, hostWorkerSessions = undefined }: Omit<HandleMcpToolCallInput, 'name' | 'parameters'> & { hostWorkerSessions?: ReturnType<typeof createHostWorkerSessions> } = {}) => {
   const recoveryContinuity = createKernelRecoveryContinuity();
   // The owning Host may reuse this exact control surface across Main
   // connections. An isolated Handler still owns its local sessions by default.
-  const workerSessions = hostWorkerSessions || createHostWorkerSessions(workerTransportOptions ? { transportOptions: workerTransportOptions } : {});
+  const workerSessions = hostWorkerSessions || createHostWorkerSessions({ env });
   return async (request: McpRequest) => {
     const { id, method, params } = request || {};
 
@@ -507,11 +517,12 @@ export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, 
       try {
         const worker = asRecord(callArgs.worker);
         const startsWorker = name === 'kernel_next' && worker.action === 'start';
-        // Reject an unverified Native start before kernel_next can create
-        // or advance a Run. Only the Host supplies the capability.
-        if (startsWorker && verifiedNativeWriterIsolation !== true) {
-          throw Object.assign(new Error('host_worker_native_isolation_unverified'), { code: 'host_worker_native_isolation_unverified' });
-        }
+        // A contract can create or revise a Run, so check capability before
+        // accepting it. Requests without a contract may read back an Attempt.
+        if (startsWorker && callArgs.contractJson) workerSessions.assertNativeStartAvailable();
+        const workerModel = typeof worker.model === 'string' ? worker.model : '';
+        const workerEffort = typeof worker.effort === 'string' ? worker.effort : '';
+        if (startsWorker && (!workerModel || !workerEffort)) throw new Error('host_worker_request_invalid');
         const resultData = await handleMcpToolCall({
           name,
           parameters: callArgs,
@@ -522,21 +533,16 @@ export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, 
         });
         const modelInput = asRecord(resultData);
         let resultWithWorker: unknown = resultData;
-        if (startsWorker) {
+        if (startsWorker && asRecord(modelInput.action).type !== 'done') {
           if (typeof callArgs.workspaceRoot !== 'string') throw new Error('host_worker_workspace_required');
           const runId = String(modelInput.runId || callArgs.runId || '');
-          if (!runId || typeof worker.model !== 'string' || typeof worker.effort !== 'string') {
-            throw new Error('host_worker_request_invalid');
-          }
-          const running = await workerSessions.start({
-            projectRoot: callArgs.workspaceRoot,
-            runtimeHome: resolvedRuntimeHome,
-            runId,
-            model: worker.model,
-            effort: worker.effort,
-            modelInput,
-          });
-          resultWithWorker = { ...modelInput, hostWorker: running };
+          if (!runId) throw new Error('host_worker_request_invalid');
+          const startInput = {
+            projectRoot: callArgs.workspaceRoot, runtimeHome: resolvedRuntimeHome, runId,
+            model: workerModel, effort: workerEffort,
+          };
+          const running = await workerSessions.startLocal(startInput);
+          resultWithWorker = { schemaVersion: 1, runId, status: 'host-worker-attached', hostWorker: running };
         } else if (worker.action === 'interrupt' && name === 'kernel_attach') {
           if (modelInput.status === 'not_found') {
             resultWithWorker = modelInput;
@@ -548,7 +554,7 @@ export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, 
             const signal = await workerSessions.interrupt(callArgs.workspaceRoot, resolvedRuntimeHome, runId, worker.attemptId);
             resultWithWorker = { ...modelInput, hostWorkerSignal: signal };
           }
-        } else if (Object.keys(worker).length > 0) {
+        } else if (!startsWorker && Object.keys(worker).length > 0) {
           throw new Error('host_worker_action_unsupported');
         } else if ((name === 'kernel_status' || name === 'kernel_attach')
           && typeof callArgs.workspaceRoot === 'string'

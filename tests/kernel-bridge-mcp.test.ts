@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { PassThrough } from 'node:stream';
-import { createMcpBridgeHandler, startMcpBridgeServer } from '../src/kernel/bridge/mcp.js';
+import { createMcpBridgeHandler, handleMcpToolCall, startMcpBridgeServer } from '../src/kernel/bridge/mcp.js';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
 import { createHostWorkerSessions } from '../src/host/kernel/host-worker-sessions.js';
 import { dispatchKernelTurn } from '../src/host/kernel/turn-dispatcher.js';
@@ -633,6 +633,23 @@ test('mcp Host carries recovery continuity across retries without model-supplied
   assert.equal(attempts[3].mode, 'escalate');
 });
 
+const startFixtureWorker = async (
+  sessions: ReturnType<typeof createHostWorkerSessions>,
+  projectRoot: string, runtimeHome: string, runId: string, objective: string,
+) => {
+  const cp = await createKernelControlPlane({ projectRoot, runtimeHome });
+  try {
+    const ensured = await cp.ensureRun({
+      runId, objective,
+      taskContract: { objective, acceptance: ['README is updated'], allowedPaths: ['README.md'] },
+    });
+    return await sessions.start({ projectRoot, runtimeHome, runId, model: 'test-model',
+      effort: 'high', modelInput: assertTestRecord(ensured.next) });
+  } finally {
+    await cp.close();
+  }
+};
+
 test('W1/W2: a second Main reads and interrupts the same Host-owned Attempt without re-running or delivering it', async (t) => {
   const workspaceRoot = await createFixtureRepo();
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-host-worker-mcp-'));
@@ -665,11 +682,11 @@ input.on('line', (line) => {
   }
 });
 `);
-  // Fake App Server runs only against disposable fixture Worktrees; no native
-  // operating-system isolation claim is exported to the default MCP server.
-  const settings = { runtimeHome, verifiedNativeWriterIsolation: true, workerTransportOptions: { executable: process.execPath, args: [server], requestTimeoutMs: 1500 } };
-  const handler = createMcpBridgeHandler(settings);
-  const otherHost = createMcpBridgeHandler(settings);
+  const sessions = createHostWorkerSessions({
+    transportOptions: { executable: process.execPath, args: [server], requestTimeoutMs: 1500 },
+  });
+  const handler = createMcpBridgeHandler({ runtimeHome, hostWorkerSessions: sessions });
+  const otherHost = createMcpBridgeHandler({ runtimeHome });
   const runId = 'run-mcp-host-owned-worker';
   const call = (client: typeof handler, id: number, name: string, args: Record<string, unknown>) =>
     client({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: { workspaceRoot, runId, ...args } } });
@@ -694,12 +711,7 @@ input.on('line', (line) => {
   } finally {
     await verificationPlane.close();
   }
-  const began = await call(handler, 100, 'kernel_next', {
-    contractJson: { objective: 'implement README change', acceptance: ['README contains a new sentence'], allowedPaths: ['README.md'] },
-    worker: { action: 'start', model: 'test-model', effort: 'high' },
-  });
-  assert.equal(assertTestRecord(assertTestRecord(began).result).isError, false, JSON.stringify(began));
-  const started = assertTestRecord(parseToolText(began).hostWorker);
+  const started = assertTestRecord(await startFixtureWorker(sessions, workspaceRoot, runtimeHome, runId, 'implement README change'));
   assert.equal(started.runId, runId);
   const attemptId = assertTestString(started.attemptId);
   assert.equal(started.writerExitVerified, false);
@@ -741,17 +753,13 @@ input.on('line', (line) => {
     assert.equal(afterRevision?.planRevision, before?.planRevision);
     assert.equal(immutable.getHostRoutingSnapshot(runId).stepAttempts.length, attemptCount);
   } finally { await immutable.close(); }
-  const sameHost = parseToolText(await call(handler, 106, 'kernel_next', {
-    worker: { action: 'start', model: 'test-model', effort: 'high' },
-  }));
-  assert.equal(assertTestRecord(sameHost.hostWorker).attemptId, attemptId,
+  const startRequest = { projectRoot: workspaceRoot, runtimeHome, runId, model: 'test-model',
+    effort: 'high', modelInput: inFlightNext };
+  const sameHost = await sessions.start(startRequest);
+  assert.equal(sameHost.attemptId, attemptId,
     'the original Host reattaches to its Attempt without a second Worker');
-  const otherStart = await call(otherHost, 107, 'kernel_next', {
-    worker: { action: 'start', model: 'test-model', effort: 'high' },
-  });
-  assert.equal(assertTestRecord(assertTestRecord(otherStart).result).isError, true);
-  assert.equal(parseToolText(otherStart).code, 'host_worker_not_implementation_step',
-    'a different Host must not turn a blocked continuation into a new start');
+  await assert.rejects(createHostWorkerSessions().start(startRequest),
+    { code: 'host_worker_previous_attempt_unreconciled' });
   const prematureReport = parseToolText(await call(otherHost, 103, 'kernel_report', {
     report: { summary: 'claiming a finished Worker', changedPaths: [] },
   }));
@@ -842,7 +850,22 @@ input.on('line', line => {
   const message = JSON.parse(line);
   if (message.method === 'initialize') send({ id: message.id, result: { userAgent: 'fixture' } });
   if (message.method === 'thread/start') send({ id: message.id, result: { thread: { id: 'thread-once' } } });
-  if (message.method === 'turn/start') send({ id: message.id, result: { turn: { id: 'turn-once', status: 'inProgress' } } });
+  if (message.method === 'turn/start') {
+    const threadId = message.params.threadId;
+    send({ id: message.id, result: { turn: { id: 'turn-once', status: 'inProgress' } } });
+    for (let i = 0; i < 33; i++) {
+      send({ method: 'item/started', params: {
+        threadId, turnId: 'turn-once', item: {
+          type: 'commandExecution', id: 'item-' + i,
+          processId: i === 32 ? 'sk-proj-fixtureevent0123456789' : 'provider-' + i,
+          aggregatedOutput: 'raw-provider-output-not-for-status',
+        },
+      } });
+    }
+    send({ method: 'item/started', params: {
+      threadId, turnId: 'other-turn', item: { type: 'commandExecution', id: 'other-item' },
+    } });
+  }
   if (message.method === 'turn/interrupt') {
     send({ id: message.id, result: {} });
     send({ method: 'turn/completed', params: { threadId: message.params.threadId, turn: { id: message.params.turnId, status: 'interrupted' } } });
@@ -852,18 +875,54 @@ input.on('line', line => {
   const runId = 'run-coalesced-host-worker';
   const cp = await createKernelControlPlane({ runtimeHome, projectRoot: workspaceRoot });
   try {
-    const ensured = await cp.ensureRun({
-      runId,
-      objective: 'update README',
-      taskContract: { objective: 'update README', acceptance: ['README updated'], allowedPaths: ['README.md'] },
-    });
-    const modelInput = assertTestRecord(ensured.next);
+    const registration = {
+      name: 'kernel_next', runtimeHome,
+      parameters: {
+        workspaceRoot, runId,
+        contractJson: { objective: 'update README', acceptance: ['README updated'], allowedPaths: ['README.md'] },
+        worker: { action: 'start' as const, model: 'test-model', effort: 'high' },
+      },
+    };
+    assert.deepEqual(await handleMcpToolCall(registration), { runId });
+    assert.equal((await cp.getRun(runId))?.objective, 'update README');
+    const modelInput = assertTestRecord(await cp.next(runId));
     assert.equal(assertTestRecord(modelInput.action).type, 'implement');
     const sessions = createHostWorkerSessions({
       transportOptions: { executable: process.execPath, args: [server], requestTimeoutMs: 1500 },
     });
     const request = { projectRoot: workspaceRoot, runtimeHome, runId, model: 'test-model', effort: 'high', modelInput };
+    const originalStep = assertTestPresent(cp.getCurrentStep(runId));
+    const runBeforeClaim = assertTestPresent(await cp.getRun(runId));
+    const binding = {
+      stepId: originalStep.stepId, provenanceKind: 'host-owned-worker',
+      expectedContractRevision: runBeforeClaim.contractRevision,
+      planRevision: runBeforeClaim.planRevision, mutationRevision: runBeforeClaim.mutationRevision,
+    };
+    for (const field of ['expectedContractRevision', 'planRevision', 'mutationRevision'] as const) {
+      assert.throws(() => cp.beginAttempt(runId, { ...binding, [field]: binding[field] + 1 }),
+        { code: 'STEP_ATTEMPT_REVISION_STALE' });
+      assert.deepEqual(cp.getCurrentStep(runId), originalStep, 'a rejected claim cannot change the Step');
+      assert.equal(cp.getHostRoutingSnapshot(runId).stepAttempts.length, 0);
+    }
+    const authority = assertTestRecord(modelInput.workAuthority);
+    const staleDirective = {
+      ...modelInput, workAuthority: {
+        ...authority,
+        task: { ...assertTestRecord(authority.task), contractRevision: runBeforeClaim.contractRevision + 1 },
+      },
+    };
+    await assert.rejects(sessions.start({ ...request, modelInput: staleDirective }),
+      { code: 'host_worker_continuation_stale' });
+    assert.equal(await sessions.status(workspaceRoot, runtimeHome, runId), null);
+    assert.deepEqual(cp.getCurrentStep(runId), originalStep);
+    assert.equal(cp.getHostRoutingSnapshot(runId).stepAttempts.length, 0);
     const [left, right] = await Promise.all([sessions.start(request), sessions.start(request)]);
+    const contender = await createKernelControlPlane({ runtimeHome, projectRoot: workspaceRoot });
+    try {
+      assert.throws(() => contender.beginAttempt(runId, binding), { code: 'STEP_ATTEMPT_ALREADY_CLAIMED' });
+    } finally {
+      await contender.close();
+    }
     assert.equal(left.attemptId, right.attemptId);
     assert.equal(cp.getHostRoutingSnapshot(runId).stepAttempts.length, 1, 'no duplicate canonical Attempt');
     await assert.rejects(sessions.start({ ...request, model: 'conflicting-model' }), /host_worker_start_conflict/);
@@ -898,22 +957,75 @@ input.on('line', line => {
         close: () => { service.close(); stdin.destroy(); stdout.destroy(); },
       };
     };
+    let readback = (await sessions.status(workspaceRoot, runtimeHome, runId))?.commandEventReadback;
+    for (let n = 0; n < 100 && readback?.observedCount !== 33; n++) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      readback = (await sessions.status(workspaceRoot, runtimeHome, runId))?.commandEventReadback;
+    }
+    assert.ok(readback);
+    assert.equal(readback.scope, 'current-host-attempt');
+    assert.equal(readback.observedCount, 33);
+    assert.equal(readback.omittedCount, 1);
+    assert.equal(readback.events.length, 32);
+    assert.equal(readback.events[0]?.itemId, 'item-1');
+    assert.equal(readback.events.at(-1)?.itemId, 'item-32');
+    assert.ok(readback.events.every(event =>
+      event.attemptId === left.attemptId && event.threadId === 'thread-once' && event.turnId === 'turn-once'));
+    assert.ok(readback.events.at(-1)?.processId?.includes('[REDACTED]'));
+
     const originalMain = connectMain();
     const original = parseToolText(await originalMain.call(99, 'kernel_attach'));
     assert.equal(assertTestRecord(original.liveWorker).attemptId, left.attemptId);
+    assert.deepEqual(assertTestRecord(original.liveWorker).commandEventReadback, readback);
     originalMain.close();
     const replacementMain = connectMain();
     const observed = parseToolText(await replacementMain.call(100, 'kernel_attach'));
     assert.equal(assertTestRecord(observed.liveWorker).attemptId, left.attemptId);
+    assert.deepEqual(assertTestRecord(observed.liveWorker).commandEventReadback, readback);
+    const response = JSON.stringify(observed);
+    assert.ok(!response.includes('raw-provider-output-not-for-status'));
+    assert.ok(!response.includes('sk-proj-fixtureevent0123456789'));
+    assert.ok(!response.includes('other-item'));
     assert.equal(observed.next, undefined);
     assert.equal(cp.getHostRoutingSnapshot(runId).stepAttempts.length, 1);
-    // Cancel from the replacement Main. It may arrive either before Turn
-    // ID allocation (queued) or after the Turn becomes addressable (requested).
+    const beforeRetry = await cp.getRun(runId);
+    assert.deepEqual(await handleMcpToolCall(registration), { runId });
+    await assert.rejects(handleMcpToolCall({
+      ...registration,
+      parameters: {
+        ...registration.parameters,
+        contractJson: { ...registration.parameters.contractJson, acceptance: ['Change the running scope'] },
+      },
+    }), { code: 'host_worker_contract_revision_blocked' });
+    const retried = parseToolText(await replacementMain.call(102, 'kernel_next', {
+      worker: { action: 'start', model: 'test-model', effort: 'high' },
+    }));
+    assert.equal(retried.status, 'host-worker-attached');
+    assert.equal(assertTestRecord(retried.hostWorker).attemptId, left.attemptId);
+    assert.equal(retried.action, undefined);
+    assert.equal(retried.next, undefined);
+    const differentlyBoundMain = createMcpBridgeHandler({
+      runtimeHome, hostWorkerSessions: sessions,
+      env: { ...process.env, MOON_RELAY_KERNEL_RUN_ID: 'different-bound-run' },
+    });
+    const conflict = parseToolText(await differentlyBoundMain({
+      jsonrpc: '2.0', id: 103, method: 'tools/call', params: {
+        name: 'kernel_next', arguments: {
+          workspaceRoot, runId, worker: { action: 'start', model: 'test-model', effort: 'high' },
+        },
+      },
+    }));
+    assert.equal(conflict.code, 'run_binding_conflict');
+    assert.equal((await cp.getRun(runId))?.revision, beforeRetry?.revision);
+    assert.equal((await cp.getRun(runId))?.mutationRevision, beforeRetry?.mutationRevision);
+    assert.equal((await cp.getRun(runId))?.contractRevision, beforeRetry?.contractRevision);
+    assert.equal(cp.getHostRoutingSnapshot(runId).stepAttempts.length, 1);
+    // The replacement Main cancels the same Turn after observing its events.
     const signaled = parseToolText(await replacementMain.call(101, 'kernel_attach', {
       worker: { action: 'interrupt', attemptId: left.attemptId },
     }));
     replacementMain.close();
-    assert.ok(['queued', 'requested'].includes(String(assertTestRecord(signaled.hostWorkerSignal).status)));
+    assert.equal(assertTestRecord(signaled.hostWorkerSignal).status, 'requested');
     assert.equal(cp.getHostRoutingSnapshot(runId).stepAttempts.length, 1);
     let live = await sessions.status(workspaceRoot, runtimeHome, runId);
     for (let n = 0; n < 100 && live?.turnStatus === 'pending'; n++) {
@@ -963,19 +1075,15 @@ input.on('line', line => {
 });
 `);
   const runId = 'run-host-worker-result';
-  // Fixture-only capability. This does not enable Native delivery in the product.
-  const host = createMcpBridgeHandler({ runtimeHome, verifiedNativeWriterIsolation: true,
-    workerTransportOptions: { executable: process.execPath, args: [server], requestTimeoutMs: 1500 } });
+  const sessions = createHostWorkerSessions({
+    transportOptions: { executable: process.execPath, args: [server], requestTimeoutMs: 1500 },
+  });
+  const host = createMcpBridgeHandler({ runtimeHome, hostWorkerSessions: sessions });
   const independentMain = (id: number, name: string, extra: Record<string, unknown> = {}) =>
     host({ jsonrpc: '2.0', id, method: 'tools/call', params: {
       name, arguments: { workspaceRoot, runId, ...extra },
     } });
-  const began = await independentMain(1, 'kernel_next', {
-    contractJson: { objective: 'update README', acceptance: ['README is updated'], allowedPaths: ['README.md'] },
-    worker: { action: 'start', model: 'test-model', effort: 'high' },
-  });
-  assert.equal(assertTestRecord(assertTestRecord(began).result).isError, false, JSON.stringify(began));
-  const attemptId = assertTestString(assertTestRecord(parseToolText(began).hostWorker).attemptId);
+  const { attemptId } = await startFixtureWorker(sessions, workspaceRoot, runtimeHome, runId, 'update README');
   let status = parseToolText(await independentMain(2, 'kernel_status'));
   for (let n = 0; n < 80 && assertTestRecord(status.liveWorker).turnStatus === 'pending'; n++) {
     await new Promise(resolve => setTimeout(resolve, 20));
@@ -1016,10 +1124,12 @@ input.on('line', line => {
   assert.equal(next.attemptId, attemptId);
 });
 
-test('A2-1: Host result handoff survives Main replacement without Delivery flags or a new Attempt', async (t) => {
+test('A2-1: Host result handoff survives Main replacement without secret exposure, Delivery flags or a new Attempt', async (t) => {
   const workspaceRoot = await createFixtureRepo();
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-host-result-handoff-'));
   const server = path.join(runtimeHome, 'finite-writer.cjs');
+  const reportSecret = 'sk-proj-fixtureworkerreport123456';
+  const patchMarker = 'worker-patch-content-not-for-status';
   t.after(async () => {
     await Promise.all([workspaceRoot, runtimeHome].map(root => rm(root, { recursive: true, force: true })));
   });
@@ -1035,11 +1145,11 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
   if(message.method==='thread/start') send({id:message.id,result:{thread:{id:'host-result-thread'}}});
   if(message.method==='turn/start') {
     if(!message.params.outputSchema) throw Error('missing Worker schema');
-    fs.writeFileSync(path.join(message.params.cwd,'README.md'),'# Worker candidate\n');
+    fs.writeFileSync(path.join(message.params.cwd,'README.md'),process.argv[3] + '\n');
     send({id:message.id,result:{turn:{id:'host-result-turn',status:'inProgress'}}});
     send({method:'item/completed',params:{threadId:message.params.threadId,turnId:'host-result-turn',
       item:{type:'agentMessage',id:'worker-final',phase:'final_answer',text:JSON.stringify({
-        status:'completed',summary:'Worker changed README',changedPaths:['README.md'],risks:[],
+        status:'completed',summary:'Worker changed README ' + process.argv[2],changedPaths:['README.md'],risks:[],
         verifications:[{obligationId:'default',commandRef:'test',acceptanceCoverage:['AC-1']}],
         requestedVerifications:[],judgments:[],knowledgeObservations:[],blocker:null,
       })}}});
@@ -1048,7 +1158,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
 });
 `);
   const sessions = createHostWorkerSessions({ transportOptions: {
-    executable: process.execPath, args: [server], requestTimeoutMs: 1500,
+    executable: process.execPath, args: [server, reportSecret, patchMarker], requestTimeoutMs: 1500,
   } });
   const firstMain = createMcpBridgeHandler({ runtimeHome, hostWorkerSessions: sessions });
   const secondMain = createMcpBridgeHandler({ runtimeHome, hostWorkerSessions: sessions });
@@ -1066,7 +1176,11 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
     model: 'test-model', effort: 'high', modelInput: next });
   let live: Record<string, unknown> = {};
   for (let n = 0; n < 100; n++) {
-    live = assertTestRecord(parseToolText(await call(secondMain, n + 2, 'kernel_status')).liveWorker);
+    const status = parseToolText(await call(secondMain, n + 2, 'kernel_status'));
+    const response = JSON.stringify(status);
+    assert.ok(!response.includes(reportSecret));
+    assert.ok(!response.includes(patchMarker));
+    live = assertTestRecord(status.liveWorker);
     if (live.preflight && optionalTestRecord(live.preflight)?.status !== 'running') break;
     await new Promise(resolve => setTimeout(resolve, 20));
   }
@@ -1079,7 +1193,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
     const attempt = assertTestPresent(reader.getAttemptById(runId, started.attemptId));
     assert.equal(attempt.status, 'started');
     assert.equal(attempt.resultCommitSha, assertTestRecord(live.resultCandidate).resultCommitSha);
-    assert.equal(assertTestRecord(attempt.workerReport).summary, 'Worker changed README');
+    const summary = assertTestString(assertTestRecord(attempt.workerReport).summary);
+    assert.match(summary, /^Worker changed README /u);
+    assert.ok(summary.includes('[REDACTED]'));
+    assert.ok(!summary.includes(reportSecret));
     assert.equal(assertTestRecord(attempt.workerReport).attemptId, started.attemptId);
     assert.equal(reader.getCurrentStep(runId)?.executionWorkspaceId, attempt.workspaceId);
     assert.equal(reader.stateStore.getMutationProvenance(runId), null);
@@ -1098,7 +1215,10 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
     assert.deepEqual(reader.getAttemptById(runId, started.attemptId), attempt, 'replay and rejected changes leave the receipt intact');
   } finally { await reader.close(); }
   const attached = parseToolText(await call(secondMain, 120, 'kernel_attach'));
-  assert.ok(JSON.stringify(attached).includes(started.attemptId));
+  const attachedResponse = JSON.stringify(attached);
+  assert.ok(attachedResponse.includes(started.attemptId));
+  assert.ok(!attachedResponse.includes(reportSecret));
+  assert.ok(!attachedResponse.includes(patchMarker));
   const rejected = parseToolText(await call(secondMain, 121, 'kernel_report', { report: {
     summary: 'premature settlement', attemptId: started.attemptId, changedPaths: ['README.md'],
   } }));
@@ -1142,19 +1262,15 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
 });
 `);
   const runId = 'run-host-failed-turn';
-  const handler = createMcpBridgeHandler({
-    runtimeHome, verifiedNativeWriterIsolation: true,
-    workerTransportOptions: { executable: process.execPath, args: [server], requestTimeoutMs: 1500 },
+  const sessions = createHostWorkerSessions({
+    transportOptions: { executable: process.execPath, args: [server], requestTimeoutMs: 1500 },
   });
+  const handler = createMcpBridgeHandler({ runtimeHome, hostWorkerSessions: sessions });
   const call = (id: number, name: string, args: Record<string, unknown> = {}) =>
     handler({ jsonrpc: '2.0', id, method: 'tools/call', params: {
       name, arguments: { workspaceRoot, runId, ...args },
     } });
-  const started = parseToolText(await call(1, 'kernel_next', {
-    contractJson: { objective: 'change README', acceptance: ['README changed'], allowedPaths: ['README.md'] },
-    worker: { action: 'start', model: 'test-model', effort: 'high' },
-  }));
-  const attemptId = assertTestString(assertTestRecord(started.hostWorker).attemptId);
+  const { attemptId } = await startFixtureWorker(sessions, workspaceRoot, runtimeHome, runId, 'change README');
   let live: Record<string, unknown> = {};
   for (let i = 0; i < 100; i++) {
     const status = parseToolText(await call(2 + i, 'kernel_status'));

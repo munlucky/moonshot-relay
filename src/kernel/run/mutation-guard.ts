@@ -41,6 +41,7 @@ interface StepLike {
   state?: unknown;
   executionWorkspaceId?: unknown;
   baseWorkspaceIdentity?: unknown;
+  planRevision?: unknown;
 }
 
 interface CapsulePermissionsLike extends UnknownRecord {
@@ -65,6 +66,13 @@ interface MutationGuardStore extends WorktreeLeaseStore {
   getProjectWorkspace?(workspaceId: string): WorkspaceLike | null | undefined;
   getWorkspaceMutationLockV2(workspaceId: string): WorkspaceMutationLockLike | null | undefined;
   getRunStep(runId: string, stepId: string): StepLike | null | undefined;
+  getStepAttemptByAttemptId?(attemptId: string, input: { runId: string }): {
+    runId: string; stepId: string; status: string; provenanceKind?: string | null;
+    planRevision?: number | null; mutationRevision?: number | null;
+    workspaceId?: string | null; baseWorkspaceIdentity?: string | null;
+    resultCommitSha?: string | null; patchDigest?: string | null;
+    workerReport?: unknown;
+  } | null | undefined;
   getExecutionCapsule(
     capsuleId: string,
     input: { runId: string },
@@ -324,6 +332,8 @@ export const assertOwnerWorkspaceMutationCAS = ({
   actualWorkspaceIdentity = null,
   headCommitSha = null,
   workspaceStatus = null,
+  indexDigest = null,
+  baselineAttemptId = null,
   phase = 'pre',
 }: {
   stateStore?: MutationGuardStore | null;
@@ -343,6 +353,8 @@ export const assertOwnerWorkspaceMutationCAS = ({
   actualWorkspaceIdentity?: string | null;
   headCommitSha?: string | null;
   workspaceStatus?: string | null;
+  indexDigest?: string | null;
+  baselineAttemptId?: string | null;
   phase?: DeliveryPhase;
 } = {}) => {
   const fence = assertWorkspaceMutationFence({
@@ -427,7 +439,25 @@ export const assertOwnerWorkspaceMutationCAS = ({
       fail('delivery_workspace_drift', 'Delivery workspace status is unavailable');
     }
     if (workspaceStatus) {
-      fail('delivery_workspace_drift', 'Delivery workspace is dirty before materialization');
+      // A Host-owned next Step can start from a previously delivered, still
+      // uncommitted Owner tree. Only its immutable canonical receipt admits
+      // that baseline; a caller flag or a matching content hash alone cannot.
+      const attempt = baselineAttemptId
+        ? stateStore?.getStepAttemptByAttemptId?.(baselineAttemptId, { runId: run.runId }) : null;
+      const step = attempt && stateStore?.getRunStep(run.runId, attempt.stepId);
+      const report = attempt?.workerReport && typeof attempt.workerReport === 'object'
+        ? attempt.workerReport as UnknownRecord : null;
+      if (!attempt || attempt.runId !== run.runId || attempt.provenanceKind !== 'host-owned-worker'
+        || attempt.status !== 'started' || attempt.planRevision !== run.planRevision
+        || Number(attempt.mutationRevision) !== Number(run.mutationRevision)
+        || !expectedWorkspaceIdentity || attempt.baseWorkspaceIdentity !== expectedWorkspaceIdentity
+        || !step || step.state !== 'running' || step.planRevision !== run.planRevision
+        || step.executionWorkspaceId !== attempt.workspaceId
+        || !attempt.resultCommitSha || !attempt.patchDigest
+        || !report || report.planRevision !== run.planRevision || report.contractRevision !== run.contractRevision
+        || !indexDigest || report.baseOwnerIndexDigest !== indexDigest) {
+        fail('delivery_workspace_drift', 'Dirty Delivery workspace has no matching canonical Worker baseline');
+      }
     }
   }
 

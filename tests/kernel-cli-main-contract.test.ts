@@ -20,6 +20,7 @@ test('kernel CLI main(argv, deps) is import-safe and writes help through injecte
   const help = JSON.parse(stdout[0]);
   assert.equal(help.usage, 'kernel <command> [options]');
   assert.ok(help.commands.next);
+  assert.ok(help.commands['worker-host']);
 });
 
 test('standalone CLI main(argv, deps) reports unknown utilities without process exit side effects', async () => {

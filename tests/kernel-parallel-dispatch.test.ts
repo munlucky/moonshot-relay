@@ -199,7 +199,7 @@ const makeControlPlane = ({ fixture, failedStepId = null, failMaterialization = 
   };
 };
 
-const runDispatch = async ({ failedStepId = null, failMaterialization = false, failRenewal = false, verificationAddsExtraPath = false, settlementFailureStepId = null, failReceiptPersistenceStepId = null, denyAllClaims = false, integrationVerification = null }: DispatchFixtureOptions = {}) => {
+const runDispatch = async ({ failedStepId = null, failMaterialization = false, failRenewal = false, verificationAddsExtraPath = false, verificationChangesUnstagedContent = false, settlementFailureStepId = null, failReceiptPersistenceStepId = null, denyAllClaims = false, integrationVerification = null }: DispatchFixtureOptions = {}) => {
   const fixture = await createFixture();
   const controlPlane = makeControlPlane({ fixture, failedStepId, failMaterialization, failRenewal, settlementFailureStepId, failReceiptPersistenceStepId, denyAllClaims });
   try {
@@ -217,6 +217,9 @@ const runDispatch = async ({ failedStepId = null, failMaterialization = false, f
           await writeFile(extraPath, 'verification must not change the integrated patch\n');
           const staged = runGit(workspaceRoot, ['add', '--', 'src/alpha/verification-extra.txt']);
           assert.equal(staged.status, 0, staged.stderr);
+        }
+        if (verificationChangesUnstagedContent) {
+          await writeFile(path.join(workspaceRoot, 'src', 'alpha', 'result.txt'), 'unstaged Proof mutation\n');
         }
         return integrationVerification || { status: 'passed', passed: true, evidenceRef: 'evidence://fixture' };
       },
@@ -382,6 +385,19 @@ test('integration verification cannot add staged paths after receipt validation'
     assert.equal(run.controlPlane.ownerMutations.length, 0);
     assert.equal(existsSync(path.join(run.fixture.projectRoot, 'src', 'alpha', 'result.txt')), false);
     assert.equal(assertTestRecord(assertTestRecord(run.result).cleanup).retained, true);
+  } finally {
+    await finishFixture(run);
+  }
+});
+
+test('integration verification cannot change unstaged content before Owner apply', async () => {
+  const run = await runDispatch({ verificationChangesUnstagedContent: true });
+  try {
+    assert.equal(assertTestRecord(run.result).status, 'failed');
+    assert.equal(assertTestRecord(assertTestRecord(run.result).integration).failureCode, 'integration_verification_changed_paths');
+    assert.equal(run.controlPlane.ownerMutations.length, 0);
+    assert.equal(run.controlPlane.reports.length, 0);
+    assert.equal(existsSync(path.join(run.fixture.projectRoot, 'src', 'alpha', 'result.txt')), false);
   } finally {
     await finishFixture(run);
   }
@@ -641,7 +657,7 @@ type TestStateStore = Awaited<ReturnType<typeof import('../src/kernel/state-stor
 
 
 interface FixtureOptions { fixture: Awaited<ReturnType<typeof createFixture>>; failedStepId?: string | null; failMaterialization?: boolean; failRenewal?: boolean; settlementFailureStepId?: string | null; failReceiptPersistenceStepId?: string | null; denyAllClaims?: boolean }
-interface DispatchFixtureOptions extends Omit<FixtureOptions, "fixture"> { verificationAddsExtraPath?: boolean; integrationVerification?: Record<string, unknown> | null }
+interface DispatchFixtureOptions extends Omit<FixtureOptions, "fixture"> { verificationAddsExtraPath?: boolean; verificationChangesUnstagedContent?: boolean; integrationVerification?: Record<string, unknown> | null }
 interface FixtureAttempt extends Record<string, unknown> { id: number; runId: string; stepId: string; attemptId: string; bindingId: string; status: string }
 
 

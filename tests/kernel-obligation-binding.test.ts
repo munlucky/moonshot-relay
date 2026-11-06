@@ -878,6 +878,42 @@ test('P0-5: replacing a hard evidence plan with judgment retires its predecessor
   }
 });
 
+test('contract reduction keeps removed acceptance retired after command binding refresh and report', async () => {
+  const fixture = await setup();
+  const cp = await createKernelControlPlane(fixture);
+  try {
+    await cp.startRun({
+      runId: 'r-reduced-contract', objective: 'revised scope',
+      taskContract: {
+        allowedPaths: ['app.mjs', 'package.json'],
+        acceptance: [
+          { id: 'AC-1', acceptance: 'retained behavior', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test:ok'] } },
+          { id: 'AC-2', acceptance: 'removed behavior', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test:fail'] } },
+        ],
+      },
+    });
+    const original = assertTestPresent(await cp.getRun('r-reduced-contract'));
+    await cp.reviseContract('r-reduced-contract', normalizeTaskContract({
+      ...original.taskContract,
+      acceptance: [{ id: 'AC-1', acceptance: 'retained behavior', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test:ok'] } }],
+    }, { objective: original.objective }));
+    // Change a live binding so refresh actually persists the rebound set.
+    await writeFile(path.join(fixture.projectRoot, 'package.json'), JSON.stringify({
+      name: 'bind-fixture', version: '0.0.1', scripts: { ...SCRIPTS, 'test:additional': 'node -e "process.exit(0)"' },
+    }));
+    await cp.next('r-reduced-contract');
+    assert.equal(assertTestPresent(cp.stateStore.getRunObligation('r-reduced-contract', 'acceptance-ac-2')).status, 'superseded');
+    await mutate(fixture.projectRoot, 1);
+    const report = await cp.report('r-reduced-contract', { summary: 'revised scope implemented', changedPaths: ['app.mjs', 'package.json'] });
+    assert.notEqual(assertTestPresent(report).status, 'evidence-rejected');
+    assert.equal(assertTestPresent(cp.stateStore.getRunObligation('r-reduced-contract', 'acceptance-ac-2')).status, 'superseded');
+    assert.ok(!cp.stateStore.getVerifications('r-reduced-contract').some((entry) => entry.obligationId === 'acceptance-ac-2'));
+  } finally {
+    await cp.close();
+    await cleanup(fixture);
+  }
+});
+
 test('P0-2: AC coverage is canonicalized and cannot cross obligation boundaries', async () => {
   const fixture = await setup();
   const cp = await createKernelControlPlane(fixture);

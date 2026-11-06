@@ -56,6 +56,8 @@ interface ParallelSettlement {
   result?: { changedPaths?: string[] } | null;
 }
 type GuardedProofWorkspace = { root: string; identity: string };
+const settlingHostWorkerAttempt = Symbol('settlingHostWorkerAttempt');
+const hostWorkerProofFailure = 'host-worker-candidate-proof';
 type ExecutedProof = {
   obligationId: string; commandRef?: (string | null) | undefined;
   verificationScope?: (ReturnType<typeof deriveVerificationSettlementScope>) | undefined;
@@ -68,6 +70,7 @@ type ReportCheckpoint = {
   observed: { changed: boolean; run: StoredKernelRun | null };
   observation: WorkspaceObservation; workerWorkspace: boolean;
   parallelSettlement: ParallelSettlement | null;
+  guardedHostWorkerProof?: true;
   liveWorkspaceObservation: WorkspaceObservation | null;
   activeStep: PersistedWorkStep | null; stepAttemptId: string | null;
   actualChangedPaths: string[]; reportedChangedPaths: string[]; reportKey: string | null;
@@ -354,8 +357,9 @@ export const createKernelControlPlane = async ({
   // A Host-owned external Writer stays live/unknown in the canonical ledger
   // until an authorized Owner Delivery reconciles it. An App Server Turn
   // completion, disconnect or interrupt never clears this admission fence.
-  const pendingHostWorker = (runId: string) => store.getStepAttempts(runId).find((attempt) => (
-    attempt.provenanceKind === 'host-owned-worker' && attempt.status === 'started'
+  const pendingHostWorker = (runId: string, settlingAttemptId: string | null = null) => store.getStepAttempts(runId).find((attempt) => (
+    attempt.provenanceKind === 'host-owned-worker' && ['started', 'reported', 'verifying'].includes(attempt.status)
+    && attempt.attemptId !== settlingAttemptId
   ));
   const hostWorkerContinuation = (runId: string, attempt: NonNullable<ReturnType<typeof pendingHostWorker>>) => ({
     schemaVersion: 1,
@@ -838,7 +842,9 @@ export const createKernelControlPlane = async ({
   };
 
   const refreshProofPolicyBindings = (runId: string) => {
-    const before = store.getRunObligations(runId);
+    // Declaring refreshed bindings makes them required. Retired contract
+    // obligations must remain historical even when the catalog changes.
+    const before = store.getRunObligations(runId).filter((obligation) => obligation.status !== 'superseded');
     const rebound = rebindProofPolicyCommands({
       obligations: before,
       projectRoot,
@@ -1035,7 +1041,10 @@ export const createKernelControlPlane = async ({
     return { ...payload, knowledgeAuthority };
   };
 
-  const proofRequestsForReport = ({ runId, report, completion, step = null }: { runId: string; report: NormalizedReport; completion: Completion; step?: PersistedWorkStep | null }) => {
+  const proofRequestsForReport = ({ runId, report, completion, step = null, revalidatePassedSteps = false, candidateMutation = false }: {
+    runId: string; report: NormalizedReport; completion: Completion | null; step?: PersistedWorkStep | null;
+    revalidatePassedSteps?: boolean; candidateMutation?: boolean;
+  }) => {
     const projectCommands = currentProjectCommands();
     const currentRun = requireRun(runId);
     const obligations = store.getRunObligations(runId);
@@ -1044,7 +1053,8 @@ export const createKernelControlPlane = async ({
       .filter((candidate) => candidate.stepId !== step?.stepId)
       .every((candidate) => ['passed', 'superseded', 'cancelled'].includes(candidate.state));
     const byId = new Map(obligations.map((obligation) => [obligation.obligationId, obligation]));
-    const outstanding = new Set((completion?.unsatisfiedObligations || []).map((entry) => entry.obligationId));
+    const outstanding = new Set((candidateMutation ? obligations : completion?.unsatisfiedObligations || [])
+      .map(entry => entry.obligationId));
     const acceptedCoverage = new Set((completion?.acceptanceCovered || []).map(String));
     const requested = new Map((report?.verifications || []).map((request) => [reportHintObligationId(request, obligations), request]));
     const stepAcceptanceIds = new Set((step?.acceptanceIds || []).map(String));
@@ -1056,6 +1066,12 @@ export const createKernelControlPlane = async ({
           .map((obligation) => String(obligation.obligationId)),
       ])
       : null;
+    // The final guarded Host Worker Report can refresh earlier focused
+    // receipts on the final integrated tree, within the same settlement.
+    const passedStepObligationIds = new Set(revalidatePassedSteps && finalWorkUnitCandidate
+      ? planSteps.filter(candidate => candidate.stepId !== step?.stepId && candidate.state === 'passed')
+        .flatMap(candidate => candidate.obligationIds || [])
+      : []);
     const freshRequests = (report?.verifications || []).filter((request) => (
       request.forceFresh === true
       || request.freshnessPolicy === 'fresh'
@@ -1068,7 +1084,12 @@ export const createKernelControlPlane = async ({
         projectCommands,
         preferredCommandRef: automatic ? null : hint.commandRef,
       });
-      if (!commandRef) return;
+      if (!commandRef) {
+        if (candidateMutation) throw Object.assign(new Error('Candidate Proof has no bound Manifest command'), {
+          code: 'host_worker_bound_proof_unavailable',
+        });
+        return;
+      }
       const existing = requests.find((request) => request.obligationId === obligation.obligationId);
       if (existing) {
         if (forceFresh) existing.allowEvidenceReuse = false;
@@ -1122,7 +1143,8 @@ export const createKernelControlPlane = async ({
       // An explicit hint remains authoritative and is still honored below.
       const settlementScope = deriveVerificationSettlementScope(obligation);
       if (settlementScope !== 'focused' && !finalWorkUnitCandidate && step) continue;
-      if (settlementScope === 'focused' && !hasHint && stepObligationIds && !stepObligationIds.has(String(obligationId))) continue;
+      if (settlementScope === 'focused' && !hasHint && stepObligationIds
+        && !stepObligationIds.has(String(obligationId)) && !passedStepObligationIds.has(String(obligationId))) continue;
       addRequest(obligation, requested.get(obligationId) || {}, { forceFresh: false, automatic: !hasHint });
     }
     // An obligation can have a valid receipt while the report explicitly
@@ -1524,7 +1546,7 @@ export const createKernelControlPlane = async ({
       }
     },
 
-    async startSuccessor({ invocation, objective, taskContract = {}, hostCapabilities = null }: { invocation?: ReturnType<typeof resolveInvocation>; objective?: (string) | undefined; taskContract?: TaskContractLike; hostCapabilities?: Parameters<typeof assertRequiredHostCapabilities>[1] | null } = {}) {
+    async startSuccessor({ invocation, objective, taskContract = {}, hostCapabilities = null, includeNext = true }: { invocation?: ReturnType<typeof resolveInvocation>; objective?: (string) | undefined; taskContract?: TaskContractLike; hostCapabilities?: Parameters<typeof assertRequiredHostCapabilities>[1] | null; includeNext?: boolean } = {}) {
       const runStartedAt = new Date().toISOString();
       if (invocation?.mode !== 'successor' || !invocation.predecessorRunId) {
         throw Object.assign(new Error('successor_not_allowed'), {
@@ -1701,7 +1723,7 @@ export const createKernelControlPlane = async ({
       return {
         status: result.created ? 'created' : 'resumed',
         run: result.run,
-        next: await this.next(result.run.runId),
+        next: includeNext ? await this.next(result.run.runId) : null,
       };
     },
 
@@ -1758,7 +1780,7 @@ export const createKernelControlPlane = async ({
     // ensureRun is idempotent: it creates the run on first call for a run id
     // and resumes it afterwards, and it is what `kernel next --contract-json`
     // uses to bootstrap a turn.
-    async ensureRun({ runId, objective, taskContract = {} }: { runId?: string; objective?: (string) | undefined; taskContract?: TaskContractLike } = {}) {
+    async ensureRun({ runId, objective, taskContract = {}, includeNext = true }: { runId?: string; objective?: (string) | undefined; taskContract?: TaskContractLike; includeNext?: boolean } = {}) {
       if (!runId) throw new Error('ensureRun requires a runId');
       const metadata = store.getRunMetadata(runId);
       if (!metadata) {
@@ -1778,7 +1800,7 @@ export const createKernelControlPlane = async ({
             });
             store.createSessionBinding(binding);
           }
-          return { status: 'created', run: createdRun, next: await this.next(runId) };
+          return { status: 'created', run: createdRun, next: includeNext ? await this.next(runId) : null };
         } catch (error) {
           if (createdRun && typeof store.rollbackRunInitialization === 'function') {
             try {
@@ -1886,7 +1908,7 @@ export const createKernelControlPlane = async ({
           }
         }
       }
-      return { status: 'resumed', run: getRunSnapshot(runId), next: await this.next(runId) };
+      return { status: 'resumed', run: getRunSnapshot(runId), next: includeNext ? await this.next(runId) : null };
     },
 
     // Persists a refined Task Contract and recompiles obligations against it,
@@ -2177,9 +2199,11 @@ export const createKernelControlPlane = async ({
       expectedProjectId = null,
       expectedWorktreeId = null,
       expectedWorkspaceId = null,
+      baselineAttemptId = null,
+      recoveryAttemptId = null,
       sessionToken = holder,
       ttlMs = 120000,
-    }: { expectedMutationRevision?: number; expectedWorkspaceIdentity?: string; expectedHeadCommitSha?: string; expectedProjectId?: string | null; expectedWorktreeId?: string | null; expectedWorkspaceId?: string | null; sessionToken?: string; ttlMs?: number } = {}) {
+    }: { expectedMutationRevision?: number; expectedWorkspaceIdentity?: string; expectedHeadCommitSha?: string; expectedProjectId?: string | null; expectedWorktreeId?: string | null; expectedWorkspaceId?: string | null; baselineAttemptId?: string | null; recoveryAttemptId?: string | null; sessionToken?: string; ttlMs?: number } = {}) {
       const run = getRunSnapshot(runId);
       const projectId = expectedProjectId || run?.projectId || currentProject.projectId;
       const worktreeId = expectedWorktreeId || run?.worktreeId || currentWorktree.worktreeId;
@@ -2193,6 +2217,9 @@ export const createKernelControlPlane = async ({
       }
       if (projectId !== currentProject.projectId || worktreeId !== currentWorktree.worktreeId || workspaceId !== currentWorktree.workspaceId) {
         throw Object.assign(new Error('delivery_worktree_authority_lost'), { code: 'delivery_worktree_authority_lost', errorCode: 'delivery_worktree_authority_lost' });
+      }
+      if (recoveryAttemptId && !this.getPendingHostWorkerDelivery(runId, recoveryAttemptId)) {
+        throw Object.assign(new Error('delivery_owner_mutation_stale'), { code: 'delivery_owner_mutation_stale' });
       }
 
       let lockResult;
@@ -2235,9 +2262,10 @@ export const createKernelControlPlane = async ({
           expectedProjectId: projectId,
           expectedWorktreeId: worktreeId,
           expectedWorkspaceId: workspaceId,
+          baselineAttemptId,
           ...inspectMutationWorkspace({ workspaceRoot: fencingWorkspaceRoot }),
           actualWorkspaceIdentity: observeWorkspaceIdentity({ projectRoot: fencingWorkspaceRoot }).identity,
-          phase: 'pre',
+          phase: recoveryAttemptId ? 'post-commit' : 'pre',
         });
         return {
           lock: lockResult.lock,
@@ -2249,6 +2277,7 @@ export const createKernelControlPlane = async ({
             expectedProjectId: projectId,
             expectedWorktreeId: worktreeId,
             expectedWorkspaceId: workspaceId,
+            baselineAttemptId,
           },
           assertion,
         };
@@ -2272,12 +2301,13 @@ export const createKernelControlPlane = async ({
       expectedProjectId = null,
       expectedWorktreeId = null,
       expectedWorkspaceId = null,
+      baselineAttemptId = null,
       workspaceId = expectedWorkspaceId,
       fencingToken,
       sessionToken = holder,
       ttlMs = 120000,
       phase = 'pre',
-    }: { expectedMutationRevision?: number; expectedWorkspaceIdentity?: string; expectedHeadCommitSha?: string; expectedProjectId?: string | null; expectedWorktreeId?: string | null; expectedWorkspaceId?: string | null; workspaceId?: string | null; fencingToken?: number; sessionToken?: string; ttlMs?: number; phase?: 'pre' | 'post-commit' } = {}) {
+    }: { expectedMutationRevision?: number; expectedWorkspaceIdentity?: string; expectedHeadCommitSha?: string; expectedProjectId?: string | null; expectedWorktreeId?: string | null; expectedWorkspaceId?: string | null; baselineAttemptId?: string | null; workspaceId?: string | null; fencingToken?: number; sessionToken?: string; ttlMs?: number; phase?: 'pre' | 'post-commit' } = {}) {
       const run = getRunSnapshot(runId);
       const projectId = expectedProjectId || run?.projectId || currentProject.projectId;
       const worktreeId = expectedWorktreeId || run?.worktreeId || currentWorktree.worktreeId;
@@ -2329,6 +2359,7 @@ export const createKernelControlPlane = async ({
           expectedProjectId: projectId,
           expectedWorktreeId: worktreeId,
           expectedWorkspaceId: effectiveWorkspaceId,
+          baselineAttemptId,
           ...inspectMutationWorkspace({ workspaceRoot: fencingWorkspaceRoot }),
           actualWorkspaceIdentity: observeWorkspaceIdentity({ projectRoot: fencingWorkspaceRoot }).identity,
           phase,
@@ -2343,6 +2374,7 @@ export const createKernelControlPlane = async ({
             expectedProjectId: projectId,
             expectedWorktreeId: worktreeId,
             expectedWorkspaceId: effectiveWorkspaceId,
+            baselineAttemptId,
           },
           assertion,
         };
@@ -2362,12 +2394,13 @@ export const createKernelControlPlane = async ({
       expectedProjectId = null,
       expectedWorktreeId = null,
       expectedWorkspaceId = null,
+      baselineAttemptId = null,
       fencingToken,
       sessionToken = holder,
       integrationWorkspaceIdentity,
       changedPaths = [],
       patchDigest = null,
-    }: { expectedMutationRevision?: number; expectedWorkspaceIdentity?: string; expectedHeadCommitSha?: string; expectedProjectId?: string | null; expectedWorktreeId?: string | null; expectedWorkspaceId?: string | null; fencingToken?: number; sessionToken?: string; integrationWorkspaceIdentity?: string; changedPaths?: string[]; patchDigest?: string | null } = {}) {
+    }: { expectedMutationRevision?: number; expectedWorkspaceIdentity?: string; expectedHeadCommitSha?: string; expectedProjectId?: string | null; expectedWorktreeId?: string | null; expectedWorkspaceId?: string | null; baselineAttemptId?: string | null; fencingToken?: number; sessionToken?: string; integrationWorkspaceIdentity?: string; changedPaths?: string[]; patchDigest?: string | null } = {}) {
       const run = getRunSnapshot(runId);
       const projectId = expectedProjectId || run?.projectId || currentProject.projectId;
       const worktreeId = expectedWorktreeId || run?.worktreeId || currentWorktree.worktreeId;
@@ -2394,6 +2427,7 @@ export const createKernelControlPlane = async ({
         expectedProjectId: projectId,
         expectedWorktreeId: worktreeId,
         expectedWorkspaceId: workspaceId,
+        baselineAttemptId,
         ...inspectMutationWorkspace({ workspaceRoot: fencingWorkspaceRoot }),
           actualWorkspaceIdentity: observeWorkspaceIdentity({ projectRoot: fencingWorkspaceRoot }).identity,
         phase: 'pre',
@@ -2406,6 +2440,7 @@ export const createKernelControlPlane = async ({
         expectedProjectId: projectId,
         expectedWorktreeId: worktreeId,
         expectedWorkspaceId: workspaceId,
+        baselineAttemptId,
       };
       return { snapshot, integrationWorkspaceIdentity, changedPaths: canonicalChangedPaths(changedPaths), patchDigest };
     },
@@ -2534,6 +2569,118 @@ export const createKernelControlPlane = async ({
       return getRunSnapshot(runId);
     },
 
+    getHostWorkerCandidateProofPlan(runId: string, attemptId: string) {
+      const run = getRunSnapshot(runId);
+      const attempt = store.getStepAttemptByAttemptId(attemptId, { runId });
+      const step = attempt && store.getRunStep(runId, attempt.stepId);
+      if (!run || !step || step.planRevision !== run.planRevision
+        || attempt?.provenanceKind !== 'host-owned-worker' || !attempt.workerReport) return [];
+      // Candidate bytes do not inherit earlier Proof. Plan every applicable
+      // hard obligation using the same selector and bindings as Report.
+      return proofRequestsForReport({
+        runId, report: normalizeReport(attempt.workerReport), step, completion: null,
+        revalidatePassedSteps: true, candidateMutation: true,
+      });
+    },
+
+    // Record a rejected candidate on the Attempt ledger. Its negative Proof
+    // belongs to the isolated candidate and cannot satisfy Owner evidence.
+    async rejectHostWorkerCandidateProof(runId: string, {
+      attemptId, fencingToken, commandRef, evidenceRef, exitCode, candidateIdentity,
+    }: {
+      attemptId: string; fencingToken: number; commandRef: string;
+      evidenceRef: string; exitCode: number; candidateIdentity: string;
+    }) {
+      const run = getRunSnapshot(runId);
+      const attempt = store.getStepAttemptByAttemptId(attemptId, { runId });
+      const step = attempt && store.getRunStep(runId, attempt.stepId);
+      const fence = run?.workspaceId ? store.getWorkspaceMutationLockV2(run.workspaceId) : null;
+      if (!run || run.status !== 'active' || !run.currentWorkspaceIdentity
+        || !attempt || attempt.provenanceKind !== 'host-owned-worker' || attempt.status !== 'started'
+        || !step || step.state !== 'running' || step.planRevision !== run.planRevision
+        || attempt.planRevision !== run.planRevision || attempt.mutationRevision !== run.mutationRevision
+        || attempt.workspaceId !== step.executionWorkspaceId
+        || attempt.baseWorkspaceIdentity !== run.currentWorkspaceIdentity
+        || !attempt.resultCommitSha || !attempt.patchDigest || !attempt.workerReport
+        || attempt.resultWorkspaceIdentity !== candidateIdentity
+        || fence?.holderRunId !== runId || fence.sessionToken !== holder || fence.fencingToken !== fencingToken
+        || Date.parse(fence.expiresAt) <= Date.now()
+        || observeWorkspaceIdentity({ projectRoot: fencingWorkspaceRoot }).identity !== run.currentWorkspaceIdentity
+        || !this.getHostWorkerCandidateProofPlan(runId, attemptId).some(item => item.commandRef === commandRef)
+        || !evidenceRef.startsWith('evidence://proof/') || !Number.isInteger(exitCode) || exitCode === 0) {
+        throw Object.assign(new Error('Candidate Proof failure no longer matches the active Worker and Owner fence'), {
+          code: 'host_worker_proof_failure_stale',
+        });
+      }
+      store.finishStepAttempt(attempt.id, {
+        status: 'failed', workspaceIdentityEnd: candidateIdentity, resultDigest: attempt.patchDigest,
+        verificationRefs: [evidenceRef], failureCategory: hostWorkerProofFailure,
+        failureReasons: [`The isolated invocation of ${commandRef} returned exit code ${exitCode} on the Worker candidate.`],
+      });
+      this.failStep(runId, step.stepId, { reason: hostWorkerProofFailure });
+      return this.prepareNext(runId);
+    },
+
+    // A single Host-owned patch can be joined to its durable Owner CAS by
+    // digest, paths, revisions and workspace lineage. This is a lookup of
+    // committed state, not authority to write or launch a second Worker.
+    getPendingHostWorkerDelivery(runId: string, attemptId: string) {
+      const run = getRunSnapshot(runId);
+      const attempt = store.getStepAttemptByAttemptId(attemptId, { runId });
+      const step = attempt && store.getRunStep(runId, attempt.stepId);
+      const provenance = store.getMutationProvenance(runId);
+      const report = asRecord(attempt?.workerReport);
+      const changedPaths = canonicalChangedPaths(attempt?.changedPaths);
+      if (!run || !run.currentWorkspaceIdentity
+        || !attempt || attempt.provenanceKind !== 'host-owned-worker'
+        || !['started', 'reported', 'verifying'].includes(attempt.status)
+        || !step || step.planRevision !== run.planRevision
+        || step.executionWorkspaceId !== attempt.workspaceId
+        || !attempt.workspaceId || !attempt.baseWorkspaceIdentity || !attempt.resultWorkspaceIdentity
+        || !attempt.resultCommitSha || !attempt.patchDigest || changedPaths.length === 0
+        || attempt.planRevision !== run.planRevision || attempt.mutationRevision === null
+        || attempt.mutationRevision + 1 !== run.mutationRevision
+        || report.attemptId !== attemptId || report.stepId !== step.stepId
+        || report.workspaceId !== attempt.workspaceId || report.planRevision !== run.planRevision
+        || report.contractRevision !== run.contractRevision
+        || !provenance || provenance.attemptId
+        || provenance.projectId !== run.projectId || provenance.workspaceId !== run.workspaceId
+        || provenance.sourceIdentity !== run.sourceIdentity
+        || provenance.workspaceIdentity !== run.currentWorkspaceIdentity
+        || provenance.workspaceIdentity !== attempt.resultWorkspaceIdentity
+        || provenance.mutationRevision !== run.mutationRevision
+        || provenance.mutationDigest !== attempt.patchDigest
+        || !receiptValuesEqual(provenance.changedPaths, changedPaths, { paths: true })
+        || !receiptValuesEqual(report.changedPaths, changedPaths, { paths: true })) return null;
+      const checkpoint = readReportCheckpoint(attempt.reportCheckpoint);
+      const reportCheckpointPending = checkpoint?.guardedHostWorkerProof === true
+        && checkpoint.runId === runId && checkpoint.stepAttemptId === attemptId
+        && checkpoint.reportKey === attempt.reportKey && checkpoint.activeStep?.stepId === step.stepId
+        && checkpoint.planRevision === run.planRevision && checkpoint.mutationRevision === run.mutationRevision
+        && checkpoint.observation.identity === run.currentWorkspaceIdentity
+        && checkpoint.parallelSettlement?.deliveryWorkspaceIdentity === run.currentWorkspaceIdentity;
+      if (!(run.status === 'active' && step.state === 'running')
+        && !(reportCheckpointPending && (
+          (run.status === 'active' && ['reported', 'verifying', 'passed'].includes(step.state))
+          || (run.status === 'completed' && step.state === 'passed')
+        ))) return null;
+      return {
+        reportCheckpointPending,
+        snapshot: {
+          expectedMutationRevision: attempt.mutationRevision,
+          expectedWorkspaceIdentity: attempt.baseWorkspaceIdentity,
+          expectedProjectId: run.projectId, expectedWorkspaceId: run.workspaceId,
+          expectedWorktreeId: run.worktreeId,
+        },
+        changed: true,
+        changedPaths,
+        patchDigest: attempt.patchDigest,
+        mutationRevision: run.mutationRevision,
+        deliveryWorkspaceIdentity: run.currentWorkspaceIdentity,
+        integrationWorkspaceIdentity: run.currentWorkspaceIdentity,
+      };
+    },
+
     // Restart recovery is derived from the existing Run mutation authority,
     // provenance, Step Ledger, and execution attempts. No persisted Delivery
     // intent/status lifecycle is created. A workspace drift or an owner
@@ -2580,6 +2727,7 @@ export const createKernelControlPlane = async ({
         : Number(run.mutationRevision);
       const relevantAttempts = workerAttempts
         .filter((attempt) => Number(attempt.mutationRevision) === expectedRevision);
+      const pendingApply = workerAttempts.some((attempt) => Number(attempt.mutationRevision) === Number(run.mutationRevision));
 
       // No routed worker receipt means there is no parallel Delivery boundary
       // to reconcile. In particular, this keeps ordinary direct edits and
@@ -2593,7 +2741,9 @@ export const createKernelControlPlane = async ({
       // the incomplete-marker guard fail-closed without repeatedly blocking on
       // a stale historical owner mutation during a normal PROVE retry.
       const preparedDeliveryMarker = Boolean(provenance && !provenance.attemptId);
-      if (relevantAttempts.length === 0 && !preparedDeliveryMarker) return { status: 'none', run };
+      if (!pendingApply && relevantAttempts.length === 0 && !preparedDeliveryMarker) return { status: 'none', run };
+      const ownerFence = run.workspaceId ? store.getWorkspaceMutationLockV2(run.workspaceId) : null;
+      const ownerApplying = ownerFence?.holderRunId === runId && Date.parse(ownerFence.expiresAt) > Date.now();
 
       let liveDeliveryWorkspaceIdentity;
       try {
@@ -2606,6 +2756,10 @@ export const createKernelControlPlane = async ({
       // routed worker receipts is exactly the crash window after apply and
       // before the owner CAS persisted its provenance. It is ambiguous and
       // must block rather than silently resume.
+      if (pendingApply && liveDeliveryWorkspaceIdentity !== run.currentWorkspaceIdentity) {
+        if (ownerApplying) return { status: 'in-progress', run };
+        return block('Owner workspace changed after worker receipts but before owner mutation provenance was persisted');
+      }
       if (!provenance) {
         if (liveDeliveryWorkspaceIdentity === run.currentWorkspaceIdentity) return { status: 'none', run };
         return block('Owner workspace changed after parallel worker receipts but before owner mutation provenance was persisted');
@@ -2640,6 +2794,11 @@ export const createKernelControlPlane = async ({
       const relevantStepIds = new Set(relevantAttempts.map((attempt) => attempt.stepId));
       const unresolvedSteps = steps.filter((step) => relevantStepIds.has(step.stepId) && !terminalStepStates.has(step.state));
       if (unresolvedSteps.length > 0) {
+        if (ownerApplying) return { status: 'in-progress', run };
+        const candidate = relevantAttempts.length === 1 ? relevantAttempts[0] : null;
+        if (candidate?.attemptId && this.getPendingHostWorkerDelivery(runId, candidate.attemptId)) {
+          return { status: 'report-pending', run };
+        }
         return block(`Owner workspace mutation was recorded before these Steps settled: ${unresolvedSteps.map((step) => step.stepId).join(', ')}`);
       }
       return { status: 'none', run };
@@ -3545,7 +3704,9 @@ export const createKernelControlPlane = async ({
     // verification support, capability selection, baseline gating, and Work
     // Unit scope checks. It is an internal lifecycle primitive, not a new
     // model-visible command.
-    async prepareNext(runId: string, { stepId = null }: { stepId?: string | null } = {}) {
+    async prepareNext(runId: string, {
+      stepId = null, [settlingHostWorkerAttempt]: settlingAttemptId = null,
+    }: { stepId?: string | null; [settlingHostWorkerAttempt]?: string | null } = {}) {
       let run = getRunSnapshot(runId);
       if (!run) return { schemaVersion: 1, runId, status: 'not_found' };
       const projectCommands = currentProjectCommands();
@@ -3567,17 +3728,18 @@ export const createKernelControlPlane = async ({
         });
       }
       const deliveryRecovery = await this.recoverPendingDeliveryMaterialization(runId);
-      if (deliveryRecovery.status === 'blocked') {
+      if (deliveryRecovery.status === 'blocked' || deliveryRecovery.status === 'in-progress') {
         return buildBlockedResponse({
           runId,
-          reason: String('reason' in deliveryRecovery ? deliveryRecovery.reason : 'delivery_materialization_recovery_required'),
+          reason: deliveryRecovery.status === 'in-progress' ? 'delivery_materialization_in_progress'
+            : String('reason' in deliveryRecovery ? deliveryRecovery.reason : 'delivery_materialization_recovery_required'),
           detail: ('detail' in deliveryRecovery ? deliveryRecovery.detail : null),
         });
       }
       // A reconnecting Main must not receive a second implementation directive
       // while a Host-owned external Writer is in flight or still unretired.
       // This is only a projection; it does not manufacture a completed Step.
-      const pendingWorker = pendingHostWorker(runId);
+      const pendingWorker = pendingHostWorker(runId, settlingAttemptId);
       if (pendingWorker) return hostWorkerContinuation(runId, pendingWorker);
       let stageContext: UnknownRecord | null | undefined = store.getKnowledgeContextReceipt(runId, run.state)?.receiptJson;
       if (!stageContext) {
@@ -3658,6 +3820,22 @@ export const createKernelControlPlane = async ({
         ? this.ensureRunStepsMigrated(runId).find((entry) => entry.stepId === stepId && entry.planRevision === run.planRevision)
         : null;
       const step = requestedStep || this.getCurrentStep(runId);
+      if (step?.state === 'failed' && step.blockedReason === hostWorkerProofFailure
+        && ['implement', 'fix'].includes(payload.action?.type || '')) {
+        const retry = store.getStepAttempts(runId, { stepId: step.stepId }).at(-1);
+        if (retry?.status === 'failed' && retry.failureCategory === hostWorkerProofFailure
+          && retry.planRevision === run.planRevision && retry.mutationRevision === run.mutationRevision) {
+          if (this.detectStepStagnation(runId, { stepId: step.stepId }).stagnant) {
+            return buildBlockedResponse({ runId, reason: 'host_worker_proof_retry_stagnant' });
+          }
+          payload.action = {
+            ...payload.action, type: 'fix', retryAttemptId: retry.attemptId,
+            guidance: [retry.failureReasons?.[0], 'Correct the failed candidate from the unchanged Owner baseline.']
+              .filter(Boolean).join(' '),
+          };
+          payload.nextAction = 'fix';
+        }
+      }
       // Owner-direct turns use the same fail-closed scope boundary as routed
       // workers. Refuse an unbounded implementation before the owner is
       // invited to mutate the workspace.
@@ -3845,6 +4023,68 @@ export const createKernelControlPlane = async ({
       } catch (error) {
         return bindingErrorPayload(error, { projectRoot, provider: hostProvider });
       }
+      // A lost response must replay the durable Report before consulting the
+      // live Step cursor or Owner mutation. Those may already have advanced.
+      // Replay reads an existing outcome; it cannot apply or settle again.
+      const operation = inspectReportOperation(runId, payload);
+      if (operation.comparison.state === 'conflict') {
+        return reportOperationConflict(runId, operation);
+      }
+      const recovery = operation.comparison.state === 'in-progress' && payload.attemptId
+        ? this.getPendingHostWorkerDelivery(runId, payload.attemptId) : null;
+      if (operation.comparison.state === 'replay' || recovery?.reportCheckpointPending) {
+        const canonical = operation.attempt;
+        const sameReceipt = canonical && result
+          && ['routed', 'host-owned-worker'].includes(canonical.provenanceKind || '')
+          && canonical.resultCommitSha && canonical.patchDigest && canonical.workerReport
+          && canonical.resultWorkspaceIdentity && canonical.baseWorkspaceIdentity
+          && Array.isArray(canonical.changedPaths) && canonical.changedPaths.length > 0
+          && payload.attemptId === canonical.attemptId
+          && result.attemptId === canonical.attemptId
+          && result.executionWorkspaceId === canonical.workspaceId
+          && receiptValuesEqual(result.workerWorkspaceIdentity, canonical.baseWorkspaceIdentity)
+          && receiptValuesEqual(result.resultWorkspaceIdentity, canonical.resultWorkspaceIdentity)
+          && receiptValuesEqual(result.resultCommitSha, canonical.resultCommitSha)
+          && receiptValuesEqual(result.patchDigest, canonical.patchDigest)
+          && receiptValuesEqual(result.changedPaths, canonical.changedPaths, { paths: true })
+          && receiptValuesEqual(result.workerReport, canonical.workerReport);
+        if (!sameReceipt) {
+          return {
+            schemaVersion: 1, runId, status: 'evidence-rejected',
+            failures: [{ obligationId: 'delivery-materialization', command: 'parallel-settlement',
+              errorSummary: 'Report recovery requires the same canonical Worker execution receipt',
+              errorCode: 'delivery_worker_receipt_mismatch' }],
+          };
+        }
+        if (operation.comparison.state === 'replay') {
+          settleDurableReportReplay(operation.stored);
+          return { ...asRecord(operation.comparison.reportResult), idempotentReplay: true };
+        }
+        // The original protected Proof and Owner CAS have already finished.
+        // Resume only the journaled Report, even if its Step or Run passed.
+        const run = requireRun(runId);
+        const fence = run.workspaceId ? store.getWorkspaceMutationLockV2(run.workspaceId) : null;
+        if (fence && fence.sessionToken !== holder && Date.parse(fence.expiresAt) > Date.now()) {
+          return { schemaVersion: 1, runId, status: 'lease-conflict', lease: fence };
+        }
+        const lease = acquireRunLease(runId, REPORT_LEASE_TTL_MS);
+        if (!lease.acquired) return { schemaVersion: 1, runId, status: 'lease-conflict', lease: lease.lease };
+        const { fencingToken } = lease.lease;
+        try {
+          const reportResult = await this.reportUnderLease(runId, payload, { fencingToken, checkpointOnly: true });
+          recordReportOutcome(runId, reportResult);
+          return publicReportResult(reportResult);
+        } finally {
+          store.releaseLease(runId, { holder, fencingToken });
+        }
+      }
+      if (!deliveryMutation && guardedProofRoot && payload.attemptId) {
+        const run = getRunSnapshot(runId);
+        const fence = run?.workspaceId ? store.getWorkspaceMutationLockV2(run.workspaceId) : null;
+        if (fence?.holderRunId === runId && fence.sessionToken === holder && Date.parse(fence.expiresAt) > Date.now()) {
+          deliveryMutation = this.getPendingHostWorkerDelivery(runId, payload.attemptId);
+        }
+      }
       const snapshot = deliveryMutation ? asRecord(deliveryMutation.snapshot || deliveryMutation) : null;
       const deliveryWorkspaceIdentity = deliveryMutation?.deliveryWorkspaceIdentity || snapshot?.deliveryWorkspaceIdentity || null;
       if (!snapshot || !Number.isInteger(Number(snapshot.expectedMutationRevision))
@@ -3971,6 +4211,18 @@ export const createKernelControlPlane = async ({
 
       const canonicalAttempt = parallelResolution.attempt;
       if (!canonicalAttempt || !result) throw new Error('delivery_worker_receipt_incomplete');
+      if (canonicalAttempt.provenanceKind === 'host-owned-worker') {
+        const fence = currentRun.workspaceId ? store.getWorkspaceMutationLockV2(currentRun.workspaceId) : null;
+        if (!guardedProofRoot || fence?.holderRunId !== runId || fence.sessionToken !== holder
+          || Date.parse(fence.expiresAt) <= Date.now()) {
+          return {
+            schemaVersion: 1, runId, status: 'evidence-rejected',
+            failures: [{ obligationId: 'delivery-materialization', command: 'parallel-settlement',
+              errorSummary: 'Host Worker Report requires protected Proof under the Owner fence',
+              errorCode: 'host_worker_report_guard_required' }],
+          };
+        }
+      }
       const requiredReceiptFields = [
         ['attemptId', result?.attemptId],
         ['executionWorkspaceId', result?.executionWorkspaceId],
@@ -4106,7 +4358,9 @@ export const createKernelControlPlane = async ({
       }
     },
 
-    async reportUnderLease(runId: string, payload: RawReport, { fencingToken, parallelSettlement = null, guardedProof = null }: { fencingToken: number; parallelSettlement?: ParallelSettlement | null; guardedProof?: GuardedProofWorkspace | null }) {
+    async reportUnderLease(runId: string, payload: RawReport, {
+      fencingToken, parallelSettlement = null, guardedProof = null, checkpointOnly = false,
+    }: { fencingToken: number; parallelSettlement?: ParallelSettlement | null; guardedProof?: GuardedProofWorkspace | null; checkpointOnly?: boolean }) {
       const run = requireRun(runId);
       const incomingOperation = inspectReportOperation(runId, payload);
       let reportKey = incomingOperation.reportKey;
@@ -4120,6 +4374,10 @@ export const createKernelControlPlane = async ({
       }
       const recoveryCheckpoint = readReportCheckpoint(incomingOperation.attempt?.reportCheckpoint);
       if (recoveryCheckpoint) {
+        if (incomingOperation.attempt?.provenanceKind === 'host-owned-worker'
+          && recoveryCheckpoint.guardedHostWorkerProof !== true) {
+          return { schemaVersion: 1, runId, status: 'report-conflict', errorCode: 'REPORT_CHECKPOINT_STALE' };
+        }
         const live = observeWorkspaceIdentity({ projectRoot });
         const gitReceipt = store.getGitCloseoutReceipt(runId);
         const authorizedGitRecovery = recoveryCheckpoint.report.gitCloseoutRequest?.requested === true
@@ -4132,6 +4390,9 @@ export const createKernelControlPlane = async ({
           return { schemaVersion: 1, runId, status: 'report-conflict', errorCode: 'REPORT_CHECKPOINT_STALE' };
         }
         return this.settleVerifiedReport(runId, recoveryCheckpoint, { fencingToken });
+      }
+      if (checkpointOnly) {
+        return { schemaVersion: 1, runId, status: 'report-conflict', errorCode: 'REPORT_CHECKPOINT_STALE' };
       }
       recordEfficiency(runId, { increments: { reportCount: 1 } });
       const evidenceRejected = async (failures: ReportFailure[]) => ({
@@ -4647,7 +4908,11 @@ export const createKernelControlPlane = async ({
         });
       }
       failures.push(...invalidHardJudgmentFailures);
-      const proofRequests = proofRequestsForReport({ runId, report, completion: preProofCompletion, step: activeStep })
+      const proofRequests = proofRequestsForReport({
+        runId, report, completion: preProofCompletion, step: activeStep,
+        revalidatePassedSteps: Boolean(guardedProof && parallelSettlement
+          && stepAttempt?.provenanceKind === 'host-owned-worker'),
+      })
         .filter((request) => !invalidHardJudgmentIds.has(String(request.obligationId || '')));
       const outstandingJudgmentIds = new Set(preProofCompletion.unsatisfiedObligations
         .filter((entry) => entry.requiredEvidenceClass === 'judgment')
@@ -4933,6 +5198,8 @@ export const createKernelControlPlane = async ({
       const checkpoint: ReportCheckpoint = { schemaVersion: 1, runId, mutationRevision: requireRun(runId).mutationRevision,
         planRevision: requireRun(runId).planRevision, report, executed, failures, observed, observation,
         workerWorkspace, parallelSettlement, liveWorkspaceObservation, activeStep,
+        ...(guardedProof && parallelSettlement && stepAttempt?.provenanceKind === 'host-owned-worker'
+          ? { guardedHostWorkerProof: true } : {}),
         stepAttemptId: stepAttempt?.attemptId || null, actualChangedPaths, reportedChangedPaths, reportKey };
       if (stepAttempt?.attemptId) store.checkpointStepReport(stepAttempt.attemptId, checkpoint);
       return this.settleVerifiedReport(runId, checkpoint, { fencingToken });
@@ -5058,6 +5325,8 @@ export const createKernelControlPlane = async ({
           : (nextStep ? 'implement' : 'continue'),
         stepId: nextStep?.stepId || null,
       };
+      const settledHostWorkerId = parallelSettlement && stepState === 'passed'
+        && stepAttempt?.provenanceKind === 'host-owned-worker' ? stepAttempt.attemptId : null;
 
       const reportResult = {
         schemaVersion: 1,
@@ -5076,13 +5345,12 @@ export const createKernelControlPlane = async ({
         failureClassification,
         step: stepOutcome ? { ...stepOutcome } : null,
         finalization,
-        // A model-visible report prepares its canonical continuation here.
-        // Parallel worker settlement is an internal Host batch primitive: if it
-        // ran restart recovery between sibling receipts, an in-flight Delivery
-        // would be mistaken for a crashed Delivery. The parallel dispatcher
-        // prepares one canonical continuation after every worker receipt has
-        // settled.
-        next: parallelSettlement ? null : await this.prepareNext(runId),
+        // A single Host-owned Delivery has no sibling receipts. Prepare its
+        // continuation after the Step passes and journal it with the Report.
+        // The current Attempt stays fenced for other callers until settlement.
+        next: parallelSettlement && !settledHostWorkerId ? null : await this.prepareNext(runId, {
+          [settlingHostWorkerAttempt]: settledHostWorkerId,
+        }),
       };
       if (stepAttempt?.attemptId && stepOutcome?.attemptSettlement) {
         // Journal the exact result before the settlement transaction. If the

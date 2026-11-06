@@ -20,7 +20,7 @@ import { runGit } from '../../shared/git-safe.js';
 import { matchPathScope } from '../../shared/path-scope.js';
 import { Ajv } from 'ajv';
 import { CODEX_WORKER_OUTPUT_SCHEMA } from './adapters/codex.js';
-import { sanitizePersistentPayload } from '../../shared/persistent-sanitizer.js';
+import { sanitizePersistentPayload, sanitizePersistentText } from '../../shared/persistent-sanitizer.js';
 import { observeWorkspaceIdentity } from './workspace/workspace-identity.js';
 
 type KernelControlPlane = Awaited<ReturnType<typeof createKernelControlPlane>>;
@@ -94,7 +94,11 @@ const inside = (root: string, candidate: string): boolean => {
   );
 };
 
-export async function runHostOwnedWritableAttempt({
+export function runHostOwnedWritableAttempt(input: HostOwnedWritableAttemptInput): Promise<HostOwnedWritableAttemptObservation> {
+  return executeHostOwnedWritableAttempt(input, []);
+}
+
+async function executeHostOwnedWritableAttempt({
   controlPlane,
   repoRoot,
   runtimeHome,
@@ -110,7 +114,7 @@ export async function runHostOwnedWritableAttempt({
   onNativeExecution = undefined,
   transportOptions = undefined,
   onHostControl = undefined,
-}: HostOwnedWritableAttemptInput): Promise<HostOwnedWritableAttemptObservation> {
+}: HostOwnedWritableAttemptInput, commandEvents: NativeExecutionObservation[]): Promise<HostOwnedWritableAttemptObservation> {
   if (![repoRoot, runtimeHome, reservationRoot, baseCommit, runId, stepId, attemptId, prompt, model, effort].every(required)) {
     throw deny('host_writable_attempt_input_missing');
   }
@@ -133,6 +137,11 @@ export async function runHostOwnedWritableAttempt({
   if (run.baseCommitSha && run.baseCommitSha !== baseCommit) {
     throw deny('host_writable_attempt_base_commit_mismatch');
   }
+  const ownerSnapshot = await snapshotHostWorkerPatch({ workspaceRoot: ownerRoot, runtimeHome });
+  if (ownerSnapshot.workspaceIdentity !== run.currentWorkspaceIdentity) {
+    throw deny('host_writable_attempt_owner_baseline_changed');
+  }
+  const resultBaseCommit = ownerSnapshot.resultCommitSha || baseCommit;
   const prepared = await prepareHostWriterAttemptWorktree({
     repoRoot: ownerRoot,
     runtimeHome,
@@ -141,6 +150,7 @@ export async function runHostOwnedWritableAttempt({
     runId,
     stepId,
     attemptId,
+    ownerSnapshot,
   });
   const registered = controlPlane.registerExecutionWorkspace(runId, prepared.workspaceRoot);
   if (!required(registered.workspaceId)
@@ -158,7 +168,6 @@ export async function runHostOwnedWritableAttempt({
     throw deny('host_writable_attempt_binding_unverified');
   }
 
-  const commandEvents: NativeExecutionObservation[] = [];
   const transport = await createCodexAppServerTransport({
     ...transportOptions,
     cwd: prepared.workspaceRoot,
@@ -200,7 +209,9 @@ export async function runHostOwnedWritableAttempt({
     let resultCaptureStatus: HostOwnedWritableAttemptObservation['resultCaptureStatus'] = 'not-attempted';
     if (nativeTurn.turnStatus === 'completed') {
       try {
-        snapshot = await snapshotHostWorkerPatch({ workspaceRoot: prepared.workspaceRoot, runtimeHome });
+        snapshot = await snapshotHostWorkerPatch({
+          workspaceRoot: prepared.workspaceRoot, runtimeHome, baseCommit: resultBaseCommit,
+        });
         resultCaptureStatus = 'captured';
       } catch (error) {
         // The old OS Writer can outlive a completed model Turn. A racing
@@ -287,6 +298,8 @@ export async function runHostOwnedWritableAttempt({
           workspaceId: registered.workspaceId,
           bindingId: currentAttempt.bindingId, capsuleId: currentAttempt.capsuleId,
           actorSessionId: currentAttempt.actorSessionId,
+          baseResultCommitSha: resultBaseCommit,
+          baseOwnerIndexDigest: ownerSnapshot.indexDigest,
         });
         controlPlane.recordStepResult(runId, stepId, {
           attemptId, executionWorkspaceId: registered.workspaceId,
@@ -337,6 +350,12 @@ export interface HostOwnedWritableAttemptHandle {
   observe(): {
     state: 'starting' | 'turn-running' | 'turn-settled' | 'unknown';
     nativeTurn: CodexAppServerTurnObservation | null;
+    commandEventReadback: {
+      scope: 'current-host-attempt';
+      observedCount: number;
+      omittedCount: number;
+      events: NativeExecutionObservation[];
+    };
     writerExitVerified: false;
   };
   interrupt(): Promise<CodexAppServerInterruptResult>;
@@ -354,7 +373,8 @@ export function startHostOwnedWritableAttempt(
   let nativeControl: Pick<CodexAppServerTransport, 'observeTurn' | 'interruptActiveTurn'> | null = null;
   let cancelQueued = false;
   let state: 'starting' | 'turn-running' | 'turn-settled' | 'unknown' = 'starting';
-  const result = runHostOwnedWritableAttempt({
+  const commandEvents: NativeExecutionObservation[] = [];
+  const result = executeHostOwnedWritableAttempt({
     ...input,
     onHostControl: (control) => {
       nativeControl = control;
@@ -362,7 +382,7 @@ export function startHostOwnedWritableAttempt(
       if (cancelQueued) void control.interruptActiveTurn();
       input.onHostControl?.(control);
     },
-  }).then((value) => {
+  }, commandEvents).then((value) => {
     state = 'turn-settled';
     return value;
   }, (error: unknown) => {
@@ -376,11 +396,28 @@ export function startHostOwnedWritableAttempt(
     runId: input.runId,
     attemptId: input.attemptId,
     result,
-    observe: () => ({
-      state,
-      nativeTurn: nativeControl?.observeTurn() || null,
-      writerExitVerified: false,
-    }),
+    observe: () => {
+      // This is a bounded projection of observed command identities from the
+      // current Attempt. Provider output and the full transcript stay outside it.
+      const events = commandEvents.slice(-32).map(event => ({
+        ...event,
+        threadId: sanitizePersistentText(event.threadId),
+        turnId: sanitizePersistentText(event.turnId),
+        itemId: sanitizePersistentText(event.itemId),
+        processId: event.processId === null ? null : sanitizePersistentText(event.processId),
+      }));
+      return {
+        state,
+        nativeTurn: nativeControl?.observeTurn() || null,
+        commandEventReadback: {
+          scope: 'current-host-attempt',
+          observedCount: commandEvents.length,
+          omittedCount: commandEvents.length - events.length,
+          events,
+        },
+        writerExitVerified: false,
+      };
+    },
     interrupt: () => {
       if (state === 'starting') {
         cancelQueued = true;

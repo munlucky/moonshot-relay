@@ -11,8 +11,9 @@ import {
   createStepResultCommit,
   canUseExecutionWorkspace,
   cleanupExecutionWorkspaces,
+  snapshotHostWorkerPatch,
 } from './workspace/physical-worktree.js';
-import { executeTrustedProof } from './proof/proof-executor.js';
+import { executeTrustedProof, executeWithFlakyRerun } from './proof/proof-executor.js';
 import { buildUsageReceipt } from './usage-receipt.js';
 import { prepareHostTurn } from './host-turn.js';
 import { buildModelVisiblePromptView } from './model-capsule-view.js';
@@ -160,7 +161,8 @@ type ParallelControlPlane = StepControlPlane & {
   discoverProjectCommands?: () => CommandLike[];
   registerExecutionWorkspace?: (...args: Parameters<ControlPlaneLike['registerExecutionWorkspace']>) => { workspaceId: string };
   acquireOwnerWorkspaceMutationFence?: (...args: Parameters<ControlPlaneLike['acquireOwnerWorkspaceMutationFence']>) => OwnerFenceLike | Promise<OwnerFenceLike>;
-  renewOwnerWorkspaceMutationFence?: (...args: Parameters<ControlPlaneLike['renewOwnerWorkspaceMutationFence']>) => OwnerFenceLike | Promise<OwnerFenceLike>;
+  renewOwnerWorkspaceMutationFence?: (...args: Parameters<ControlPlaneLike['renewOwnerWorkspaceMutationFence']>) => { lock: OwnerFenceLike['lock'] | null } | Promise<{ lock: OwnerFenceLike['lock'] | null }>;
+  getPendingHostWorkerDelivery?: ControlPlaneLike['getPendingHostWorkerDelivery'];
   prepareNext?: (...args: Parameters<ControlPlaneLike['prepareNext']>) => unknown | Promise<unknown>;
 } & {
   [K in 'assertOwnerWorkspaceMutationReady' | 'recordOwnerWorkspaceMutation' | 'releaseOwnerWorkspaceMutationFence' | 'settleParallelResult' | 'blockDeliveryMaterialization' | 'recordStepResult' | 'failStepAttempt']?: (...args: Parameters<ControlPlaneLike[K]>) => unknown | Promise<unknown>;
@@ -195,6 +197,7 @@ interface IntegrateParallelResultsInput {
   materializeDelivery: (input: MaterializeDeliveryInput) => UnknownRecord | Promise<UnknownRecord>;
   // Preflight creates only a protected candidate patch. No Owner CAS/Report.
   verifyOnly?: boolean;
+  ownerBaseline?: { commitSha: string; patch: string; workspaceIdentity: string };
   runtimeHome?: (string | null) | undefined;
   projectRoot: string;
   runId: string;
@@ -623,14 +626,20 @@ const git = (root: string, args: string[], options: RunGitOptions = {}): string 
   return String(result.stdout || '');
 };
 
-const stagedPaths = (root: string): string[] => normalizePaths(git(root, ['diff', '--name-only', '--cached', '--']).split(/\r?\n/u).filter(Boolean));
-
-const integrateParallelResults = async ({ run, steps, results, integrationWorkspace, deliveryWorkspace, integrationVerification, executeIntegrationVerification, beforeCherryPick, materializeDelivery, verifyOnly = false, runtimeHome, projectRoot, runId }: IntegrateParallelResultsInput): Promise<IntegrationResult> => {
+const integrateParallelResults = async ({ run, steps, results, integrationWorkspace, deliveryWorkspace, integrationVerification, executeIntegrationVerification, beforeCherryPick, materializeDelivery, verifyOnly = false, ownerBaseline, runtimeHome, projectRoot, runId }: IntegrateParallelResultsInput): Promise<IntegrationResult> => {
   const ordered = [...results].sort((left, right) => (steps.find((step) => step.stepId === left.stepId)?.sequence || 0) - (steps.find((step) => step.stepId === right.stepId)?.sequence || 0));
   const base = run.baseCommitSha || git(integrationWorkspace.workspaceRoot, ['rev-parse', 'HEAD']).trim();
   const preIntegrationIdentity = observeWorkspaceIdentity({ projectRoot: integrationWorkspace.workspaceRoot }).identity;
   try {
     if (git(integrationWorkspace.workspaceRoot, ['rev-parse', 'HEAD']).trim() !== base) throw new Error('parallel integration base changed');
+    if (ownerBaseline) {
+      if (beforeCherryPick) await beforeCherryPick();
+      git(integrationWorkspace.workspaceRoot, ['apply', '--index', '--binary', '-'], { input: ownerBaseline.patch });
+      if (observeWorkspaceIdentity({ projectRoot: integrationWorkspace.workspaceRoot }).identity !== ownerBaseline.workspaceIdentity) {
+        throw Object.assign(new Error('integration Owner baseline changed'), { code: 'integration_owner_baseline_mismatch' });
+      }
+    }
+    const patchBase = ownerBaseline?.commitSha || base;
     for (const result of ordered) {
       const step = steps.find((candidate) => candidate.stepId === result.stepId);
       if (!step || !result.resultCommitSha) throw new Error(`missing execution result for ${result.stepId || '<unknown>'}`);
@@ -642,33 +651,38 @@ const integrateParallelResults = async ({ run, steps, results, integrationWorksp
       if (beforeCherryPick) await beforeCherryPick();
       git(integrationWorkspace.workspaceRoot, ['cherry-pick', '--no-commit', result.resultCommitSha]);
     }
-    const integratedPaths = stagedPaths(integrationWorkspace.workspaceRoot);
+    const deltaPaths = () => normalizePaths(git(integrationWorkspace.workspaceRoot,
+      ['diff', '--cached', '--name-only', '-z', patchBase]).split('\0').filter(Boolean));
+    const integratedPaths = deltaPaths();
     const declaredPaths = normalizePaths(ordered.flatMap((result) => result.changedPaths || []));
     if (JSON.stringify(integratedPaths) !== JSON.stringify(declaredPaths)) {
       throw Object.assign(new Error('integrated diff does not match execution receipts'), { code: 'integration_receipt_paths_mismatch' });
     }
-    const preVerificationPatch = git(integrationWorkspace.workspaceRoot, ['diff', '--cached', '--binary', base]);
+    const preVerificationPatch = git(integrationWorkspace.workspaceRoot, ['diff', '--cached', '--binary', patchBase]);
+    const preVerificationIdentity = observeWorkspaceIdentity({ projectRoot: integrationWorkspace.workspaceRoot }).identity;
     const verification = asRecord(await executeIntegrationVerification({
       commandRef: integrationVerification.commandRef,
       workspaceRoot: integrationWorkspace.workspaceRoot,
       run,
       steps,
     }));
-    if (verification.status !== 'passed' || verification.passed !== true) {
-      throw Object.assign(new Error('parallel integration verification failed'), { code: 'integration_verification_failed' });
-    }
     // Verification is trusted proof, not a second mutation authority. Re-read
     // both the staged path set and the exact patch after it runs so a helper
     // that stages an extra file (or changes an integrated file) cannot smuggle
     // content into Delivery outside the execution receipts.
-    const postVerificationPaths = stagedPaths(integrationWorkspace.workspaceRoot);
-    const postVerificationPatch = git(integrationWorkspace.workspaceRoot, ['diff', '--cached', '--binary', base]);
+    const postVerificationPaths = deltaPaths();
+    const postVerificationPatch = git(integrationWorkspace.workspaceRoot, ['diff', '--cached', '--binary', patchBase]);
     if (JSON.stringify(postVerificationPaths) !== JSON.stringify(integratedPaths)
       || JSON.stringify(postVerificationPaths) !== JSON.stringify(declaredPaths)
-      || postVerificationPatch !== preVerificationPatch) {
+      || postVerificationPatch !== preVerificationPatch
+      || observeWorkspaceIdentity({ projectRoot: integrationWorkspace.workspaceRoot }).identity !== preVerificationIdentity) {
       throw Object.assign(new Error('integration verification changed the staged Delivery patch'), { code: 'integration_verification_changed_paths' });
     }
     const integrationIdentity = observeWorkspaceIdentity({ projectRoot: integrationWorkspace.workspaceRoot }).identity;
+    if (verification.status !== 'passed' || verification.passed !== true) {
+      return { status: 'failed', failureCode: 'integration_verification_failed',
+        verification, changedPaths: integratedPaths, integrationWorkspaceIdentity: integrationIdentity };
+    }
     const patch = postVerificationPatch;
     if (!patch) throw Object.assign(new Error('delivery_patch_empty'), { code: 'delivery_patch_empty' });
     if (verifyOnly) {
@@ -703,6 +717,144 @@ const integrateParallelResults = async ({ run, steps, results, integrationWorksp
     try { runGit(integrationWorkspace.workspaceRoot, ['cherry-pick', '--abort']); } catch {}
     const failure = errorRecord(error);
     return { status: 'failed', failureCode: String(failure.code || 'parallel-integration-failed'), error, changedPaths: [] };
+  }
+};
+
+// Shared Owner materialization boundary for integrated Worker results. Caller
+// admission owns Writer exclusion; this function owns the existing fence/CAS.
+const materializeOwnerDelivery = async ({
+  controlPlane, projectRoot: repoRoot, runId, snapshot: deliverySnapshot,
+  patch, integrationWorkspaceIdentity, changedPaths,
+  ownerFence: suppliedFence = null, retainFence = false,
+}: {
+  controlPlane: ParallelControlPlane;
+  projectRoot: string;
+  runId: string;
+  snapshot: Parameters<ControlPlaneLike['acquireOwnerWorkspaceMutationFence']>[1];
+  patch: string;
+  integrationWorkspaceIdentity: string;
+  changedPaths: string[];
+  ownerFence?: OwnerFenceLike | null;
+  retainFence?: boolean;
+}): Promise<UnknownRecord> => {
+  const acquireOwnerFence = controlPlane.acquireOwnerWorkspaceMutationFence;
+  const renewOwnerFence = controlPlane.renewOwnerWorkspaceMutationFence;
+  const assertOwnerMutationReady = controlPlane.assertOwnerWorkspaceMutationReady;
+  const recordOwnerMutation = controlPlane.recordOwnerWorkspaceMutation;
+  const releaseOwnerFence = controlPlane.releaseOwnerWorkspaceMutationFence;
+  const blockDeliveryMaterialization = controlPlane.blockDeliveryMaterialization;
+  if (!acquireOwnerFence || !renewOwnerFence || !assertOwnerMutationReady
+    || !recordOwnerMutation || !releaseOwnerFence || !blockDeliveryMaterialization) {
+    throw Object.assign(new Error('delivery_authority_unavailable'), { code: 'delivery_authority_unavailable' });
+  }
+  if (path.resolve(repoRoot) !== path.resolve(controlPlane.projectRoot || repoRoot)) {
+    throw Object.assign(new Error('delivery_workspace_mismatch'), { code: 'delivery_workspace_mismatch' });
+  }
+  let ownerFence: OwnerFenceLike | null = suppliedFence;
+  let applyAttempted = false;
+  let primaryError: UnknownRecord | null = null;
+  try {
+    if (!ownerFence) ownerFence = await acquireOwnerFence(runId, deliverySnapshot);
+    const check = runGit(repoRoot, ['apply', '--check', '--binary', '-'], { input: patch, maxBuffer: 64 * 1024 * 1024 });
+    if (check.error || check.status !== 0) throw Object.assign(new Error(String(check.stderr || '').trim() || 'delivery patch check failed'), { code: 'delivery_patch_check_failed' });
+    // The check itself can take long enough for the owner lease to
+    // expire. Renew and re-run the full owner CAS immediately before the
+    // mutating git apply; a lost/reissued fence therefore fails closed
+    // before any Delivery bytes are changed.
+    const renewedFence = await renewOwnerFence(runId, {
+      ...deliverySnapshot,
+      workspaceId: ownerFence.lock.workspaceId,
+      fencingToken: ownerFence.lock.fencingToken,
+      sessionToken: ownerFence.lock.sessionToken,
+    });
+    if (!renewedFence.lock) throw new Error('delivery_mutation_fence_lost');
+    ownerFence = { ...renewedFence, lock: renewedFence.lock };
+    await assertOwnerMutationReady(runId, {
+      ...deliverySnapshot,
+      expectedWorkspaceId: ownerFence.lock.workspaceId,
+      fencingToken: ownerFence.lock.fencingToken,
+      sessionToken: ownerFence.lock.sessionToken,
+      integrationWorkspaceIdentity,
+      changedPaths,
+      patchDigest: digest(patch),
+    });
+    const applyTimeoutMs = deliveryApplyTimeoutMs({ expiresAt: ownerFence.lock.expiresAt ?? null });
+    if (applyTimeoutMs <= 0) {
+      throw Object.assign(new Error('delivery mutation fence has insufficient remaining lease for patch apply'), { code: 'delivery_mutation_fence_lost' });
+    }
+    applyAttempted = true;
+    const apply = runGit(repoRoot, ['apply', '--binary', '-'], {
+      input: patch,
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: applyTimeoutMs,
+      killSignal: 'SIGTERM',
+    });
+    if (apply.error || apply.status !== 0) {
+      const timedOut = (apply.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT';
+      throw Object.assign(new Error(String(apply.stderr || '').trim() || (timedOut ? 'delivery patch apply exceeded the owner fence deadline' : 'delivery patch failed')), {
+        code: timedOut ? 'delivery_patch_apply_timeout' : 'delivery_patch_apply_failed',
+      });
+    }
+    let mutation;
+    try {
+      mutation = asRecord(await recordOwnerMutation(runId, {
+        ...deliverySnapshot,
+        fencingToken: ownerFence.lock.fencingToken,
+        sessionToken: ownerFence.lock.sessionToken,
+        integrationWorkspaceIdentity,
+        changedPaths,
+        patchDigest: digest(patch),
+      }));
+    } catch (error) {
+      // The CAS may have committed before its caller received the outcome.
+      // Only a canonical single Worker receipt can identify that exact
+      // mutation. The caller still renews its post-CAS fence before Report.
+      const committed = deliverySnapshot?.baselineAttemptId
+        ? controlPlane.getPendingHostWorkerDelivery?.(runId, deliverySnapshot.baselineAttemptId)
+        : null;
+      if (!committed || committed.deliveryWorkspaceIdentity !== integrationWorkspaceIdentity
+        || committed.patchDigest !== digest(patch)) throw error;
+      mutation = committed;
+    }
+    return { ...mutation, snapshot: deliverySnapshot };
+  } catch (error: unknown) {
+    primaryError = errorRecord(error);
+    if (applyAttempted) {
+      try {
+        await blockDeliveryMaterialization(runId, {
+          reason: 'delivery_materialization_recovery_required',
+          detail: String(primaryError.message || error),
+        });
+      } catch (recoveryError: unknown) {
+        primaryError.recoveryError = recoveryError;
+      }
+    }
+    throw error;
+  } finally {
+    if (ownerFence && !retainFence) {
+      try {
+        await releaseOwnerFence(runId, {
+          workspaceId: ownerFence.lock.workspaceId,
+          fencingToken: ownerFence.lock.fencingToken,
+          sessionToken: ownerFence.lock.sessionToken,
+        });
+      } catch (releaseError: unknown) {
+        if (primaryError) {
+          primaryError.releaseError = releaseError;
+        } else {
+          const releaseFailure = errorRecord(releaseError);
+          try {
+            await blockDeliveryMaterialization(runId, {
+              reason: 'delivery_materialization_recovery_required',
+              detail: String(releaseFailure.message || releaseError),
+            });
+          } catch (recoveryError: unknown) {
+            releaseFailure.recoveryError = recoveryError;
+          }
+          throw releaseError;
+        }
+      }
+    }
   }
 };
 
@@ -796,8 +948,6 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
   }
   const acquireOwnerFence = controlPlane.acquireOwnerWorkspaceMutationFence;
   const renewOwnerFence = controlPlane.renewOwnerWorkspaceMutationFence;
-  const assertOwnerMutationReady = controlPlane.assertOwnerWorkspaceMutationReady;
-  const recordOwnerMutation = controlPlane.recordOwnerWorkspaceMutation;
   const releaseOwnerFence = controlPlane.releaseOwnerWorkspaceMutationFence;
   // The canonical Kernel settlement method calls other Control Plane methods
   // through `this`. Retain its receiver when crossing the Host dispatcher.
@@ -1030,102 +1180,11 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
         integrationWorkspaceIdentity,
         changedPaths,
       }: MaterializeDeliveryInput): Promise<UnknownRecord> => {
-        if (path.resolve(repoRoot) !== path.resolve(controlPlane.projectRoot || repoRoot)) {
-          throw Object.assign(new Error('delivery_workspace_mismatch'), { code: 'delivery_workspace_mismatch' });
-        }
-        let ownerFence: OwnerFenceLike | null = guardedOwnerFence;
-        let applyAttempted = false;
-        let primaryError: UnknownRecord | null = null;
-        try {
-          if (!ownerFence) ownerFence = await acquireOwnerFence(runId, deliverySnapshot);
-          const check = runGit(repoRoot, ['apply', '--check', '--binary', '-'], { input: patch, maxBuffer: 64 * 1024 * 1024 });
-          if (check.error || check.status !== 0) throw Object.assign(new Error(String(check.stderr || '').trim() || 'delivery patch check failed'), { code: 'delivery_patch_check_failed' });
-          // The check itself can take long enough for the owner lease to
-          // expire. Renew and re-run the full owner CAS immediately before the
-          // mutating git apply; a lost/reissued fence therefore fails closed
-          // before any Delivery bytes are changed.
-          const renewedFence = await renewOwnerFence(runId, {
-            ...deliverySnapshot,
-            workspaceId: ownerFence.lock.workspaceId,
-            fencingToken: ownerFence.lock.fencingToken,
-            sessionToken: ownerFence.lock.sessionToken,
-          });
-          if (!renewedFence.lock) throw new Error('delivery_mutation_fence_lost');
-          ownerFence = { ...renewedFence, lock: renewedFence.lock };
-          await assertOwnerMutationReady(runId, {
-            ...deliverySnapshot,
-            expectedWorkspaceId: ownerFence.lock.workspaceId,
-            fencingToken: ownerFence.lock.fencingToken,
-            sessionToken: ownerFence.lock.sessionToken,
-            integrationWorkspaceIdentity,
-            changedPaths,
-            patchDigest: digest(patch),
-          });
-          applyAttempted = true;
-          const applyTimeoutMs = deliveryApplyTimeoutMs({ expiresAt: ownerFence.lock.expiresAt ?? null });
-          if (applyTimeoutMs <= 0) {
-            throw Object.assign(new Error('delivery mutation fence has insufficient remaining lease for patch apply'), { code: 'delivery_mutation_fence_lost' });
-          }
-          const apply = runGit(repoRoot, ['apply', '--binary', '-'], {
-            input: patch,
-            maxBuffer: 64 * 1024 * 1024,
-            timeout: applyTimeoutMs,
-            killSignal: 'SIGTERM',
-          });
-          if (apply.error || apply.status !== 0) {
-            const timedOut = (apply.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT';
-            throw Object.assign(new Error(String(apply.stderr || '').trim() || (timedOut ? 'delivery patch apply exceeded the owner fence deadline' : 'delivery patch failed')), {
-              code: timedOut ? 'delivery_patch_apply_timeout' : 'delivery_patch_apply_failed',
-            });
-          }
-          const mutation = asRecord(await recordOwnerMutation(runId, {
-            ...deliverySnapshot,
-            fencingToken: ownerFence.lock.fencingToken,
-            sessionToken: ownerFence.lock.sessionToken,
-            integrationWorkspaceIdentity,
-            changedPaths,
-            patchDigest: digest(patch),
-          }));
-          return { ...mutation, snapshot: deliverySnapshot };
-        } catch (error: unknown) {
-          primaryError = errorRecord(error);
-          if (applyAttempted) {
-            try {
-              await blockDeliveryMaterialization(runId, {
-                reason: 'delivery_materialization_recovery_required',
-                detail: String(primaryError.message || error),
-              });
-            } catch (recoveryError: unknown) {
-              primaryError.recoveryError = recoveryError;
-            }
-          }
-          throw error;
-        } finally {
-          if (ownerFence && !guardedIntegration) {
-            try {
-              await releaseOwnerFence(runId, {
-                workspaceId: ownerFence.lock.workspaceId,
-                fencingToken: ownerFence.lock.fencingToken,
-                sessionToken: ownerFence.lock.sessionToken,
-              });
-            } catch (releaseError: unknown) {
-              if (primaryError) {
-                primaryError.releaseError = releaseError;
-              } else {
-                const releaseFailure = errorRecord(releaseError);
-                try {
-                  await blockDeliveryMaterialization(runId, {
-                    reason: 'delivery_materialization_recovery_required',
-                    detail: String(releaseFailure.message || releaseError),
-                  });
-                } catch (recoveryError: unknown) {
-                  releaseFailure.recoveryError = recoveryError;
-                }
-                throw releaseError;
-              }
-            }
-          }
-        }
+        return materializeOwnerDelivery({
+          controlPlane, projectRoot: repoRoot, runId, snapshot: deliverySnapshot,
+          patch, integrationWorkspaceIdentity, changedPaths,
+          ownerFence: guardedOwnerFence, retainFence: guardedIntegration,
+        });
       },
       runtimeHome,
       projectRoot: repoRoot,
@@ -1254,15 +1313,7 @@ export const dispatchKernelParallel = async (options: DispatchKernelParallelInpu
 
 export const dispatchKernelRun = (options: DispatchKernelParallelInput = {} as DispatchKernelParallelInput) => dispatchKernelParallel(options);
 
-// One Host-owned Worker result enters the SAME integration verifier used by
-// parallel results. Proof-only: no Owner mutation, CAS, Report or automatic
-// Step transition. Native Writer retirement is a separate requirement.
-export const verifyHostOwnedWorkerCandidate = async ({
-  controlPlane, projectRoot, runtimeHome, runId, stepId, attemptId,
-  workspaceId, workspaceRoot, baseWorkspaceIdentity,
-  resultCommitSha, patchDigest, changedPaths, resultWorkspaceIdentity,
-  commandRef, verificationRunner = null,
-}: {
+export interface HostOwnedWorkerCandidateInput {
   controlPlane: ControlPlaneLike;
   projectRoot: string;
   runtimeHome: string;
@@ -1276,31 +1327,83 @@ export const verifyHostOwnedWorkerCandidate = async ({
   patchDigest: string;
   changedPaths: string[];
   resultWorkspaceIdentity: string;
-  commandRef: string;
+  commandRef?: string;
   // Only direct, isolated fixture calls may supply an alternate proof runner.
   // This method NEVER grants Delivery authority, even after a passing proof.
   verificationRunner?: ((input: VerificationRunnerInput) => UnknownRecord | Promise<UnknownRecord>) | null;
-}): Promise<UnknownRecord> => {
+}
+
+// The Host owns this execution boundary. It must establish persistent Writer
+// exclusion from real lifecycle/OS evidence before invoking the operation.
+// This is not model input, a boolean attestation, or a Delivery receipt.
+export type WithHostWorkerExcluded = (
+  candidate: Readonly<HostOwnedWorkerCandidateInput>,
+  operation: () => Promise<void>,
+) => Promise<void>;
+
+export const verifyHostOwnedWorkerCandidate = (input: HostOwnedWorkerCandidateInput): Promise<UnknownRecord> => (
+  processHostOwnedWorkerCandidate(input, false)
+);
+
+export const settleHostOwnedWorkerCandidate = async (
+  input: HostOwnedWorkerCandidateInput,
+  withWriterExcluded: WithHostWorkerExcluded | undefined,
+): Promise<UnknownRecord> => {
+  const blocked = (failureCode: string): UnknownRecord => ({ schemaVersion: 1, runId: input.runId,
+    status: 'blocked', failureCode, writerExitVerified: false, deliveryAuthorized: false });
+  if (!withWriterExcluded) return blocked('host_worker_writer_exclusion_unavailable');
+  // Fixture proof runners are deliberately incapable of authorizing Delivery.
+  if (input.verificationRunner) return blocked('host_worker_delivery_proof_override_rejected');
+  let invoked = false;
+  let result: UnknownRecord | null = null;
+  let operation: Promise<void> | null = null;
+  try {
+    await withWriterExcluded(input, () => {
+      if (invoked) throw Object.assign(new Error('Host exclusion operation invoked twice'), {
+        code: 'host_worker_exclusion_operation_repeated',
+      });
+      invoked = true;
+      operation = processHostOwnedWorkerCandidate(input, true).then(value => { result = value; });
+      // Keep the actual settlement observed even if a faulty Host callback
+      // returns early or throws while its operation is still running.
+      void operation.catch(() => undefined);
+      return operation;
+    });
+    await operation;
+    return result || blocked('host_worker_writer_exclusion_unconfirmed');
+  } catch (error: unknown) {
+    try { await operation; } catch { /* Preserve the Host boundary failure. */ }
+    return blocked(String(errorRecord(error).code || 'host_worker_writer_exclusion_failed'));
+  }
+};
+
+// A single canonical result uses the existing integration verifier and Owner
+// materializer. Only the Host exclusion boundary may select settlement mode.
+const processHostOwnedWorkerCandidate = async ({
+  controlPlane, projectRoot, runtimeHome, runId, stepId, attemptId,
+  workspaceId, workspaceRoot, baseWorkspaceIdentity,
+  resultCommitSha, patchDigest, changedPaths, resultWorkspaceIdentity,
+  commandRef, verificationRunner = null,
+}: HostOwnedWorkerCandidateInput, settle: boolean): Promise<UnknownRecord> => {
   const blocked = (failureCode: string): UnknownRecord => ({
     schemaVersion: 1, runId, status: 'blocked', failureCode,
     writerExitVerified: false, deliveryAuthorized: false,
   });
-  if (!commandRef || !/^[a-f\d]{40,64}$/i.test(resultCommitSha) || changedPaths.length === 0 || !patchDigest
+  if (!/^[a-f\d]{40,64}$/i.test(resultCommitSha) || changedPaths.length === 0 || !patchDigest
     || !baseWorkspaceIdentity || !resultWorkspaceIdentity) return blocked('host_worker_result_incomplete');
-  // A product proof runner requires OS-scoped protection for the integration
-  // Worktree. An injected fixture runner cannot become a Delivery authority.
-  if (!verificationRunner && process.platform !== 'darwin') return blocked('host_worker_proof_write_scope_unavailable');
   const run = await controlPlane.getRun(runId);
   const step = controlPlane.getRunSteps(runId).find((row) => row.stepId === stepId);
   const attempt = controlPlane.getAttemptById(runId, attemptId);
-  if (!run?.projectId || run.status !== 'active' || !run.workspaceId
+  const recovery = settle ? controlPlane.getPendingHostWorkerDelivery(runId, attemptId) : null;
+  if (!run?.projectId || !run.workspaceId
+    || (run.status !== 'active' && !(run.status === 'completed' && recovery?.reportCheckpointPending))
     || !step || step.planRevision !== run.planRevision
     || !attempt || attempt.provenanceKind !== 'host-owned-worker'
-    || attempt.status !== 'started' || attempt.stepId !== stepId
+    || (!recovery && attempt.status !== 'started') || attempt.stepId !== stepId
     || attempt.planRevision !== run.planRevision
     || attempt.workspaceId !== workspaceId
     || attempt.baseWorkspaceIdentity !== baseWorkspaceIdentity
-    || Number(attempt.mutationRevision) !== Number(run.mutationRevision)
+    || (!recovery && attempt.mutationRevision !== run.mutationRevision)
     || (step.executionWorkspaceId && step.executionWorkspaceId !== workspaceId)) {
     return blocked('host_worker_canonical_attempt_changed');
   }
@@ -1316,12 +1419,6 @@ export const verifyHostOwnedWorkerCandidate = async ({
     || JSON.stringify(normalizePaths(Array.isArray(workerReport.changedPaths) ? workerReport.changedPaths as string[] : [])) !== JSON.stringify(normalizePaths(changedPaths))) {
     return blocked('host_worker_canonical_result_mismatch');
   }
-  const obligation = controlPlane.getRunObligations(runId).find(item =>
-    (step.obligationIds || []).includes(item.obligationId) && item.evidenceClass === 'hard'
-    && item.allowedCommandRefs.includes(commandRef));
-  if (!obligation || !controlPlane.discoverProjectCommands().some(item => item.commandRef === commandRef)) {
-    return blocked('host_worker_bound_proof_unavailable');
-  }
   if (changedPaths.some((file) =>
     !(step.allowedPaths || []).some((scope) => pathWithin(file, scope))
     || (step.forbiddenPaths || []).some((scope) => pathWithin(file, scope)))) {
@@ -1335,17 +1432,35 @@ export const verifyHostOwnedWorkerCandidate = async ({
     || observeWorkspaceIdentity({ projectRoot: workspaceRoot }).identity !== resultWorkspaceIdentity) {
     return blocked('host_worker_result_workspace_drift');
   }
+  if (workerReport.baseResultCommitSha
+    && (typeof workerReport.baseResultCommitSha !== 'string' || !/^[a-f\d]{40,64}$/iu.test(workerReport.baseResultCommitSha))) {
+    return blocked('host_worker_canonical_result_mismatch');
+  }
   const commit = runGit(workspaceRoot, ['rev-list', '--parents', '-n', '1', resultCommitSha]);
   const patch = runGit(workspaceRoot, ['show', '--format=', '--binary', resultCommitSha], { maxBuffer: 64 * 1024 * 1024 });
   const files = runGit(workspaceRoot, ['diff-tree', '--no-commit-id', '--name-only', '-z', '-r', resultCommitSha]);
   if (commit.error || commit.status !== 0 || patch.error || patch.status !== 0
     || files.error || files.status !== 0
     || String(commit.stdout || '').trim().split(/\s+/u).length !== 2
-    || String(commit.stdout || '').trim().split(/\s+/u)[1] !== ownerHead
+    || String(commit.stdout || '').trim().split(/\s+/u)[1] !== (workerReport.baseResultCommitSha || ownerHead)
     || digest(String(patch.stdout || '')) !== patchDigest
     || JSON.stringify(String(files.stdout || '').split('\0').filter(Boolean).sort()) !== JSON.stringify([...changedPaths].sort())) {
     return blocked('host_worker_result_commit_drift');
   }
+  const workerReceipt = {
+    attemptId, executionWorkspaceId: workspaceId,
+    workerWorkspaceIdentity: baseWorkspaceIdentity,
+    resultWorkspaceIdentity, resultCommitSha, changedPaths, patchDigest, workerReport,
+  };
+  if (recovery?.reportCheckpointPending) {
+    const report = asRecord(await controlPlane.settleParallelResult(runId, workerReport, { result: workerReceipt }));
+    if (nestedRecord(report, 'step').state !== 'passed') return { ...blocked('host_worker_report_not_settled'), report };
+    return { schemaVersion: 1, runId, status: 'settled', deliveryMutation: recovery, report,
+      next: report.next || null, deliveryAuthorized: true, writerExitVerified: false };
+  }
+  // New product Proof requires OS-scoped protection for the integration
+  // Worktree. A journaled Report above already has its protected evidence.
+  if (!verificationRunner && process.platform !== 'darwin') return blocked('host_worker_proof_write_scope_unavailable');
   const expected = {
     expectedMutationRevision: Number(run.mutationRevision ?? -1),
     expectedWorkspaceIdentity: ownerIdentity,
@@ -1353,19 +1468,43 @@ export const verifyHostOwnedWorkerCandidate = async ({
     expectedProjectId: run.projectId,
     expectedWorktreeId: run.worktreeId,
     expectedWorkspaceId: run.workspaceId,
+    baselineAttemptId: attemptId,
   };
   let fence: OwnerFenceLike | null = null;
+  let deliveryCommitted = false;
   let outcome: UnknownRecord = blocked('host_worker_integration_not_started');
   try {
+    const proofPlan = controlPlane.getHostWorkerCandidateProofPlan(runId, attemptId);
+    const firstProof = proofPlan[0]?.commandRef;
+    if (!firstProof || (verificationRunner && commandRef && !proofPlan.some(request => request.commandRef === commandRef))) {
+      return blocked('host_worker_bound_proof_unavailable');
+    }
     // Reuse the Kernel Owner fence across ALL integration writes and Proof.
     // This is cooperating-Host serialization, never OS Writer retirement.
-    fence = await controlPlane.acquireOwnerWorkspaceMutationFence(runId, expected);
-    const renew = async (): Promise<void> => {
+    fence = await controlPlane.acquireOwnerWorkspaceMutationFence(runId, {
+      ...expected, recoveryAttemptId: recovery ? attemptId : null,
+    });
+    const ownerSnapshot = await snapshotHostWorkerPatch({ workspaceRoot: projectRoot, runtimeHome });
+    const sourceBaseCommit = String(workerReport.baseResultCommitSha || ownerHead);
+    const actualBaselineCommit = ownerSnapshot.resultCommitSha || ownerHead;
+    if (ownerSnapshot.workspaceIdentity !== ownerIdentity
+      || (ownerSnapshot.patch && ownerSnapshot.indexDigest !== workerReport.baseOwnerIndexDigest)
+      || git(projectRoot, ['rev-parse', (recovery ? resultCommitSha : sourceBaseCommit) + '^{tree}']).trim()
+        !== git(projectRoot, ['rev-parse', actualBaselineCommit + '^{tree}']).trim()) {
+      return blocked('host_worker_owner_baseline_changed');
+    }
+    const renew = async (postCommit = false): Promise<void> => {
       if (!fence) throw Object.assign(new Error('host_worker_fence_missing'), { code: 'delivery_mutation_fence_lost' });
       const updated = await controlPlane.renewOwnerWorkspaceMutationFence(runId, {
         ...expected, workspaceId: fence.lock.workspaceId,
         fencingToken: fence.lock.fencingToken,
         sessionToken: fence.lock.sessionToken,
+        ...(postCommit || recovery ? {
+          expectedMutationRevision: expected.expectedMutationRevision + (recovery ? 0 : 1),
+          expectedWorkspaceIdentity: recovery ? recovery.deliveryWorkspaceIdentity
+            : observeWorkspaceIdentity({ projectRoot }).identity,
+          phase: 'post-commit' as const,
+        } : {}),
       });
       if (!updated.lock) throw Object.assign(new Error('host_worker_fence_lost'), { code: 'delivery_mutation_fence_lost' });
       fence = { lock: updated.lock };
@@ -1377,66 +1516,184 @@ export const verifyHostOwnedWorkerCandidate = async ({
     const registered = controlPlane.registerExecutionWorkspace(runId, prepared.workspaceRoot);
     if (!registered?.workspaceId) return blocked('host_worker_integration_workspace_missing');
     const integration: RegisteredWorkspace = { ...prepared, ...registered } as RegisteredWorkspace;
+    if (recovery) {
+      // Rebuild a fresh Proof root from the already-committed Owner contents.
+      // No command in this branch applies a patch to Owner or starts a Worker.
+      await renew();
+      if (ownerSnapshot.patch) {
+        git(integration.workspaceRoot, ['apply', '--index', '--binary', '-'], { input: ownerSnapshot.patch });
+      }
+      if (observeWorkspaceIdentity({ projectRoot: integration.workspaceRoot }).identity !== recovery.deliveryWorkspaceIdentity) {
+        return blocked('host_worker_recovery_workspace_mismatch');
+      }
+    }
     const result: IntegrationReceipt = {
       stepId, step: step as StepLike,
       workspace: { workspaceId, workspaceRoot },
       outcome: { status: 'passed' }, resultCommitSha,
       changedPaths, patchDigest, resultWorkspaceIdentity,
     };
-    const integrationResult = await integrateParallelResults({
+    const integrationResult = recovery ? null : await integrateParallelResults({
       run: { ...run, baseCommitSha: ownerHead },
       steps: [step as StepLike], results: [result],
       integrationWorkspace: integration,
       deliveryWorkspace: { workspaceRoot: projectRoot },
-      integrationVerification: { commandRef },
-      executeIntegrationVerification: verificationRunner || (async ({ commandRef: proofRef, workspaceRoot: proofRoot }) => {
-        const execution = executeTrustedProof({
-          projectRoot: proofRoot, commandRef: proofRef,
-          writeScope: proofRoot,
-          evidenceDir: path.join(runtimeHome, 'evidence', run.projectId!, runId, 'host-worker-preflight'),
-        });
-        const protectedProof = execution.writeContainment?.mechanism === 'macos-seatbelt';
-        return { status: protectedProof ? execution.status : 'failed',
-          passed: protectedProof && execution.status === 'passed',
-          verificationRef: execution.evidenceRef, execution };
-      }),
+      integrationVerification: { commandRef: verificationRunner && commandRef ? commandRef : firstProof },
+      executeIntegrationVerification: async (input) => {
+        const proofRoot = input.workspaceRoot;
+        const proofIdentity = observeWorkspaceIdentity({ projectRoot: proofRoot }).identity;
+        const staged = () => git(proofRoot, ['diff', '--cached', '--raw', '--no-abbrev', '-z']);
+        const proofPatch = staged();
+        const checked = new Set<string>();
+        const executions: UnknownRecord[] = [];
+        for (const { commandRef: proofRef, timeoutMs, networkPolicy, flakyRerun } of proofPlan) {
+          const key = JSON.stringify([proofRef, timeoutMs, networkPolicy, flakyRerun]);
+          if (checked.has(key)) continue;
+          checked.add(key);
+          await renew();
+          let proof: UnknownRecord;
+          if (verificationRunner) {
+            proof = asRecord(await verificationRunner({ ...input, commandRef: String(proofRef) }));
+          } else {
+            const execute = () => executeTrustedProof({
+              projectRoot: proofRoot, commandRef: proofRef, timeoutMs, networkPolicy,
+              writeScope: proofRoot,
+              evidenceDir: path.join(runtimeHome, 'evidence', run.projectId!, runId, 'host-worker-preflight'),
+            });
+            const result = flakyRerun ? executeWithFlakyRerun(execute) : execute();
+            const passed = result.status === 'passed' && result.writeContainment?.mechanism === 'macos-seatbelt'
+              && !('flaky' in result && result.flaky === true);
+            proof = { status: passed ? 'passed' : 'failed', passed,
+              verificationRef: result.evidenceRef, execution: result };
+          }
+          if (staged() !== proofPatch || observeWorkspaceIdentity({ projectRoot: proofRoot }).identity !== proofIdentity) {
+            throw Object.assign(new Error('Candidate Proof changed the staged patch or working bytes'), {
+              code: 'integration_verification_changed_paths',
+            });
+          }
+          executions.push(proof);
+          if (proof.status !== 'passed' || proof.passed !== true) return { ...proof, executions };
+        }
+        return { ...executions.at(-1), status: 'passed', passed: true, executions };
+      },
       // The integration engine must not attempt an Owner delivery even if
       // a fixture verification returns passed.
-      beforeCherryPick: renew,
-      materializeDelivery: () => { throw new Error('host_worker_preflight_has_no_delivery_authority'); },
-      verifyOnly: true, runtimeHome, projectRoot, runId,
+      beforeCherryPick: () => renew(),
+      materializeDelivery: async (delivery) => {
+        if (!settle) throw new Error('host_worker_preflight_has_no_delivery_authority');
+        if (digest(delivery.patch) !== patchDigest
+          || delivery.integrationWorkspaceIdentity !== resultWorkspaceIdentity) {
+          throw Object.assign(new Error('Integrated patch differs from the canonical Worker patch'), {
+            code: 'host_worker_delivery_result_mismatch',
+          });
+        }
+        // Re-observe the immutable result immediately before entering the
+        // existing Owner apply/CAS boundary. The Host still holds exclusion.
+        const liveRun = await controlPlane.getRun(runId);
+        const current = controlPlane.getAttemptById(runId, attemptId);
+        if (liveRun?.status !== 'active' || liveRun.contractRevision !== run.contractRevision
+          || liveRun.planRevision !== run.planRevision || liveRun.mutationRevision !== run.mutationRevision
+          || current?.status !== 'started' || current.resultCommitSha !== resultCommitSha
+          || current.patchDigest !== patchDigest
+          || JSON.stringify(current.workerReport) !== JSON.stringify(attempt.workerReport)
+          || observeWorkspaceIdentity({ projectRoot: workspaceRoot }).identity !== resultWorkspaceIdentity) {
+          throw Object.assign(new Error('Worker changed before Owner materialization'), { code: 'host_worker_preflight_drift' });
+        }
+        const mutation = await materializeOwnerDelivery({
+          controlPlane, projectRoot, runId, snapshot: expected,
+          ...delivery, ownerFence: fence, retainFence: true,
+        });
+        deliveryCommitted = true;
+        return mutation;
+      },
+      verifyOnly: !settle, runtimeHome, projectRoot, runId,
+      ...(ownerSnapshot.patch ? { ownerBaseline: {
+        commitSha: sourceBaseCommit, patch: ownerSnapshot.patch, workspaceIdentity: ownerIdentity,
+      } } : {}),
     });
-    await renew();
-    const lastRun = await controlPlane.getRun(runId);
-    const afterAttempt = controlPlane.getAttemptById(runId, attemptId);
-    if (lastRun?.mutationRevision !== run.mutationRevision
-      || observeWorkspaceIdentity({ projectRoot }).identity !== ownerIdentity
-      || observeWorkspaceIdentity({ projectRoot: workspaceRoot }).identity !== resultWorkspaceIdentity
-      || lastRun?.contractRevision !== run.contractRevision || lastRun?.planRevision !== run.planRevision
-      || afterAttempt?.status !== 'started' || afterAttempt.resultCommitSha !== resultCommitSha
-      || afterAttempt.patchDigest !== patchDigest
-      || JSON.stringify(afterAttempt.workerReport) !== JSON.stringify(attempt.workerReport)) return blocked('host_worker_preflight_drift');
-    outcome = integrationResult.status === 'verified'
-      ? { schemaVersion: 1, runId, status: 'verified',
-        candidate: {
-          patchDigest: integrationResult.patchDigest,
-          changedPaths: integrationResult.changedPaths,
-          integrationWorkspaceIdentity: integrationResult.integrationWorkspaceIdentity,
-        },
-        verification: integrationResult.verification,
-        writerExitVerified: false, deliveryAuthorized: false,
+    if (recovery || (settle && integrationResult?.status === 'integrated')) {
+      await renew(true);
+      let report;
+      try {
+        report = asRecord(await controlPlane.settleParallelResult(runId, workerReport, {
+          deliveryMutation: integrationResult?.deliveryMutation,
+          guardedProofRoot: integration.workspaceRoot,
+          result: workerReceipt,
+        }));
+      } catch (error) {
+        // Recover from a durable Report or its protected checkpoint. Neither
+        // path can apply the Worker patch or repeat Proof.
+        const replay = asRecord(await controlPlane.settleParallelResult(runId, workerReport, {
+          result: workerReceipt,
+        }));
+        if (replay.idempotentReplay !== true && nestedRecord(replay, 'step').state !== 'passed') throw error;
+        report = replay;
       }
-      : blocked(String(integrationResult.failureCode || 'host_worker_integration_failed'));
+      if (nestedRecord(report, 'step').state !== 'passed') {
+        await controlPlane.blockDeliveryMaterialization(runId, {
+          reason: 'delivery_materialization_recovery_required', detail: 'Host Worker Report did not settle after Owner CAS',
+        });
+        outcome = { ...blocked('host_worker_report_not_settled'), report };
+      } else {
+        outcome = { schemaVersion: 1, runId, status: 'settled',
+          deliveryMutation: integrationResult?.deliveryMutation || recovery, report,
+          next: report.next || null, deliveryAuthorized: true, writerExitVerified: false };
+      }
+    } else {
+      await renew();
+      const lastRun = await controlPlane.getRun(runId);
+      const afterAttempt = controlPlane.getAttemptById(runId, attemptId);
+      if (lastRun?.mutationRevision !== run.mutationRevision
+        || observeWorkspaceIdentity({ projectRoot }).identity !== ownerIdentity
+        || observeWorkspaceIdentity({ projectRoot: workspaceRoot }).identity !== resultWorkspaceIdentity
+        || lastRun?.contractRevision !== run.contractRevision || lastRun?.planRevision !== run.planRevision
+        || afterAttempt?.status !== 'started' || afterAttempt.resultCommitSha !== resultCommitSha
+        || afterAttempt.patchDigest !== patchDigest
+        || JSON.stringify(afterAttempt.workerReport) !== JSON.stringify(attempt.workerReport)) return blocked('host_worker_preflight_drift');
+      const failedProof = nestedRecord(integrationResult?.verification, 'execution');
+      if (settle && fence && integrationResult?.failureCode === 'integration_verification_failed'
+        && integrationResult.integrationWorkspaceIdentity === resultWorkspaceIdentity
+        && failedProof.status === 'failed' && failedProof.processExited === true
+        && typeof failedProof.commandRef === 'string' && typeof failedProof.exitCode === 'number'
+        && typeof failedProof.evidenceRef === 'string') {
+        const next = await controlPlane.rejectHostWorkerCandidateProof(runId, {
+          attemptId, fencingToken: fence.lock.fencingToken, commandRef: failedProof.commandRef,
+          candidateIdentity: resultWorkspaceIdentity, exitCode: failedProof.exitCode,
+          evidenceRef: failedProof.evidenceRef,
+        });
+        outcome = {
+          ...blocked('integration_verification_failed'),
+          status: 'candidate-rejected', next,
+        };
+      } else outcome = integrationResult?.status === 'verified'
+        ? { schemaVersion: 1, runId, status: 'verified',
+          candidate: {
+            patchDigest: integrationResult.patchDigest,
+            changedPaths: integrationResult.changedPaths,
+            integrationWorkspaceIdentity: integrationResult.integrationWorkspaceIdentity,
+          },
+          verification: integrationResult.verification,
+          writerExitVerified: false, deliveryAuthorized: false,
+        }
+        : blocked(String(integrationResult?.failureCode || 'host_worker_integration_failed'));
+    }
   } catch (error: unknown) {
+    if (deliveryCommitted && !controlPlane.getPendingHostWorkerDelivery(runId, attemptId)) await controlPlane.blockDeliveryMaterialization(runId, {
+      reason: 'delivery_materialization_recovery_required', detail: String(errorRecord(error).message || error),
+    });
     outcome = blocked(String(errorRecord(error).code || 'host_worker_preflight_failed'));
   } finally {
     if (fence) {
       try {
-        await controlPlane.releaseOwnerWorkspaceMutationFence(runId, {
-          workspaceId: fence.lock.workspaceId,
-          fencingToken: fence.lock.fencingToken,
-          sessionToken: fence.lock.sessionToken,
-        });
+        const terminalReleased = (await controlPlane.getRun(runId))?.status === 'completed'
+          && controlPlane.stateStore.getWorkspaceMutationLockV2(fence.lock.workspaceId) === null;
+        if (!terminalReleased) {
+          await controlPlane.releaseOwnerWorkspaceMutationFence(runId, {
+            workspaceId: fence.lock.workspaceId,
+            fencingToken: fence.lock.fencingToken,
+            sessionToken: fence.lock.sessionToken,
+          });
+        }
       } catch {
         outcome = blocked('host_worker_owner_fence_release_unconfirmed');
       }

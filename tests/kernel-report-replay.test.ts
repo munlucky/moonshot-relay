@@ -389,6 +389,9 @@ await cp.report(payload.runId,payload);process.exit(3);`);
     if(gitCrashStage){assert.equal(assertTestPresent(gitReceipt).status,gitCrashStage);assert.equal(git('rev-parse','HEAD'),assertTestPresent(gitReceipt).commitSha);assert.equal(git('rev-list','--count','HEAD'),'2');}
     const pending=cp.stateStore.getStepAttempts(runId)[0];
     assert.equal(pending.reportResult,null);
+    const completedStep = cp.stateStore.getRunStep(runId, pending.stepId);
+    assert.equal(completedStep?.state, 'passed');
+    assert.ok(completedStep?.completedAt);
     if(gitCrashStage)assertTestRecord(payload).reportKey=pending.reportKey;
     const lease=cp.stateStore.getLease(runId);cp.stateStore.releaseLease(runId,{holder:assertTestPresent(lease).holder,fencingToken:assertTestPresent(lease).fencingToken});
     const count=cp.stateStore.getVerificationHistory(runId).length;
@@ -408,6 +411,7 @@ await cp.report(payload.runId,payload);process.exit(3);`);
     assert.equal(assertTestPresent(recovered).status,'completed',JSON.stringify(recovered));
     if(gitCrashStage){assert.equal(git('rev-parse','HEAD'),assertTestPresent(gitReceipt).commitSha);assert.equal(git('rev-list','--count','HEAD'),'2');}
     assert.ok(cp.stateStore.getStepAttempts(runId)[0].reportResult);
+    assert.equal(cp.stateStore.getRunStep(runId, pending.stepId)?.completedAt, completedStep?.completedAt);
     assert.equal(cp.stateStore.getVerificationHistory(runId).length,count);
     assert.equal(cp.stateStore.getStepAttempts(runId).length,1);
     assert.equal(assertTestRecord(assertTestRecord((await cp.next(runId))).action).type,'done');

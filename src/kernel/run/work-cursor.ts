@@ -182,6 +182,7 @@ interface BeginAttemptInput extends StepBinding {
   usageReceiptId?: string | null;
   parentAttemptId?: string | null;
   provenanceKind?: string;
+  expectedContractRevision?: number;
   planRevision?: number | null;
   mutationRevision?: number | null;
   retryReason?: string | null;
@@ -388,6 +389,7 @@ export const createWorkCursorApi = ({
     usageReceiptId = null,
     parentAttemptId = null,
     provenanceKind = 'owner-session',
+    expectedContractRevision = undefined,
     planRevision = null,
     mutationRevision = null,
     retryReason = null,
@@ -405,12 +407,15 @@ export const createWorkCursorApi = ({
     if (!run) throw new Error(`Run ${runId} not found`);
     const step = stepId ? store.getRunStep(runId, stepId) : this.getCurrentStep(runId);
     if (!step) throw new Error(`Run ${runId} has no current step`);
-    if (['ready', 'failed', 'planned'].includes(step.state)) {
+    const claimReadyStep = provenanceKind === 'host-owned-worker';
+    if (!claimReadyStep && ['ready', 'failed', 'planned'].includes(step.state)) {
       this.startStep(runId, step.stepId, { workspaceIdentity: workspaceIdentityStart, capsuleDigest });
     }
     const ownerBinding = bindingId ? null : store.getRunOwnerBinding?.(runId);
     return store.recordStepAttempt(runId, {
       stepId: step.stepId,
+      claimReadyStep,
+      expectedContractRevision,
       attemptId,
       bindingId: bindingId || ownerBinding?.bindingId || null,
       actorSessionId: actorSessionId || ownerBinding?.sessionId || null,
@@ -942,9 +947,6 @@ export const createWorkCursorApi = ({
   }) {
     const run = store.getRun(runId);
     if (!run) throw new Error(`Run ${runId} not found`);
-    store.updateRunStep(runId, step.stepId, { state: 'reported' });
-    store.updateRunStep(runId, step.stepId, { state: 'verifying' });
-
     const evaluation = step.synthetic
       ? { complete: outstanding.length === 0, reasons: outstanding.map((obligationId) => `obligation-unsatisfied:${obligationId}`) }
       : evaluateStepCompletion({
@@ -964,10 +966,21 @@ export const createWorkCursorApi = ({
     });
 
     const passed = failures.length === 0 && evaluation.complete;
-    if (passed) {
-      this.completeStep(runId, step.stepId, { workspaceIdentity: observation.identity, resultDigest });
+    const currentStep = store.getRunStep(runId, step.stepId);
+    if (currentStep?.state === 'passed') {
+      if (!passed || currentStep.resultDigest !== resultDigest || currentStep.workspaceIdentityEnd !== observation.identity) {
+        throw new Error('REPORT_CHECKPOINT_STALE');
+      }
+      // A crash may leave the Step passed before its dependents become ready.
+      this.unlockDependentSteps(runId);
     } else {
-      this.failStep(runId, step.stepId, { reason: evaluation.reasons[0] || 'evidence-failed' });
+      store.updateRunStep(runId, step.stepId, { state: 'reported' });
+      store.updateRunStep(runId, step.stepId, { state: 'verifying' });
+      if (passed) {
+        this.completeStep(runId, step.stepId, { workspaceIdentity: observation.identity, resultDigest });
+      } else {
+        this.failStep(runId, step.stepId, { reason: evaluation.reasons[0] || 'evidence-failed' });
+      }
     }
     const attemptSettlement = attempt ? {
         status: passed ? 'passed' : 'failed',

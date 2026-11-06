@@ -33,6 +33,7 @@ export interface ProofExecutionResult {
   cwd: string;
   exitCode: number;
   timedOut: boolean;
+  processExited?: boolean;
   status: 'passed' | 'failed';
   stdoutDigest: string;
   stderrDigest: string;

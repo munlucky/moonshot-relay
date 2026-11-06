@@ -9,6 +9,7 @@ import { runGit } from '../src/shared/git-safe.js';
 import { observeWorkspaceIdentity } from '../src/host/kernel/workspace/workspace-identity.js';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
 import { dispatchKernelParallel } from '../src/host/kernel/parallel-dispatcher.js';
+import { executeTrustedProof } from '../src/host/kernel/proof/proof-executor.js';
 import {
   cleanupExecutionWorkspaces,
   executionRoot,
@@ -20,6 +21,7 @@ const makeRepository = async () => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), 'kernel-parallel-recovery-repo-'));
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-parallel-recovery-home-'));
   runGit(repoRoot, ['init', '-b', 'main']);
+  runGit(repoRoot, ['config', 'core.autocrlf', 'false']);
   runGit(repoRoot, ['config', 'user.name', 'Kernel Recovery Test']);
   runGit(repoRoot, ['config', 'user.email', 'kernel-recovery@example.invalid']);
   await mkdir(path.join(repoRoot, 'src'), { recursive: true });
@@ -321,9 +323,22 @@ test('restart blocks an owner workspace changed after worker receipt but before 
     controlPlane.failStepAttempt(runId, step.stepId, { code: 'delivery_settlement_rejected' });
     assert.equal(controlPlane.stateStore.getStepAttempts(runId)[0].status, 'failed');
     assert.equal(controlPlane.stateStore.getMutationProvenance(runId), null);
+    const ownerFence = await controlPlane.acquireOwnerWorkspaceMutationFence(runId, {
+      expectedMutationRevision: assertTestPresent(run).mutationRevision,
+      expectedWorkspaceIdentity: baseWorkspaceIdentity,
+      expectedHeadCommitSha: fixture.baseCommit,
+    });
     await mkdir(path.join(fixture.repoRoot, 'src', 'alpha'), { recursive: true });
     await writeFile(path.join(fixture.repoRoot, 'src', 'alpha', 'result.txt'), 'applied before provenance\n');
 
+    const inFlight = await controlPlane.recoverPendingDeliveryMaterialization(runId);
+    assert.equal(inFlight.status, 'in-progress', JSON.stringify(inFlight));
+    assert.equal(controlPlane.stateStore.getRun(runId)?.status, 'active');
+    await controlPlane.releaseOwnerWorkspaceMutationFence(runId, {
+      workspaceId: ownerFence.lock.workspaceId,
+      sessionToken: ownerFence.lock.sessionToken,
+      fencingToken: ownerFence.lock.fencingToken,
+    });
     const recovered = await controlPlane.recoverPendingDeliveryMaterialization(runId);
     assert.equal(recovered.status, 'blocked', JSON.stringify(recovered, null, 2));
     assert.match(assertTestString(assertTestRecord(recovered).detail), /before owner mutation provenance was persisted/u);
@@ -373,6 +388,111 @@ test('restart blocks Delivery workspace drift without a persisted lifecycle mark
   } finally {
     if (controlPlane) await controlPlane.close();
     await cleanupExecutionWorkspaces({ runtimeHome: fixture.runtimeHome, projectId: assertTestString(projectId), runId, repoRoot: fixture.repoRoot, retain: false }).catch(() => {});
+    await rm(fixture.runtimeHome, { recursive: true, force: true });
+    await rm(fixture.repoRoot, { recursive: true, force: true });
+  }
+});
+
+// This exercises the shared settlement boundary, not Host-owned acceptance.
+// Workers are fixture writes; Proof, Owner apply/CAS and Reports are real.
+test('A2-3 shared settlement replays a persisted Report after response loss and reconnect', async () => {
+  const fixture = await makeRepository();
+  const runId = 'run-settlement-response-loss';
+  let cp: TestControlPlane | undefined;
+  let projectId: string | undefined;
+  type SettlementArgs = Parameters<TestControlPlane['settleParallelResult']>;
+  let lostArgs: SettlementArgs | undefined;
+  let lostReport: Awaited<ReturnType<TestControlPlane['settleParallelResult']>> | undefined;
+  try {
+    const proofScript = "const f=require('node:fs');for(const n of ['alpha','beta']){if(f.readFileSync('src/'+n+'/result.txt','utf8')!==n+'\\n')process.exit(1)}";
+    await writeFile(path.join(fixture.repoRoot, 'proof.cjs'), proofScript);
+    await writeFile(path.join(fixture.repoRoot, 'package.json'), JSON.stringify({
+      name: 'settlement-replay-fixture', scripts: { 'test:ok': 'node proof.cjs' },
+    }));
+    runGit(fixture.repoRoot, ['add', 'package.json', 'proof.cjs']);
+    runGit(fixture.repoRoot, ['commit', '-m', 'bind actual content proof']);
+    cp = await createKernelControlPlane({ runtimeHome: fixture.runtimeHome, projectRoot: fixture.repoRoot });
+    const acceptance = ['alpha', 'beta'].map(name => ({
+      acceptance: name + ' content is verified', id: 'AC-' + name.toUpperCase(),
+      evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test:ok'], obligationId: name + '-proof' },
+    }));
+    const started = await cp.startRun({ runId, objective: 'settlement response replay', taskContract: {
+      riskTier: 'T1', acceptance,
+      steps: ['alpha', 'beta'].map(name => ({ objective: name, allowedPaths: ['src/' + name + '/**'],
+        acceptanceIds: ['AC-' + name.toUpperCase()], obligationIds: [name + '-proof'], dependsOn: [] })),
+    } });
+    projectId = assertTestString(started.projectId);
+    const settle = cp.settleParallelResult.bind(cp);
+    let reports = 0;
+    cp.settleParallelResult = async (...args: SettlementArgs) => {
+      const response = await settle(...args);
+      assert.equal(assertTestRecord(assertTestRecord(response).step).state, 'passed', JSON.stringify(response));
+      if (++reports === 2) {
+        lostArgs = args;
+        lostReport = response;
+        throw new Error('response lost after durable Report');
+      }
+      return response;
+    };
+    await assert.rejects(dispatchKernelParallel({
+      controlPlane: cp, runId, projectRoot: fixture.repoRoot, runtimeHome: fixture.runtimeHome,
+      parentSessionId: 'settlement-response-loss',
+      adapter: { capabilities: { surface: 'codex', supportsConcurrentSessions: true,
+        supportsIsolatedWorkingDirectory: true, supportsPerSessionEnvironment: true } },
+      actionContext: { integrationVerification: { commandRef: 'test:ok' } },
+      dispatchStep: async ({ step, workspace }) => {
+        const name = String(step.objective);
+        const file = 'src/' + name + '/result.txt';
+        await mkdir(path.dirname(path.join(workspace.workspaceRoot, file)), { recursive: true });
+        await writeFile(path.join(workspace.workspaceRoot, file), name + '\n');
+        return { status: 'passed', resultStatus: 'passed', report: {
+          summary: name + ' result', changedPaths: [file], verifications: [
+            { obligationId: name + '-proof', commandRef: 'test:ok', acceptanceCoverage: ['AC-' + name.toUpperCase()] },
+            ...(name === 'beta' ? [{ obligationId: 'unit-test', commandRef: 'test:ok', acceptanceCoverage: [] }] : []),
+          ],
+        } };
+      },
+      executeIntegrationVerification: ({ commandRef, workspaceRoot }) => {
+        const proof = executeTrustedProof({ projectRoot: workspaceRoot, commandRef });
+        assert.equal(proof.status, 'passed', JSON.stringify(proof));
+        return { status: proof.status, passed: proof.status === 'passed', execution: proof };
+      },
+    }).then(value => { const result = assertTestRecord(value); throw new Error('Dispatcher returned without response loss: ' + JSON.stringify({
+      status: result.status, integration: result.integration, failures: result.settlementFailures,
+      detail: assertTestRecord(assertTestRecord(result.integration).error).message,
+    })); }), /response lost after durable Report/);
+    assert.ok(lostArgs);
+    const beforeRun = cp.stateStore.getRun(runId);
+    const beforeAttempts = cp.stateStore.getStepAttempts(runId);
+    const beforeProofs = cp.stateStore.getVerificationHistory(runId);
+    assert.equal(beforeRun?.status, 'completed');
+    assert.equal(beforeRun?.mutationRevision, 1);
+    assert.equal(beforeAttempts.length, 2);
+    await cp.close();
+    cp = await createKernelControlPlane({ runtimeHome: fixture.runtimeHome, projectRoot: fixture.repoRoot });
+    const replay = await cp.settleParallelResult(...lostArgs);
+    assert.deepEqual(replay, { ...assertTestRecord(lostReport), idempotentReplay: true });
+    // Replay must not depend on a current Owner mutation receipt or execute
+    // Proof/Owner materialization again. The stored Worker receipt is required.
+    const [, payload, options] = lostArgs;
+    const again = await cp.settleParallelResult(runId, payload, { result: options?.result });
+    assert.deepEqual(again, replay);
+    const forged = await cp.settleParallelResult(runId, payload, {
+      result: { ...options?.result, patchDigest: 'sha256:forged' },
+    });
+    assert.equal(assertTestRecord(forged).status, 'evidence-rejected');
+    const conflict = await cp.settleParallelResult(runId, { ...payload, summary: 'different report' }, options);
+    assert.equal(assertTestRecord(conflict).status, 'report-conflict');
+    assert.deepEqual(cp.stateStore.getStepAttempts(runId), beforeAttempts);
+    assert.deepEqual(cp.stateStore.getVerificationHistory(runId), beforeProofs);
+    assert.equal(cp.stateStore.getRun(runId)?.mutationRevision, beforeRun?.mutationRevision);
+    for (const name of ['alpha', 'beta']) {
+      assert.equal(await readFile(path.join(fixture.repoRoot, 'src', name, 'result.txt'), 'utf8'), name + '\n');
+    }
+  } finally {
+    await cp?.close();
+    if (projectId) await cleanupExecutionWorkspaces({ runtimeHome: fixture.runtimeHome, projectId,
+      runId, repoRoot: fixture.repoRoot, retain: false }).catch(() => {});
     await rm(fixture.runtimeHome, { recursive: true, force: true });
     await rm(fixture.repoRoot, { recursive: true, force: true });
   }

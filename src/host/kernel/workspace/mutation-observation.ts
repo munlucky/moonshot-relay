@@ -1,4 +1,5 @@
 import { existsSync, realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { canonicalPathIdentity } from '../../../shared/path-identity.js';
 import { runGit } from '../../../shared/git-safe.js';
@@ -51,6 +52,7 @@ export const inspectMutationWorkspace = ({
 }): MutationWorkspaceObservation => {
   const head = runGit(workspaceRoot, ['rev-parse', '--verify', 'HEAD']);
   const status = runGit(workspaceRoot, ['status', '--porcelain=v1', '--untracked-files=all']);
+  const index = runGit(workspaceRoot, ['ls-files', '--stage', '-z']);
   return {
     headCommitSha: head.error || head.status !== 0
       ? null
@@ -58,5 +60,7 @@ export const inspectMutationWorkspace = ({
     workspaceStatus: status.error || status.status !== 0
       ? null
       : String(status.stdout || '').trim(),
+    indexDigest: index.error || index.status !== 0 ? null
+      : 'sha256:' + createHash('sha256').update(String(index.stdout || '')).digest('hex'),
   };
 };

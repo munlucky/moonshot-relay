@@ -9,10 +9,13 @@ import { createCodexAppServerTransport } from '../src/host/kernel/codex-app-serv
 import { type NativeExecutionObservation } from '../src/host/kernel/adapter-dispatch.js';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
 import { runHostOwnedWritableAttempt, startHostOwnedWritableAttempt } from '../src/host/kernel/host-owned-writable-attempt.js';
+import { createHostWorkerSessions } from '../src/host/kernel/host-worker-sessions.js';
 import { prepareHostWriterAttemptWorktree, snapshotHostWorkerPatch } from '../src/host/kernel/workspace/physical-worktree.js';
 import { reserveHostWorkspaceWriter } from '../src/host/kernel/workspace-writer-reservation.js';
-import { verifyHostOwnedWorkerCandidate } from '../src/host/kernel/parallel-dispatcher.js';
+import { verifyHostOwnedWorkerCandidate, settleHostOwnedWorkerCandidate } from '../src/host/kernel/parallel-dispatcher.js';
 import { CODEX_WORKER_OUTPUT_SCHEMA } from '../src/host/kernel/adapters/codex.js';
+import { executeTrustedProof } from '../src/host/kernel/proof/proof-executor.js';
+import { assertTestRecord } from './helpers/assert-value.js';
 
 const fakeServer = String.raw`
 const readline = require('node:readline');
@@ -59,8 +62,15 @@ input.on('line', (line) => {
       send({ id, error: { code: -1, message: 'unsafe turn' } });
       return;
     }
+    if (process.env.TEST_MODE === 'completion-before-start-ack' && serial === 1) {
+      process.stdout.write([
+        { method: 'turn/completed', params: { threadId, turn: { id: turnId, status: 'completed' } } },
+        { id, result: { turn: { id: turnId, status: 'completed' } } },
+      ].map(message => JSON.stringify(message)).join('\n') + '\n');
+      return;
+    }
     if (process.env.TEST_MODE === 'writable' || process.env.TEST_MODE?.startsWith('writable-report')) {
-      fs.writeFileSync(path.join(message.params.cwd, 'mock-writer-started.txt'), 'started');
+      fs.writeFileSync(path.join(message.params.cwd, 'mock-writer-started.txt'), process.env.TEST_WRITER_CONTENT || 'started');
     }
     const reportEvent = (thread, itemId = 'final-report', text = process.env.TEST_REPORT_TEXT) => ({
       method: 'item/completed', params: { threadId: thread, turnId,
@@ -104,7 +114,8 @@ input.on('line', (line) => {
       send({ id, result: { turn: { id: turnId, status: 'inProgress' } } });
       return;
     }
-    if (process.env.TEST_MODE === 'stall-turn' || process.env.TEST_MODE === 'writable-stall-turn') {
+    if (process.env.TEST_MODE === 'stall-turn' || process.env.TEST_MODE === 'writable-stall-turn'
+      || (process.env.TEST_MODE === 'completion-without-interrupt-ack' && serial === 1)) {
       send({ id, result: { turn: { id: turnId, status: 'inProgress' } } });
       return;
     }
@@ -119,8 +130,16 @@ input.on('line', (line) => {
       send({ method: 'turn/completed', params: { threadId, turn: { id: 'wrong-turn', status: 'interrupted' } } });
       send({ method: 'turn/completed', params: { threadId, turn: { id: turnId, status: 'completed' } } });
       if (process.env.TEST_MODE?.includes('report')) send(reportEvent(threadId, 'late-report', '{"status":"failed"}'));
-    }, 25);
+    }, process.env.TEST_MODE === 'completion-without-interrupt-ack' ? 1500 : 25);
   } else if (message.method === 'turn/interrupt') {
+    if (process.env.TEST_MODE === 'completion-before-start-ack') {
+      fs.writeFileSync(path.join(process.env.TEST_PID_DIR, 'late-interrupt'), message.params.turnId);
+    }
+    if (process.env.TEST_MODE === 'completion-without-interrupt-ack') {
+      const { threadId, turnId } = message.params;
+      send({ method: 'turn/completed', params: { threadId, turn: { id: turnId, status: 'completed' } } });
+      return;
+    }
     if (process.env.TEST_MODE === 'stall-turn' || process.env.TEST_MODE === 'writable-stall-turn') {
       send({ id, result: {} });
       send({ method: 'turn/completed', params: {
@@ -292,6 +311,55 @@ test('Host queues an early cancel until the same Turn is addressable without cla
       assert.equal(finished.turnStatus, 'interrupted');
       assert.equal(finished.writerExitVerified, false);
       assert.equal(transport.observeTurn().turn, 'idle');
+    } finally {
+      await transport.close();
+    }
+  });
+});
+
+test('B cancel race: a buffered terminal event wins over queued cancel for that Turn', async () => {
+  await withFixture(async ({ workspace, alternative, server }) => {
+    const transport = await createCodexAppServerTransport({
+      executable: process.execPath, args: [server], requestTimeoutMs: 1500,
+      env: { ...process.env, TEST_MODE: 'completion-before-start-ack', TEST_PID_DIR: workspace },
+    });
+    try {
+      const running = transport.runTurn(turn(workspace));
+      assert.equal((await transport.interruptActiveTurn()).status, 'queued');
+      const finished = await running;
+      assert.equal(finished.turnId, 'turn-1');
+      assert.equal(finished.turnStatus, 'completed');
+      assert.equal(finished.writerExitVerified, false);
+      // The fixture processes the next thread request after any late interrupt.
+      const next = await transport.runTurn(turn(alternative));
+      assert.equal(next.turnId, 'turn-2');
+      assert.equal(next.turnStatus, 'completed');
+      await assert.rejects(readFile(path.join(workspace, 'late-interrupt')), { code: 'ENOENT' });
+    } finally {
+      await transport.close();
+    }
+  });
+});
+
+test('B cancel race: a missing interrupt ACK cannot poison a later Turn', async () => {
+  await withFixture(async ({ workspace, alternative, server }) => {
+    const transport = await createCodexAppServerTransport({
+      executable: process.execPath, args: [server], requestTimeoutMs: 1000,
+      env: { ...process.env, TEST_MODE: 'completion-without-interrupt-ack' },
+    });
+    try {
+      const running = transport.runTurn(turn(workspace));
+      for (let i = 0; i < 100 && transport.observeTurn().turn !== 'running'; i++) await sleep(10);
+      assert.equal(transport.observeTurn().turnId, 'turn-1');
+      const signal = transport.interruptActiveTurn();
+      const finished = await running;
+      assert.equal(finished.turnStatus, 'completed');
+      assert.equal(finished.writerExitVerified, false);
+      const next = transport.runTurn(turn(alternative));
+      assert.deepEqual(await signal, { status: 'unknown', writerExitVerified: false });
+      const later = await next;
+      assert.equal(later.turnId, 'turn-2');
+      assert.equal(later.turnStatus, 'completed');
     } finally {
       await transport.close();
     }
@@ -1058,6 +1126,333 @@ test('G2/T14: a server-originated approval request blocks the Turn without autom
       const closed = await transport.close();
       assert.equal(closed.writerExitVerified, false);
       assert.equal(closed.appServerExited, true);
+    }
+  });
+});
+
+// Baseline/result and durable CAS classification. The CAS setup at the end
+// exercises the Kernel boundary separately from protected Host settlement.
+test('Host-owned result preserves uncommitted Owner baseline and reports only its own delta', async () => {
+  await withFixture(async ({ workspace, server, reservationRoot }) => {
+    const git = (...args: string[]) => {
+      const result = spawnSync('git', args, { cwd: workspace, encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr);
+      return result.stdout.trim();
+    };
+    git('init');
+    git('config', 'core.autocrlf', 'false');
+    git('config', 'user.name', 'Baseline Fixture');
+    git('config', 'user.email', 'baseline@example.invalid');
+    await writeFile(path.join(workspace, 'prior.txt'), 'original\n');
+    await writeFile(path.join(workspace, 'proof.cjs'), [
+      "const f=require('node:fs');",
+      "if(f.readFileSync('prior.txt','utf8')!=='prior step\\n')process.exit(1);",
+      "if(f.readFileSync('mock-writer-started.txt','utf8')!=='started')process.exit(1);",
+    ].join('\n'));
+    await writeFile(path.join(workspace, 'package.json'), JSON.stringify({
+      name: 'host-baseline-fixture', scripts: { 'test:fixture': 'node proof.cjs' },
+    }));
+    git('add', '--all');
+    git('commit', '-m', 'initial baseline');
+    const baseCommit = git('rev-parse', 'HEAD');
+    await writeFile(path.join(workspace, 'prior.txt'), 'prior step\n');
+    // Preserve the Owner index as well as the working bytes.
+    git('add', 'prior.txt');
+    await writeFile(path.join(workspace, 'foreign.txt'), 'existing user change\n');
+    const beforeStatus = git('status', '--porcelain');
+    const beforeIndex = git('diff', '--cached', '--binary');
+    const runtimeHome = path.join(path.dirname(workspace), 'kernel-runtime');
+    const cp = await createKernelControlPlane({ runtimeHome, projectRoot: workspace });
+    let workerRoot: string | undefined;
+    const runId = 'run-host-baseline';
+    try {
+      await cp.startRun({ runId, objective: 'preserve Owner baseline', taskContract: {
+        acceptance: ['Worker changes only its declared file'], allowedPaths: ['mock-writer-started.txt'],
+      } });
+      const attempt = cp.beginAttempt(runId, { provenanceKind: 'host-owned-worker' });
+      assert.ok(attempt?.attemptId);
+      const result = await runHostOwnedWritableAttempt({
+        controlPlane: cp, repoRoot: workspace, runtimeHome, reservationRoot, baseCommit, runId,
+        stepId: attempt.stepId, attemptId: attempt.attemptId,
+        prompt: 'write the one fixture file', model: 'test-model', effort: 'high',
+        transportOptions: { executable: process.execPath, args: [server],
+          env: { ...process.env, TEST_MODE: 'writable-report' }, requestTimeoutMs: 1500 },
+      });
+      workerRoot = result.workspaceRoot;
+      assert.deepEqual(result.resultHandoff, { status: 'recorded', failureCode: null });
+      const candidate = result.resultCandidate;
+      assert.ok(candidate);
+      assert.deepEqual(candidate.changedPaths, ['mock-writer-started.txt']);
+      assert.deepEqual(candidate.outsideStepScope, []);
+      assert.equal(await readFile(path.join(workerRoot, 'prior.txt'), 'utf8'), 'prior step\n');
+      assert.equal(await readFile(path.join(workerRoot, 'foreign.txt'), 'utf8'), 'existing user change\n');
+      const verified = await verifyHostOwnedWorkerCandidate({
+        controlPlane: cp, projectRoot: workspace, runtimeHome, runId,
+        stepId: attempt.stepId, attemptId: attempt.attemptId,
+        workspaceId: result.workspaceId, workspaceRoot: workerRoot,
+        baseWorkspaceIdentity: result.baseWorkspaceIdentity,
+        resultCommitSha: candidate.resultCommitSha, patchDigest: candidate.patchDigest,
+        changedPaths: candidate.changedPaths, resultWorkspaceIdentity: candidate.workspaceIdentity,
+        commandRef: 'test:fixture',
+        verificationRunner: ({ commandRef, workspaceRoot }) => {
+          const proof = executeTrustedProof({ projectRoot: workspaceRoot, commandRef });
+          assert.equal(proof.status, 'passed', JSON.stringify(proof));
+          return { status: proof.status, passed: proof.status === 'passed', execution: proof };
+        },
+      });
+      assert.equal(verified.status, 'verified', JSON.stringify(verified));
+      assert.equal(verified.deliveryAuthorized, false);
+      const deliveryInput = {
+        controlPlane: cp, projectRoot: workspace, runtimeHome, runId,
+        stepId: attempt.stepId, attemptId: attempt.attemptId,
+        workspaceId: result.workspaceId, workspaceRoot: workerRoot,
+        baseWorkspaceIdentity: result.baseWorkspaceIdentity,
+        resultCommitSha: candidate.resultCommitSha, patchDigest: candidate.patchDigest,
+        changedPaths: candidate.changedPaths, resultWorkspaceIdentity: candidate.workspaceIdentity,
+        commandRef: 'test:fixture',
+      };
+      const missingBoundary = await settleHostOwnedWorkerCandidate(deliveryInput, undefined);
+      assert.equal(missingBoundary.failureCode, 'host_worker_writer_exclusion_unavailable');
+      const noOperation = await settleHostOwnedWorkerCandidate(deliveryInput, async () => {});
+      assert.equal(noOperation.failureCode, 'host_worker_writer_exclusion_unconfirmed',
+        'a callback that supplies no real exclusion operation must not mint Delivery');
+      let unsafeRunnerInvoked = false;
+      const override = await settleHostOwnedWorkerCandidate({
+        ...deliveryInput, verificationRunner: () => {
+          unsafeRunnerInvoked = true;
+          throw new Error('fixture runner cannot authorize Delivery');
+        },
+      }, async () => { throw new Error('proof override must be rejected first'); });
+      assert.equal(override.failureCode, 'host_worker_delivery_proof_override_rejected');
+      assert.equal(unsafeRunnerInvoked, false);
+      assert.equal(cp.stateStore.getRun(runId)?.mutationRevision, 0);
+      assert.equal(cp.stateStore.getMutationProvenance(runId), null);
+      assert.equal(cp.getAttemptById(runId, attempt.attemptId)?.status, 'started');
+      assert.equal(git('status', '--porcelain'), beforeStatus);
+      assert.equal(git('diff', '--cached', '--binary'), beforeIndex);
+      assert.equal(git('rev-parse', 'HEAD'), baseCommit);
+      let preCasReconciliations = 0;
+      const recoveringHost = createHostWorkerSessions({
+        withWriterExcluded: async (received) => {
+          preCasReconciliations += 1;
+          assert.equal(received.attemptId, attempt.attemptId);
+          assert.equal(received.patchDigest, candidate.patchDigest);
+          // Refuse the operation. Observing the same candidate is not
+          // evidence that a reconnecting Host can exclude its Writer.
+        },
+      });
+      const resumed = assertTestRecord(await recoveringHost.startLocal({
+        projectRoot: workspace, runtimeHome, runId, model: 'test-model', effort: 'high',
+      }));
+      assert.equal(assertTestRecord(resumed.settlement).failureCode, 'host_worker_writer_exclusion_unconfirmed');
+      assert.equal(preCasReconciliations, 1);
+      assert.equal(cp.stateStore.getStepAttempts(runId).length, 1);
+      assert.equal(cp.stateStore.getRun(runId)?.mutationRevision, 0);
+      assert.equal(cp.getAttemptById(runId, attempt.attemptId)?.reportResult, null);
+      assert.equal(git('status', '--porcelain'), beforeStatus);
+      // An Index-only edit can leave all working bytes unchanged. The old
+      // content identity must not admit that different Owner baseline.
+      git('reset', '--', 'prior.txt');
+      let unexpectedProofs = 0;
+      const staleIndex = await verifyHostOwnedWorkerCandidate({
+        controlPlane: cp, projectRoot: workspace, runtimeHome, runId,
+        stepId: attempt.stepId, attemptId: attempt.attemptId,
+        workspaceId: result.workspaceId, workspaceRoot: workerRoot,
+        baseWorkspaceIdentity: result.baseWorkspaceIdentity,
+        resultCommitSha: candidate.resultCommitSha, patchDigest: candidate.patchDigest,
+        changedPaths: candidate.changedPaths, resultWorkspaceIdentity: candidate.workspaceIdentity,
+        commandRef: 'test:fixture', verificationRunner: () => {
+          unexpectedProofs += 1;
+          throw new Error('stale Index must be rejected before Proof');
+        },
+      });
+      assert.equal(staleIndex.status, 'blocked');
+      assert.equal(staleIndex.failureCode, 'delivery_workspace_drift');
+      assert.equal(unexpectedProofs, 0);
+      assert.equal(cp.stateStore.getRun(runId)?.mutationRevision, 0);
+      assert.equal(cp.stateStore.getMutationProvenance(runId), null);
+      git('add', 'prior.txt');
+      assert.equal(git('diff', '--cached', '--binary'), beforeIndex);
+
+      // Use actual Git bytes and the real CAS to represent a process exit
+      // immediately after persistence, with no Report or Proof fabricated.
+      const prepared = assertTestRecord(verified.candidate);
+      assert.equal(prepared.patchDigest, candidate.patchDigest);
+      assert.equal(prepared.integrationWorkspaceIdentity, candidate.workspaceIdentity);
+      const snapshot = {
+        expectedMutationRevision: 0, expectedWorkspaceIdentity: result.baseWorkspaceIdentity,
+        expectedHeadCommitSha: baseCommit, baselineAttemptId: attempt.attemptId,
+      };
+      const fence = await cp.acquireOwnerWorkspaceMutationFence(runId, snapshot);
+      const receiptInput = {
+        ...snapshot, fencingToken: fence.lock.fencingToken, sessionToken: fence.lock.sessionToken,
+        integrationWorkspaceIdentity: candidate.workspaceIdentity, changedPaths: candidate.changedPaths,
+        patchDigest: candidate.patchDigest,
+      };
+      cp.assertOwnerWorkspaceMutationReady(runId, receiptInput);
+      const patch = spawnSync('git', ['show', '--format=', '--binary', candidate.resultCommitSha], {
+        cwd: workerRoot, encoding: 'utf8',
+      });
+      assert.equal(patch.status, 0, patch.stderr);
+      const apply = spawnSync('git', ['apply', '--binary', '-'], {
+        cwd: workspace, encoding: 'utf8', input: patch.stdout,
+      });
+      assert.equal(apply.status, 0, apply.stderr);
+      cp.recordOwnerWorkspaceMutation(runId, receiptInput);
+      assert.equal((await cp.recoverPendingDeliveryMaterialization(runId)).status, 'in-progress');
+      cp.releaseOwnerWorkspaceMutationFence(runId, fence.lock);
+
+      const reconnect = await createKernelControlPlane({ runtimeHome, projectRoot: workspace });
+      try {
+        assert.equal((await reconnect.recoverPendingDeliveryMaterialization(runId)).status, 'report-pending');
+        assert.equal(reconnect.getPendingHostWorkerDelivery(runId, 'other-attempt'), null);
+        assert.equal(reconnect.getPendingHostWorkerDelivery(runId, attempt.attemptId)?.patchDigest, candidate.patchDigest);
+        const postCommit = await reconnect.acquireOwnerWorkspaceMutationFence(runId, {
+          expectedMutationRevision: 1, expectedWorkspaceIdentity: candidate.workspaceIdentity,
+          expectedHeadCommitSha: baseCommit, recoveryAttemptId: attempt.attemptId,
+        });
+        reconnect.releaseOwnerWorkspaceMutationFence(runId, postCommit.lock);
+        const pending = await reconnect.prepareNext(runId);
+        assert.equal(pending.status, 'worker-reconciliation-required');
+        await assert.rejects(createHostWorkerSessions().startLocal({
+          projectRoot: workspace, runtimeHome, runId, model: 'test-model', effort: 'high',
+        }), { code: 'host_worker_native_isolation_unverified' });
+        assert.equal(reconnect.stateStore.getRun(runId)?.mutationRevision, 1);
+        const attempts = reconnect.stateStore.getStepAttempts(runId);
+        assert.equal(attempts.length, 1);
+        assert.equal(attempts[0]?.reportResult, null);
+        assert.equal(await readFile(path.join(workspace, 'mock-writer-started.txt'), 'utf8'), 'started');
+        assert.equal(git('diff', '--cached', '--binary'), beforeIndex);
+
+        await writeFile(path.join(workspace, 'mock-writer-started.txt'), 'late drift');
+        assert.equal((await reconnect.recoverPendingDeliveryMaterialization(runId)).status, 'blocked');
+        assert.equal(reconnect.stateStore.getRun(runId)?.mutationRevision, 1);
+      } finally {
+        await reconnect.close();
+      }
+    } finally {
+      await cp.close();
+      if (workerRoot) git('worktree', 'remove', '--force', workerRoot);
+    }
+  });
+});
+
+test('A3 repair: actual candidate Proof failure leaves Owner unchanged and Kernel selects the same Step', async () => {
+  await withFixture(async ({ workspace, server, reservationRoot }) => {
+    const git = (...args: string[]) => {
+      const result = spawnSync('git', args, { cwd: workspace, encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr);
+      return result.stdout.trim();
+    };
+    git('init');
+    git('config', 'core.autocrlf', 'false');
+    git('config', 'user.name', 'Host Repair Fixture');
+    git('config', 'user.email', 'repair@example.invalid');
+    await writeFile(path.join(workspace, 'proof.cjs'),
+      "if(require('node:fs').readFileSync('mock-writer-started.txt','utf8')!=='corrected')process.exit(19);");
+    await writeFile(path.join(workspace, 'package.json'), JSON.stringify({
+      name: 'host-repair-fixture',
+      scripts: { 'test:fixture': 'node --check proof.cjs', 'test:content': 'node proof.cjs' },
+    }));
+    git('add', '--all');
+    git('commit', '-m', 'bind content proof');
+    const baseCommit = git('rev-parse', 'HEAD');
+    const runtimeHome = path.join(path.dirname(workspace), 'repair-runtime');
+    const cp = await createKernelControlPlane({ runtimeHome, projectRoot: workspace });
+    const runId = 'run-host-proof-repair';
+    const workerRoots: string[] = [];
+    try {
+      await cp.startRun({ runId, objective: 'deliver corrected content', taskContract: {
+        acceptance: [
+          { acceptance: 'Proof script parses', evidencePlan: {
+            class: 'hard', method: 'unit-test', obligationId: 'default', commandRefs: ['test:fixture'],
+          } },
+          { acceptance: 'Worker writes corrected content', evidencePlan: {
+            class: 'hard', method: 'unit-test', obligationId: 'z-content-proof',
+            evidenceLevel: 'goal', commandRefs: ['test:content'],
+          } },
+        ],
+        steps: [{ objective: 'Write corrected content', allowedPaths: ['mock-writer-started.txt'],
+          acceptanceIds: ['AC-1', 'AC-2'], obligationIds: ['default', 'z-content-proof'] }],
+        allowedPaths: ['mock-writer-started.txt'],
+      } });
+      const runWorker = async (attemptId: string, stepId: string, content: string) => {
+        const result = await runHostOwnedWritableAttempt({
+          controlPlane: cp, repoRoot: workspace, runtimeHome, reservationRoot, baseCommit, runId,
+          stepId, attemptId, prompt: 'write the requested fixture content', model: 'test-model', effort: 'high',
+          transportOptions: { executable: process.execPath, args: [server], requestTimeoutMs: 1500,
+            env: { ...process.env, TEST_MODE: 'writable-report', TEST_WRITER_CONTENT: content } },
+        });
+        workerRoots.push(result.workspaceRoot);
+        assert.equal(result.resultHandoff.status, 'recorded');
+        assert.ok(result.resultCandidate);
+        return result;
+      };
+      const original = cp.beginAttempt(runId, { provenanceKind: 'host-owned-worker' });
+      assert.ok(original?.attemptId);
+      const bad = await runWorker(original.attemptId, original.stepId, 'incorrect');
+      assert.ok(bad.resultCandidate);
+      const proofs: Array<ReturnType<typeof executeTrustedProof>> = [];
+      const candidate = await verifyHostOwnedWorkerCandidate({
+        controlPlane: cp, projectRoot: workspace, runtimeHome, runId,
+        stepId: original.stepId, attemptId: original.attemptId,
+        workspaceId: bad.workspaceId, workspaceRoot: bad.workspaceRoot,
+        baseWorkspaceIdentity: bad.baseWorkspaceIdentity,
+        resultCommitSha: bad.resultCandidate.resultCommitSha, patchDigest: bad.resultCandidate.patchDigest,
+        changedPaths: bad.resultCandidate.changedPaths, resultWorkspaceIdentity: bad.resultCandidate.workspaceIdentity,
+        verificationRunner: ({ commandRef, workspaceRoot }) => {
+          const execution = executeTrustedProof({ projectRoot: workspaceRoot, commandRef,
+            evidenceDir: path.join(runtimeHome, 'repair-proof-evidence') });
+          proofs.push(execution);
+          return { status: execution.status, passed: execution.status === 'passed', execution };
+        },
+      });
+      assert.equal(candidate.failureCode, 'integration_verification_failed');
+      assert.deepEqual(proofs.map(proof => [proof.commandRef, proof.status]),
+        [['test:fixture', 'passed'], ['test:content', 'failed']]);
+      // Exercise the local Kernel failure ledger with real Proof output.
+      // The fixture verification path cannot authorize Native Delivery.
+      const failure = proofs[1];
+      assert.equal(failure.status, 'failed');
+      assert.equal(failure.exitCode, 19);
+      assert.equal(failure.processExited, true);
+      assert.ok(failure.evidenceRef && bad.resultCandidate);
+      const fence = await cp.acquireOwnerWorkspaceMutationFence(runId, {
+        expectedMutationRevision: 0, expectedWorkspaceIdentity: bad.baseWorkspaceIdentity,
+        expectedHeadCommitSha: baseCommit, baselineAttemptId: original.attemptId,
+      });
+      const input = { attemptId: original.attemptId, fencingToken: fence.lock.fencingToken,
+        commandRef: failure.commandRef, evidenceRef: failure.evidenceRef,
+        exitCode: failure.exitCode, candidateIdentity: bad.resultCandidate.workspaceIdentity };
+      const beforeProofs = cp.stateStore.getVerificationHistory(runId);
+      await assert.rejects(cp.rejectHostWorkerCandidateProof(runId, { ...input, fencingToken: fence.lock.fencingToken + 1 }),
+        { code: 'host_worker_proof_failure_stale' });
+      const next = await cp.rejectHostWorkerCandidateProof(runId, input);
+      cp.releaseOwnerWorkspaceMutationFence(runId, fence.lock);
+      const repair = assertTestRecord(assertTestRecord(next).action);
+      assert.equal(repair.type, 'fix');
+      assert.equal(repair.retryAttemptId, original.attemptId);
+      assert.equal(assertTestRecord(repair.step).stepId, original.stepId);
+      const failed = cp.getAttemptById(runId, original.attemptId);
+      assert.equal(failed?.status, 'failed');
+      assert.deepEqual(failed?.verificationRefs, [failure.evidenceRef]);
+      assert.equal(failed?.reportResult, null);
+      assert.equal(cp.stateStore.getRun(runId)?.mutationRevision, 0);
+      assert.deepEqual(cp.stateStore.getVerificationHistory(runId), beforeProofs);
+      assert.equal(cp.stateStore.getMutationProvenance(runId), null);
+      assert.equal(git('status', '--porcelain'), '');
+
+      const retry = cp.beginAttempt(runId, { stepId: original.stepId,
+        provenanceKind: 'host-owned-worker', parentAttemptId: original.attemptId });
+      assert.ok(retry?.attemptId && retry.attemptId !== original.attemptId);
+      assert.equal(retry.stepId, original.stepId);
+      assert.equal(retry.attemptNumber, original.attemptNumber + 1);
+      const corrected = await runWorker(retry.attemptId, retry.stepId, 'corrected');
+      assert.equal(executeTrustedProof({ projectRoot: corrected.workspaceRoot, commandRef: 'test:content' }).status, 'passed');
+      assert.equal(git('status', '--porcelain'), '');
+    } finally {
+      await cp.close();
+      for (const workerRoot of workerRoots) git('worktree', 'remove', '--force', workerRoot);
     }
   });
 });

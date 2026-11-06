@@ -136,6 +136,7 @@ export interface WorkAttempt extends Record<string, unknown> {
 export interface RecordStepAttemptInput {
   stepId: string;
   claimReadyStep?: boolean;
+  expectedContractRevision?: number | undefined;
   attemptId?: unknown;
   bindingId?: unknown;
   actorSessionId?: unknown;
@@ -905,6 +906,7 @@ export const createWorkAttemptStore = ({
   const recordStepAttempt: WorkAttemptStore['recordStepAttempt'] = (runId, {
     stepId,
     claimReadyStep = false,
+    expectedContractRevision = undefined,
     attemptId = null,
     bindingId = null,
     actorSessionId = null,
@@ -934,6 +936,14 @@ export const createWorkAttemptStore = ({
       const step = stepId ? getRunStep(runId, stepId) : null;
       if (!step) throw new Error(`Run ${runId} step ${stepId || '<missing>'} not found`);
       if (claimReadyStep) {
+        if (run.status !== 'active' || step.planRevision !== run.planRevision
+          || (planRevision !== null && planRevision !== run.planRevision)
+          || (mutationRevision !== null && mutationRevision !== run.mutationRevision)
+          || (expectedContractRevision !== undefined && expectedContractRevision !== run.contractRevision)) {
+          throw Object.assign(new Error('Canonical execution directive no longer matches the Run'), {
+            code: 'STEP_ATTEMPT_REVISION_STALE',
+          });
+        }
         // The Step is the existing canonical dispatch claim. Claim and insert
         // its Attempt in one SQLite transaction before any Host starts a tool.
         const claim = asChangeResult(db.prepare(`

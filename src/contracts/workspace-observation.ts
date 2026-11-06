@@ -62,4 +62,5 @@ export interface MutationPathObservation {
 export interface MutationWorkspaceObservation {
   headCommitSha: string | null;
   workspaceStatus: string | null;
+  indexDigest?: string | null;
 }

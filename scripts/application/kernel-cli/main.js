@@ -47,6 +47,7 @@ export async function runKernelCliApplication(argv = [], options = {}) {
                 approve: 'kernel approve [run-id] [--obligation <id>] [--reason <text>] [--approver <name>] [--approval-ref <host-ref>] [--all-judgments] [--json]',
                 status: 'kernel status --run-id <id> [--json]',
                 context: 'kernel context [--run-id <id>] [--stage <stage>] [--json]',
+                'worker-host': 'kernel worker-host [--project-root <path>] [--runtime-home <path>] [--run-id <id>] (local JSON lines: capabilities/start/resume/status/attach/interrupt)',
                 finalize: 'kernel finalize [run-id] [--json]',
                 resume: 'kernel resume [run-id] [--json]',
                 doctor: 'kernel doctor [--project-root <path>] [--json]',
@@ -305,7 +306,13 @@ export async function runKernelCliApplication(argv = [], options = {}) {
             throw hostSessionResolutionError;
         if (hostRunResolutionError)
             throw hostRunResolutionError;
-        if (command === 'mcp-bridge') {
+        if (command === 'worker-host') {
+            await assertKernelTrack();
+            const { startLocalWorkerControl } = await import('../../host/kernel/local-worker-control.js');
+            startLocalWorkerControl({ projectRoot,
+                runtimeHome: effectiveRuntimeHome || resolveKernelRuntimeHome({ env: kernelEnv }), env: kernelEnv });
+        }
+        else if (command === 'mcp-bridge') {
             const moduleValue = await import('../../kernel/bridge/mcp.js');
             const { startMcpBridgeServer } = moduleValue;
             startMcpBridgeServer({ runtimeHome: effectiveRuntimeHome || undefined, env: kernelEnv });

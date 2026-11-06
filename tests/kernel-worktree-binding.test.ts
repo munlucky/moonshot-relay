@@ -433,6 +433,8 @@ test('legacy workspaceId-only Runs migrate to authoritative worktreeId and acqui
     const raw = await openSqliteDb(kernelDbPath(fixture.runtimeHome));
     raw.prepare(`UPDATE runs SET worktree_id=NULL WHERE run_id=?`).run('run-legacy-workspace');
     raw.prepare(`DELETE FROM worktree_mutation_leases WHERE holder_run_id=?`).run('run-legacy-workspace');
+    // This fixture represents a legacy database before schema versioning.
+    raw.exec('PRAGMA user_version = 0');
     raw.close();
 
     store = await openKernelStateStore({ runtimeHome: fixture.runtimeHome });
@@ -468,6 +470,7 @@ test('legacy duplicate active Runs preserve history and fail closed without a wo
     raw.prepare(`UPDATE runs SET updated_at=? WHERE run_id=?`)
       .run('2026-01-02T00:00:00.000Z', 'run-legacy-newer');
     raw.prepare(`DELETE FROM worktree_mutation_leases WHERE worktree_id=?`).run(worktree.worktreeId);
+    raw.exec('PRAGMA user_version = 0');
     raw.close();
 
     store = await openKernelStateStore({ runtimeHome: fixture.runtimeHome });

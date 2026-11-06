@@ -346,6 +346,7 @@ const runResolvedCommand = ({
       ? exitCode || 1
       : exitCode,
     timedOut,
+    processExited: !result.error && typeof result.status === 'number',
     status: failed ? 'failed' : 'passed',
     stdoutDigest: sha256(stdout),
     stderrDigest: sha256(stderr),

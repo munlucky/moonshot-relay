@@ -1,11 +1,12 @@
 # Host-owned Worker / Context Continuity 진행 현황
 
-- **유일한 구현 기준:** [PLAN.md](PLAN.md). 필수 검증은 [VERIFICATION.md](VERIFICATION.md). 후속 실험·실행계획은 원래 W0~W6 및 G0~G6의 범위·선행 관계를 바꾸지 않는다.
+- **구현 기준:** [PLAN.md](PLAN.md)의 최신 사용자 변경 범위. 검증과 미지원 경계는 [VERIFICATION.md](VERIFICATION.md)를 따른다. 이전 W0~W6 및 G0~G6 전체 수용 기록은 이력으로 보존한다.
+- **최신 개발 종료 범위:** 로컬 제품 기능 연결 1~5의 코드 개발 완료. 사용자의 완료·커밋·푸시 요청에 따라 같은 Run의 Contract Revision 4으로 범위를 변경했다. 아래 전체 Native 제품 판정과 구분한다.
 - **현재 제품 판정 (2026-11-06): PARTIAL.** W0 ContextReceipt 수정은 SOURCE PASS, W1·W2 Host Worker 제어는 CODE/WIRED PARTIAL, W3·W4·W6 제품 수용은 미완료. 테스트 통과를 사용자 기능 완료로 간주하지 않는다.
 - **소스 기준:** `main`의 현재 HEAD와 `origin/main`은 Git에서 확인한다. 보안 수정·Fixture PASS를 Native 제품 전체 수용 PASS로 취급하지 않는다.
 - **Native 안전 계약:** OS Writer의 물리적 종료·쓰기 배제가 입증되지 않아 기본 Native Writable Worker 자동 시작, 불명확한 Attempt 재실행, 자동 Owner 결과 합류, 충돌하는 Fresh Resume은 계속 **HOLD_SAFE**. 이 차단을 독립적인 조회·기존 Kernel 실행 루프 개발 전체로 전파하지 않는다.
 
-## 최초 계획 대비 실제 구현·검증 상태
+## 최초 계획의 전체 Native 수용 상태와 초기 구현 이력
 
 | Wave / Gate | CODE / WIRED | TESTED / ACCEPTED | 다음 실제 구현 또는 제한 |
 | --- | --- | --- | --- |
@@ -103,6 +104,154 @@
 - **추가 Git 검사:** admission·경로 검증·사전 스테이징 보호·중복 커밋 방지·재푸시·authority audit **14/14 PASS**. 타입·Production/Tests Build·Boundary도 PASS다. 별도 스테이징 정적 검사에서는 스냅샷 함수의 직접 `git add` 호출을 금지하는 기존 검사 1건이 실패했으며, 변경 전 `a9576033`에서도 동일하게 재현됐다. 이번 Worker 인계·커밋 경로 수정이 만든 실패가 아니다. 관리형 실행 파일의 standalone lock은 기존 생성기로 재생성했다. 위 108건 PASS 집계와 이 추가 Git 정적 검사의 기존 실패를 구분한다.
 - **승인 계보의 커밋 누락 복구:** 첫 관리형 커밋은 복구 코드·문서 4개만 포함했고, 승인된 이전 Run의 Worker 소스를 기준선 보존 대상으로 제외했다. 이전 Run의 실제 승인 경로는 보존 대상에서 제외하고 미승인 사용자 기준선만 유지하도록 기존 admission을 수정했다. 실제 격리 Worktree의 새 Kernel 작업 단위에서 원본 패치를 재인계해 검증·커밋한다. 완료 후의 HEAD 변경 때문에 발생한 successor continuity 불일치를 사용자 승인으로 위장하거나 DB/Receipt를 수정하지 않는다.
 
+## 2026-11-06 완료 조건 정정 — 원래 A2/A3 요청은 미완료
+
+- **다음 실행 기준:** [PLAN.md의 완료 조건 정정](PLAN.md#완료-조건-정정--다음-개발에-적용할-필수-기준-2026-11-06). A2-1~A3-2는 모두 묶음 A의 필수 조건이다. “안전한 관통 실행이 불가능하면 근거를 남긴다”는 문장을 성공 Acceptance의 대체 조건으로 사용하지 않는다.
+- **과거 `done`의 범위:** 앞선 Run은 A2-1 결과 인계·미수용 기록·관리형 커밋 복구를 수락했다. A2-2~A3-2 구현·관통 수용을 완료한 증거가 아니다. 원래 요청은 계속 **미완료**다. 과거 Receipt/DB는 수정하지 않고 이 범위 차이를 보존한다.
+- **완료 보고 제한:** 기존 108건 회귀·14건 Git 회귀·빌드·푸시 성공을 전체 A2/A3 완료로 사용하지 않는다. 각 AC에는 실제 검증한 증거만 연결한다. 필수 구현/통제 관통 실행이 막히면 미충족 AC와 blocker를 남기며 모든 AC를 충족으로 제출하지 않는다.
+- **분리 판정:** A의 코드·통합 완료, B의 각 세션 기능, Native 제품 수용, C의 비교·채택을 각각 기록한다. Native HOLD_SAFE·승인/Fresh Resume DEFER·비교 NOT_RUN은 A2-2 이후 코드 개발을 자동 제외하지 않는다. 안전한 통제 검증도 불가능하면 A는 미완료로 남는다.
+- **이번 정정은 문서 작업이다.** PLAN/STATUS의 완료 기준만 수정하며 새 제품 구현·Native 수용·전체 Kernel 완료를 주장하지 않는다.
+
+## 2026-11-06 정착·후속 실행 연결 — 통합 수용 진행 중
+
+`codex/host-worker-integration`에서 기존 A2-1 구현을 이어서 개발했다. 아래는 이 작업 트리의 관측이다. 위의 최초 인계 판정은 당시 결과로 보존한다.
+
+| 항목 | 현재 관측 | 남은 수용 |
+| --- | --- | --- |
+| A2-1 | 실제 후보 인계와 Main 교체 회귀 통과. Owner의 기존 staged 변경과 untracked 파일을 보존하고 Worker 변경만 후보에 포함한다. Owner Index만 바뀐 경우도 Proof 전에 차단한다. | 전체 Run의 통합 증거와 연결 |
+| A2-2 | 기존 통합 Proof와 Owner Fence/CAS, Canonical Report 호출을 연결했다. 실제 Writer 배제 경계가 없거나 Proof runner를 바꾸면 자동 정착을 허용하지 않는다. | 보호된 동일 제품 경로에서 실제 파일 적용·Revision 증가·Report 각 1회 확인 |
+| A2-3 | 공유 정착에서 Report 저장 뒤 응답 유실을 재현하고 재연결 시 같은 Report를 반환했다. Owner Fence가 유효한 적용 중에는 재연결을 대기 상태로 표시한다. Fence 종료 뒤 CAS 기록 없는 파일 변경은 차단한다. | Host-owned CAS 후 Report 전 재개와 각 중단 지점의 제품 경로 관통 수용 |
+| A3-1 | Kernel은 성공한 단일 Host-owned Report에 `next`를 함께 저장한다. 같은 Host만 저장된 Report와 현재 Revision을 확인해 후속 구현을 시작하도록 연결했다. Main 상태 조회에는 내부 `next`와 Proof 원본을 포함하지 않는다. | 실제 정착을 거친 후속 실행, 중복 경쟁, Proof 실패 뒤 같은 Step의 수정 Attempt 수용 |
+| A3-2 | 미수용 | 동일 Run의 보호된 Host-owned 3~5-Step, 실패 수정, stale Evidence 재검증, 원래 계약의 최종 `done` |
+| B | 통제된 MCP에서 Main 교체, 같은 Attempt 조회, 동시 start 1회, 정확한 Turn 취소를 검증했다. 인증된 채널이 없는 승인 요청은 기존 경로에서 거부했다. | 승인 왕복 및 Fresh Writable Resume은 실제 채널과 Writer 보호가 필요하다. |
+| C | 타입·Production Build·Tests Build·Boundary·Git diff 검사 통과. 관련 회귀 90 PASS, 실패 0, POSIX 전용 2 SKIP. | I01~I12의 Host-owned 관통 증거와 Native 수용, 지원 Arm 실측 비교. B/E/C/D는 NOT_RUN. |
+
+macOS 원격 연결에서 Native Host 실행기의 상태를 확인할 수 없었다. Windows에서는 제품이 신뢰하는 Writer 배제와 보호된 Proof 경로가 확인되지 않았다. Native 자동 정착은 HOLD_SAFE다. 위 회귀는 공통 복구와 MCP 제어의 증거다. A2-2나 A3의 관통 Acceptance는 미충족이며, 이 상태에서 전체 Run 완료를 보고하지 않는다.
+
+### 로컬 기준과 CAS 후 Report 복구
+
+- 현재 로컬 Git 작업 트리와 그 Kernel Run을 판정 기준으로 삼는다. 로컬 Host는 `startLocal`에서 바인딩된 Kernel 지시를 가져온다. MCP는 같은 Host 세션에 받은 지시를 전달한다. 실제 Writer 보호가 없는 로컬 Host의 Native 시작은 차단한다.
+- CAS가 이미 기록됐으면 Kernel은 원래 Attempt의 Revision, Workspace Identity, 패치 Digest와 경로가 기록과 일치할 때만 `report-pending`으로 판정한다. 보호된 Host는 Owner 내용을 새 Proof 작업 트리에 재구성하고 같은 Attempt의 Report를 재개한다. 이 분기에는 Owner 재적용이나 새 Worker 시작이 없다.
+- 로컬 격리 시험에서 실제 Git 패치와 Kernel CAS를 사용해 Report 전 중단 상태를 만들었다. 새 Control Plane 연결에서 같은 Attempt와 CAS를 찾았고, Revision은 1회, Attempt는 1개로 유지됐다. Owner 파일을 바꾸면 복구를 차단했다. 이 시험의 직접 CAS 준비는 분류 경계 검증이다. 보호된 Host의 Report 재개와 전체 A2-3 관통 수용은 남아 있다.
+
 ## 재개 지점
 
-[PLAN.md의 개정 실행 기준](PLAN.md#2026-11-06-잔여-개발-실행-기준--hostkernel-중심-os-관리-기능-제외-개정)을 유지한다. A1과 **A2-1 실제 Worker 보고서·Git 후보의 Canonical 인계**는 구현/격리 검증 완료다. 다음 개발 대상은 A2-2의 기존 정착 엔진 연결이다. 실제 Host가 원래 Writer의 종료·쓰기 배제 증거를 제공할 수 있을 때만 같은 Attempt의 Owner CAS·Report·`report.next`로 연결한다. A2-3~A3-2의 Host-owned 관통 수용은 아직 미완료다. Fixture 전용 Delivery 승인·가짜 true 플래그·새 OS 플랫폼으로 이 제한을 숨기지 않는다. B의 승인 왕복·Fresh Writable Thread는 DEFER, C의 B/E/C/D 비교는 NOT_RUN이다. 기존 Owner-direct 3-Step과 Report replay 증거는 보존한다.
+[PLAN.md의 정정된 완료 조건](PLAN.md#완료-조건-정정--다음-개발에-적용할-필수-기준-2026-11-06)으로 이어간다. A1과 A2-1 구현·증거를 재사용하고 **A2-2→A2-3→A3-1→A3-2를 하나의 기능 묶음으로 구현·검증**한다. 기존 제품의 검증·정착·후속 실행 경로를 공유하고 안전한 통제 환경의 관통 수용을 수행한다. 실제 Writer 배제 근거 없이 Owner 적용·새 Writer를 허용하지 않는다. 이 조건을 충족하지 못하면 해당 수용은 BLOCKED이며 묶음 A는 미완료다. Native HOLD_SAFE를 코드 개발 전체의 종료 조건으로 사용하지 않는다. B의 독립 Main 연속성·취소 검증은 계속하며 승인 왕복·Fresh Writable Thread와 C의 비교는 실제 지원 조건에 따라 별도 판정한다. 기존 Owner-direct 3-Step·Report replay 증거는 보존하되 Host-owned 관통 증거로 대체하지 않는다.
+
+### 로컬 후보 Proof 실패와 같은 Step 수정
+
+- 로컬 fixture에서 실제 Manifest 명령을 종료 코드 19로 실패시켰다. 원래 Attempt에 실패 증거가 남고, Kernel이 같은 Step의 다음 Attempt를 지정했다. 수정 후보는 같은 명령을 통과했다. 실패 경로에서 Owner 파일·Mutation Revision·완료용 Evidence는 보존됐고 Canonical Report는 생성되지 않았다.
+- Production Build, Tests Build, 로컬 집중 검증 1/1, MCP 전송 검증 2/2 PASS. MCP에서 Main 교체·원래 Attempt 재조회·취소 및 결과 인계를 확인했다. 실제 Writer 보호 아래의 Owner 정착과 3~5 Step 연속 실행은 아직 입증하지 못했다.
+
+### 로컬 3-Step 수용 진입점
+
+- 같은 Host에서 CAS 뒤 Report를 복구하면 기존 Attempt의 Canonical `next`를 이어서 소비한다. 새 Host에는 기존 Owner 예약을 넘기지 않는다.
+- 마지막 Guarded Worker Report는 이미 통과한 Step의 stale Proof를 최종 통합 작업 트리에서 다시 실행한다. Canonical Report는 기존 검증과 최종화 경로로 저장한다.
+- `npm run test:host-worker-acceptance`는 로컬 Host 진입점에 연결한다. 유한 App Server의 실제 종료, 실제 Manifest 실패와 같은 Step 재시도, 정착 3회, 중복 Report 0, 최종 Revision의 Evidence와 Kernel `done`을 확인한다.
+- 현재 Windows에서는 제품 Proof 쓰기 경계가 없어 관통 검증이 시작되지 않는다. Docker 엔진이 실행 중이지만 제품 Proof 경계에는 연결되어 있지 않다. 관련 회귀 62 PASS / 2 POSIX 전용 SKIP은 별도 증거다.
+
+### A2-3 로컬 중단 복구
+
+- CAS 전 재연결은 기존 Worker의 Canonical Attempt·Git 후보를 다시 사용한다. 최초 검증과 복구에서 같은 Manifest 선택을 사용한다. 실제 Writer 배제와 기존 Owner Fence를 다시 요구한다.
+- CAS 응답 유실은 저장된 변경과 동일한 패치 Digest·결과 작업 트리일 때만 이어서 정착한다. Git 적용 후 CAS 기록이 없으면 모호한 상태로 차단한다. Report 저장 후 응답 유실은 기존 Report를 재사용한다.
+- `npm run test:host-worker-recovery`에 같은 로컬 Host 경로의 중단 시나리오 두 건을 연결했다. 보호된 Proof가 있는 Host에서 실제 Git·CAS·Report를 사용하도록 구성했다. Windows 결과는 보호 경계 미지원으로 구분한다.
+
+### B 취소와 C 불변식 근거
+
+- 로컬 App Server에서 같은 Turn의 완료 이벤트가 ACK보다 먼저 오면 큐에 있던 취소를 보내지 않는다. 이미 보낸 취소의 ACK가 유실되면 그 신호만 unknown으로 남고, 다음 Turn은 완료할 수 있다.
+- MCP와 로컬 시작은 같은 Host의 Native 시작 조건을 확인한다. MCP의 수동 격리 불리언을 제거했다. B fixture는 로컬에서 시작한 동일 Host 세션에 MCP가 붙어 재연결과 취소를 검사한다.
+- 기존 승인 요청 거부 경계는 유지한다. 인증된 사용자 승인 왕복과 이전 Writer 배제를 전제로 하는 Fresh Resume은 DEFER다.
+
+| 불변식 | 로컬 관측과 수용 범위 |
+| --- | --- |
+| I01 | Host Worker가 미정착 상태이면 Kernel이 다음 Step과 Report를 차단한다. 상태 조회는 Run을 만들거나 진행시키지 않는다. |
+| I02 | 실제 Git Worker 패치, Owner Index 및 untracked 파일 보존, 작업 트리 바인딩과 레거시 충돌을 검증했다. Native 교체 후 바인딩은 미관측이다. |
+| I03 | 실제 detached Writer가 Turn과 App Server보다 오래 살아도 기존 Attempt와 예약을 보존했다. Native Writer 배제와 보호된 정착은 미수용이다. |
+| I04 | 동시 시작은 같은 Attempt 한 건을 반환했다. disconnect로 상태가 unknown인 Worker는 재실행하지 않았다. 실제 정착 Report의 3-Step 연속 실행은 미수용이다. |
+| I05 | Worker 결과나 연결 상태는 Kernel 완료 권한을 부여하지 않는다. stale Evidence와 누락된 Coverage는 완료를 차단한다. |
+| I06 | Worker가 실행 중인 동안 Contract 교체를 거부했다. 후보의 원본 Attempt, 경로, Proof 바인딩을 검증했다. |
+| I07 | App Server 이벤트는 원래 Turn에 귀속했다. 실제 Native 원본 transcript를 Main 교체 뒤 조회하는 경로는 미관측이다. |
+| I08 | fixture가 시작 요청의 model/effort와 sandbox·approval 정책을 검사했다. 실제 Native 유효 구성은 미관측이다. |
+| I09 | 두 MCP 스트림이 같은 Host Attempt를 조회했다. 다른 Host는 영속 Attempt만 조회했다. 연결 종료로 Kernel 완료 상태가 바뀌지 않았다. |
+| I10 | 시작 전 큐잉, 동일 Turn 취소, 완료 선착, ACK 유실, 승인 우회 차단을 검증했다. 실제 사용자 승인 왕복은 DEFER다. |
+| I11 | 상태에서 원본 패치와 명령 출력을 제외했다. Proof와 Context의 비밀정보 삭제 회귀를 검증했다. |
+| I12 | 수명이나 원본을 확인할 수 없는 실행은 unknown으로 유지했다. Native transcript 완전성은 미관측이다. |
+
+Native Writer 보호와 비교 Arm 수용은 미완료다. A/B/E/C/D 비교는 기존 지원 및 예산 조건에 따라 판정하며, 미지원 B/E/C/D는 NOT_RUN이다.
+
+검증 결과는 B MCP/App Server 44 PASS / 2 POSIX 전용 SKIP, C 관련 Worktree·Trust·Redaction·Context 28 PASS다. 레거시 Worktree fixture는 기준 커밋에서도 같은 오류가 났다. 테스트 DB의 버전을 0으로 표시해 실제 마이그레이션을 실행하고, 단일 Run의 Lease 복구와 중복 Run의 차단을 확인했다. TypeScript, Production Build, Tests Build, Boundary도 통과했다.
+
+### A2-2 복수 Manifest Proof
+
+- 후보 검증이 Kernel Report와 같은 계획기를 사용한다. 해당 Step의 필수 Manifest 명령과 마지막 Step에서 필요한 이전 검증을 Owner CAS 전에 검사한다. 각 명령 뒤 staged blob과 작업 트리 내용을 다시 확인한다.
+- 로컬 테스트에서 첫 명령은 통과하고 두 번째 명령은 실제 종료 코드 19로 실패했다. Owner 파일과 Revision은 그대로였고 Report는 생성되지 않았다. Kernel이 같은 Step의 수정 Attempt를 지정했다.
+- TypeScript, Production Build, Tests Build, Boundary 및 집중 회귀 4건이 통과했다. 보호된 3-Step 테스트에도 복수 명령을 연결했다. Windows에서는 여전히 제품 Proof 경계가 없어 관통 테스트가 실행되지 않는다.
+
+### A3-1 재요청과 Owner 적용 직전 검증
+
+- 같은 로컬 Host의 재요청은 기존 실행이나 시작 중인 Promise를 반환한다. 중단된 정착만 Kernel에 재조회를 요청한다. 성공한 Step의 후속 지시는 저장된 Canonical Report에서 소비한다.
+- Owner 적용 직전에 Run의 Contract·Plan·Mutation Revision과 Canonical Attempt를 재확인한다. Proof 도중 해당 기준이 바뀌면 적용을 차단한다.
+- 보호된 A3 수용 테스트는 첫 Report를 저장한 직후 같은 Host와 다른 Host가 각각 재요청하도록 구성했다. 같은 Host는 기존 Attempt를 반환하고 다른 Host는 후속 Worker를 시작할 수 없어야 한다.
+- TypeScript·Production Build·Tests Build·Boundary와 집중 회귀 5건 통과. Windows의 A3 관통 명령은 `PROOF_WRITE_CONTAINMENT_UNAVAILABLE`로 중단됐다. Mac 보조 확인도 Native 실행기 부재로 실행되지 않았다. 원래 로컬 Kernel Run은 `step-2-1`에서 active이며 Finalization은 pending이다.
+
+### A2-3 Step 통과 뒤 Report 복구
+
+- 로컬 Kernel이 보호된 Proof 체크포인트를 원래 Worker Attempt와 이미 적용한 Owner Mutation에 대조한다. 일치할 때만 Report 결과 저장을 재개한다. 기존 Step의 완료 시각을 유지하고 Proof와 Owner 패치 적용을 반복하지 않는다.
+- 실제 프로세스 종료 후 복구하는 공통 Report 회귀에서 완료 시각, Proof 기록 수, Attempt 수가 유지됐다. Host-owned 관통 테스트에도 Step 통과 후 Report 저장 직전 중단과 로컬 재접속을 추가했다.
+- TypeScript, Production Build, Tests Build, Boundary, Git diff 검사와 관련 회귀 46건이 통과했다. POSIX 전용 2건은 건너뛰었다. 로컬 Windows의 보호된 A2-3 테스트는 `PROOF_WRITE_CONTAINMENT_UNAVAILABLE`로 시험 전 단계에서 중단됐다. A2-3 관통 수용은 미완료다.
+
+### C 로컬 제품 검증 명령과 I11
+
+- `npm run test:host-worker-product-acceptance`를 실제 로컬 검증에 연결했다. 타입 검사, 제품 빌드, 테스트 빌드, 경계 검사, 관련 통합 테스트를 실행한다. [VERIFICATION.md](VERIFICATION.md#묶음-c-로컬-실행)에 I01~I12별 로컬 시험과 별도 제품 증거를 대응했다.
+- 로컬 Windows, Node 24.18.0, 기준 HEAD e419fa09와 현재 작업 트리에서 기본 검사 4종이 통과했다. 전체 시험은 110건 중 104건 통과, POSIX 전용 2건 건너뜀, 실패 4건이었다. 보호된 Host 시험 3건은 `PROOF_WRITE_CONTAINMENT_UNAVAILABLE`로 중단됐다. 나머지 1건은 비밀 마스킹 문자열 형식을 고정한 테스트 오류였다.
+- I11 테스트가 비밀값 삭제를 직접 검사하도록 수정했다. 테스트를 다시 빌드한 뒤 해당 시험 1건이 통과했다. 저장된 Worker 요약은 비밀값을 마스킹했고, 새 Main의 상태와 재접속 응답은 비밀값과 원본 패치 내용을 노출하지 않았다. 수정 후 전체 명령의 통과는 기록하지 않았다.
+- C는 PARTIAL이다. Native 원본 transcript와 실제 적용 설정, 보호된 A2/A3 및 B/E/C/D 비교 증거가 남았다. 비교 상태는 NOT_RUN이다.
+
+### B Main 재접속과 명령 이벤트 조회
+
+- 같은 로컬 Host의 현재 Attempt에서 관측한 App Server 명령 이벤트 식별자를 상태와 재접속 응답에 제공한다. 최근 32건과 전체 관측 건수, 응답에서 생략한 건수를 표시한다. 원본 명령 출력은 제공하지 않고 식별자에서 비밀값을 마스킹한다.
+- 실제 MCP 스트림 두 개에서 같은 이벤트와 Attempt를 확인했다. 다른 Turn의 이벤트는 제외됐고 교체된 Main이 같은 Turn만 취소했다. TypeScript, 제품·테스트 빌드, 경계 검사, 집중 3건, B 통합 44건이 통과했다. POSIX 전용 2건은 건너뛰었다.
+- 이 조회 범위는 현재 Host 프로세스와 현재 Attempt다. Native 원본 transcript, Host 종료 후 이벤트 재조회, 실제 사용자 승인 왕복과 Fresh Resume은 미수용 범위다. 원래 로컬 Run은 active, Finalization은 pending이다.
+
+### A3-1 기존 Run의 MCP 시작 재요청
+
+- 새 계약 없이 Worker 시작을 요청하면 MCP는 기존 Kernel Run과 Worktree 바인딩을 확인한다. 로컬 Host가 기존 Attempt를 반환하거나 새 실행이 필요한 경우에만 Kernel 지시를 조회한다. 재요청 응답에는 별도 실행 지시가 없다. 기존 Attempt 조회는 가능하며 새 Writer에는 기존 보호 조건을 적용한다.
+- Main 교체 시험에서 같은 Attempt를 반환했고 Run Revision, Mutation Revision 및 Attempt 수가 유지됐다. 다른 Run에 바인딩된 Main의 재요청은 거부됐다. TypeScript, 제품·테스트 빌드, 경계 검사, MCP 집중 회귀 4건이 통과했다.
+- 보호된 관통 테스트에는 실제 Report 직후 MCP 시작 재요청도 추가했다. 로컬 Windows에서는 `PROOF_WRITE_CONTAINMENT_UNAVAILABLE`로 해당 구간까지 실행하지 못했다. 원래 로컬 Run은 active이며 Finalization은 pending이다.
+
+### A3-1 계약을 포함한 Worker 요청
+
+- 계약 등록과 Kernel 지시 조회를 분리했다. MCP에서 Worker 시작과 계약을 함께 요청하면 Kernel이 기존 규칙으로 Run을 등록하거나 재사용한다. 그 다음 로컬 Host가 기존 Attempt를 조회하거나 필요한 실행 지시를 받는다. 계약 등록 응답에는 실행 지시를 넣지 않는다.
+- 최초 계약 등록과 동일 계약 재요청에서 같은 Run ID를 반환했다. 실행 중 계약 범위 변경을 거부했고 Run·Contract·Mutation Revision과 Attempt 수를 유지했다. 타입·제품 빌드·테스트 빌드·경계 검사와 관련 회귀 9건이 통과했다.
+- 보호된 시험은 실제 Report 직후 동일 계약을 포함한 MCP 재요청을 검사한다. 로컬 Windows의 `PROOF_WRITE_CONTAINMENT_UNAVAILABLE`로 그 구간은 미관측이다. 원래 로컬 Kernel Run은 active이며 전체 수용은 미완료다.
+
+### A3-1 로컬 Step 선점과 Revision 검사
+
+- Host-owned Attempt 등록은 기존 SQLite Step 선점 트랜잭션을 사용한다. Run 상태와 Contract·Plan·Mutation Revision이 맞지 않으면 Step과 Attempt를 변경하지 않는다. 다른 Kernel 연결의 두 번째 선점도 거부한다. 별도 실행 상태 저장소는 추가하지 않았다.
+- 같은 로컬 Host의 동시 요청, 오래된 실행 지시, 다른 연결의 선점 경쟁, MCP 재접속을 포함한 실제 회귀에서 상태 보존과 Attempt 1개를 확인했다. Worktree 바인딩·Fence·중단 복구·Report replay를 함께 실행한 결과는 53건 중 50 PASS, 3 FAIL이다. 실패 3건은 보호된 Host 관통 시험이며 모두 `PROOF_WRITE_CONTAINMENT_UNAVAILABLE`로 실행 전 차단됐다. 이를 통과나 건너뜀으로 바꾸지 않았다.
+- 로컬 우선 완료 기준을 PLAN에 명시했다. MCP 없이 로컬 Host에서 필수 기능을 수용하고, MCP는 같은 제품 경로의 전송 회귀로 별도 판정한다. 원래 Run은 active, Finalization은 pending이며 A2-2·A2-3·A3-2의 관통 수용은 미완료다.
+- 별도 집중 회귀 7건도 종료 코드 0으로 통과했다. 실제 후보 Proof 실패 후 같은 Step 수정 지시, Canonical Attempt 인계 및 Provider 실패 경계를 포함한다.
+
+### 잔여 수용 차단과 재개 조건
+
+- A2-1과 A3-1의 확인된 회귀는 보존한다. A2-2의 보호된 Owner 정착, A2-3의 Host-owned 관통 복구, A3-2의 3~5-Step 최종 완료는 현재 로컬 환경에서 입증되지 않았다. B의 인증된 승인 왕복·Fresh Resume과 C의 미지원 비교 Arm도 미수용 상태를 유지한다.
+- 동일 로컬 Proof 보호 기능 부재는 앞선 여러 실행과 이번 53건 회귀에서 반복됐다. 현재 구현의 `confineTrustedProofWrites`는 macOS Seatbelt만 제공한다. Windows에서 이를 일반 spawn으로 바꾸거나 성공 불리언을 주입하지 않는다. 새 OS 보안 플랫폼은 원래 개발 범위에 포함하지 않는다.
+- 대화 목표의 실행 상태는 외부 능력 차단으로 BLOCKED다. 이는 제품 완료가 아니다. 원래 로컬 Kernel Run은 active/Finalization pending 상태를 유지하며 성공 Report를 제출하지 않는다. 재개에는 현재 로컬 Host에 제품이 신뢰할 수 있는 Proof 쓰기 보호와 실제 Writer 배제 근거가 필요하다. 원격·MCP 성공은 이 로컬 수용을 대신하지 않는다.
+
+### 후속 요청 — 로컬 제품 기능 연결
+
+사용자가 이전 목표를 해제하고 로컬 기능 1~5의 개발을 새 목표로 지정했다. 성능 비교·반복 검증은 새 기능 개발 범위에서 제외한다. 위의 전체 A2/A3 Run과 그 미수용 증거는 보존한다.
+
+- 로컬 `worker-host` 제품 진입점과 Native Host용 `createLocalWorkerControl`을 추가했다. MCP 없이 시작·조회·재접속·중단 처리 재개·정확한 Turn 취소를 기존 Host 세션으로 처리한다. 다른 Main도 동일한 Host 세션을 공유하며, 다른 Run 바인딩은 거부한다.
+- 결과 반영과 후속 Step은 기존 `HostWorkerSessions.startLocal` 경로를 사용한다. Report 저장 후 Host 응답만 유실되면 Canonical Report의 `next`를 복구한다. 후속 시작 실패도 같은 지시로 재시도하며 별도 `next`를 요청하지 않는다. 새로운 정착 엔진·작업 저장소·데몬은 만들지 않았다.
+- 기본 제품 구성의 실제 Writer 배제 구현은 여전히 없다. 이 구성은 미지원 사유를 반환하며 자동 Owner 적용을 활성화하지 않는다. Windows Proof 보호도 미지원이다. 로컬 전경 CLI의 표준 입출력은 한 연결이며, Main 교체는 Native Host에서 같은 세션을 공유하는 새 연결에 적용한다. Host 종료 후 실행 핸들 복원과 소켓 서비스는 추가하지 않았다.
+- 사용 방법과 기능별 경계는 [LOCAL_WORKER_CONTROL.md](LOCAL_WORKER_CONTROL.md)에 기록했다. 로컬 제어와 CLI 도움말 집중 시험 4건이 통과했다. 보호된 Owner 반영과 후속 Step의 관통 수용으로 확대하지 않는다.
+- 최종 변경의 TypeScript·제품 빌드·테스트 빌드·경계 검사·diff 검사와 로컬/MCP 집중 회귀 6건이 통과했다. 실제 `worker-host` CLI도 실행해 현재 Host의 `unsupported / host_worker_native_isolation_unverified` 응답을 확인했다. 보호된 관통 시험은 같은 환경 차단을 재확인하기 위해 반복 실행하지 않았다. 이번 결과는 새 요청의 로컬 제어 연결 개발과 현재 미지원 경계에 한정한다. 이전 전체 Kernel 수용을 완료로 바꾸지 않는다.
+
+### 사용자 승인 범위 변경과 Kernel·Git 종료
+
+사용자의 후속 로컬 기능 개발 요청과 완료·커밋·푸시 요청을 반영해 원래 Run의 Contract Revision 4, step-4-1로 종료 범위를 변경했다. 이전 전체 A2/A3 미수용 기록은 보존한다. 같은 Run의 최초 objective는 이력이며 최신 acceptance·constraints·nonGoals가 변경 범위를 정의한다.
+
+로컬 제어·후보 인계·공통 정착/복구·Step 선점·Main 교체/취소·MCP 전송·Evidence/Scope/Redaction 회귀를 test:host-worker-code-closeout으로 묶었다. 제품 관통 명령의 실패를 성공으로 바꾸지 않는다. Kernel이 현재 소스의 명령을 실행하고 모든 변경 범위 acceptance를 충족한 Canonical Report.next만 완료 권위로 사용한다. Git 결과는 같은 Run의 governed kernel-commit receipt와 해당 브랜치의 실제 커밋·원격 이력에서 확인한다.
+
+계약 축소 뒤 Manifest 명령이 바뀌면 폐기된 검증 항목까지 required로 되살아나는 공통 결함을 발견했다. 바인딩 갱신 대상을 현재 계약의 비폐기 항목으로 제한했다. 계약 축소→카탈로그 변경→next→report 회귀를 종료 검증에 포함한다. Revision 3의 최초 Report는 AC-7의 이전 항목 때문에 실행 전 거부됐으며 통과 기록이 아니다. 수정 후 Revision 4로 같은 Run을 재개한다.
