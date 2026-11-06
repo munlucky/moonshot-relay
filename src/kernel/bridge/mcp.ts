@@ -94,7 +94,7 @@ export const resolveInstalledKernelEntrypoint = ({ runtimeHome = null, env = pro
 export const KERNEL_MCP_TOOLS = [
   {
     name: 'kernel_attach',
-    description: 'Attach native harness surface to Moon Relay Kernel Run for the workspace.',
+    description: 'Reattach to an existing Kernel Run without consuming next; return canonical Step, Attempt and durable resume evidence. A contractJson request retains the existing task-bootstrap behavior.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -315,9 +315,14 @@ export const handleMcpToolCall = async ({
       if (!run) return { schemaVersion: 1, runId, status: 'not_found' };
       const step = cp.getCurrentStep(runId);
       const attempts = cp.getHostRoutingSnapshot(runId).stepAttempts;
+      // Reuse the existing Kernel projection; a fresh Main recovers the
+      // original Contract/Evidence without a model-authored handoff or an
+      // executable next. This is observation, NOT Fresh Worker authorization.
+      const status = asRecord(await cp.status(runId));
       return {
         schemaVersion: 1, runId, status: 'attached', runStatus: run.status,
         currentStep: step ? { stepId: step.stepId, state: step.state } : null,
+        resume: status.resume ?? null,
         workerAttempts: attempts.map(attempt => ({
           attemptId: attempt.attemptId,
           stepId: attempt.stepId,

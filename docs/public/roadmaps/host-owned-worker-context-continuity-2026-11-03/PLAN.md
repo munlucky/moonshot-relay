@@ -4,7 +4,7 @@
 - 계획 기준 HEAD: `3797c60f662d7b61e7b57b00bc41f96bf7525e94` / `main`
 - Canonical 작업 경로: Windows `C:\dev\moonshot-relay`, MCP `/shared/moonshot-relay`
 - 목적: 메인 에이전트의 개발 실행 컨텍스트를 Host-owned Worker와 분리하고, 압축·교체·장애 후에도 같은 Kernel Run/Step을 안전하게 재개
-- 현재: **READY FOR W0 / G0 미검증 / 생산 코드 미변경**
+- 현재 (2026-11-06): **제품 PARTIAL / 구현 진행 중**. W0 결과 및 A·B·C 실행 묶음의 실제 수용 상태는 [STATUS.md](STATUS.md)를 기준으로 판단한다. 아래 W0 준비 기록은 최초 설계 당시의 이력이다.
 - 기반 자료: `moonshot-relay-host-worker-handoff-improvement-strategy-2026-11-03-v2.md`, `moonshot-relay-host-worker-handoff-verification-strategy-2026-11-03-v2.md`, `moonshot-relay-host-worker-code-level-execution-plan-2026-11-03.md` (2026-11-03 사용자 제공·코드 조사 기반). 이 계획서는 실행에 필요한 결정과 검증 조건을 저장소 안에서 자체 참조 가능하도록 정착한 버전이다.
 - 진입점: [W0_START.md](W0_START.md), [VERIFICATION.md](VERIFICATION.md), [STATUS.md](STATUS.md)
 - 관련 기존 수용 기준: [Ephemeral Work W7](../ephemeral-work-persistent-knowledge-2026-10-31/W7_RESULT.md) (실제 in-flight Host 재시작·인계는 PARTIAL)

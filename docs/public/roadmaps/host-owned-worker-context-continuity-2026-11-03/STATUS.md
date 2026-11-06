@@ -37,9 +37,17 @@
 원본 [PLAN.md](PLAN.md)의 1~7번 수용 기준은 보존하고 **A(기존 1·2·3), B(4·5), C(6·7)** 세 개의 실제 제품 기능 묶음으로 개발·검증·커밋한다. 개별 오류 수정이나 테스트 PASS 때마다 종료하지 않는다.
 
 - **A — 핵심 Host-owned 루프: PARTIAL / Native 자동 정착 HOLD_SAFE.** Worker 실행·상태·Git 후보·검증 전용 preflight는 기존대로 재사용한다. 실제 Writer 종료/쓰기 배제를 입증하지 못해 Owner CAS→Canonical Report→3-Step 자동 연계는 **미구현**이다. 비검증 상태를 권한 있는 결과로 변환하거나 허위 E2E PASS로 처리하지 않는다.
-- **B — 세션 연속성: CODE/WIRED PARTIAL.** `kernel_attach`의 계약 없는 기존 Run 재접속은 `ensureRun`·`next`·리뷰 없이 Canonical Step/Attempt를 조회한다. 원래 Host는 live Worker를, 다른 Host는 영속 Attempt만 조회하며 새 Worker로 오인하지 않는다. Worker 생성 중의 Main 취소 신호를 **동일 Native Turn이 시작할 때까지 큐잉**해 그 Turn의 interrupt에만 전달한다. 실제 Native Main 교체·승인 전체 수용 및 Writer 종료 불명확 상태의 Fresh Resume은 미완료/차단이다.
+- **B — 세션 연속성: CODE/WIRED PARTIAL.** `kernel_attach`의 계약 없는 기존 Run 재접속은 `ensureRun`·`next`·리뷰 없이 Canonical Step/Attempt와 기존 Kernel `resume`(Run/Contract/Evidence의 권위 투영)를 재조회한다. 원래 Host는 live Worker를, 다른 Host는 영속 Attempt만 조회하며 새 Worker로 오인하지 않는다. Worker 생성 중의 Main 취소 신호를 **동일 Native Turn이 시작할 때까지 큐잉**해 그 Turn의 interrupt에만 전달한다. 동일 Runtime의 새 MCP Main에서 Owner-direct 3-Step을 `report.next`로 이어받고 실제 Proof 실패 수정 및 앞선 Proof 재검증을 통한 최종 완료를 확인했다. 이 증거는 **새 Native Worker Thread를 생성하는 G4-E 수용이 아니다**. 실제 Native Main 교체·승인 전체 수용 및 Writer 종료 불명확 상태의 Fresh Resume은 미완료/차단이다.
 - **C — 영향 범위 회귀만 수행, 비교 채택 NOT_RUN.** TypeScript·Production Build·Test Build·Boundary PASS, MCP/App Server **29/29 PASS**, Host loop·Report replay·Recovery **32 PASS / 1 macOS 전용 Native SKIP**. Fixture/기존 Owner-direct 경로 증거이지 Host-owned Native G1/G3·Fresh Resume G4-E 제품 수용 증거는 아니다. 미지원 B/E Arm 비교는 수행하지 않는다.
 - **복잡도 검토:** 새 DB·Queue·Scheduler·완료 권위·신규 공개 Kernel 명령 없음. 기존 App Server `runTurn`의 준비 콜백과 Host process-local 취소 상태만 추가. Native Writer 퇴장 플래그는 변경하지 않음.
+
+## 2026-11-06 기존 실행 묶음 B — 권위 기반 Main 재조회·Owner-direct 3-Step 수용
+
+- **제품 코드:** `src/kernel/bridge/mcp.ts`에서 `kernel_attach`의 기존 Run 조회 결과에 기존 `cp.status(runId).resume`를 그대로 노출한다. 이 투영은 Kernel의 Run/Contract/Step/Evidence·신선도 판정을 재사용한다. 새 `next`를 실행하거나 새 Worker/Attempt/Thread를 만들지 않는다. 기존 `kernel_status`의 정보 신뢰 범위를 확장하지 않는다.
+- **실제 MCP 호출 검증:** 별도 Main Handler가 동일 Runtime Home/Run의 `kernel_attach`에서 `kernel_status.resume`와 동일한 영속 권위를 복원한다. 기존 Owner-direct 3-Step에서 첫 Report의 `report.next`를 이어받아 두 번째 Step을 수행하고 세 번째의 **실제 manifest 테스트 실패**를 수정한다. 최종 파일 수정으로 앞선 Proof가 stale인 상태에서는 완료하지 않고, 기존 두 Hard Proof를 최종 Workspace에 재검증한 후에만 Kernel `completed`를 반환한다. 총 3개 Step, 4개 Step Attempt(실패 1개), Proof 갱신 Report를 확인한다. 새 Handoff, 새로운 Completion Authority 없음.
+- **검증:** TypeScript·Production Build·Test Build·Boundary 검사 PASS. MCP/App Server·Host loop·Report replay·Step resume를 결합한 영향 범위 회귀 **64/64 PASS**, 실제 새 Main의 3-Step·Proof 실패·stale 재검증까지 PASS. macOS Native 격리/퇴장 수용은 이번 결과에 포함되지 않는다.
+- **수용 구분:** MCP/Kernel 통합 경로 CODE/WIRED 및 격리 실행 PASS. 새 Native Thread 생성, Host-owned Worker의 Owner Delivery, 물리적 Writer 격리, W4-E 자동 Fresh Resume, G6 B/E 성능 비교는 **미완료 / HOLD_SAFE / NOT_RUN**. Owner-direct 증거를 Host-owned Native PASS로 간주하지 않는다.
+- **복잡도 검토:** 기존 `resume` 투영을 재사용하고 새로운 DB·Queue·Scheduler·별도 Handoff 구조·새 API 명령은 추가하지 않았다.
 
 ## 재개 지점
 

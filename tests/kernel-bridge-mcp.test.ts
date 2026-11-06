@@ -189,6 +189,20 @@ test('mcp bridge provides initialize, ping, tools/list, and tool execution', asy
   assert.ok(statusResult.workerAttempts.every((attempt: { liveState: string; writerExitVerified: boolean }) =>
     attempt.liveState === 'unobserved' && attempt.writerExitVerified === false));
 
+  // A fresh Main has the same durable Kernel Contract/Evidence projection,
+  // without implicitly preparing a next action or creating an Attempt.
+  const newMain = createMcpBridgeHandler({ runtimeHome });
+  const reattached = parseToolText(await newMain({
+    jsonrpc: '2.0', id: 51, method: 'tools/call', params: {
+      name: 'kernel_attach', arguments: { workspaceRoot, runId },
+    },
+  }));
+  assert.equal(reattached.status, 'attached');
+  assert.equal(reattached.next, undefined);
+  assert.deepEqual(reattached.resume, statusResult.resume);
+  assert.deepEqual(reattached.workerAttempts, statusResult.workerAttempts);
+  assert.equal(reattached.liveWorker, null);
+
   // 7. tools/call kernel_report
   await writeFile(path.join(workspaceRoot, 'README.md'), '# Bridge Fixture\n\nchanged by report\n');
   const reportCall = await handler({
@@ -1001,4 +1015,125 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     assert.equal(plane.getHostRoutingSnapshot(runId).stepAttempts.length, 1);
     assert.equal(plane.getAttemptById(runId, attemptId)?.status, 'started');
   } finally { await plane.close(); }
+});
+
+test('Owner-direct MCP: fresh Main reuses report.next across three Steps, fixes proof and refreshes stale evidence', async (t) => {
+  const workspaceRoot = await createFixtureRepo();
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-mcp-3step-resume-'));
+  t.after(async () => {
+    await Promise.all([workspaceRoot, runtimeHome].map(root => rm(root, { recursive: true, force: true })));
+  });
+  const runId = 'run-mcp-3step-resume';
+  const cp = await createKernelControlPlane({ projectRoot: workspaceRoot, runtimeHome });
+  const names = ['README.md', 'second.md', 'third.md'];
+  // The trusted manifest command must fail on the actual third-step bytes.
+  // Missing acceptanceCoverage alone is an incomplete claim, not a failed
+  // proof; this fixture exercises a genuine Kernel-executed test failure.
+  await writeFile(path.join(workspaceRoot, 'proof-check.cjs'), String.raw`const fs = require('node:fs');
+if (fs.existsSync('third.md') && !fs.readFileSync('third.md', 'utf8').includes('Completed third step')) process.exit(9);
+`);
+  await writeFile(path.join(workspaceRoot, 'package.json'), JSON.stringify({
+    name: 'three-step-fixture', scripts: { test: 'node proof-check.cjs' },
+  }));
+  assert.equal(spawnSync('git', ['add', 'package.json', 'proof-check.cjs'], { cwd: workspaceRoot }).status, 0);
+  assert.equal(spawnSync('git', ['commit', '-m', 'trusted fixture verification', '--quiet'], { cwd: workspaceRoot }).status, 0);
+  const obligations = ['first-proof', 'second-proof', 'third-proof'];
+  const acceptances = ['first change', 'second change', 'third change'];
+  let stepIds: string[];
+  try {
+    await cp.startRun({ runId, objective: 'Complete three independently verifiable changes',
+      taskContract: {
+        complex: true,
+        acceptance: acceptances.map((acceptance, i) => ({
+          acceptance,
+          evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test'], obligationId: obligations[i] },
+        })),
+        steps: names.map((name, i) => ({
+          objective: 'Modify ' + name, allowedPaths: [name],
+          acceptanceIds: ['AC-' + (i + 1)], obligationIds: [obligations[i]],
+        })),
+      },
+    });
+    stepIds = cp.getRunSteps(runId).map(row => row.stepId);
+    assert.equal(stepIds.length, 3);
+  } finally { await cp.close(); }
+
+  const host = createMcpBridgeHandler({ runtimeHome });
+  const freshHost = createMcpBridgeHandler({ runtimeHome });
+  const call = (client: typeof host, id: number, name: string, args: Record<string, unknown> = {}) =>
+    client({ jsonrpc: '2.0', id, method: 'tools/call', params: {
+      name, arguments: { workspaceRoot, runId, ...args },
+    } });
+  const next = parseToolText(await call(host, 1, 'kernel_next'));
+  assert.equal(assertTestRecord(assertTestRecord(next.action).step).stepId, stepIds[0]);
+
+  const report = async (client: typeof host, id: number, index: number) => {
+    const claimed = {
+      stepId: stepIds[index], summary: 'Implemented ' + names[index],
+      changedPaths: [names[index]],
+      verifications: [{
+        obligationId: obligations[index], commandRef: 'test',
+        acceptanceCoverage: ['AC-' + (index + 1)],
+      }],
+    };
+    return parseToolText(await call(client, id, 'kernel_report', { report: claimed }));
+  };
+
+  await writeFile(path.join(workspaceRoot, names[0]), '# Step one complete\n');
+  const first = await report(host, 2, 0);
+  assert.equal(assertTestRecord(first.step).state, 'passed', JSON.stringify(first));
+  assert.equal(assertTestRecord(assertTestRecord(first.next).action).type, 'implement');
+  assert.equal(assertTestRecord(assertTestRecord(assertTestRecord(first.next).action).step).stepId, stepIds[1]);
+
+  // A separate Main handler reconnects to the same Runtime; the original
+  // Host process is not killed. It restores authority without a second next.
+  const reattached = parseToolText(await call(freshHost, 3, 'kernel_attach'));
+  const status = parseToolText(await call(freshHost, 4, 'kernel_status'));
+  assert.equal(reattached.runId, runId);
+  assert.equal(reattached.next, undefined);
+  assert.equal(assertTestRecord(reattached.currentStep).stepId, stepIds[1]);
+  assert.deepEqual(reattached.resume, status.resume);
+  assert.equal(assertTestRecord(assertTestRecord(reattached.resume).implementation).mutationRevision,
+    assertTestRecord(assertTestRecord(status.resume).implementation).mutationRevision);
+  const check = await createKernelControlPlane({ projectRoot: workspaceRoot, runtimeHome });
+  try {
+    assert.equal(check.getHostRoutingSnapshot(runId).stepAttempts.length, 1);
+    assert.equal(check.getCurrentStep(runId)?.stepId, stepIds[1]);
+  } finally { await check.close(); }
+
+  await writeFile(path.join(workspaceRoot, names[1]), 'Step two complete\n');
+  const second = await report(freshHost, 5, 1);
+  assert.equal(assertTestRecord(second.step).state, 'passed', JSON.stringify(second));
+  assert.equal(assertTestRecord(assertTestRecord(assertTestRecord(second.next).action).step).stepId, stepIds[2]);
+
+  await writeFile(path.join(workspaceRoot, names[2]), 'Incomplete third step\n');
+  const failed = await report(freshHost, 6, 2);
+  assert.equal(failed.status, 'evidence-failed', JSON.stringify(failed));
+  assert.equal(assertTestRecord(assertTestRecord(failed.next).action).type, 'fix', JSON.stringify(failed));
+  assert.equal(assertTestRecord(assertTestRecord(assertTestRecord(failed.next).action).step).stepId, stepIds[2]);
+
+  await writeFile(path.join(workspaceRoot, names[2]), 'Completed third step after proof failure\n');
+  const finalStep = await report(freshHost, 7, 2);
+  assert.equal(assertTestRecord(finalStep.step).state, 'passed', JSON.stringify(finalStep));
+  // Mutations in later Steps legitimately stale earlier hard proofs. Re-run
+  // only those original obligations on the final workspace, not another Step.
+  assert.equal(finalStep.status, 'in-progress');
+  const pendingProofs = assertTestArray(assertTestRecord(assertTestRecord(finalStep.next).verification).pending);
+  assert.deepEqual([...pendingProofs].sort(), obligations.slice(0, 2).sort());
+  const completed = parseToolText(await call(freshHost, 8, 'kernel_report', {
+    report: {
+      summary: 'Revalidate prior hard acceptance on the final workspace',
+      verifications: [0, 1].map(index => ({
+        obligationId: obligations[index], commandRef: 'test',
+        acceptanceCoverage: ['AC-' + (index + 1)],
+      })),
+    },
+  }));
+  assert.equal(completed.status, 'completed', JSON.stringify(completed));
+  assert.equal(assertTestRecord(assertTestRecord(completed.next).action).type, 'done');
+  const finalPlane = await createKernelControlPlane({ projectRoot: workspaceRoot, runtimeHome });
+  try {
+    assert.equal((await finalPlane.getRun(runId))?.status, 'completed');
+    assert.equal(finalPlane.getHostRoutingSnapshot(runId).stepAttempts.length, 4);
+  } finally { await finalPlane.close(); }
 });
