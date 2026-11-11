@@ -6,6 +6,7 @@
 
 export { createKernelControlPlane } from './control-plane-runtime.js';
 export { createHostWorkerSessions } from './host-worker-sessions.js';
+export { createLocalWorkerControl, type LocalWorkerControlOptions } from './local-worker-control.js';
 export { resolveKernelWorktreeIdentity } from './workspace/worktree-resolution.js';
 export {
   createKernelHostReviewBridge,

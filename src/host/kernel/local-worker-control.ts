@@ -4,6 +4,9 @@ import readline from 'node:readline';
 import { createKernelControlPlane } from './control-plane-runtime.js';
 import { createHostWorkerSessions } from './host-worker-sessions.js';
 import { resolveKernelRuntimeHome } from '../../kernel/runtime-home.js';
+import { createHostIoWriter, type HostIoWriteRequest } from './io-writer.js';
+import { createHostIoReader, type HostIoReadRequest } from './io-reader.js';
+import type { HostIoModelOptions } from './io-common.js';
 
 type Value = Record<string, unknown>;
 type Sessions = ReturnType<typeof createHostWorkerSessions>;
@@ -18,13 +21,20 @@ export interface LocalWorkerControlOptions {
   runtimeHome?: string;
   env?: NodeJS.ProcessEnv;
   hostWorkerSessions?: Sessions;
+  ioWriter?: HostIoModelOptions;
+  ioReader?: HostIoModelOptions;
 }
 
 export function createLocalWorkerControl({
   projectRoot, runtimeHome, env = process.env,
   hostWorkerSessions = createHostWorkerSessions({ env }),
+  ioWriter, ioReader,
 }: LocalWorkerControlOptions) {
   const home = runtimeHome || resolveKernelRuntimeHome({ env });
+  // A trusted Host must opt in. The model-visible Worker receives no new tool
+  // or delegation capability, and normal start/resume adds no helper call.
+  const writeCandidate = ioWriter ? createHostIoWriter({ projectRoot, runtimeHome: home, env, ...ioWriter }) : null;
+  const readEvidence = ioReader ? createHostIoReader({ projectRoot, runtimeHome: home, env, ...ioReader }) : null;
   return async (input: unknown): Promise<Value> => {
     const request = record(input);
     try {
@@ -35,10 +45,14 @@ export function createLocalWorkerControl({
         catch (error) { failureCode = String(record(error).code || 'host_worker_native_isolation_unverified'); }
         return { schemaVersion: 1, status: failureCode ? 'unsupported' : 'available',
           writableStart: !failureCode, failureCode, authority: 'bound-kernel-run',
-          lifetime: 'current-host-process' };
+          lifetime: 'current-host-process', ioWriter: { available: Boolean(writeCandidate), adoption: 'opt-in' },
+          ioReader: { available: Boolean(readEvidence), adoption: 'opt-in' } };
       }
-      if (!['start', 'resume', 'status', 'attach', 'interrupt'].includes(action)) {
+      if (!['start', 'resume', 'status', 'attach', 'interrupt', 'io-write', 'io-read'].includes(action)) {
         return { schemaVersion: 1, status: 'error', failureCode: 'host_worker_action_unknown' };
+      }
+      if ((action === 'io-write' && !writeCandidate) || (action === 'io-read' && !readEvidence)) {
+        return { schemaVersion: 1, status: 'unsupported', failureCode: 'host_io_not_enabled' };
       }
       const starting = action === 'start' || action === 'resume';
       // Reject malformed execution requests before Kernel can prepare a Step.
@@ -57,6 +71,14 @@ export function createLocalWorkerControl({
         if (typeof run.runId !== 'string') {
           return { schemaVersion: 1, runId, status: snapshot.status || 'not_found',
             failureCode: snapshot.errorCode || snapshot.failureCode || null };
+        }
+        if (action === 'io-write' && writeCandidate) {
+          if (request.runId !== runId) return { schemaVersion: 1, status: 'error', failureCode: 'host_io_run_required' };
+          return { schemaVersion: 1, runId, ...await writeCandidate(cp, request as unknown as HostIoWriteRequest) };
+        }
+        if (action === 'io-read' && readEvidence) {
+          if (request.runId !== runId) return { schemaVersion: 1, status: 'error', failureCode: 'host_io_run_required' };
+          return { schemaVersion: 1, runId, ...await readEvidence(cp, request as unknown as HostIoReadRequest) };
         }
         if (starting) {
           const worker = await hostWorkerSessions.startLocal({ projectRoot, runtimeHome: home, runId, model, effort });

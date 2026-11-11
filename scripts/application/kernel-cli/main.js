@@ -47,7 +47,8 @@ export async function runKernelCliApplication(argv = [], options = {}) {
                 approve: 'kernel approve [run-id] [--obligation <id>] [--reason <text>] [--approver <name>] [--approval-ref <host-ref>] [--all-judgments] [--json]',
                 status: 'kernel status --run-id <id> [--json]',
                 context: 'kernel context [--run-id <id>] [--stage <stage>] [--json]',
-                'worker-host': 'kernel worker-host [--project-root <path>] [--runtime-home <path>] [--run-id <id>] (local JSON lines: capabilities/start/resume/status/attach/interrupt)',
+                'worker-host': 'kernel worker-host [--project-root <path>] [--runtime-home <path>] [--run-id <id>] [--enable-io-writer] [--enable-io-reader] (local JSON lines: capabilities/start/resume/status/attach/interrupt; opt-in io-write/io-read)',
+                'mcp-bridge': 'kernel mcp-bridge [--runtime-home <path>] [--enable-io-writer] [--enable-io-reader] (Kernel MCP; opt-in kernel_attach.ioWrite/ioRead)',
                 finalize: 'kernel finalize [run-id] [--json]',
                 resume: 'kernel resume [run-id] [--json]',
                 doctor: 'kernel doctor [--project-root <path>] [--json]',
@@ -310,12 +311,16 @@ export async function runKernelCliApplication(argv = [], options = {}) {
             await assertKernelTrack();
             const { startLocalWorkerControl } = await import('../../host/kernel/local-worker-control.js');
             startLocalWorkerControl({ projectRoot,
-                runtimeHome: effectiveRuntimeHome || resolveKernelRuntimeHome({ env: kernelEnv }), env: kernelEnv });
+                runtimeHome: effectiveRuntimeHome || resolveKernelRuntimeHome({ env: kernelEnv }), env: kernelEnv,
+                ...(args.includes('--enable-io-writer') ? { ioWriter: {} } : {}),
+                ...(args.includes('--enable-io-reader') ? { ioReader: {} } : {}) });
         }
         else if (command === 'mcp-bridge') {
             const moduleValue = await import('../../kernel/bridge/mcp.js');
             const { startMcpBridgeServer } = moduleValue;
-            startMcpBridgeServer({ runtimeHome: effectiveRuntimeHome || undefined, env: kernelEnv });
+            startMcpBridgeServer({ runtimeHome: effectiveRuntimeHome || undefined, env: kernelEnv,
+                ...(args.includes('--enable-io-writer') ? { ioWriter: {} } : {}),
+                ...(args.includes('--enable-io-reader') ? { ioReader: {} } : {}) });
         }
         else if (command === '--version' || command === 'version') {
             output({ productId: 'moon-relay-kernel', version: '0.1.0' });

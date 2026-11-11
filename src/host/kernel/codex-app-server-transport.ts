@@ -30,6 +30,9 @@ export interface CodexAppServerTurn {
   // Host-selected schema. The matching final agent message remains a model
   // claim; neither JSON shape nor Turn completion grants Report authority.
   outputSchema?: RecordValue;
+  onUsage?: (usage: CodexAppServerUsage) => void;
+  // Host-only generation policy. Read-only sandboxing alone permits tools.
+  toolPolicy?: 'none';
   // Explicit Host-only opt-in. The reservation root must be inaccessible to
   // the Worker sandbox; this does not change the default read-only transport.
   writableWorker?: { reservationRoot: string } | null;
@@ -42,6 +45,18 @@ export interface CodexAppServerTurnResult {
   // A completed model turn is NOT proof that command descendants have exited.
   writerExitVerified: false;
   finalMessage?: string | null;
+  // Configuration resolved by App Server, not provider-observed enforcement.
+  resolvedModel?: string | null;
+  resolvedEffort?: string | null;
+  usage?: CodexAppServerUsage | null;
+}
+
+export interface CodexAppServerUsage {
+  inputTokens: number | null;
+  cachedInputTokens: number | null;
+  cacheWriteInputTokens: number | null;
+  outputTokens: number | null;
+  reasoningOutputTokens: number | null;
 }
 
 export interface CodexAppServerTurnObservation {
@@ -117,8 +132,11 @@ export async function createCodexAppServerTransport({
   });
   child.stderr.resume(); // Consume stderr without exposing credentials or logs.
   let exited = false;
+  let drained = false;
+  let retiringNoTools = false;
   let closed = false;
   let poisoned = false;
+  let poisonReason: string | null = null;
   let nextId = 1;
   let buffer = '';
   let active = false;
@@ -134,6 +152,7 @@ export async function createCodexAppServerTransport({
   const fail = (reason: string): void => {
     if (poisoned) return;
     poisoned = true;
+    poisonReason = reason;
     const failure = error(reason);
     for (const request of pending.values()) {
       clearTimeout(request.timer);
@@ -149,8 +168,9 @@ export async function createCodexAppServerTransport({
   });
   child.once('exit', () => {
     exited = true;
-    fail('codex_app_server_connection_lost');
+    if (!retiringNoTools) fail('codex_app_server_connection_lost');
   });
+  child.once('close', () => { drained = true; });
   // Own only this App Server process, never its unknown tool descendants.
   // Reuse one shutdown across initialization failures and repeated close().
   const stopOwnedAppServer = (): Promise<boolean> => {
@@ -310,7 +330,7 @@ export async function createCodexAppServerTransport({
       return sendInterrupt();
     },
 
-    async runTurn({ cwd: requestedCwd, prompt, model, effort, timeoutMs: turnTimeout, executionOwner = null, onNativeExecution = null, onReady = undefined, outputSchema = undefined, writableWorker = null }) {
+    async runTurn({ cwd: requestedCwd, prompt, model, effort, timeoutMs: turnTimeout, executionOwner = null, onNativeExecution = null, onReady = undefined, outputSchema = undefined, onUsage = undefined, toolPolicy = undefined, writableWorker = null }) {
       if (closed || poisoned || exited) throw error('codex_app_server_unavailable');
       if (active) throw error('codex_app_server_turn_already_running');
       if (!name(prompt) || !name(model) || !name(effort) || !name(requestedCwd)) {
@@ -319,6 +339,9 @@ export async function createCodexAppServerTransport({
       if (Boolean(executionOwner) !== Boolean(onNativeExecution)
         || (writableWorker !== null && (!executionOwner || !onNativeExecution))) {
         throw error('codex_app_server_observation_owner_required');
+      }
+      if (toolPolicy !== undefined && (toolPolicy !== 'none' || writableWorker || executionOwner)) {
+        throw error('codex_app_server_tool_policy_invalid');
       }
       const effectiveTimeout = timeBudget(turnTimeout, DEFAULT_TURN_TIMEOUT_MS);
       // Reserve before the first await so concurrent callers cannot both
@@ -352,6 +375,7 @@ export async function createCodexAppServerTransport({
       let startedTurn: { threadId: string; turnId: string } | null = null;
       let buffered: ServerMessage[] = [];
       let finalMessage: { id: string; text: string } | null = null;
+      let usage: CodexAppServerUsage | null = null;
       const finalText = (): string | null => finalMessage?.text ?? null;
       let turnCompleted = false;
       let completionResolve: ((status: CodexAppServerTurnResult['turnStatus']) => void) | null = null;
@@ -364,13 +388,13 @@ export async function createCodexAppServerTransport({
       // Attach a rejection observer before making any RPC requests.
       void completed.catch(() => undefined);
       const observe = (message: ServerMessage): void => {
-        if (turnCompleted) return;
+        if (turnCompleted && toolPolicy !== 'none') return;
         if (!startedTurn) {
           if (buffered.length === MAX_BEFORE_ACK) {
             fail('codex_app_server_early_events_overflow');
             return;
           }
-          if (message.method === 'item/started' || message.method === 'item/completed' || message.method === 'turn/completed') buffered.push(message);
+          if ((toolPolicy === 'none' && String(message.method).startsWith('item/')) || message.method === 'item/started' || message.method === 'item/completed' || message.method === 'turn/completed' || message.method === 'thread/tokenUsage/updated') buffered.push(message);
           return;
         }
         const params = object(message.params);
@@ -378,7 +402,29 @@ export async function createCodexAppServerTransport({
           ? name(object(params?.turn)?.id)
           : name(params?.turnId);
         if (params?.threadId !== startedTurn.threadId || observedTurnId !== startedTurn.turnId) return;
-        if (message.method === 'item/started' || message.method === 'item/completed') {
+        if (toolPolicy === 'none' && String(message.method).startsWith('item/')) {
+          const type = object(params?.item)?.type;
+          const permitted = message.method === 'item/started' || message.method === 'item/completed'
+            ? ['agentMessage', 'userMessage', 'reasoning'].includes(String(type))
+            : ['item/agentMessage/delta', 'item/reasoning/textDelta', 'item/reasoning/summaryTextDelta', 'item/reasoning/summaryPartAdded'].includes(String(message.method));
+          if (!permitted) { fail('codex_app_server_tool_event_forbidden'); return; }
+        }
+        if (turnCompleted) return;
+        if (message.method === 'thread/tokenUsage/updated') {
+          // One fresh thread and one Turn: total includes every model request
+          // in this Turn. "last" would omit earlier tool/model requests.
+          const total = object(object(params.tokenUsage)?.total);
+          if (!total) return;
+          const count = (key: string): number | null => {
+            const value = total[key];
+            return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+          };
+          usage = { inputTokens: count('inputTokens'), cachedInputTokens: count('cachedInputTokens'),
+            cacheWriteInputTokens: count('cacheWriteInputTokens'), outputTokens: count('outputTokens'),
+            reasoningOutputTokens: count('reasoningOutputTokens') };
+          try { onUsage?.({ ...usage }); }
+          catch { fail('codex_app_server_observer_failed'); }
+        } else if (message.method === 'item/started' || message.method === 'item/completed') {
           const item = object(params?.item);
           if (outputSchema && message.method === 'item/completed' && item?.type === 'agentMessage'
             && (item.phase === 'final_answer' || item.phase === null || item.phase === undefined)) {
@@ -411,9 +457,30 @@ export async function createCodexAppServerTransport({
       activeReject = (e) => { completionReject?.(e); };
       let settled = false;
       try {
+        let noToolsConfig: RecordValue = {};
+        if (toolPolicy === 'none') {
+          // Discover names, never forward credentials/settings from the parent
+          // catalogs. An unreadable config is a failure, not a tools-on fallback.
+          const configuration = object((await rpc('config/read', { includeLayers: false, cwd: workspace })).config);
+          if (!configuration) throw error('codex_app_server_tool_config_unavailable');
+          const disableCatalog = (key: string) => Object.fromEntries(Object.keys(object(configuration[key]) || {})
+            .map(id => [id, { enabled: false }]));
+          noToolsConfig = {
+            features: { shell_tool: false, multi_agent: false, multi_agent_v2: false,
+              apps: false, browser_use: false, in_app_browser: false, computer_use: false,
+              image_generation: false, view_image: false, code_mode_host: false, code_mode: false, code_mode_only: false,
+              skill_search: false, sleep_tool: false, tool_suggest: false,
+              hooks: false, goals: false, workspace_dependencies: false, remote_plugin: false },
+            web_search: 'disabled',
+            tools: { update_plan: { enabled: false }, experimental_request_user_input: { enabled: false } },
+            mcp_servers: disableCatalog('mcp_servers'), plugins: disableCatalog('plugins'),
+            apps: { ...disableCatalog('apps'), _default: { enabled: false, default_tools_enabled: false } },
+          };
+        }
         const thread = await rpc('thread/start', {
           cwd: workspace, sandbox: writableWorker ? 'workspace-write' : 'read-only',
-          approvalPolicy: 'never', ephemeral: true,
+          approvalPolicy: 'never', ephemeral: true, model,
+          config: { model_reasoning_effort: effort, ...noToolsConfig },
         });
         const threadId = name(object(thread.thread)?.id);
         if (!threadId) throw error('codex_app_server_thread_missing');
@@ -441,8 +508,25 @@ export async function createCodexAppServerTransport({
         }, effectiveTimeout);
         try {
           const turnStatus = await completed;
+          if (toolPolicy === 'none') {
+            // Keep observing through process exit and pipe drain. A terminal
+            // Turn followed by a tool event in the remaining stream is not
+            // an acceptable generation. This still proves no OS descendants.
+            retiringNoTools = true;
+            if (!await stopOwnedAppServer()) throw error('codex_app_server_shutdown_unconfirmed');
+            if (!drained) await new Promise<void>((resolve, reject) => {
+              const finish = () => { clearTimeout(timer); resolve(); };
+              const timer = setTimeout(() => {
+                child.removeListener('close', finish);
+                reject(error('codex_app_server_drain_unconfirmed'));
+              }, 2000);
+              child.once('close', finish);
+            });
+          }
+          if (poisoned) throw error(poisonReason || 'codex_app_server_unavailable');
           settled = true;
           return { threadId, turnId, turnStatus, writerExitVerified: false,
+            resolvedModel: name(thread.model), resolvedEffort: name(thread.reasoningEffort), usage,
             ...(outputSchema ? { finalMessage: finalText() } : {}) };
         } finally {
           clearTimeout(turnTimer);

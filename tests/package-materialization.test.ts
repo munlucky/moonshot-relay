@@ -513,7 +513,9 @@ test('Codex package payload includes only service profile entries', async () => 
   for (const entry of requiredConcreteCodexFiles) {
     await assertEntryExists(profileRoot, entry);
   }
-  assert.deepEqual(await listSkillDirs(profileRoot), publicRuntimeSkills);
+  assert.deepEqual(await listSkillDirs(profileRoot), [...publicRuntimeSkills, 'io-writer'].sort());
+  await assertEntryExists(profileRoot, 'hooks.json');
+  await assertEntryExists(profileRoot, 'hooks/moonshot-reader.mjs');
   assert.equal(existsSync(path.join(profileRoot, 'skills', 'completion-verifier', 'SKILL.md')), false);
 
   for (const entry of ['bin', 'tools', 'schemas', 'scripts', 'templates', 'docs/public']) {
@@ -921,7 +923,7 @@ test('account-root installer merges shared directories without deleting unrelate
     assert.ok(installPayload.installId);
     assert.equal(installPayload.verification.every((entry: unknown) => (
       assertTestArray(assertTestRecord(entry).missing).length === 0 && assertTestArray(assertTestRecord(entry).mismatch).length === 0
-    )), true);
+    )), true, JSON.stringify(installPayload.verification));
     const globalSkillsManifest = JSON.parse(await readFile(
       path.join(antigravitySkillsHome, '.moonshot-relay-antigravity-skills-manifest.json'),
       'utf8',

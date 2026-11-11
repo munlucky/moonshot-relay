@@ -70,4 +70,6 @@ package/antigravity/profile/
 /scripts/lib/skills-lock.mjs
 /bin/moon-relay-kernel.mjs
 /bin/moon-relay-standalone.mjs
+/bin/moonshot-io.mjs
+/bin/moonshot-io-hook.mjs
 /scripts/lib/runtime-build.mjs

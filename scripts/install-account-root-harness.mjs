@@ -22,7 +22,7 @@ import { constants as fsConstants } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultSourceRoot = path.dirname(path.dirname(scriptPath));
@@ -110,6 +110,8 @@ const runtimeSpecs = {
     defaultHome: () => path.join(os.homedir(), '.codex'),
     envName: 'CODEX_HOME',
     exposureEntries: new Set([
+      'hooks.json',
+      'hooks',
       'AGENTS.md',
       'README.md',
       'agents',
@@ -263,7 +265,7 @@ runtimeSpecs.ade = {
 
 const profileRuntimeNames = Object.freeze(['claude', 'codex', 'qwen', 'ade', 'antigravity']);
 
-const usage = () => `Usage: node scripts/install-account-root-harness.mjs [--runtime all|claude,codex,qwen,ade,antigravity] [--source-root <repo>] [--payload-root <materialized-payload>] [--moonshot-home <dir>] [--codex-home <dir>] [--claude-home <dir>] [--qwen-home <dir>] [--ade-home <dir>] [--antigravity-home <dir>] [--antigravity-skills-home <dir>] [--skip-common] [--dry-run] [--json] [--no-backup] [--remove-legacy-harness-core]`;
+const usage = () => `Usage: node scripts/install-account-root-harness.mjs [--runtime all|claude,codex,qwen,ade,antigravity] [--source-root <repo>] [--payload-root <materialized-payload>] [--moonshot-home <dir>] [--codex-home <dir>] [--claude-home <dir>] [--qwen-home <dir>] [--ade-home <dir>] [--antigravity-home <dir>] [--antigravity-skills-home <dir>] [--codex-io-only] [--io-reader-min-lines <positive integer>] [--skip-common] [--dry-run] [--json] [--no-backup] [--remove-legacy-harness-core]`;
 
 const parseArgs = (argv) => {
   const options = {
@@ -276,6 +278,8 @@ const parseArgs = (argv) => {
     backup: true,
     removeLegacyHarnessCore: false,
     skipCommon: false,
+    codexIoOnly: false,
+    ioReaderMinLines: 350,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -302,6 +306,11 @@ const parseArgs = (argv) => {
       options.homes.antigravitySkills = path.resolve(argv[++index]);
     } else if (arg === '--skip-common') {
       options.skipCommon = true;
+    } else if (arg === '--codex-io-only') {
+      options.codexIoOnly = true;
+    } else if (arg === '--io-reader-min-lines') {
+      options.ioReaderMinLines = Number(argv[++index]);
+      if (!Number.isSafeInteger(options.ioReaderMinLines) || options.ioReaderMinLines <= 0) throw new Error('io_reader_min_lines_invalid');
     } else if (arg === '--dry-run') {
       options.dryRun = true;
     } else if (arg === '--json') {
@@ -325,6 +334,7 @@ const parseArgs = (argv) => {
     throw new Error(`Unsupported runtime: ${options.runtime}\n${usage()}`);
   }
   options.runtimeNames = [...new Set(requestedRuntimes)];
+  if (options.codexIoOnly && (options.runtimeNames.length !== 1 || options.runtimeNames[0] !== 'codex')) throw new Error('codex_io_only_requires_codex_runtime');
   if (options.runtimeNames.includes('ade') && !options.homes.ade && !process.env.ADE_HOME) {
     throw new Error(`ADE runtime requires --ade-home <dir> or ADE_HOME.\n${usage()}`);
   }
@@ -831,6 +841,71 @@ const copyPayloadEntry = async ({ source, target, targetRoot, dryRun, replaceDir
   }
 };
 
+// hooks.json is shared user data. Ownership is attached to the exact previous
+// definition in the existing manifest, never inferred from its matcher/path.
+const prepareCodexIo = async ({ sourceRoot, targetRoot, commonRoot, options }) => {
+  const previous = await readJsonFile(path.join(targetRoot, manifestName));
+  const old = previous?.codexIo || { hooks: [], files: [] };
+  const hooksPath = path.join(targetRoot, 'hooks.json');
+  await assertSafeTargetPath(targetRoot, hooksPath);
+  const currentBytes = await pathExists(hooksPath) ? await readFile(hooksPath) : null;
+  const current = currentBytes ? JSON.parse(currentBytes.toString('utf8')) : { hooks: {} };
+  if (!current || typeof current !== 'object' || Array.isArray(current)
+    || (current.hooks && (typeof current.hooks !== 'object' || Array.isArray(current.hooks)))) throw new Error('codex_hooks_invalid');
+  const next = structuredClone(current);
+  next.hooks ||= {};
+  const canonical = value => JSON.stringify(value);
+  for (const record of old.hooks) {
+    const groups = next.hooks[record.event] || [];
+    const matches = groups.map((group, i) => canonical(group) === canonical(record.definition) ? i : -1).filter(i => i >= 0);
+    if (matches.length !== 1) throw new Error('codex_io_hook_ownership_conflict');
+    groups.splice(matches[0], 1);
+  }
+  // Reject an unowned copy or inline registration; preserve unrelated hooks,
+  // including hooks which use the same Bash matcher.
+  const inline = await pathExists(path.join(targetRoot, 'config.toml')) ? await readFile(path.join(targetRoot, 'config.toml'), 'utf8') : '';
+  if (/moonshot-reader\.mjs|moonshot-io-hook\.mjs/.test(canonical(next) + inline)) throw new Error('codex_io_hook_unowned_registration');
+  const template = await readJsonFile(path.join(sourceRoot, 'hooks.json'));
+  const rendered = template ? JSON.parse(canonical(template).replaceAll('__CODEX_HOME__', targetRoot.replaceAll('\\', '/'))) : { hooks: {} };
+  const ownedHooks = [];
+  for (const [event, definitions] of Object.entries(rendered.hooks || {})) {
+    if (!Array.isArray(definitions)) throw new Error('codex_hooks_invalid');
+    if (next.hooks[event] && !Array.isArray(next.hooks[event])) throw new Error('codex_hooks_invalid');
+    next.hooks[event] ||= [];
+    for (const definition of definitions) {
+      next.hooks[event].push(definition);
+      ownedHooks.push({ event, definition });
+    }
+  }
+  const files = [];
+  for (const relative of ['hooks/moonshot-reader.mjs', 'skills/io-writer/SKILL.md']) {
+    const source = path.join(sourceRoot, relative);
+    if (!await pathExists(source)) continue;
+    let bytes = await readFile(source);
+    if (relative.startsWith('hooks/')) {
+      bytes = Buffer.from(bytes.toString('utf8')
+        .replace("'__MOONSHOT_RELAY_HOME__'", JSON.stringify(commonRoot))
+        .replace("'__MOONSHOT_RELAY_IO_HOOK_URL__'", JSON.stringify(pathToFileURL(path.join(commonRoot, 'bin/moonshot-io-hook.mjs')).href))
+        .replace('__IO_READER_MIN_LINES__', String(options.ioReaderMinLines)));
+    } else {
+      bytes = Buffer.from(bytes.toString('utf8').replaceAll('__MOONSHOT_RELAY_HOME__', commonRoot.replaceAll('\\', '/')));
+    }
+    files.push({ path: relative, bytes, sha256: createHash('sha256').update(bytes).digest('hex') });
+  }
+  const allPaths = new Set([...old.files.map(record => record.path), ...files.map(record => record.path)]);
+  const before = new Map([[hooksPath, currentBytes]]);
+  for (const relative of allPaths) {
+    if (!['hooks/moonshot-reader.mjs', 'skills/io-writer/SKILL.md'].includes(relative)) throw new Error('codex_io_manifest_path_invalid');
+    const target = path.join(targetRoot, relative);
+    await assertSafeTargetPath(targetRoot, target);
+    const bytes = await pathExists(target) ? await readFile(target) : null;
+    const owned = old.files.find(record => record.path === relative);
+    if (bytes && (!owned || createHash('sha256').update(bytes).digest('hex') !== owned.sha256)) throw new Error('codex_io_file_ownership_conflict');
+    before.set(target, bytes);
+  }
+  return { hooks: ownedHooks, files, before, previousCopied: previous?.copied || [], hooksBytes: Buffer.from(JSON.stringify(next, null, 2) + '\n') };
+};
+
 const installPayloadSpec = async ({
   spec,
   runtime,
@@ -849,10 +924,14 @@ const installPayloadSpec = async ({
     throw new Error(`Missing materialized ${runtime} payload: ${sourceRoot}`);
   }
 
+  const ioOnly = runtime === 'codex' && options.codexIoOnly;
+  const commonRoot = resolveSpecHome({ spec: commonSpec, runtime: commonSpec.runtime, options });
+  const codexIo = runtime === 'codex' ? await prepareCodexIo({ sourceRoot, targetRoot, commonRoot, options }) : null;
   const sourceEntries = (await readdir(sourceRoot, { withFileTypes: true }))
-    .filter((entry) => !ownedEntries || ownedEntries.has(entry.name));
+    .filter((entry) => (!ownedEntries || ownedEntries.has(entry.name)) && !ioOnly
+      && !(runtime === 'codex' && ['hooks', 'hooks.json'].includes(entry.name)));
   const backupRoot = path.join(targetRoot, 'backups', `moonshot-relay-account-root-${installId}`);
-  const copied = [];
+  const copied = ioOnly ? [...codexIo.previousCopied] : [];
   const skipped = [];
   const backups = [];
   const removed = [];
@@ -861,7 +940,7 @@ const installPayloadSpec = async ({
     await mkdir(targetRoot, { recursive: true });
   }
 
-  if (ownedEntries && !replaceDirectories) {
+  if (ownedEntries && !replaceDirectories && !ioOnly) {
     removed.push(...await removePreviouslyManagedNonExposureFiles({
       targetRoot,
       exposureEntries: ownedEntries,
@@ -919,9 +998,9 @@ const installPayloadSpec = async ({
 
     await copyPayloadEntry({ source, target, targetRoot, dryRun: options.dryRun, replaceDirectories });
 
-    const files = entry.isDirectory()
+    const files = (entry.isDirectory()
       ? await listFiles(source, entry.name)
-      : [entry.name];
+      : [entry.name]).filter(file => !(runtime === 'codex' && toPortable(file) === 'skills/io-writer/SKILL.md'));
 
     for (const relativeFile of files) {
       const targetFile = path.join(targetRoot, relativeFile);
@@ -959,11 +1038,8 @@ const installPayloadSpec = async ({
     installMode: 'account-root-direct',
     targetRoot,
     sourceRepo,
-    commonRoot: path.resolve(
-      options.homes[commonSpec.runtime]
-        || process.env[commonSpec.envName]
-        || commonSpec.defaultHome(),
-    ),
+    commonRoot,
+    codexIoOnly: ioOnly,
     skillTargetRoot,
     legacyHarnessCorePresent: legacyHarnessCore ? await pathExists(legacyHarnessCore) : false,
     copied,
@@ -972,8 +1048,37 @@ const installPayloadSpec = async ({
     removed,
   };
 
+  if (codexIo) {
+    manifest.codexIo = { hooks: codexIo.hooks, files: codexIo.files.map(({ path, sha256 }) => ({ path, sha256 })) };
+    // Keep I/O files out of whole-file hooks.json ownership and out of generic
+    // profile pruning. Existing backups remain the recovery boundary.
+    if (!options.dryRun) {
+      const manifestPath = path.join(targetRoot, manifestName);
+      codexIo.before.set(manifestPath, await pathExists(manifestPath) ? await readFile(manifestPath) : null);
+      try {
+        for (const [target, bytes] of codexIo.before) {
+          if (target === manifestPath) continue;
+          if (bytes && options.backup) await backupTarget(target, backupRoot);
+          const relative = toPortable(path.relative(targetRoot, target));
+          const nextFile = codexIo.files.find(record => record.path === relative);
+          if (relative === 'hooks.json') await writeFile(target, codexIo.hooksBytes);
+          else if (nextFile) {
+            await mkdir(path.dirname(target), { recursive: true });
+            await writeFile(target, nextFile.bytes);
+          } else if (bytes) await rm(target);
+        }
+        await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+      } catch (error) {
+        for (const [target, bytes] of [...codexIo.before].reverse()) {
+          if (bytes) await writeFile(target, bytes); else await rm(target, { force: true });
+        }
+        throw error;
+      }
+    }
+  }
+
   if (!options.dryRun) {
-    await writeFile(path.join(targetRoot, manifestName), `${JSON.stringify(manifest, null, 2)}\n`);
+    if (!codexIo) await writeFile(path.join(targetRoot, manifestName), `${JSON.stringify(manifest, null, 2)}\n`);
     for (const legacyManifestName of legacyManifestNames) {
       const legacyManifestPath = path.join(targetRoot, legacyManifestName);
       if (await pathExists(legacyManifestPath)) {
@@ -1251,8 +1356,9 @@ const installRuntime = async ({ runtime, payloadRoot, options, installId, source
 const verifyRuntimeManifest = async (manifest) => {
   const missing = [];
   const mismatch = [];
+  const files = [...(manifest.codexIoOnly ? [] : manifest.copied), ...(manifest.codexIo?.files || [])];
 
-  for (const record of manifest.copied) {
+  for (const record of files) {
     const target = path.join(record.targetRoot || manifest.targetRoot, record.path);
     if (!await pathExists(target)) {
       missing.push(record.path);
@@ -1264,10 +1370,18 @@ const verifyRuntimeManifest = async (manifest) => {
     }
   }
 
+  if (manifest.codexIo?.hooks.length) {
+    const hooks = await readJsonFile(path.join(manifest.targetRoot, 'hooks.json'));
+    for (const record of manifest.codexIo.hooks) {
+      const groups = hooks?.hooks?.[record.event] || [];
+      if (groups.filter(group => JSON.stringify(group) === JSON.stringify(record.definition)).length !== 1) mismatch.push(`hooks.json:${record.event}`);
+    }
+  }
+
   return {
     runtime: manifest.runtime,
     targetRoot: manifest.targetRoot,
-    checked: manifest.copied.length,
+    checked: files.length + (manifest.codexIo?.hooks.length || 0),
     missing,
     mismatch,
   };
@@ -1290,6 +1404,7 @@ const listDirectoryNames = async (root) => {
 };
 
 const computeProfileSurfaceParity = async ({ manifest, sourceRepo, publicRuntimeSkills }) => {
+  if (manifest.codexIoOnly) return null;
   if (!['claude', 'codex', 'qwen', 'ade', 'antigravity'].includes(manifest.runtime)) {
     return null;
   }
@@ -1356,7 +1471,7 @@ const main = async () => {
         runtime: manifest.runtime,
         targetRoot: manifest.targetRoot,
         skillTargetRoot: manifest.skillTargetRoot || null,
-        copiedCount: manifest.copied.length,
+        copiedCount: (manifest.codexIoOnly ? 0 : manifest.copied.length) + (manifest.codexIo?.files.length || 0),
         legacyHarnessCorePresent: manifest.legacyHarnessCorePresent,
         skipped: manifest.skipped,
         removedCount: manifest.removed.length,

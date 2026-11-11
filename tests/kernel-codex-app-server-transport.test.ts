@@ -36,7 +36,19 @@ input.on('line', (line) => {
   const id = message.id;
   if (message.method === 'initialize') {
     if (process.env.TEST_MODE !== 'stall-initialize' && process.env.TEST_MODE !== 'stall-initialize-ignore-term') send({ id, result: { userAgent: 'fixture' } });
+  } else if (message.method === 'config/read') {
+    send({ id, result: process.env.TEST_MODE === 'tool-config-missing' ? {} : { config: {
+      mcp_servers: { external: { command: 'must-not-inherit' } },
+      apps: { external: { enabled: true } }, plugins: { external: { enabled: true } },
+    } } });
   } else if (message.method === 'thread/start') {
+    if (process.env.TEST_MODE?.startsWith('no-tools')) {
+      const c = message.params.config;
+      if (c.features.shell_tool !== false || c.features.apps !== false || c.features.multi_agent !== false
+        || c.mcp_servers.external.enabled !== false || c.apps.external.enabled !== false
+        || c.plugins.external.enabled !== false || c.web_search !== 'disabled'
+        || JSON.stringify(c).includes('must-not-inherit')) throw Error('missing no-tools configuration');
+    }
     const expectedSandbox = process.env.TEST_MODE?.startsWith('writable') ? 'workspace-write' : 'read-only';
     if (message.params.sandbox !== expectedSandbox || message.params.approvalPolicy !== 'never') {
       send({ id, error: { code: -1, message: 'unsafe launch' } });
@@ -120,15 +132,17 @@ input.on('line', (line) => {
       return;
     }
     // A real App Server may stream items before turn/start ACK.
-    send({ method: 'item/started', params: { threadId, turnId, item: { type: 'commandExecution', id: 'cmd-' + serial, processId: 1454, command: 'fixture raw command', output: 'fixture private output', owner: { attemptId: 'forged' } } } });
+    if (process.env.TEST_MODE !== 'no-tools-late') send({ method: 'item/started', params: { threadId, turnId, item: { type: 'commandExecution', id: 'cmd-' + serial, processId: 1454, command: 'fixture raw command', output: 'fixture private output', owner: { attemptId: 'forged' } } } });
     send({ method: 'item/started', params: { threadId: 'other-thread', turnId, item: { type: 'commandExecution', id: 'wrong-thread', processId: 4 } } });
     send({ id, result: { turn: { id: turnId, status: 'inProgress' } } });
     setTimeout(() => {
-      send({ method: 'item/completed', params: { threadId, turnId, item: { type: 'commandExecution', id: 'cmd-' + serial, processId: 1454 } } });
+      if (process.env.TEST_MODE !== 'no-tools-late') send({ method: 'item/completed', params: { threadId, turnId, item: { type: 'commandExecution', id: 'cmd-' + serial, processId: 1454 } } });
       // Turn lifecycle notifications identify the Turn by turn.id, unlike
       // item notifications which include params.turnId.
       send({ method: 'turn/completed', params: { threadId, turn: { id: 'wrong-turn', status: 'interrupted' } } });
       send({ method: 'turn/completed', params: { threadId, turn: { id: turnId, status: 'completed' } } });
+      if (process.env.TEST_MODE === 'no-tools-late') send({ method: 'item/completed', params: {
+        threadId, turnId, item: { type: 'commandExecution', id: 'late' } } });
       if (process.env.TEST_MODE?.includes('report')) send(reportEvent(threadId, 'late-report', '{"status":"failed"}'));
     }, process.env.TEST_MODE === 'completion-without-interrupt-ack' ? 1500 : 25);
   } else if (message.method === 'turn/interrupt') {
@@ -175,6 +189,19 @@ const withFixture = async <T>(
 const turn = (cwd: string) => ({
   cwd, prompt: 'read-only lifecycle fixture', model: 'test-model', effort: 'high',
   timeoutMs: 3000,
+});
+
+test('No-tools generation disables configured catalogs and rejects early or trailing execution events', async () => {
+  for (const mode of ['no-tools', 'no-tools-late', 'tool-config-missing']) await withFixture(async ({ workspace, server }) => {
+    const transport = await createCodexAppServerTransport({ executable: process.execPath, args: [server],
+      env: { ...process.env, TEST_MODE: mode }, requestTimeoutMs: 1500 });
+    try {
+      await assert.rejects(transport.runTurn({ ...turn(workspace), toolPolicy: 'none' }), {
+        code: mode === 'tool-config-missing' ? 'codex_app_server_tool_config_unavailable' : 'codex_app_server_tool_event_forbidden',
+      });
+      assert.equal((await transport.close()).writerExitVerified, false);
+    } finally { await transport.close(); }
+  });
 });
 
 test('Host owns one App Server process, binds early and later command events, and keeps Writer exit unverified', async () => {

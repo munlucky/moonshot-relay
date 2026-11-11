@@ -1,13 +1,15 @@
 import process from 'node:process';
 import path from 'node:path';
 import readline from 'node:readline';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { isDirectEntrypoint } from '../../shared/runtime-assets.js';
 import { resolveKernelRuntimeHome } from '../runtime-home.js';
 import { projectKernelModelView } from '../run/model-view.js';
 import {
   createKernelControlPlane,
   createHostWorkerSessions,
+  createLocalWorkerControl,
+  type LocalWorkerControlOptions,
   createKernelHostReviewBridge,
   createKernelRecoveryContinuity,
   isKernelReviewAction,
@@ -31,6 +33,8 @@ interface McpParameters extends UnknownRecord {
   verbose?: boolean;
   report?: UnknownRecord | null;
   worker?: { action?: 'start' | 'interrupt'; model?: string; effort?: string; attemptId?: string } | null;
+  ioWrite?: unknown;
+  ioRead?: unknown;
 }
 
 type HostBridgeFactory = (input: { surface: string | null }) => HostReviewBridge | null;
@@ -63,6 +67,8 @@ interface StartMcpBridgeServerInput {
   stdin?: NodeJS.ReadableStream;
   stdout?: NodeJS.WritableStream;
   hostWorkerSessions?: ReturnType<typeof createHostWorkerSessions>;
+  ioWriter?: LocalWorkerControlOptions['ioWriter'];
+  ioReader?: LocalWorkerControlOptions['ioReader'];
   runtimeHome?: (string | null) | undefined;
   env?: NodeJS.ProcessEnv;
   hostBridge?: HostLifecycleBridge | HostBridgeFactory | null;
@@ -167,6 +173,29 @@ export const KERNEL_MCP_TOOLS = [
   },
 ];
 
+const ioRequestProperties = {
+  stepId: { type: 'string' }, expectedWorkspaceIdentity: { type: 'string' },
+  references: { type: 'array', items: { type: 'object', additionalProperties: false,
+    properties: { path: { type: 'string' }, sha256: { type: 'string' } }, required: ['path', 'sha256'] } },
+  maxInputBytes: { type: 'integer', minimum: 1 }, maxOutputBytes: { type: 'integer', minimum: 1 },
+  timeoutMs: { type: 'integer', minimum: 1, maximum: 600000 },
+};
+// Advertised only by an explicitly enabled Host.
+const ioWriteSchema = {
+  type: 'object', additionalProperties: false,
+  description: 'Host opt-in only: generate one isolated new file for the current Run/Step. No next, proof, Owner delivery or completion. Return metadata only.',
+  properties: {
+    ...ioRequestProperties, filePath: { type: 'string' }, specification: { type: 'string' },
+  },
+  required: ['stepId', 'expectedWorkspaceIdentity', 'filePath', 'specification', 'references', 'maxInputBytes', 'maxOutputBytes', 'timeoutMs'],
+};
+const ioReadSchema = {
+  type: 'object', additionalProperties: false,
+  description: 'Host opt-in only: answer a source question for the current Run/Step with checked quotes and required semantic review.',
+  properties: { ...ioRequestProperties, references: { ...ioRequestProperties.references, minItems: 1 }, question: { type: 'string' } },
+  required: [...Object.keys(ioRequestProperties), 'question'],
+};
+
 const resolveConfiguredHostBridge = (hostBridge: HandleMcpToolCallInput['hostBridge'], parameters: McpParameters): HostLifecycleBridge | null => {
   if (typeof hostBridge === 'function') return hostBridge({ surface: parameters.surface || null });
   return hostBridge || null;
@@ -269,6 +298,9 @@ export const handleMcpToolCall = async ({
   hostBridge = null,
   nativeHost = globalThis,
 }: HandleMcpToolCallInput = {}): Promise<unknown> => {
+  if (Object.hasOwn(parameters, 'ioWrite') || Object.hasOwn(parameters, 'ioRead')) {
+    throw Object.assign(new Error('host_io_requires_owning_handler'), { code: 'host_io_requires_owning_handler' });
+  }
   const workspaceRoot = parameters.workspaceRoot;
   if (!workspaceRoot || typeof workspaceRoot !== 'string') {
     throw new Error('workspaceRoot is required and must be a string path');
@@ -467,11 +499,22 @@ export const handleMcpToolCall = async ({
   }
 };
 
-export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, hostBridge = null, nativeHost = globalThis, hostWorkerSessions = undefined }: Omit<HandleMcpToolCallInput, 'name' | 'parameters'> & { hostWorkerSessions?: ReturnType<typeof createHostWorkerSessions> } = {}) => {
+export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, hostBridge = null, nativeHost = globalThis, hostWorkerSessions = undefined, ioWriter = undefined, ioReader = undefined }: Omit<HandleMcpToolCallInput, 'name' | 'parameters'> & {
+  hostWorkerSessions?: ReturnType<typeof createHostWorkerSessions>;
+  ioWriter?: LocalWorkerControlOptions['ioWriter'];
+  ioReader?: LocalWorkerControlOptions['ioReader'];
+} = {}) => {
   const recoveryContinuity = createKernelRecoveryContinuity();
   // The owning Host may reuse this exact control surface across Main
   // connections. An isolated Handler still owns its local sessions by default.
   const workerSessions = hostWorkerSessions || createHostWorkerSessions({ env });
+  // Keep the existing Writer's process-local duplicate guard across requests.
+  // Canonical roots share one control even when Main uses a path alias.
+  const ioControls = new Map<string, ReturnType<typeof createLocalWorkerControl>>();
+  const tools = ioWriter || ioReader ? KERNEL_MCP_TOOLS.map(tool => tool.name === 'kernel_attach'
+    ? { ...tool, inputSchema: { ...tool.inputSchema, properties: { ...tool.inputSchema.properties,
+      ...(ioWriter ? { ioWrite: ioWriteSchema } : {}), ...(ioReader ? { ioRead: ioReadSchema } : {}) } } }
+    : tool) : KERNEL_MCP_TOOLS;
   return async (request: McpRequest) => {
     const { id, method, params } = request || {};
 
@@ -505,7 +548,7 @@ export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, 
         jsonrpc: '2.0',
         id,
         result: {
-          tools: KERNEL_MCP_TOOLS,
+          tools,
         },
       };
     }
@@ -516,14 +559,37 @@ export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, 
       const resolvedRuntimeHome = runtimeHome || resolveKernelRuntimeHome({ env });
       try {
         const worker = asRecord(callArgs.worker);
-        const startsWorker = name === 'kernel_next' && worker.action === 'start';
+        const writesIo = Object.hasOwn(callArgs, 'ioWrite');
+        const readsIo = Object.hasOwn(callArgs, 'ioRead');
+        const handlesIo = writesIo || readsIo;
+        const startsWorker = !handlesIo && name === 'kernel_next' && worker.action === 'start';
         // A contract can create or revise a Run, so check capability before
         // accepting it. Requests without a contract may read back an Attempt.
         if (startsWorker && callArgs.contractJson) workerSessions.assertNativeStartAvailable();
         const workerModel = typeof worker.model === 'string' ? worker.model : '';
         const workerEffort = typeof worker.effort === 'string' ? worker.effort : '';
         if (startsWorker && (!workerModel || !workerEffort)) throw new Error('host_worker_request_invalid');
-        const resultData = await handleMcpToolCall({
+        let resultData: unknown;
+        if (handlesIo) {
+          const request = readsIo ? callArgs.ioRead : callArgs.ioWrite;
+          const fields = readsIo ? ioReadSchema.required : ioWriteSchema.required;
+          const fixed = asRecord(request);
+          if ((readsIo && writesIo) || name !== 'kernel_attach' || callArgs.contractJson != null || callArgs.worker != null || callArgs.report != null
+            || typeof callArgs.workspaceRoot !== 'string' || typeof callArgs.runId !== 'string' || !callArgs.runId.trim()
+            || fields.some(key => !Object.hasOwn(fixed, key))
+            || Object.keys(fixed).some(key => !fields.includes(key))) {
+            throw Object.assign(new Error('host_io_request_invalid'), { code: 'host_io_request_invalid' });
+          }
+          if (!(readsIo ? ioReader : ioWriter)) throw Object.assign(new Error('host_io_not_enabled'), { code: 'host_io_not_enabled' });
+          const root = realpathSync(path.resolve(callArgs.workspaceRoot));
+          let control = ioControls.get(root);
+          if (!control) {
+            control = createLocalWorkerControl({ projectRoot: root, runtimeHome: resolvedRuntimeHome, env,
+              hostWorkerSessions: workerSessions, ...(ioWriter ? { ioWriter } : {}), ...(ioReader ? { ioReader } : {}) });
+            ioControls.set(root, control);
+          }
+          resultData = await control({ ...fixed, action: readsIo ? 'io-read' : 'io-write', runId: callArgs.runId });
+        } else resultData = await handleMcpToolCall({
           name,
           parameters: callArgs,
           runtimeHome,
@@ -556,7 +622,7 @@ export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, 
           }
         } else if (!startsWorker && Object.keys(worker).length > 0) {
           throw new Error('host_worker_action_unsupported');
-        } else if ((name === 'kernel_status' || name === 'kernel_attach')
+        } else if (!handlesIo && (name === 'kernel_status' || name === 'kernel_attach')
           && typeof callArgs.workspaceRoot === 'string'
           && (name !== 'kernel_attach' || !callArgs.contractJson)) {
           const runId = String(asRecord(modelInput.run).runId || modelInput.runId || callArgs.runId || '');
@@ -587,7 +653,7 @@ export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, 
                 text: typeof decoratedResult === 'string' ? decoratedResult : JSON.stringify(decoratedResult, null, 2),
               },
             ],
-            isError: false,
+            isError: handlesIo && ['failed', 'error', 'unsupported', 'not_found'].includes(String(asRecord(resultWithWorker).status)),
           },
         };
       } catch (error: unknown) {
@@ -642,8 +708,12 @@ export const startMcpBridgeServer = ({
   hostBridge = null,
   nativeHost = globalThis,
   hostWorkerSessions = undefined,
+  ioWriter = undefined,
+  ioReader = undefined,
 }: StartMcpBridgeServerInput = {}) => {
   const handler = createMcpBridgeHandler({ runtimeHome, env, hostBridge, nativeHost,
+    ...(ioWriter ? { ioWriter } : {}),
+    ...(ioReader ? { ioReader } : {}),
     ...(hostWorkerSessions ? { hostWorkerSessions } : {}),
   });
   const rl = readline.createInterface({ input: stdin, output: stdout, terminal: false });

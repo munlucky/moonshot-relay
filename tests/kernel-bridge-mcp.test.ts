@@ -18,6 +18,23 @@ import { CODEX_EXECUTION_POLICY } from '../src/host/kernel/codex-model-policy.js
 
 const tempRoots: string[] = [];
 
+test('MCP lists the fixed-spec Writer only with Host opt-in and keeps the same tool catalog', async () => {
+  const list = async (enabled: boolean) => {
+    const handler = createMcpBridgeHandler(enabled ? { ioWriter: {} } : {});
+    const response = await handler({ id: 1, method: 'tools/list' });
+    return assertTestArray(assertTestRecord(assertTestRecord(response).result).tools).map(assertTestRecord);
+  };
+  const disabled = await list(false), enabled = await list(true);
+  assert.deepEqual(enabled.map(tool => tool.name), disabled.map(tool => tool.name));
+  for (const [tools, expected] of [[disabled, false], [enabled, true], [await list(false), false]] as const) {
+    const attach = assertTestRecord(tools.find(tool => tool.name === 'kernel_attach'));
+    const properties = assertTestRecord(assertTestRecord(attach.inputSchema).properties);
+    assert.equal(Object.hasOwn(properties, 'ioWrite'), expected);
+  }
+  await assert.rejects(handleMcpToolCall({ name: 'kernel_attach', parameters: {
+    workspaceRoot: process.cwd(), ioWrite: {} } }), /host_io_requires_owning_handler/);
+});
+
 const createFixtureRepo = async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-bridge-fixture-'));
   tempRoots.push(root);
