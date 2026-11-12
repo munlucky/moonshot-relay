@@ -1,24 +1,53 @@
 # Host-owned I/O
 
-Reviewed: 2026-11-11
+Reviewed: 2026-11-12
 
 ## Standalone Codex I/O
 
 The explicit `bin/moonshot-io.mjs` entrypoint provides `io-read`, `io-write` and
 an explicitly requested `io-apply` without a Kernel Run or Step. These commands
-reuse the same Reader/Writer execution, file hashes, source citations, no-tools
+reuse the same Reader/Writer execution, file hashes, no-tools
 transport and Host model registry. Kernel MCP continues to require its existing
 Run/Step binding; an authorization failure never falls back to standalone mode.
 
 The Reader accepts a question and existing relative reference paths. The Writer
 accepts a fixed specification, one new destination, and at least one existing
 reference. Both require explicit byte and time budgets. The CLI acquires source
-hashes locally. Writer results contain candidate metadata and reference hashes,
-not the generated code. `io-apply` rechecks the candidate and every reference,
+hashes locally. Reader returns plain `answer` text and Host-supplied snapshot
+`sources` (path/hash), not validated claim citations. Missing or repeated quotes
+do not fail an answer. Empty responses fail; bounded previews are `truncated`;
+source changes retain a `stale` answer. Changed authority and forbidden tool
+events still fail without exposing a normal answer. There is no semantic-review
+or coverage completion field in the tool contract.
+
+Writer results contain metadata and reference hashes, not the generated code.
+The ordinary `io-write - --apply` command accepts stdin JSON and generates and
+saves the named new file in one call. It reuses the isolated candidate and
+`io-apply` checks. `created` means saved, not tested or correct. The successful
+call removes only its own candidate directory; failed candidates and known
+usage remain available for diagnosis. No retry or automatic repair is performed.
+Candidate-only `io-write` and explicit `io-apply` remain available. Kernel never
+uses the standalone apply path. `io-apply` rechecks the candidate and every reference,
 the real workspace root, parent paths and destination, then creates the file
 with `wx`. It does not overwrite an existing target. A failed partial write is
 reported with the observed destination state; the caller must inspect it.
 These checks are not a transaction across reference files and directory paths.
+
+```text
+node <common-runtime>/bin/moonshot-io.mjs io-read -
+node <common-runtime>/bin/moonshot-io.mjs io-write - --apply
+node <common-runtime>/bin/moonshot-io.mjs io-write request.json [metadata.json]
+```
+
+Pipe JSON with `question` or `specification`/`filePath`, existing `references`
+(relative path strings), `maxInputBytes`, `maxOutputBytes`, and `timeoutMs`.
+File input remains supported. Optional metadata output is preflighted before
+the model call and created exclusively. A later save failure returns the received
+result and usage on stdout with `metadataFailure`, and exits unsuccessfully.
+Standalone CLI results omit Kernel Proof/Owner/completion fields. Necessary
+review, project tests and exact edits remain ordinary Codex work, not new I/O
+tool features. The account-condition comparison does not justify default adoption;
+the Reader Hook stays disabled and Writer is for explicit delegation/evaluation.
 
 Install through the existing account-root installer:
 
@@ -46,11 +75,40 @@ The Hook is a workflow guardrail, not an OS security boundary.
 
 Local result caching and reuse of previous validation results are out of scope.
 Provider-reported cached token counts are usage measurements, not a local cache.
-Account installation, new-session E2E and v3 economic acceptance remain separate
+Account installation, new-session E2E and economic acceptance remain separate
 verification gates. The development calls alone do not establish those gates.
 
-### Ordinary Codex v3 evaluation, 2026-11-11
+### Thin I/O refactor evaluation, 2026-11-12
 
+The current refactor removes mandatory Reader fact/citation validation and
+connects standalone stdin Writer generation and saving in one call. Actual
+account sessions confirmed plain Reader answers and one-call file creation with
+requested/resolved Luna. Kernel remains bound and candidate-only. See the
+[requirement audit and full results](../roadmaps/spotify-io-structural-recovery-2026-11-11/RESULTS.ko.md).
+
+The native `0.167.0-alpha.4.1` comparison completed all 36 attempts and external
+AI content reviews. Reader content passed 9/9 direct and 8/9 delegated; Writer
+passed 9/9 direct and 4/9 delegated after allowed ordinary task work. Conservatively
+counting a task-prompt repair deviation gives 3/9 compliant delegated Writer
+completions. Raw tokens increased from 1,030,386 to 1,411,898 for Reader and from
+1,099,260 to 1,741,828 for Writer. No task met all adoption conditions.
+
+The Writer pilot passed functional return/save but failed content; continuing
+the full comparison violated its stricter preregistered pilot-content gate.
+One Writer repaired omissions after passing tests despite a task prompt allowing
+repairs after test failure only. Both deviations and every failure remain in
+the report. These are descriptive non-adoption results, not clean preregistered
+adoption proof. The earlier native3 quota failures and pre-refactor v3 records
+remain separate and unchanged. Hypothetical resource units are not billing or
+subscription measurements.
+
+Keep the Reader Hook disabled and Writer explicit/evaluation-only. Functional
+implementation and installation do not establish quality equivalence or savings.
+
+### Historical ordinary Codex v3 evaluation, 2026-11-11
+
+The following records describe the pre-refactor citation/candidate workflow.
+They are preserved and are not results for the new thin I/O contract.
 This evaluation supersedes the older Kernel/Sol-only experiments below for
 ordinary Codex adoption. It used native Codex `0.167.0-alpha.3.2`, the same
 Sol/medium Main in both arms, the installed I/O profile, and one Luna helper
@@ -597,22 +655,25 @@ budgets count the question and raw source bytes before prompt serialization.
 Both use the existing Host model policy and the same read-only App Server with
 tools disabled.
 
-A successful response has `status: "evidence-ready"`, a draft `summary`,
-`semanticReview: "REQUIRED"`, and an `evidence` list. Each entry has a verified
-path, exact symbol, unique quote, uncertainty, source hash, and line range.
-Source hashes cover raw bytes. Line ranges and quotes use LF-normalized UTF-8
-text so a Windows CRLF checkout gives the same source locations. Invalid,
-ambiguous, out-of-scope, or stale citations fail the request. The Host retains
-usage and time when the model reports them.
+A normal response has `status: "answered"`, plain `answer` text, and Host-supplied
+`sources` containing the paths and raw-byte hashes actually sent to the model.
+These are snapshot identifiers, not validated claims or citations. Missing,
+repeated or imperfect quotes do not discard an answer. Empty responses fail;
+oversized answers return a bounded `truncated` preview. A changed source retains
+the received answer with `stale` diagnostics. Changed authority, forbidden paths
+and tool events still reject the request. Known usage and time are retained.
 
-Before using a draft's interpretation, read the cited branch and any required
-surrounding or missing source. A verbatim quote can accompany an incorrect
-conclusion about that branch. The Reader does not update the Run, create a file,
-settle Proof, or apply a result to the Owner. Review of cross-file ownership
-conditions stays with the caller. The Reader never chains to a Planner or
-Writer and never retries a failed result.
+Interpretation and any necessary exact source checks remain ordinary caller
+work. There is no mandatory semantic-review field, full-source reread or coverage
+engine. The Reader does not update the Run, create a file, settle Proof, apply a
+result to the Owner, chain to another model, or retry a failed result. The Kernel
+wrapper retains its existing authority and noncompletion evidence fields; the
+standalone CLI omits those Kernel-only fields.
 
-### Reader evidence and adoption
+### Historical Reader evidence and adoption, 2026-11-10
+
+The following citation-based results describe the earlier contract. They are
+preserved as history, not as acceptance results for the plain-answer Reader.
 
 The Nov 11 evaluation recovered the original questions and byte hashes from
 the historical experiment. It replayed the 1,656-line and 4,391-line cases and

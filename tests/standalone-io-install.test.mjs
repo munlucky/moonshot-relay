@@ -37,7 +37,10 @@ test('I/O installation merges only owned hooks, preserves user settings/skills, 
    const script = await readFile(path.join(f.home, 'hooks/moonshot-reader.mjs'), 'utf8');
    assert.ok(script.includes(JSON.stringify(f.common)));
    assert.ok(!script.includes('__MOONSHOT'));
-   assert.ok((await readFile(path.join(f.home, 'skills/io-writer/SKILL.md'), 'utf8')).includes(f.common.replaceAll('\\', '/')));
+   const skill = await readFile(path.join(f.home, 'skills/io-writer/SKILL.md'), 'utf8');
+   assert.ok(skill.includes(f.common.replaceAll('\\', '/')));
+   assert.match(skill, /io-write - --apply/);
+   assert.match(skill, /explicit delegation or evaluation/);
   }
   assert.match(await readFile(path.join(f.home, 'hooks/moonshot-reader.mjs'), 'utf8'), /main\(runtimeHome, 400\)/);
   // An older payload removes exactly the owned definition and files.

@@ -1,11 +1,11 @@
 ---
 name: io-writer
-description: Generate one new file from an explicit specification and existing reference files using the installed low-cost Writer. Use for pattern-based new code, not existing-file edits.
+description: Generate and save one new file with the installed low-cost Writer when explicitly delegated or testing I/O delegation. Default adoption is pending measured economics. Not for existing-file edits.
 ---
 
 # New-file Writer
 
-Use only when the user's task authorizes creating the named new file. Keep small reads and existing-file edits in the ordinary Codex tools. Do not start Kernel or invent a Run or Step.
+Use for explicit delegation or evaluation while economic adoption is pending. The user's task must authorize creating the named new file. Keep small reads and existing-file edits in ordinary Codex tools. Do not start Kernel or invent a Run or Step.
 
 The installed Host selects the low-cost helper independently of the Main model.
 Keep the supplied model, effort, and policy environment unchanged. Do not set
@@ -13,11 +13,8 @@ execution-class overrides or turn model policy off to match the current Main.
 Names in task filenames do not select a helper model. If the caller requires a
 particular helper, verify requested/resolved model evidence and report a mismatch.
 
-1. Choose at least one existing reference file. Fix the new relative destination and a short specification, including tests and important conditions. Do not generate the full code yourself first.
-2. Use `MOONSHOT_RELAY_HOME` if explicitly set; otherwise use this installation's common runtime: `__MOONSHOT_RELAY_HOME__`. Use its installed `bin/moonshot-io.mjs`, not a development checkout. The installer replaces this path for custom account homes.
-3. With the ordinary shell tool, write a temporary JSON request containing `specification`, `filePath`, `references` (relative path strings), `maxInputBytes`, `maxOutputBytes`, and `timeoutMs`. Use bounded budgets suitable for the task (for example 1048576, 64000, 120000). Run `node "<common runtime>/bin/moonshot-io.mjs" io-write "<request.json>" "<new metadata.json>"` from the project working directory.
-4. Inspect status, requested/resolved model, usage, and candidate metadata. A failed or mismatched-model response is not a generated file. Inspect only the candidate sections needed to review quality. Do not return or regenerate its full source through the main model.
-5. After review, use the ordinary shell tool to run `node "<common runtime>/bin/moonshot-io.mjs" io-apply "<metadata.json>"` from the same working directory. This explicitly rechecks candidate SHA, every reference SHA, real root, parent paths and destination, then creates the file with `wx`. If any check fails, stop applying that candidate. Never overwrite an existing file or bypass a failed check with a plain copy.
-6. Run the project's tests. Check important conditions and defect cases. Correct exact ranges using ordinary Codex editing tools if needed, and include those calls in efficiency measurements.
+1. Choose existing reference paths, the new relative destination, and a short specification with important conditions. Do not first generate the full code or reread all references just to delegate.
+2. Use `MOONSHOT_RELAY_HOME` if explicitly set; otherwise use this installation's common runtime: `__MOONSHOT_RELAY_HOME__`. From the project directory, pipe one JSON request to `node "<common runtime>/bin/moonshot-io.mjs" io-write - --apply`. Fields: `specification`, `filePath`, `references` (relative path strings), `maxInputBytes`, `maxOutputBytes`, `timeoutMs`. Example budgets: 1048576, 64000, 120000. Check the short result, model identity and usage. `created` means the file was saved, not that its code passed tests. No separate metadata read or io-apply call is required. On failure, preserve the diagnostics and stop; never regenerate automatically or bypass a failed file check.
+3. Perform the review, project tests, and exact-range edits needed for the original task with ordinary Codex tools. Do not require a full candidate read or an additional review package. Include necessary reads, tests and repairs in efficiency measurements.
 
-`wx` prevents overwriting a destination created by another process. The reference checks and parent-path checks are not one atomic transaction. No Kernel Proof, Owner delivery, global duplicate guarantee, local result cache, or completion authority is created by this command.
+The Host keeps candidate generation, SHA/path checks and `wx` saving in one call. `wx` prevents destination overwrite; reference and parent checks are not one atomic transaction. `io-write` without `--apply` and explicit `io-apply` remain available for candidate-only callers. Kernel always retains its bound candidate and Owner path. No local result cache is created.

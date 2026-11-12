@@ -56,6 +56,10 @@ export function denyIo(code: string): never {
 export const ioDigest = (bytes: string | Buffer): string =>
   'sha256:' + createHash('sha256').update(bytes).digest('hex');
 
+// Streaming decode omits an incomplete final UTF-8 character in a preview.
+export const boundedIoText = (text: string, maxBytes: number): string =>
+  new TextDecoder().decode(Buffer.from(text).subarray(0, maxBytes), { stream: true });
+
 export function relativeIoFile(value: string): string {
   if (typeof value !== 'string' || !value || path.win32.isAbsolute(value) || path.posix.isAbsolute(value)) denyIo('host_io_path_invalid');
   const portable = value.replaceAll('\\', '/');

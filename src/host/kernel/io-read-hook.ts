@@ -58,10 +58,10 @@ export async function evaluateReadHook(input: ReadHookInput, options: {
     const lines = content ? content.split(/\r?\n/).length - (content.endsWith('\n') ? 1 : 0) : 0;
     if (lines <= minLines) return {};
     return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny',
-      permissionDecisionReason: 'Use the installed Reader for this full-file read. Write a JSON request '
+      permissionDecisionReason: 'Use the installed Reader for this full-file read. Pipe a JSON request '
         + JSON.stringify({ question: 'Replace with your exact question', references: [relative], maxInputBytes, maxOutputBytes: 12000, timeoutMs: 120000 })
-        + ` to a temporary request file, then call node "${command}" io-read <request.json> from the same working directory. `
-        + 'Check conditions and uncertainty in the returned citations. Small reads, rg, and exact ranges remain available. '
+        + ` to node "${command}" io-read - from the same working directory. `
+        + 'Check conditions and uncertainty in the answer. Sources identify supplied snapshots, not verified claims. Small reads, rg, and exact ranges remain available. '
         + 'If Reader execution fails, report the error and use a bounded source read; do not repeatedly invoke the full read.' } };
   } catch { return {}; }
 }

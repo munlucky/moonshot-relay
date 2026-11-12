@@ -99,7 +99,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line',line=>
     if(mode==='extra')response.extra=true;
     if(mode==='empty')response.code='';
     if(mode==='size')response.code='x'.repeat(50000);
-    if(mode!=='missing')send({method:'item/completed',params:{threadId:'io-thread',turnId:'io-turn',item:{id:'final',type:'agentMessage',phase:'final_answer',text:mode==='json'?'bad json':JSON.stringify(response)}}});
+    if(mode!=='missing')send({method:'item/completed',params:{threadId:'io-thread',turnId:'io-turn',item:{id:'final',type:'agentMessage',phase:'final_answer',text:request.question?'The reference contains initial.':mode==='json'?'bad json':JSON.stringify(response)}}});
     send({id:m.id,result:{turn:{id:'io-turn'}}});
     if(toolMode&&mode.endsWith('-after'))send(event('io-thread','io-turn','mcpToolCall','item/completed'));
     send({method:'turn/completed',params:{threadId:'io-thread',turn:{id:'io-turn',status:mode==='failed'?'failed':'completed'}}});
@@ -131,7 +131,7 @@ const ioFixture = async (mode = '') => {
   return { ...f, calls, options, request, control: createLocalWorkerControl(options) };
 };
 
-test('Reader opt-in serves checked source quotes through local and MCP controls without advancing the Run', async () => {
+test('Reader opt-in serves plain answers through local and MCP controls without advancing the Run', async () => {
   const f = await ioFixture();
   try {
     const { filePath: _filePath, specification: _spec, action: _action, ...bound } = f.request;
@@ -161,11 +161,11 @@ test('Reader opt-in serves checked source quotes through local and MCP controls 
     const mcp = await invoke(mcpArgs);
     assert.equal(mcp.isError, false);
     for (const result of [local, mcp.payload]) {
-      assert.equal(result.status, 'evidence-ready', JSON.stringify(result));
-      assert.equal(result.semanticReview, 'REQUIRED');
+      assert.equal(result.status, 'answered', JSON.stringify(result));
+      assert.equal(result.semanticReview, undefined);
       assert.equal(result.kernelDone, false);
-      assert.deepEqual(result.evidence, [{ ...fixed.references[0], symbol: 'initial', quote: 'initial',
-        uncertainty: 'none', startLine: 1, endLine: 1 }]);
+      assert.equal(result.answer, 'The reference contains initial.');
+      assert.deepEqual(result.sources, fixed.references);
       assert.equal(result.usage.inputTokens, 30);
     }
     assert.equal(await readFile(f.calls, 'utf8'), 'call\ncall\n');
@@ -174,10 +174,9 @@ test('Reader opt-in serves checked source quotes through local and MCP controls 
   } finally { await f.cp.close(); await rm(f.root, { recursive: true, force: true }); }
 });
 
-test('Reader refuses unbound input and discards incorrect citations, tool events and stale source', async () => {
+test('Reader refuses unbound input and tool events; changed snapshots are not normal answers', async () => {
   for (const [mode, expected] of [
-    ['read-quote', 'host_io_citation_invalid'], ['read-symbol', 'host_io_citation_invalid'],
-    ['read-path', 'host_io_scope_rejected'], ['ignored-change', 'host_io_stale_reference'],
+    ['ignored-change', 'host_io_stale_reference'],
     ['tool-completed', 'codex_app_server_tool_event_forbidden'],
   ] as const) {
     const f = await ioFixture(mode);
@@ -190,6 +189,9 @@ test('Reader refuses unbound input and discards incorrect citations, tool events
       assert.equal(await readFile(f.calls, 'utf8'), '');
       const result = await control(request);
       assert.equal(result.failureCode, expected, JSON.stringify(result));
+      assert.equal(result.status, mode === 'ignored-change' ? 'stale' : 'failed');
+      if (mode === 'ignored-change') assert.equal(result.answer, 'The reference contains initial.');
+      else assert.equal(result.answer, undefined);
       assert.equal(Object.hasOwn(result, 'evidence'), false);
       assert.equal(assertTestRecord(result.usage).inputTokens, 30);
     } finally { await f.cp.close(); await rm(f.root, { recursive: true, force: true }); }

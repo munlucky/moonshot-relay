@@ -426,7 +426,7 @@ export async function createCodexAppServerTransport({
           catch { fail('codex_app_server_observer_failed'); }
         } else if (message.method === 'item/started' || message.method === 'item/completed') {
           const item = object(params?.item);
-          if (outputSchema && message.method === 'item/completed' && item?.type === 'agentMessage'
+          if ((outputSchema || toolPolicy === 'none') && message.method === 'item/completed' && item?.type === 'agentMessage'
             && (item.phase === 'final_answer' || item.phase === null || item.phase === undefined)) {
             if (!name(item.id) || typeof item.text !== 'string') {
               fail('codex_app_server_final_message_invalid');
@@ -527,7 +527,7 @@ export async function createCodexAppServerTransport({
           settled = true;
           return { threadId, turnId, turnStatus, writerExitVerified: false,
             resolvedModel: name(thread.model), resolvedEffort: name(thread.reasoningEffort), usage,
-            ...(outputSchema ? { finalMessage: finalText() } : {}) };
+            ...(outputSchema || toolPolicy === 'none' ? { finalMessage: finalText() } : {}) };
         } finally {
           clearTimeout(turnTimer);
         }

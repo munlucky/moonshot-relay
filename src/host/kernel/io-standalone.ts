@@ -1,4 +1,5 @@
-import { lstat, mkdir, open, readFile, realpath } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, realpath, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { assertIoBudgets, assertIoReferencesFresh, denyIo, inspectIoPath, ioDigest,
   readIoReferences, relativeIoFile, type HostIoOptions, type IoContext, type IoRequest } from './io-common.js';
@@ -55,10 +56,36 @@ export function createStandaloneIo(options: HostIoOptions) {
       const { context, references } = await prepare(request);
       return read({ ...request, references }, async () => context);
     },
-    async write(request: StandaloneIoRequest & { filePath: string; specification: string }) {
+    async write(request: StandaloneIoRequest & { filePath: string; specification: string }, apply = false) {
       const { context, references } = await prepare(request, request.filePath);
       const result = await write({ ...request, references }, async () => context);
-      return { ...result, projectRoot: context.root, references };
+      const candidate = { ...result, projectRoot: context.root, references };
+      if (!apply || candidate.status !== 'generated' || !('candidatePath' in candidate)) return candidate;
+      try {
+        const created = await applyStandaloneIoCandidate(context.root, candidate as StandaloneIoCandidate);
+        // Only the directory allocated by this invocation may be removed.
+        // Never derive a recursive delete target from caller-supplied metadata.
+        const ownedRoot = result.candidateRoot!;
+        const temporaryRoot = await realpath(tmpdir());
+        let cleanupFailure: string | undefined;
+        try {
+          if (path.dirname(await realpath(ownedRoot)) !== temporaryRoot
+            || !path.basename(ownedRoot).startsWith('kernel-io-candidate-')
+            || (await lstat(ownedRoot)).isSymbolicLink()) denyIo('host_io_candidate_cleanup_rejected');
+          await rm(ownedRoot, { recursive: true });
+        } catch (error) { cleanupFailure = (error as NodeJS.ErrnoException).code || 'host_io_candidate_cleanup_failed'; }
+        const { candidatePath: _path, candidateRoot: _root, ...metadata } = candidate;
+        return { ...metadata, ...created, ...(cleanupFailure ? { cleanupFailure, candidateRoot: ownedRoot } : {}) };
+      } catch (error) {
+        const failure = error as NodeJS.ErrnoException & { destinationState?: string };
+        let destinationState = failure.destinationState;
+        if (!destinationState) {
+          try { await lstat(path.join(context.root, request.filePath)); destinationState = 'present'; }
+          catch (inspection) { destinationState = (inspection as NodeJS.ErrnoException).code === 'ENOENT' ? 'missing' : 'unknown'; }
+        }
+        return { ...candidate, status: 'failed', generationStatus: 'generated',
+          failureCode: failure.code || 'host_io_apply_failed', destinationState };
+      }
     },
   };
 }
@@ -73,8 +100,8 @@ export interface StandaloneIoCandidate {
   bytes: number;
 }
 
-// Invoked explicitly through the ordinary Codex shell tool after candidate
-// inspection. wx protects the new destination, not a multi-file transaction.
+// Used by explicit io-apply or standalone io-write --apply. wx protects the
+// new destination, not a multi-file transaction. Kernel never calls this.
 export async function applyStandaloneIoCandidate(projectRoot: string, candidate: StandaloneIoCandidate) {
   const context = await workspaceContext(projectRoot, candidate.filePath);
   const filePath = relativeIoFile(candidate.filePath);
