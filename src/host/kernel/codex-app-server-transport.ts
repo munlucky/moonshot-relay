@@ -4,7 +4,9 @@
 // default, Kernel completion rule, or persisted worker layer is changed.
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { realpath } from 'node:fs/promises';
+import { readFile, readdir, realpath, stat } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import path from 'node:path';
 import { bindNativeCommandEvent, type NativeExecutionOwner, type NativeExecutionObserver } from './adapter-dispatch.js';
 import { reserveHostWorkspaceWriter } from './workspace-writer-reservation.js';
 
@@ -113,6 +115,95 @@ const timeBudget = (value: number | undefined, fallback: number): number => {
   return value;
 };
 
+// Resolve the command Windows would select from this invocation's environment.
+// A shell/npm launcher is not the server we must own and observe at shutdown.
+const windowsCodexLaunch = async (cwd: string, env: NodeJS.ProcessEnv) => {
+  const envValue = (key: string): string | undefined => env[Object.keys(env).sort()
+    .find(candidate => candidate.toLowerCase() === key.toLowerCase()) || key];
+  const isFile = async (file: string): Promise<boolean> => {
+    try { return (await stat(file)).isFile(); } catch (cause) {
+      if (['ENOENT', 'ENOTDIR'].includes(String((cause as NodeJS.ErrnoException).code))) return false;
+      throw cause;
+    }
+  };
+  const extensions = (envValue('PATHEXT') ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
+  let command: string | null = null;
+  for (const directory of [cwd, ...(envValue('PATH') ?? '').split(';')]) {
+    for (const extension of extensions) {
+      const candidate = path.resolve(cwd, directory.replace(/^"|"$/g, ''), `codex${extension}`);
+      if (await isFile(candidate)) { command = candidate; break; }
+    }
+    if (command) break;
+  }
+  if (!command) throw error('codex_app_server_executable_not_found');
+  if (path.extname(command).toLowerCase() === '.exe') return { executable: command, env };
+  if (path.extname(command).toLowerCase() !== '.cmd') throw error('codex_app_server_launcher_unsupported');
+  try {
+    const require = createRequire(command);
+    const packageFile = require.resolve('@openai/codex/package.json');
+    const packageRoot = await realpath(path.dirname(packageFile));
+    const metadata = JSON.parse(await readFile(packageFile, 'utf8')) as RecordValue;
+    const bin = object(metadata.bin)?.codex;
+    if (metadata.name !== '@openai/codex' || typeof bin !== 'string') throw error('invalid_package');
+    // Verify the selected shim actually targets this package, rather than an
+    // unrelated codex.cmd next to another installation's node_modules.
+    const shim = await readFile(command, 'utf8');
+    const references = [...shim.matchAll(/%~?dp0%?([^"\r\n]*codex\.js)/gi)];
+    const entry = await realpath(path.resolve(packageRoot, bin));
+    let matches = false;
+    for (const reference of references) {
+      const target = path.resolve(path.dirname(command), reference[1]!.replace(/^[\\/]+/, ''));
+      if (await isFile(target) && (await realpath(target)).toLowerCase() === entry.toLowerCase()) matches = true;
+    }
+    if (!matches) throw error('invalid_shim');
+    const packageRequire = createRequire(packageFile);
+    const platformPackages: string[] = [];
+    for (const dependency of Object.keys(object(metadata.optionalDependencies) || {})) {
+      if (!dependency.startsWith('@openai/codex-')) continue;
+      let dependencyFile: string;
+      try { dependencyFile = packageRequire.resolve(`${dependency}/package.json`); }
+      catch (cause) {
+        if ((cause as NodeJS.ErrnoException).code === 'MODULE_NOT_FOUND') continue;
+        throw cause;
+      }
+      const platform = JSON.parse(await readFile(dependencyFile, 'utf8')) as RecordValue;
+      if (Array.isArray(platform.os) && platform.os.includes('win32')
+        && Array.isArray(platform.cpu) && platform.cpu.includes(process.arch)) {
+        platformPackages.push(path.dirname(dependencyFile));
+      }
+    }
+    if (platformPackages.length > 1) throw error('ambiguous_platform_package');
+    const vendor = path.join(platformPackages[0] || packageRoot, 'vendor');
+    const binaries: string[] = [];
+    for (const target of await readdir(vendor, { withFileTypes: true })) {
+      const candidate = path.join(vendor, target.name, 'bin', 'codex.exe');
+      if (target.isDirectory() && await isFile(candidate)) binaries.push(candidate);
+    }
+    if (binaries.length !== 1) throw error('native_binary_missing_or_ambiguous');
+    // npm/pnpm cmd shims share this package layout. The packageManager field
+    // describes the project's build tooling, not ownership of this install.
+    let manager = 'NPM';
+    for (let directory = path.dirname(command); ; directory = path.dirname(directory)) {
+      const modules = path.join(directory, 'node_modules');
+      if (await isFile(path.join(modules, '.modules.yaml'))) {
+        try {
+          if ((await realpath(path.join(modules, '@openai', 'codex'))).toLowerCase() === packageRoot.toLowerCase()) manager = 'PNPM';
+        } catch { /* A different pnpm installation does not own this package. */ }
+      }
+      if (path.dirname(directory) === directory) break;
+    }
+    const launchEnv = { ...env };
+    for (const key of Object.keys(launchEnv)) {
+      if (/^CODEX_MANAGED_(?:PACKAGE_ROOT|BY_(?:NPM|PNPM|BUN|VITE_PLUS))$/i.test(key)) delete launchEnv[key];
+    }
+    launchEnv.CODEX_MANAGED_PACKAGE_ROOT = packageRoot;
+    launchEnv[`CODEX_MANAGED_BY_${manager}`] = '1';
+    return { executable: await realpath(binaries[0]!), env: launchEnv };
+  } catch (cause) {
+    throw Object.assign(error('codex_app_server_native_resolution_failed'), { cause });
+  }
+};
+
 export async function createCodexAppServerTransport({
   executable = 'codex',
   args = ['app-server'],
@@ -126,13 +217,12 @@ export async function createCodexAppServerTransport({
     throw error('codex_app_server_launch_invalid');
   }
 
-  // Windows npm installs Codex as a .cmd shim, which cannot be spawned
-  // with shell:false. Keep the shell confined to the fixed default command.
-  const windowsCodexShim = process.platform === 'win32'
-    && executable === 'codex' && args.length === 1 && args[0] === 'app-server';
+  const launch = process.platform === 'win32' && executable === 'codex'
+    ? await windowsCodexLaunch(path.resolve(cwd || process.cwd()), env)
+    : { executable, env };
   // Only the one process spawned here is owned. No killpg or descendant claim.
-  const child: ChildProcessWithoutNullStreams = spawn(executable, args, {
-    cwd, env, stdio: ['pipe', 'pipe', 'pipe'], shell: windowsCodexShim,
+  const child: ChildProcessWithoutNullStreams = spawn(launch.executable, args, {
+    cwd, env: launch.env, stdio: ['pipe', 'pipe', 'pipe'], shell: false,
   });
   child.stderr.resume(); // Consume stderr without exposing credentials or logs.
   let exited = false;
@@ -167,7 +257,6 @@ export async function createCodexAppServerTransport({
   };
 
   child.once('error', () => {
-    exited = true;
     fail('codex_app_server_process_error');
   });
   child.once('exit', () => {
@@ -194,11 +283,22 @@ export async function createCodexAppServerTransport({
         const timer = setTimeout(finish, timeoutMs);
         if (exited) finish();
       });
-      if (exited) return true;
-      child.kill('SIGTERM');
-      if (await waitForExit(2000)) return true;
-      child.kill('SIGKILL');
-      return waitForExit(2000);
+      if (!exited && child.pid !== undefined) {
+        child.kill('SIGTERM');
+        if (!await waitForExit(2000)) {
+          child.kill('SIGKILL');
+          await waitForExit(2000);
+        }
+      }
+      // A spawn failure has no owned PID. A close event also waits for inherited
+      // pipe handles, and must not be confused with the server's exit event.
+      if (!drained) await new Promise<void>((resolve) => {
+        const finish = () => { clearTimeout(timer); child.removeListener('close', finish); resolve(); };
+        const timer = setTimeout(finish, 2000);
+        child.once('close', finish);
+        if (drained) finish();
+      });
+      return (exited || child.pid === undefined) && drained;
     })();
     return shutdown;
   };
@@ -517,15 +617,8 @@ export async function createCodexAppServerTransport({
             // Turn followed by a tool event in the remaining stream is not
             // an acceptable generation. This still proves no OS descendants.
             retiringNoTools = true;
-            if (!await stopOwnedAppServer()) throw error('codex_app_server_shutdown_unconfirmed');
-            if (!drained) await new Promise<void>((resolve, reject) => {
-              const finish = () => { clearTimeout(timer); resolve(); };
-              const timer = setTimeout(() => {
-                child.removeListener('close', finish);
-                reject(error('codex_app_server_drain_unconfirmed'));
-              }, 2000);
-              child.once('close', finish);
-            });
+            if (!await stopOwnedAppServer()) throw error(exited
+              ? 'codex_app_server_drain_unconfirmed' : 'codex_app_server_shutdown_unconfirmed');
           }
           if (poisoned) throw error(poisonReason || 'codex_app_server_unavailable');
           settled = true;
@@ -556,6 +649,7 @@ export async function createCodexAppServerTransport({
       // A repeated close() must wait for the first shutdown, not claim exit
       // while the previously issued SIGTERM/SIGKILL is still pending.
       const appServerExited = await stopOwnedAppServer();
+      if (!appServerExited && exited) throw error('codex_app_server_drain_unconfirmed');
       return { appServerExited, writerExitVerified: false };
     },
   };

@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { test } from 'node:test';
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createCodexAppServerTransport } from '../src/host/kernel/codex-app-server-transport.js';
@@ -132,11 +134,15 @@ input.on('line', (line) => {
       return;
     }
     // A real App Server may stream items before turn/start ACK.
-    if (process.env.TEST_MODE !== 'no-tools-late') send({ method: 'item/started', params: { threadId, turnId, item: { type: 'commandExecution', id: 'cmd-' + serial, processId: 1454, command: 'fixture raw command', output: 'fixture private output', owner: { attemptId: 'forged' } } } });
+    const noCommands = ['no-tools-late', 'no-tools-clean'].includes(process.env.TEST_MODE);
+    if (!noCommands) send({ method: 'item/started', params: { threadId, turnId, item: { type: 'commandExecution', id: 'cmd-' + serial, processId: 1454, command: 'fixture raw command', output: 'fixture private output', owner: { attemptId: 'forged' } } } });
     send({ method: 'item/started', params: { threadId: 'other-thread', turnId, item: { type: 'commandExecution', id: 'wrong-thread', processId: 4 } } });
     send({ id, result: { turn: { id: turnId, status: 'inProgress' } } });
     setTimeout(() => {
-      if (process.env.TEST_MODE !== 'no-tools-late') send({ method: 'item/completed', params: { threadId, turnId, item: { type: 'commandExecution', id: 'cmd-' + serial, processId: 1454 } } });
+      if (!noCommands) send({ method: 'item/completed', params: { threadId, turnId, item: { type: 'commandExecution', id: 'cmd-' + serial, processId: 1454 } } });
+      if (process.env.TEST_MODE === 'no-tools-clean') {
+        send({ method: 'item/completed', params: { threadId, turnId, item: { type: 'agentMessage', id: 'answer', phase: 'final_answer', text: 'fixture answer' } } });
+      }
       // Turn lifecycle notifications identify the Turn by turn.id, unlike
       // item notifications which include params.turnId.
       send({ method: 'turn/completed', params: { threadId, turn: { id: 'wrong-turn', status: 'interrupted' } } });
@@ -191,22 +197,111 @@ const turn = (cwd: string) => ({
   timeoutMs: 3000,
 });
 
-test('Windows default Codex command launches an npm .cmd shim without a model call',
+for (const mode of ['', 'no-tools-clean', 'stall-initialize']) test(`Windows default Codex owns the active native server instead of its npm shell: ${mode || 'normal'}`,
   { skip: process.platform !== 'win32' }, async () => {
-    await withFixture(async ({ workspace, server }) => {
+    await withFixture(async ({ workspace, alternative, server }) => {
+      const packageRoot = path.join(workspace, 'node_modules', '@openai', 'codex');
+      const platformRoot = path.join(workspace, 'node_modules', '@openai', `codex-win32-${process.arch}`);
+      const nativeRoot = path.join(platformRoot, 'vendor', 'fixture-target', 'bin');
+      await mkdir(path.join(packageRoot, 'bin'), { recursive: true });
+      await mkdir(nativeRoot, { recursive: true });
+      await copyFile(process.execPath, path.join(nativeRoot, 'codex.exe'));
+      await writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({ name: '@openai/codex',
+        version: '0.0.0-fixture', bin: { codex: 'bin/codex.js' },
+        optionalDependencies: { [`@openai/codex-win32-${process.arch}`]: '0.0.0-fixture' } }));
+      await writeFile(path.join(platformRoot, 'package.json'), JSON.stringify({ name: '@openai/codex',
+        os: ['win32'], cpu: [process.arch] }));
+      // A bounded child survives the shell's termination in the old code.
+      const bootstrap = `const fs=require('node:fs');fs.writeFileSync(${JSON.stringify(path.join(workspace, 'server.json'))},JSON.stringify({pid:process.pid,root:process.env.CODEX_MANAGED_PACKAGE_ROOT,npm:process.env.CODEX_MANAGED_BY_NPM,secret:process.env.TEST_AUTH_SENTINEL}));setTimeout(()=>process.exit(0),10000);require(${JSON.stringify(server)});`;
+      await writeFile(path.join(workspace, 'app-server'), bootstrap);
+      await writeFile(path.join(alternative, 'app-server'), bootstrap);
+      await writeFile(path.join(packageRoot, 'bin', 'codex.js'), bootstrap);
       await writeFile(path.join(workspace, 'codex.cmd'),
-        `@echo off\r\n"${process.execPath}" "${server}" %*\r\n`);
+        `@echo off\r\n"${process.execPath}" "%~dp0node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n`);
       const env = { ...process.env };
       const pathKey = Object.keys(env).find(key => key.toLowerCase() === 'path') || 'Path';
       env[pathKey] = workspace + path.delimiter + (env[pathKey] || '');
+      env.TEST_AUTH_SENTINEL = 'fixture-only';
+      env.TEST_MODE = mode;
+      if (mode === 'stall-initialize') {
+        await assert.rejects(createCodexAppServerTransport({ cwd: alternative, env, requestTimeoutMs: 1200 }),
+          { code: 'codex_app_server_rpc_timeout' });
+        const observed = JSON.parse(await readFile(path.join(workspace, 'server.json'), 'utf8'));
+        assert.throws(() => process.kill(observed.pid, 0), { code: 'ESRCH' });
+        return;
+      }
       const transport = await createCodexAppServerTransport({
-        cwd: process.cwd(), env, requestTimeoutMs: 1500,
+        cwd: alternative, env, requestTimeoutMs: 1500,
       });
+      const observed = JSON.parse(await readFile(path.join(workspace, 'server.json'), 'utf8'));
       try {
-        const result = await transport.runTurn(turn(workspace));
-        assert.equal(result.turnStatus, 'completed');
-        assert.equal(result.threadId, 'thr-1');
-      } finally { await transport.close(); }
+        if (mode === 'no-tools-clean') {
+          const result = await transport.runTurn({ ...turn(workspace), toolPolicy: 'none' });
+          assert.equal(result.turnStatus, 'completed');
+          assert.equal(result.finalMessage, 'fixture answer');
+          assert.equal(result.writerExitVerified, false);
+        }
+        const closes = await Promise.all([transport.close(), transport.close()]);
+        assert.ok(closes.every(result => result.appServerExited && !result.writerExitVerified));
+        assert.throws(() => process.kill(observed.pid, 0), 'reported exited while the actual server remains alive');
+        assert.equal(observed.root.toLowerCase(), packageRoot.toLowerCase());
+        assert.equal(observed.npm, '1');
+        assert.equal(observed.secret, 'fixture-only');
+        await rm(path.join(nativeRoot, 'codex.exe'));
+        await assert.rejects(createCodexAppServerTransport({ cwd: alternative, env }),
+          { code: 'codex_app_server_native_resolution_failed' },
+          'must not fall through to another Codex on PATH when the selected package is broken');
+      } finally {
+        await transport.close();
+        // Let the bounded old-code orphan exit before removing its cwd.
+        for (let i = 0; i < 120; i++) {
+          try { process.kill(observed.pid, 0); } catch { break; }
+          await sleep(100);
+        }
+      }
+    });
+  });
+
+test('No-tools refuses success when server exit is observed but output drain is unconfirmed', async () => {
+  // Delay only the close observation. Use the real owned PID/exit; no product
+  // process-control API or model call is needed to exercise a missing drain.
+  const original = childProcess.spawn;
+  childProcess.spawn = ((...args: Parameters<typeof childProcess.spawn>) => {
+    const child = original(...args);
+    const emit = child.emit.bind(child);
+    child.emit = ((event: string | symbol, ...values: unknown[]) => {
+      if (event === 'close') { setTimeout(() => emit(event, ...values), 2300); return true; }
+      return emit(event, ...values);
+    }) as typeof child.emit;
+    return child;
+  }) as typeof childProcess.spawn;
+  syncBuiltinESMExports();
+  try {
+  await withFixture(async ({ workspace, server }) => {
+    const transport = await createCodexAppServerTransport({ executable: process.execPath, args: [server],
+      env: { ...process.env, TEST_MODE: 'no-tools-clean' }, requestTimeoutMs: 1500 });
+    try {
+      await assert.rejects(transport.runTurn({ ...turn(workspace), toolPolicy: 'none' }),
+        { code: 'codex_app_server_drain_unconfirmed' });
+      await assert.rejects(transport.close(), { code: 'codex_app_server_drain_unconfirmed' });
+      await assert.rejects(transport.close(), { code: 'codex_app_server_drain_unconfirmed' });
+    } finally { await transport.close().catch(() => undefined); }
+  });
+  } finally { childProcess.spawn = original; syncBuiltinESMExports(); }
+});
+
+test('Explicit executable launch failure is reported without a shell fallback', async () => {
+  await withFixture(async ({ workspace }) => {
+    await assert.rejects(createCodexAppServerTransport({ executable: path.join(workspace, 'missing.exe') }),
+      { code: 'codex_app_server_process_error' });
+  });
+});
+
+test('Windows missing active executable fails instead of selecting a different installation',
+  { skip: process.platform !== 'win32' }, async () => {
+    await withFixture(async ({ workspace }) => {
+      await assert.rejects(createCodexAppServerTransport({ env: { Path: workspace, PATHEXT: '.EXE;.CMD' } }),
+        { code: 'codex_app_server_executable_not_found' });
     });
   });
 

@@ -78,6 +78,29 @@ Provider-reported cached token counts are usage measurements, not a local cache.
 Account installation, new-session E2E and economic acceptance remain separate
 verification gates. The development calls alone do not establish those gates.
 
+### Windows App Server ownership, 2026-11-12
+
+The default Windows transport resolves `codex` from the supplied environment's
+`PATH`/`PATHEXT` and working directory. For an npm/pnpm `.cmd` entrypoint, it
+checks that the shim names the selected Codex package, reads that installation's
+platform package metadata and starts its native executable with `shell:false`.
+It sets the verified package root and install-manager environment while keeping
+the caller's other environment values. An unresolved or broken active package
+fails explicitly; another Codex installation is never selected as a fallback.
+An explicitly supplied executable remains a direct caller-selected launch.
+
+Shutdown observes the owned server's exit and the process `close` event separately.
+Initialization failure, no-tools completion and repeated `close()` share the same
+bounded shutdown. An unconfirmed drain fails with
+`codex_app_server_drain_unconfirmed`; it is not reported as successful shutdown.
+Late tool events remain forbidden through no-tools shutdown and drain.
+`writerExitVerified` remains `false`: server exit does not prove tool descendants
+have exited. No process-tree termination or new process-management service is used.
+
+The [v4 execution results](../roadmaps/spotify-io-windows-app-server-v4-2026-11-12/RESULTS.ko.md)
+record code, account-installation, ordinary-session I/O and economic decisions
+separately. This fix does not enable the account Reader Hook by default.
+
 ### Thin I/O refactor evaluation, 2026-11-12
 
 The current refactor removes mandatory Reader fact/citation validation and
