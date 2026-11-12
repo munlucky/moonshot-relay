@@ -136,7 +136,9 @@ const packageDryRunPublicSkills = (repoRoot) => {
     const skills = new Set();
     for (const entry of runtime.planned || []) {
       const match = entry.to.match(new RegExp(`${marker}/skills/([^/]+)/SKILL\\.md$`));
-      if (match) {
+      // The shared catalog governs canonical skills/. Runtime-native skills
+      // come from profile templates and have their own materialization checks.
+      if (match && entry.from?.startsWith('skills/')) {
         skills.add(match[1]);
       }
     }

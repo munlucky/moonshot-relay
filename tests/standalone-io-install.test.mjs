@@ -16,6 +16,15 @@ async function fixture() {
  const run = (args = [], nodeArgs = []) => spawnSync(process.execPath, [...nodeArgs, installer, '--runtime', 'codex', '--codex-io-only', '--skip-common', '--payload-root', payload, '--codex-home', home, '--moonshot-home', common, '--json', ...args], { encoding: 'utf8' });
  return { base, home, common, payload, profile, run };
 }
+async function stageLegacyHook(f) {
+ await mkdir(path.join(f.profile, 'hooks'), { recursive: true });
+ await writeFile(path.join(f.profile, 'hooks/moonshot-reader.mjs'), '// legacy managed Reader hook\n');
+ await writeFile(path.join(f.profile, 'hooks.json'), JSON.stringify({ hooks: { PreToolUse: [{ matcher: '^Read$', hooks: [{ type: 'command', command: 'node "__CODEX_HOME__/hooks/moonshot-reader.mjs"' }] }] } }));
+}
+async function removeLegacyHookPayload(f) {
+ await rm(path.join(f.profile, 'hooks.json'));
+ await rm(path.join(f.profile, 'hooks'), { recursive: true });
+}
 test('I/O installation merges only owned hooks, preserves user settings/skills, upgrades and downgrades', async () => {
  const f = await fixture();
  try {
@@ -25,32 +34,38 @@ test('I/O installation merges only owned hooks, preserves user settings/skills, 
   await writeFile(path.join(f.home, 'config.toml'), 'model = "user-model"');
   await mkdir(path.join(f.home, 'skills/keep'), { recursive: true });
   await writeFile(path.join(f.home, 'skills/keep/SKILL.md'), 'user skill');
+  await stageLegacyHook(f);
+  assert.equal(f.run().status, 0);
+  await removeLegacyHookPayload(f);
   for (const args of [[], [], ['--io-reader-min-lines', '400']]) {
    const r = f.run(args); assert.equal(r.status, 0, r.stderr);
    const hooks = JSON.parse(await readFile(path.join(f.home, 'hooks.json'), 'utf8'));
    assert.equal(hooks.description, 'user-owned');
    assert.deepEqual(hooks.hooks.PreToolUse[0], user);
-   assert.equal(hooks.hooks.PreToolUse.length, 2);
+   assert.equal(hooks.hooks.PreToolUse.length, 1);
    assert.equal(await readFile(path.join(f.home, 'AGENTS.md'), 'utf8'), 'user profile');
    assert.equal(await readFile(path.join(f.home, 'config.toml'), 'utf8'), 'model = "user-model"');
    assert.equal(await readFile(path.join(f.home, 'skills/keep/SKILL.md'), 'utf8'), 'user skill');
-   const script = await readFile(path.join(f.home, 'hooks/moonshot-reader.mjs'), 'utf8');
-   assert.ok(script.includes(JSON.stringify(f.common)));
-   assert.ok(!script.includes('__MOONSHOT'));
+   await assert.rejects(readFile(path.join(f.home, 'hooks/moonshot-reader.mjs')), { code: 'ENOENT' });
    const skill = await readFile(path.join(f.home, 'skills/io-writer/SKILL.md'), 'utf8');
-   assert.ok(skill.includes(f.common.replaceAll('\\', '/')));
-   assert.match(skill, /io-write - --apply/);
-   assert.match(skill, /explicit delegation or evaluation/);
+   assert.match(skill, /spawn_agent/);
+   assert.match(skill, /fork_turns: "none"/);
+   const nativeReader = await readFile(path.join(f.home, 'skills/io-reader/SKILL.md'), 'utf8');
+   assert.match(nativeReader, /spawn_agent/);
+   assert.match(nativeReader, /fork_turns: "none"/);
+   const policy = await readFile(path.join(f.home, 'skills/io-reader/agents/openai.yaml'), 'utf8');
+   assert.match(policy, /allow_implicit_invocation: false/);
+   assert.match(await readFile(path.join(f.home, 'skills/io-writer/agents/openai.yaml'), 'utf8'), /allow_implicit_invocation: false/);
   }
-  assert.match(await readFile(path.join(f.home, 'hooks/moonshot-reader.mjs'), 'utf8'), /main\(runtimeHome, 400\)/);
   // An older payload removes exactly the owned definition and files.
-  await rm(path.join(f.profile, 'hooks.json'));
-  await rm(path.join(f.profile, 'hooks'), { recursive: true });
+  await rm(path.join(f.profile, 'skills/io-reader'), { recursive: true });
   await rm(path.join(f.profile, 'skills/io-writer'), { recursive: true });
   const old = f.run(); assert.equal(old.status, 0, old.stderr);
   const hooks = JSON.parse(await readFile(path.join(f.home, 'hooks.json'), 'utf8'));
   assert.deepEqual(hooks.hooks.PreToolUse, [user]);
   await assert.rejects(readFile(path.join(f.home, 'hooks/moonshot-reader.mjs')));
+  await assert.rejects(readFile(path.join(f.home, 'skills/io-reader/SKILL.md')), { code: 'ENOENT' });
+  await assert.rejects(readFile(path.join(f.home, 'skills/io-reader/agents/openai.yaml')), { code: 'ENOENT' });
   assert.equal(await readFile(path.join(f.home, 'skills/keep/SKILL.md'), 'utf8'), 'user skill');
  } finally { await rm(f.base, { recursive: true, force: true }); }
 });
@@ -58,7 +73,7 @@ test('empty account installs; modified/unowned hooks or scripts are never claime
  for (const mode of ['modified-hook', 'modified-script', 'unowned']) {
   const f = await fixture();
   try {
-   if (mode !== 'unowned') assert.equal(f.run().status, 0);
+   if (mode !== 'unowned') { await stageLegacyHook(f); assert.equal(f.run().status, 0); await removeLegacyHookPayload(f); }
    if (mode === 'modified-script') await writeFile(path.join(f.home, 'hooks/moonshot-reader.mjs'), '// user modified');
    else {
     const hooks = mode === 'unowned' ? { hooks: { PreToolUse: [{ matcher: '^Bash$', hooks: [{ type: 'command', command: 'node custom/moonshot-reader.mjs' }] }] } } : JSON.parse(await readFile(path.join(f.home, 'hooks.json'), 'utf8'));
@@ -76,8 +91,10 @@ test('empty account installs; modified/unowned hooks or scripts are never claime
 test('an I/O write failure restores shared hooks, owned scripts and the previous manifest', async () => {
  const f = await fixture();
  try {
+  await stageLegacyHook(f);
   assert.equal(f.run().status, 0);
-  const paths = ['hooks.json', 'hooks/moonshot-reader.mjs', 'skills/io-writer/SKILL.md', manifestName];
+  await removeLegacyHookPayload(f);
+  const paths = ['hooks.json', 'hooks/moonshot-reader.mjs', 'skills/io-reader/SKILL.md', 'skills/io-reader/agents/openai.yaml', 'skills/io-writer/SKILL.md', 'skills/io-writer/agents/openai.yaml', manifestName];
   const before = await Promise.all(paths.map(p => readFile(path.join(f.home, p), 'utf8')));
   const injection = path.join(f.base, 'fail-write.mjs');
   await writeFile(injection, `import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';const write=fs.promises.writeFile;let failed=false;fs.promises.writeFile=async(file,...args)=>{if(!failed&&String(file).replaceAll('\\\\','/').endsWith('skills/io-writer/SKILL.md')){failed=true;throw new Error('injected_io_write_failure');}return write(file,...args);};syncBuiltinESMExports();`);

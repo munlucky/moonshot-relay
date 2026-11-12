@@ -513,9 +513,12 @@ test('Codex package payload includes only service profile entries', async () => 
   for (const entry of requiredConcreteCodexFiles) {
     await assertEntryExists(profileRoot, entry);
   }
-  assert.deepEqual(await listSkillDirs(profileRoot), [...publicRuntimeSkills, 'io-writer'].sort());
-  await assertEntryExists(profileRoot, 'hooks.json');
-  await assertEntryExists(profileRoot, 'hooks/moonshot-reader.mjs');
+  assert.deepEqual(await listSkillDirs(profileRoot), [...publicRuntimeSkills, 'io-reader', 'io-writer'].sort());
+  await assertEntryExists(profileRoot, 'skills/io-reader/SKILL.md');
+  await assertEntryExists(profileRoot, 'skills/io-reader/agents/openai.yaml');
+  await assertEntryExists(profileRoot, 'skills/io-writer/agents/openai.yaml');
+  assert.equal(existsSync(path.join(profileRoot, 'hooks.json')), false);
+  assert.equal(existsSync(path.join(profileRoot, 'hooks/moonshot-reader.mjs')), false);
   assert.equal(existsSync(path.join(profileRoot, 'skills', 'completion-verifier', 'SKILL.md')), false);
 
   for (const entry of ['bin', 'tools', 'schemas', 'scripts', 'templates', 'docs/public']) {

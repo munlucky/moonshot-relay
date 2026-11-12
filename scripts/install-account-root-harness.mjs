@@ -30,6 +30,13 @@ const defaultSourceRoot = path.dirname(path.dirname(scriptPath));
 const manifestName = '.moonshot-relay-install-manifest.json';
 const antigravitySkillsManifestName = '.moonshot-relay-antigravity-skills-manifest.json';
 const legacyManifestNames = Object.freeze(['.claude-settings-install-manifest.json']);
+const codexIoFiles = new Set([
+  'hooks/moonshot-reader.mjs',
+  'skills/io-reader/SKILL.md',
+  'skills/io-reader/agents/openai.yaml',
+  'skills/io-writer/SKILL.md',
+  'skills/io-writer/agents/openai.yaml',
+]);
 
 const commonSpec = {
   runtime: 'moonshot-relay',
@@ -794,8 +801,8 @@ const removeLegacyNonExposureEntries = async ({
   return { removed, backups };
 };
 
-const copyPayloadEntry = async ({ source, target, targetRoot, dryRun, replaceDirectories = false }) => {
-  if (dryRun) {
+const copyPayloadEntry = async ({ source, target, targetRoot, dryRun, replaceDirectories = false, skipFiles }) => {
+  if (dryRun || skipFiles?.has(toPortable(path.relative(targetRoot, target)))) {
     return;
   }
 
@@ -813,8 +820,7 @@ const copyPayloadEntry = async ({ source, target, targetRoot, dryRun, replaceDir
       const targetStat = await stat(target);
       if (!targetStat.isDirectory()) {
         await rm(target, { recursive: true, force: true });
-        await cp(source, target, { recursive: true, force: true });
-        return;
+        await mkdir(target, { recursive: true });
       }
     } else {
       await mkdir(target, { recursive: true });
@@ -828,6 +834,7 @@ const copyPayloadEntry = async ({ source, target, targetRoot, dryRun, replaceDir
         targetRoot,
         dryRun,
         replaceDirectories,
+        skipFiles,
       });
     }
   } else {
@@ -878,7 +885,7 @@ const prepareCodexIo = async ({ sourceRoot, targetRoot, commonRoot, options }) =
     }
   }
   const files = [];
-  for (const relative of ['hooks/moonshot-reader.mjs', 'skills/io-writer/SKILL.md']) {
+  for (const relative of codexIoFiles) {
     const source = path.join(sourceRoot, relative);
     if (!await pathExists(source)) continue;
     let bytes = await readFile(source);
@@ -895,7 +902,7 @@ const prepareCodexIo = async ({ sourceRoot, targetRoot, commonRoot, options }) =
   const allPaths = new Set([...old.files.map(record => record.path), ...files.map(record => record.path)]);
   const before = new Map([[hooksPath, currentBytes]]);
   for (const relative of allPaths) {
-    if (!['hooks/moonshot-reader.mjs', 'skills/io-writer/SKILL.md'].includes(relative)) throw new Error('codex_io_manifest_path_invalid');
+    if (!codexIoFiles.has(relative)) throw new Error('codex_io_manifest_path_invalid');
     const target = path.join(targetRoot, relative);
     await assertSafeTargetPath(targetRoot, target);
     const bytes = await pathExists(target) ? await readFile(target) : null;
@@ -996,11 +1003,12 @@ const installPayloadSpec = async ({
       }
     }
 
-    await copyPayloadEntry({ source, target, targetRoot, dryRun: options.dryRun, replaceDirectories });
+    const skipFiles = codexIo ? codexIoFiles : undefined;
+    await copyPayloadEntry({ source, target, targetRoot, dryRun: options.dryRun, replaceDirectories, skipFiles });
 
     const files = (entry.isDirectory()
       ? await listFiles(source, entry.name)
-      : [entry.name]).filter(file => !(runtime === 'codex' && toPortable(file) === 'skills/io-writer/SKILL.md'));
+      : [entry.name]).filter(file => !skipFiles?.has(toPortable(file)));
 
     for (const relativeFile of files) {
       const targetFile = path.join(targetRoot, relativeFile);
