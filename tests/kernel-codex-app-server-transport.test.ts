@@ -191,6 +191,25 @@ const turn = (cwd: string) => ({
   timeoutMs: 3000,
 });
 
+test('Windows default Codex command launches an npm .cmd shim without a model call',
+  { skip: process.platform !== 'win32' }, async () => {
+    await withFixture(async ({ workspace, server }) => {
+      await writeFile(path.join(workspace, 'codex.cmd'),
+        `@echo off\r\n"${process.execPath}" "${server}" %*\r\n`);
+      const env = { ...process.env };
+      const pathKey = Object.keys(env).find(key => key.toLowerCase() === 'path') || 'Path';
+      env[pathKey] = workspace + path.delimiter + (env[pathKey] || '');
+      const transport = await createCodexAppServerTransport({
+        cwd: process.cwd(), env, requestTimeoutMs: 1500,
+      });
+      try {
+        const result = await transport.runTurn(turn(workspace));
+        assert.equal(result.turnStatus, 'completed');
+        assert.equal(result.threadId, 'thr-1');
+      } finally { await transport.close(); }
+    });
+  });
+
 test('No-tools generation disables configured catalogs and rejects early or trailing execution events', async () => {
   for (const mode of ['no-tools', 'no-tools-late', 'tool-config-missing']) await withFixture(async ({ workspace, server }) => {
     const transport = await createCodexAppServerTransport({ executable: process.execPath, args: [server],

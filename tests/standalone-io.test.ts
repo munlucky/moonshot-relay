@@ -174,7 +174,7 @@ test('Reader preserves uncited/repeated text, bounds UTF-8 previews, and disting
 
 async function cliFixture(f: Awaited<ReturnType<typeof fixture>>, injection = '') {
   const file = path.join(f.base, 'cli-inject.mjs');
-  await writeFile(file, `import cp from 'node:child_process';import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';const spawn=cp.spawn;cp.spawn=(cmd,args,options)=>cmd==='codex'?spawn(process.execPath,[${JSON.stringify(path.join(f.base,'server.cjs'))}],options):spawn(cmd,args,options);${injection};syncBuiltinESMExports();`);
+  await writeFile(file, `import cp from 'node:child_process';import fs from 'node:fs';import {syncBuiltinESMExports} from 'node:module';const spawn=cp.spawn;cp.spawn=(cmd,args,options)=>cmd==='codex'?spawn(process.execPath,[${JSON.stringify(path.join(f.base,'server.cjs'))}],{...options,shell:false}):spawn(cmd,args,options);${injection};syncBuiltinESMExports();`);
   return (args: string[], request: unknown) => spawnSync(process.execPath, ['--import', pathToFileURL(file).href,
     path.resolve('bin/moonshot-io.mjs'), ...args], { cwd: f.project, encoding: 'utf8', input: JSON.stringify(request), timeout: 15000 });
 }

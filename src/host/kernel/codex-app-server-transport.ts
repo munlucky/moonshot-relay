@@ -126,9 +126,13 @@ export async function createCodexAppServerTransport({
     throw error('codex_app_server_launch_invalid');
   }
 
+  // Windows npm installs Codex as a .cmd shim, which cannot be spawned
+  // with shell:false. Keep the shell confined to the fixed default command.
+  const windowsCodexShim = process.platform === 'win32'
+    && executable === 'codex' && args.length === 1 && args[0] === 'app-server';
   // Only the one process spawned here is owned. No killpg or descendant claim.
   const child: ChildProcessWithoutNullStreams = spawn(executable, args, {
-    cwd, env, stdio: ['pipe', 'pipe', 'pipe'], shell: false,
+    cwd, env, stdio: ['pipe', 'pipe', 'pipe'], shell: windowsCodexShim,
   });
   child.stderr.resume(); // Consume stderr without exposing credentials or logs.
   let exited = false;
