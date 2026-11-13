@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"__CODEX_HOME__/hooks/moonshot-writer.mjs\"",
+            "timeout": 150,
+            "statusMessage": "Moonshot Relay Writer"
+          }
+        ]
+      }
+    ]
+  }
+}

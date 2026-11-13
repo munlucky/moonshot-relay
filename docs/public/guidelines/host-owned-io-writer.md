@@ -1,32 +1,33 @@
 # Host-owned I/O
 
-Reviewed: 2026-11-12
+Reviewed: 2026-11-13
 
-## Native I/O in ordinary Codex sessions
+## Explicit I/O in ordinary Codex sessions
 
-Invoke `$io-reader` for substantial file or log analysis and `$io-writer` for
-a clearly specified new file. Both Skills use native `spawn_agent` with
-`gpt-6-luna`, `medium` effort and `fork_turns: "none"`. Main sends the question
-or specification, reference paths and scope. Luna uses ordinary Codex tools and
-returns the needed answer or saved path. Main completes the original task with
-the necessary review, edits and project tests.
+Invoke `$io-reader` for substantial file or log analysis. It uses native
+`spawn_agent` with `gpt-6-luna`, `medium` effort and `fork_turns: "none"`.
+The child inherits Codex permissions and approvals. Main keeps its selected
+model, effort and conversation.
 
-Main keeps the user's model, effort, permissions and conversation. The child
-inherits Codex permissions and approvals. Reader scope authorizes reading and
-answering. Writer scope authorizes the named new file. Scope instructions use
-the ordinary Codex tool contract. These Skills require explicit selection.
+For one new file, submit this request in a Codex session with the installed
+Moonshot Relay Writer hook trusted and Full Access selected:
 
-Assess actual replacement, avoided duplicate work, original task quality and
-total cost independently for Reader and Writer. Count Main, Luna, necessary
-review and corrections. Record tokens and elapsed time separately. A cost
-reduction with increased tokens is reported as a cost reduction. The current
-four-condition evaluation supersedes the earlier v7 protection-equivalence and
-three-pair adoption requirements.
+```text
+Writer: path/to/new-file.mjs
+References: path/to/guide.md, path/to/example.mjs
 
-The tested Reader and larger Writer tasks reduced API-equivalent cost while
-increasing total tokens and elapsed time. The smaller Writer task increased
-cost. These are task-specific observations, not a token-saving or general
-adoption guarantee. See the [Native evaluation](../roadmaps/luna-native-io-delegation-v7-2026-11-12/NATIVE_IO_RESULTS.ko.md).
+Describe the required behavior and acceptance conditions.
+```
+
+The hook generates an isolated candidate with the existing Standalone Writer.
+It sends an apply command to Main. Main uses the ordinary shell tool to run
+`io-apply` from the project directory. The command rechecks the reference
+hashes, candidate and destination before it creates the file. Keep needed
+review and tests in the original task. If the current permission mode cannot
+run the hook, it reports that status before calling Luna.
+
+See the [Writer validation](../roadmaps/luna-native-io-delegation-v7-2026-11-12/IO_STRUCTURAL_NEXT_RESULTS.ko.md#n6--새-writer-과제-반복-검증)
+for the scope and cost results.
 
 ## Existing Standalone I/O callers
 
@@ -72,8 +73,7 @@ the model call and created exclusively. A later save failure returns the receive
 result and usage on stdout with `metadataFailure`, and exits unsuccessfully.
 Standalone CLI results omit Kernel Proof/Owner/completion fields. Necessary
 review, project tests and exact edits remain ordinary Codex work, not new I/O
-tool features. Native Skills use their own Codex child tools and do not call
-this separate supported CLI.
+tool features. Native Reader uses its own Codex child tools.
 
 Install through the existing account-root installer:
 
@@ -89,12 +89,10 @@ previously owned Reader Hook registration and script, preserving unrelated
 user hooks and configuration. Modified or unowned entries are conflicts.
 Updating or downgrading removes only entries whose ownership still matches.
 
-The ordinary Codex payload no longer registers the legacy Reader Hook. Native
-children therefore read through their existing tools. The supported explicit
-Standalone CLI and Kernel Host callers retain their execution and file checks.
-The shared Hook entrypoint remains for previous payload installation; the
-installer still resolves its URL for that compatibility path. The Native
-payload does not install its registration or wrapper.
+The Codex payload registers the Writer hook for `UserPromptSubmit`. The
+installer owns its exact registration and wrapper, and preserves unrelated
+user hooks. Codex manages hook trust. The legacy Reader registration is removed
+on upgrade and Native Reader continues to use its normal child tools.
 
 Local result caching and reuse of previous validation results are out of scope.
 Provider-reported cached token counts are usage measurements, not a local cache.

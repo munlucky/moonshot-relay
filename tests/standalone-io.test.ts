@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { createStandaloneIo, applyStandaloneIoCandidate, type StandaloneIoCandidate } from '../src/host/kernel/io-standalone.js';
 import { evaluateReadHook, fullReadPath } from '../src/host/kernel/io-read-hook.js';
+import { evaluateWriteHook } from '../src/host/kernel/io-write-hook.js';
 
 const server = String.raw`
 const send=m=>process.stdout.write(JSON.stringify(m)+'\n');
@@ -69,6 +70,46 @@ test('standalone Reader and Writer share checked model calls without a Kernel Ru
     await assert.rejects(access(path.join(f.project, '.moon-relay')));
   } finally {
     if (candidate) await rm(path.dirname(path.dirname(candidate.candidatePath)), { recursive: true, force: true });
+    await rm(f.base, { recursive: true, force: true });
+  }
+});
+
+test('explicit Writer hook prepares one isolated candidate for normal apply', async () => {
+  const f = await fixture();
+  let candidateRoot: string | undefined;
+  try {
+    const options = { runtimeHome: path.resolve('.'), env: {},
+      transportOptions: { executable: process.execPath, args: [path.join(f.base, 'server.cjs')], requestTimeoutMs: 1500 } };
+    const input = { hook_event_name: 'UserPromptSubmit', permission_mode: 'bypassPermissions', cwd: f.project,
+      prompt: 'Writer: nested/created.mjs\r\nReferences: ref.mjs\r\n\r\nCreate the new constant.' };
+    assert.deepEqual(await evaluateWriteHook({ ...input, prompt: 'Create the new constant.' }, options), {});
+    assert.match(JSON.stringify(await evaluateWriteHook({ ...input, permission_mode: 'plan' }, options)), /permission_mode_unsupported/);
+    assert.match(JSON.stringify(await evaluateWriteHook({ ...input, prompt: input.prompt.replace('nested/', '../') }, options)), /path_invalid/);
+    assert.equal(await readFile(path.join(f.base, 'calls'), 'utf8'), '');
+
+    const output = await evaluateWriteHook(input, options);
+    const command = output.hookSpecificOutput?.additionalContext ?? '';
+    assert.match(command, /io-apply/);
+    assert.doesNotMatch(command, /export const|--apply/);
+    const match = command.match(/'([^']+\/apply-[^']+\.json)'$/);
+    assert.ok(match?.[1], command);
+    const metadata = match[1];
+    candidateRoot = path.dirname(metadata);
+    assert.notEqual(candidateRoot, await realpath(f.project));
+    const candidate = JSON.parse(await readFile(metadata, 'utf8'));
+    assert.equal(candidate.status, 'generated');
+    assert.equal(candidate.projectRoot, await realpath(f.project));
+    assert.equal(await readFile(path.join(f.base, 'calls'), 'utf8'), 'call\n');
+    await assert.rejects(access(path.join(f.project, 'nested')));
+    const args = [path.resolve('bin/moonshot-io.mjs'), 'io-apply', metadata];
+    const applied = spawnSync(process.execPath, args, { cwd: f.project, encoding: 'utf8' });
+    assert.equal(applied.status, 0, applied.stdout || applied.stderr);
+    assert.equal(JSON.parse(applied.stdout).status, 'created');
+    assert.equal(await readFile(path.join(f.project, 'nested/created.mjs'), 'utf8'), 'export const generated = 7;\n');
+    assert.match(JSON.stringify(await evaluateWriteHook(input, options)), /host_io_existing_file/);
+    assert.equal(await readFile(path.join(f.base, 'calls'), 'utf8'), 'call\n');
+  } finally {
+    if (candidateRoot) await rm(candidateRoot, { recursive: true, force: true });
     await rm(f.base, { recursive: true, force: true });
   }
 });

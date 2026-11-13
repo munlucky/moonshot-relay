@@ -32,6 +32,7 @@ const antigravitySkillsManifestName = '.moonshot-relay-antigravity-skills-manife
 const legacyManifestNames = Object.freeze(['.claude-settings-install-manifest.json']);
 const codexIoFiles = new Set([
   'hooks/moonshot-reader.mjs',
+  'hooks/moonshot-writer.mjs',
   'skills/io-reader/SKILL.md',
   'skills/io-reader/agents/openai.yaml',
   'skills/io-writer/SKILL.md',
@@ -871,15 +872,20 @@ const prepareCodexIo = async ({ sourceRoot, targetRoot, commonRoot, options }) =
   // Reject an unowned copy or inline registration; preserve unrelated hooks,
   // including hooks which use the same Bash matcher.
   const inline = await pathExists(path.join(targetRoot, 'config.toml')) ? await readFile(path.join(targetRoot, 'config.toml'), 'utf8') : '';
-  if (/moonshot-reader\.mjs|moonshot-io-hook\.mjs/.test(canonical(next) + inline)) throw new Error('codex_io_hook_unowned_registration');
+  if (/moonshot-(?:reader|writer)\.mjs|moonshot-io-hook\.mjs/.test(canonical(next) + inline)) throw new Error('codex_io_hook_unowned_registration');
   const template = await readJsonFile(path.join(sourceRoot, 'hooks.json'));
-  const rendered = template ? JSON.parse(canonical(template).replaceAll('__CODEX_HOME__', targetRoot.replaceAll('\\', '/'))) : { hooks: {} };
+  const rendered = template || { hooks: {} };
   const ownedHooks = [];
   for (const [event, definitions] of Object.entries(rendered.hooks || {})) {
     if (!Array.isArray(definitions)) throw new Error('codex_hooks_invalid');
     if (next.hooks[event] && !Array.isArray(next.hooks[event])) throw new Error('codex_hooks_invalid');
     next.hooks[event] ||= [];
     for (const definition of definitions) {
+      for (const hook of definition.hooks || []) {
+        if (typeof hook.command === 'string') {
+          hook.command = hook.command.replaceAll('__CODEX_HOME__', () => targetRoot.replaceAll('\\', '/'));
+        }
+      }
       next.hooks[event].push(definition);
       ownedHooks.push({ event, definition });
     }

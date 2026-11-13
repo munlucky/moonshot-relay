@@ -517,7 +517,8 @@ test('Codex package payload includes only service profile entries', async () => 
   await assertEntryExists(profileRoot, 'skills/io-reader/SKILL.md');
   await assertEntryExists(profileRoot, 'skills/io-reader/agents/openai.yaml');
   await assertEntryExists(profileRoot, 'skills/io-writer/agents/openai.yaml');
-  assert.equal(existsSync(path.join(profileRoot, 'hooks.json')), false);
+  await assertEntryExists(profileRoot, 'hooks.json');
+  await assertEntryExists(profileRoot, 'hooks/moonshot-writer.mjs');
   assert.equal(existsSync(path.join(profileRoot, 'hooks/moonshot-reader.mjs')), false);
   assert.equal(existsSync(path.join(profileRoot, 'skills', 'completion-verifier', 'SKILL.md')), false);
 

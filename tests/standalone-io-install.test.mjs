@@ -12,9 +12,11 @@ async function fixture() {
  const home = path.join(base, 'custom codex home'), common = path.join(base, 'common runtime');
  const payload = path.join(base, 'payload'), profile = path.join(payload, 'codex/profile/.codex');
  await cp(path.resolve('package/profile-templates/codex/.codex'), profile, { recursive: true });
+ const currentHooks = await readFile(path.join(profile, 'hooks.json'), 'utf8');
+ const currentWriter = await readFile(path.join(profile, 'hooks/moonshot-writer.mjs'), 'utf8');
  await mkdir(home, { recursive: true });
  const run = (args = [], nodeArgs = []) => spawnSync(process.execPath, [...nodeArgs, installer, '--runtime', 'codex', '--codex-io-only', '--skip-common', '--payload-root', payload, '--codex-home', home, '--moonshot-home', common, '--json', ...args], { encoding: 'utf8' });
- return { base, home, common, payload, profile, run };
+ return { base, home, common, payload, profile, run, currentHooks, currentWriter };
 }
 async function stageLegacyHook(f) {
  await mkdir(path.join(f.profile, 'hooks'), { recursive: true });
@@ -22,8 +24,9 @@ async function stageLegacyHook(f) {
  await writeFile(path.join(f.profile, 'hooks.json'), JSON.stringify({ hooks: { PreToolUse: [{ matcher: '^Read$', hooks: [{ type: 'command', command: 'node "__CODEX_HOME__/hooks/moonshot-reader.mjs"' }] }] } }));
 }
 async function removeLegacyHookPayload(f) {
- await rm(path.join(f.profile, 'hooks.json'));
- await rm(path.join(f.profile, 'hooks'), { recursive: true });
+ await writeFile(path.join(f.profile, 'hooks.json'), f.currentHooks);
+ await rm(path.join(f.profile, 'hooks/moonshot-reader.mjs'));
+ await writeFile(path.join(f.profile, 'hooks/moonshot-writer.mjs'), f.currentWriter);
 }
 test('I/O installation merges only owned hooks, preserves user settings/skills, upgrades and downgrades', async () => {
  const f = await fixture();
@@ -43,13 +46,16 @@ test('I/O installation merges only owned hooks, preserves user settings/skills, 
    assert.equal(hooks.description, 'user-owned');
    assert.deepEqual(hooks.hooks.PreToolUse[0], user);
    assert.equal(hooks.hooks.PreToolUse.length, 1);
+   assert.equal(hooks.hooks.UserPromptSubmit.length, 1);
+   assert.match(hooks.hooks.UserPromptSubmit[0].hooks[0].command, /custom codex home\/hooks\/moonshot-writer\.mjs/);
+   assert.match(await readFile(path.join(f.home, 'hooks/moonshot-writer.mjs'), 'utf8'), /file:\/\/\/.*moonshot-io-hook\.mjs/);
    assert.equal(await readFile(path.join(f.home, 'AGENTS.md'), 'utf8'), 'user profile');
    assert.equal(await readFile(path.join(f.home, 'config.toml'), 'utf8'), 'model = "user-model"');
    assert.equal(await readFile(path.join(f.home, 'skills/keep/SKILL.md'), 'utf8'), 'user skill');
    await assert.rejects(readFile(path.join(f.home, 'hooks/moonshot-reader.mjs')), { code: 'ENOENT' });
    const skill = await readFile(path.join(f.home, 'skills/io-writer/SKILL.md'), 'utf8');
-   assert.match(skill, /spawn_agent/);
-   assert.match(skill, /fork_turns: "none"/);
+   assert.match(skill, /Writer: path\/to\/new-file\.mjs/);
+   assert.match(skill, /io-apply/);
    const nativeReader = await readFile(path.join(f.home, 'skills/io-reader/SKILL.md'), 'utf8');
    assert.match(nativeReader, /spawn_agent/);
    assert.match(nativeReader, /fork_turns: "none"/);
@@ -58,11 +64,15 @@ test('I/O installation merges only owned hooks, preserves user settings/skills, 
    assert.match(await readFile(path.join(f.home, 'skills/io-writer/agents/openai.yaml'), 'utf8'), /allow_implicit_invocation: false/);
   }
   // An older payload removes exactly the owned definition and files.
+  await rm(path.join(f.profile, 'hooks.json'));
+  await rm(path.join(f.profile, 'hooks/moonshot-writer.mjs'));
   await rm(path.join(f.profile, 'skills/io-reader'), { recursive: true });
   await rm(path.join(f.profile, 'skills/io-writer'), { recursive: true });
   const old = f.run(); assert.equal(old.status, 0, old.stderr);
   const hooks = JSON.parse(await readFile(path.join(f.home, 'hooks.json'), 'utf8'));
   assert.deepEqual(hooks.hooks.PreToolUse, [user]);
+  assert.deepEqual(hooks.hooks.UserPromptSubmit, []);
+  await assert.rejects(readFile(path.join(f.home, 'hooks/moonshot-writer.mjs')), { code: 'ENOENT' });
   await assert.rejects(readFile(path.join(f.home, 'hooks/moonshot-reader.mjs')));
   await assert.rejects(readFile(path.join(f.home, 'skills/io-reader/SKILL.md')), { code: 'ENOENT' });
   await assert.rejects(readFile(path.join(f.home, 'skills/io-reader/agents/openai.yaml')), { code: 'ENOENT' });
