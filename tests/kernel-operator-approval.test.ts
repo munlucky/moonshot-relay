@@ -315,13 +315,18 @@ test('workspace drift before operator approval keeps stale hard evidence blockin
 
 test('CLI moon-relay-kernel approve command approves obligations and auto-finalizes', async () => {
   const fixture = await setupFixture();
-  const cp = await createKernelControlPlane(fixture);
+  const cp = await createKernelControlPlane({
+    ...fixture,
+    requireHostBinding: true,
+    env: { MOON_RELAY_KERNEL_SESSION_ID: 'cli-operator-owner', MOON_RELAY_KERNEL_PROVIDER: 'codex' },
+  });
   const runId = 'run-cli-approve';
   try {
-    await cp.startRun({
+    await cp.ensureRun({
       runId,
       objective: 'cli approve task',
       taskContract: {
+        allowedPaths: ['app.mjs'],
         surfaces: ['security_boundary'],
         acceptance: [{ acceptance: 'works', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test:ok'], obligationId: 'unit-test' } }],
       },
@@ -344,6 +349,10 @@ test('CLI moon-relay-kernel approve command approves obligations and auto-finali
     kernelCli,
     'approve',
     runId,
+    '--session-id',
+    'cli-operator-owner',
+    '--provider',
+    'codex',
     '--reason',
     'CLI operator approval',
     '--project-root',

@@ -3260,6 +3260,194 @@
     "tests/kernel-task-contract-snapshot.test.mjs": {
       "classification": "capability",
       "capability": "task-contract-and-bounded-work"
+    },
+    "src/cli/moonshot-io-hook.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "bin/moonshot-io-hook.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/cli/moonshot-io.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "bin/moonshot-io.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/codex-app-server-transport.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/codex-app-server-transport.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/host-owned-writable-attempt.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/host-owned-writable-attempt.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/host-worker-sessions.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/host-worker-sessions.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/io-common.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/io-common.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/io-read-hook.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/io-read-hook.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/io-reader.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/io-reader.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/io-standalone.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/io-standalone.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/io-write-hook.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/io-write-hook.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/io-writer.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/io-writer.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/local-worker-control.ts": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "scripts/host/kernel/local-worker-control.js": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "tests/kernel-codex-app-server-transport.test.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "tests/kernel-host-worker-continuation-acceptance.test.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "tests/kernel-local-worker-control.test.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "tests/kernel-native-host-disconnect-recovery.test.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "tests/kernel-parallel-double-entry.test.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "tests/kernel-parallel-full-dispatch-two-hosts.test.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "tests/kernel-parallel-positive-two-hosts.test.mjs": {
+      "classification": "capability",
+      "capability": "provider-session-and-execution-boundary"
+    },
+    "src/host/kernel/proof/write-containment.ts": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "scripts/host/kernel/proof/write-containment.js": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "src/host/kernel/workspace-writer-reservation.ts": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "scripts/host/kernel/workspace-writer-reservation.js": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "src/host/kernel/workspace/canonical-worker-receipts.ts": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "scripts/host/kernel/workspace/canonical-worker-receipts.js": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "tests/kernel-native-canonical-attempt-delivery.test.mjs": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "tests/kernel-native-sandbox-confinement.test.mjs": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "tests/kernel-parallel-post-cas-host-restart.test.mjs": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "tests/kernel-parallel-preproof-fence-lifecycle.test.mjs": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "tests/kernel-parallel-proof-fence-lifetime.test.mjs": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "tests/kernel-proof-write-containment.test.mjs": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "tests/kernel-recovery-integration-worktree.test.mjs": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "tests/kernel-workspace-writer-reservation.test.mjs": {
+      "classification": "capability",
+      "capability": "mutation-fencing-and-git-closeout"
+    },
+    "tests/kernel-schema-open-fast-path.test.mjs": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
+    },
+    "tests/kernel-sqlite-runtime-recovery.test.mjs": {
+      "classification": "capability",
+      "capability": "control-plane-state-authority"
     }
   }
 }

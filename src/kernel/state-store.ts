@@ -4355,19 +4355,7 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
           incrementRevision: true,
         });
         if (decision === 'accepted') {
-          // Accepted delivery cannot prove that never-started work executed.
-          // Cancel only untouched planned steps, retaining attempted work.
-          db.prepare(`
-            UPDATE run_steps
-            SET state='cancelled',
-                blocked_reason='completion_accepted_without_step_execution',
-                completed_at=?, updated_at=?
-            WHERE run_id=? AND state IN ('planned', 'ready')
-              AND NOT EXISTS (
-                SELECT 1 FROM run_step_attempts AS a
-                WHERE a.run_id=run_steps.run_id AND a.step_id=run_steps.step_id
-              )
-          `).run(now(), now(), runId);
+          workStepPersistence.cancelUntouchedRunSteps(runId);
         }
 
         reconcileTerminalLifecycleInTransaction({ projectId: run.projectId, runId });

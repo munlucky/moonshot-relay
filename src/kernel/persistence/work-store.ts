@@ -90,6 +90,7 @@ export interface WorkStepStore {
   getRunStep(runId: string, stepId: string): PersistedWorkStep | null;
   updateRunStep(runId: string, stepId: string, patch?: Record<string, unknown>): PersistedWorkStep | null;
   supersedeRunSteps(runId: string, options: { planRevision: number }): PersistedWorkStep[];
+  cancelUntouchedRunSteps(runId: string): void;
   setPlanRevision(runId: string, planRevision: number): WorkRunLike | null;
   replaceRunPlanAtomic(runId: string, input: ReplaceRunPlanInput): {
     run: WorkRunLike | null;
@@ -366,5 +367,20 @@ export const createWorkStepStore = ({
     supersedeRunSteps,
     setPlanRevision,
     replaceRunPlanAtomic,
+    cancelUntouchedRunSteps(runId: string) {
+      // Accepted delivery cannot prove that never-started work executed.
+      // Cancel only untouched planned steps, retaining attempted work.
+      db.prepare(`
+        UPDATE run_steps
+        SET state='cancelled',
+            blocked_reason='completion_accepted_without_step_execution',
+            completed_at=?, updated_at=?
+        WHERE run_id=? AND state IN ('planned', 'ready')
+          AND NOT EXISTS (
+            SELECT 1 FROM run_step_attempts AS a
+            WHERE a.run_id=run_steps.run_id AND a.step_id=run_steps.step_id
+          )
+      `).run(now(), now(), runId);
+    },
   };
 };

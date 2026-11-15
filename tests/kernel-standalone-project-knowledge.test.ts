@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { openKernelStateStore } from '../src/kernel/state-store.js';
 import { buildCodebaseIndex } from '../src/host/kernel/codebase/codebase-index.js';
@@ -10,6 +11,45 @@ import { redactText } from '../src/kernel/knowledge-ingestion/redact.js';
 import { commitImportedProjectKnowledge } from '../src/kernel/knowledge-ingestion/import.js';
 import { isDeniedStagingPath, selectStagingPaths } from '../src/application/kernel-standalone/kernel-commit.js';
 import { isPathStagable } from '../src/kernel/git/staging-policy.js';
+
+test('Standalone project-memory CLI keeps its DB open through asynchronous status, indexing and review', async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'standalone-memory-cli-'));
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'standalone-memory-home-'));
+  const cli = path.resolve('bin/moon-relay-standalone.mjs');
+  const run = (...args: string[]) => {
+    const result = spawnSync(process.execPath, [cli, '--utility', 'project-memory', ...args, '--json'], {
+      cwd: projectRoot,
+      encoding: 'utf8',
+      env: { ...process.env, MOON_RELAY_KERNEL_HOME: runtimeHome, MOON_RELAY_TRACK: 'kernel' },
+    });
+    assert.equal(result.status, 0, result.stdout || result.stderr);
+    return JSON.parse(result.stdout) as Record<string, unknown>;
+  };
+  try {
+    await mkdir(path.join(projectRoot, 'src'));
+    await writeFile(path.join(projectRoot, 'src/math.mjs'), 'export function add(left, right) { return left + right; }\n');
+    const empty = run('status');
+    assert.equal(empty.status, 'ready');
+    const indexed = run('codebase');
+    assert.equal(indexed.status, 'analyzed');
+    assert.equal(typeof indexed.sourceFile, 'string');
+    const review = run('review', '--source-file', String(indexed.sourceFile));
+    assert.equal(review.status, 'awaiting_review');
+    const status = run('status');
+    assert.equal(status.status, 'ready');
+    assert.ok(Array.isArray(status.imports) && status.imports.length === 1);
+    assert.equal(status.knowledgeRevision, empty.knowledgeRevision, 'indexing and review must not commit Knowledge');
+    const denied = spawnSync(process.execPath, [cli, '--utility', 'project-memory', 'import', '--source-file', String(indexed.sourceFile), '--json'], {
+      cwd: projectRoot, encoding: 'utf8',
+      env: { ...process.env, MOON_RELAY_KERNEL_HOME: runtimeHome, MOON_RELAY_TRACK: 'kernel' },
+    });
+    assert.equal(denied.status, 1);
+    assert.match(denied.stdout, /USER_APPROVAL_REQUIRED/);
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+    await rm(runtimeHome, { recursive: true, force: true });
+  }
+});
 
 test('manual knowledge import uses explicit approval without a Kernel Run and is idempotent by source digest', async () => {
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-import-home-'));

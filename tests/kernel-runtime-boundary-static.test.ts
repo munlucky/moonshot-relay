@@ -29,6 +29,13 @@ const collectFiles = async (dir: string, ext = '.mjs'): Promise<string[]> => {
   return result;
 };
 
+const writeKernelManifest = async (root: string, include = ['bin/kernel.mjs']) => {
+  await mkdir(path.join(root, 'package/kernel'), { recursive: true });
+  await mkdir(path.join(root, 'bin'), { recursive: true });
+  await writeFile(path.join(root, 'bin/kernel.mjs'), 'export {};\n');
+  await writeFile(path.join(root, 'package/kernel/manifest.json'), JSON.stringify({ entrypoint: 'bin/kernel.mjs', include }));
+};
+
 test('Static boundary: No production file imports deleted legacy launchers', async () => {
   const productionDirs = [
     path.resolve('scripts/kernel'),
@@ -97,6 +104,7 @@ test('Static boundary: Active Kernel surfaces cannot reintroduce retired runtime
 test('Static boundary: Reachable local helpers are included in active execution audit', async () => {
   const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'kernel-boundary-closure-'));
   try {
+    await writeKernelManifest(fixtureRoot);
     await mkdir(path.join(fixtureRoot, 'scripts'), { recursive: true });
     await writeFile(path.join(fixtureRoot, 'scripts', 'delivery-submit.mjs'), "import(/* comment before specifier */ './reachable-helper.mjs');\n", 'utf8');
     await writeFile(path.join(fixtureRoot, 'scripts', 'reachable-helper.mjs'), "export const marker = 'MOONSHOT_RELAY_HOME';\n", 'utf8');
@@ -113,6 +121,7 @@ test('Static boundary: Symlinked reachable helpers outside the repository fail c
   const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), 'kernel-boundary-symlink-'));
   const externalRoot = await mkdtemp(path.join(os.tmpdir(), 'kernel-boundary-external-'));
   try {
+    await writeKernelManifest(fixtureRoot);
     await mkdir(path.join(fixtureRoot, 'scripts'), { recursive: true });
     await writeFile(path.join(fixtureRoot, 'scripts', 'delivery-submit.mjs'), "import './linked/helper.mjs';\n", 'utf8');
     await writeFile(path.join(externalRoot, 'helper.mjs'), "export const marker = 'MOONSHOT_RELAY_HOME';\n", 'utf8');
@@ -122,9 +131,87 @@ test('Static boundary: Symlinked reachable helpers outside the repository fail c
     assert.equal(audit.status, 'fail', JSON.stringify(audit, null, 2));
     assert.ok(audit.findings.some((finding) => finding.code === 'active-runtime-import-outside-repo'));
     assert.equal(audit.scannedFiles.some((file) => file.includes('kernel-boundary-external-')), false);
+    await symlink(externalRoot, path.join(fixtureRoot, 'bin', 'external'), 'junction');
+    await writeFile(path.join(fixtureRoot, 'package/kernel/manifest.json'), JSON.stringify({ entrypoint: 'bin/external/helper.mjs', include: ['bin/external/helper.mjs'] }));
+    const externalBin = await auditActiveRuntimeBoundary({ repoRoot: fixtureRoot });
+    assert.ok(externalBin.findings.some(f => f.code === 'active-runtime-kernel-manifest-invalid'));
+    await symlink(externalRoot, path.join(fixtureRoot, 'bin', 'kernel-outside'), 'junction');
+    await writeFile(path.join(fixtureRoot, 'package/kernel/manifest.json'), JSON.stringify({ entrypoint: 'bin/kernel.mjs', include: ['bin/kernel*'] }));
+    const externalPrefix = await auditActiveRuntimeBoundary({ repoRoot: fixtureRoot });
+    assert.ok(externalPrefix.findings.some(f => f.code === 'active-runtime-kernel-manifest-invalid'));
+    assert.equal(externalPrefix.scannedFiles.some(file => file.includes('kernel-outside')), false);
+    await writeFile(path.join(fixtureRoot, 'package/kernel/manifest.json'), JSON.stringify({ entrypoint: 'bin/kernel.mjs', include: ['bin/'] }));
+    const externalDirectory = await auditActiveRuntimeBoundary({ repoRoot: fixtureRoot });
+    assert.ok(externalDirectory.findings.some(f => f.code === 'active-runtime-kernel-manifest-invalid'));
   } finally {
     await rm(fixtureRoot, { recursive: true, force: true });
     await rm(externalRoot, { recursive: true, force: true });
+  }
+});
+
+test('Static boundary: Kernel manifest selects bin roots while Kernel imports retain shared-bin checks', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-product-bin-'));
+  try {
+    await writeKernelManifest(root);
+    await writeFile(path.join(root, 'bin/shared-product.mjs'), 'export const home = process.env.MOONSHOT_RELAY_HOME;\n');
+    const isolated = await auditActiveRuntimeBoundary({ repoRoot: root });
+    assert.equal(isolated.status, 'pass');
+    assert.ok(isolated.scannedFiles.includes('bin/kernel.mjs'));
+    assert.ok(!isolated.scannedFiles.includes('bin/shared-product.mjs'));
+    await writeFile(path.join(root, 'package/kernel/manifest.json'), JSON.stringify({ entrypoint: 'bin/kernel.mjs', include: ['bin/kernel*'] }));
+    assert.equal((await auditActiveRuntimeBoundary({ repoRoot: root })).status, 'pass');
+
+    await writeFile(path.join(root, 'bin/kernel.mjs'), "import './shared-product.mjs';\n");
+    const reachable = await auditActiveRuntimeBoundary({ repoRoot: root });
+    assert.ok(reachable.findings.some(f => f.file === 'bin/shared-product.mjs' && f.code === 'active-runtime-relay-home-interactive'));
+
+    await writeFile(path.join(root, 'bin/kernel.mjs'), 'export const home = process.env.MOONSHOT_RELAY_HOME;\n');
+    const direct = await auditActiveRuntimeBoundary({ repoRoot: root });
+    assert.ok(direct.findings.some(f => f.file === 'bin/kernel.mjs' && f.code === 'active-runtime-relay-home-interactive'));
+
+    await writeFile(path.join(root, 'bin/kernel.mjs'), "import './missing.mjs';\n");
+    const missingImport = await auditActiveRuntimeBoundary({ repoRoot: root });
+    assert.ok(missingImport.findings.some(f => f.code === 'active-runtime-import-unresolved'));
+    await writeFile(path.join(root, 'bin/kernel.mjs'), 'export {};\n');
+    await mkdir(path.join(root, 'internal'));
+    await writeFile(path.join(root, 'internal/helper.mjs'), 'export const home = process.env.MOONSHOT_RELAY_HOME;\n');
+    await symlink(path.join(root, 'internal'), path.join(root, 'bin/linked'), 'junction');
+    await symlink(path.join(root, 'bin'), path.join(root, 'internal/loop'), 'junction');
+    await writeFile(path.join(root, 'package/kernel/manifest.json'), JSON.stringify({ entrypoint: 'bin/kernel.mjs', include: ['bin/'] }));
+    const internalLink = await auditActiveRuntimeBoundary({ repoRoot: root });
+    assert.ok(internalLink.findings.some(f => f.file === 'bin/linked/helper.mjs' && f.code === 'active-runtime-relay-home-interactive'));
+    await writeFile(path.join(root, 'internal/helper.mjs'), "import '../shared.mjs';\n");
+    await writeFile(path.join(root, 'shared.mjs'), 'export const home = process.env.MOONSHOT_RELAY_HOME;\n');
+    await writeFile(path.join(root, 'bin/shared.mjs'), 'export {};\n');
+    const physicalImports = await auditActiveRuntimeBoundary({ repoRoot: root });
+    assert.ok(physicalImports.findings.some(f => f.file === 'shared.mjs' && f.code === 'active-runtime-relay-home-interactive'));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Static boundary: Missing, malformed, empty and unresolved Kernel bin declarations fail closed', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-manifest-admission-'));
+  try {
+    const missing = await auditActiveRuntimeBoundary({ repoRoot: root });
+    assert.ok(missing.findings.some(f => f.code === 'active-runtime-kernel-manifest-invalid'));
+    await writeKernelManifest(root);
+    await mkdir(path.join(root, 'bin/empty'));
+    const invalidIncludes = [[], [1], ['scripts/kernel/'], ['bin/absent.mjs'], ['bin/../../outside.mjs'], ['bin/empty/']];
+    const invalidEntrypoints = [undefined, '', 1, '../outside.mjs', 'bin/absent.mjs', 'bin/empty'];
+    const invalidManifests = [
+      '{', '{}',
+      ...invalidIncludes.map(include => JSON.stringify({ entrypoint: 'bin/kernel.mjs', include })),
+      ...invalidEntrypoints.map(entrypoint => JSON.stringify({ entrypoint, include: ['bin/kernel.mjs'] })),
+      JSON.stringify({ entrypoint: 'bin/absent.mjs', include: ['bin/empty/'] }),
+    ];
+    for (const content of invalidManifests) {
+      await writeFile(path.join(root, 'package/kernel/manifest.json'), content);
+      const audit = await auditActiveRuntimeBoundary({ repoRoot: root });
+      assert.ok(audit.findings.some(f => f.code === 'active-runtime-kernel-manifest-invalid'), content);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 

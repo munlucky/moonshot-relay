@@ -6,6 +6,359 @@
 
 ---
 
+## 2026-11-14 runtime assetization execution (R0–R1)
+
+Execution baseline: `7a5f5bd815d33a047ccdcf0550da7432a76508ee`, clean `main`.
+The isolated branch is `codex/kernel-runtime-assetization`; its worktree is
+`C:/dev/moonshot-relay-assetization`. Kernel Run
+`run-8a63100e-fe74-457c-a6ea-0a404b605b51` owns this work. The separate
+Moonremote Host Worker task `6ceb861a-b1cd-4dd0-9a58-f1663c3f76cc`, revision
+85, was observed read-only and is not repurposed or modified.
+
+The execution plan is the user's final v1.1 plan dated 2026-11-14. The existing
+review also requires baseline-to-candidate Run/Knowledge resume when installation
+payload or persistent references change, and additive Native coverage when new
+impact is found. Existing required combinations must not be removed for convenience.
+
+### R0 protected baseline and Native gate
+
+The minimum required Native combination is Windows × the actual Codex Desktop
+session `01a1d6f2-bbda-74f1-954e-e66c72fed662` × installed Kernel CLI. This is
+not a Codex CLI launcher test. The actual session must consume the installed
+work unit, mutate its bounded sample project, and submit report and proof until
+the installed Kernel returns `done`. Session binding, installation paths and
+hashes must agree with the raw receipts. Native smoke is insufficient.
+
+Linux/macOS and other Provider launchers are initially OUT_OF_SCOPE because no
+change to their execution or profile contract is proposed. MCP is initially
+OUT_OF_SCOPE because the planned correction concerns asset traceability, not
+bridge dispatch. R1 findings can add mandatory combinations. Host/Worker
+transport changes would require their real execution path; the Desktop scenario
+cannot substitute for that path. The designated review chat confirmed this N1
+method on 2026-11-14, subject to the actual evidence. It did not grant PASS.
+
+Raw evidence stays outside source, under
+`%LOCALAPPDATA%/moonshot-relay/assetization-20261114/` on the validation Host.
+The initial snapshot covers 586 account-owned profile/config/skill files; its
+aggregate ownership SHA-256 is
+`4db6b31cb5df14b8621f11495635878b1a3b2cc672c8881040db49ae941bfaea`.
+No real account profile, PATH or runtime DB is an installation target.
+
+The three frozen files have these SHA-256 values:
+
+- `CAPABILITY_ASSET_BASELINE.md`: `f0f1172441d79d890111cb800cfbd3b8a4c72cac1e01b4d8f418b83ea61ffdd3`.
+- `catalog.yaml`: `e2b56b8ca30790b0fb6fb51f19ca4e89303392be413251e969752b2374fdb312`.
+- `coverage-ledger.yaml`: `3b8336b6701ed677eb02d72e90be24c3e93cc0d9dc4c4b6ab3df14a0b51937dc`.
+
+Clean checkout `npm ci --ignore-scripts`, `build`, `build:check`, `typecheck`,
+and Kernel package materialization succeeded. Test artifacts were absent in
+the clean checkout: `build:tests:check` and characterization initially failed
+for missing generated `dist/tests` files. After `build:tests`, characterization
+passed 17/17. This is a build prerequisite, not a source regression.
+`test:capability-assets` exposed 30 unclassified typed source/output paths and
+17 unclassified test entrypoints added after the frozen baseline. The owning
+boundary is the existing migration catalog's `surfaces` mapping, not the frozen
+ledger or the runtime implementation. It must be repaired before acceptance.
+
+### R1 consumer and ownership findings
+
+The historical 15 families / 47 subcapabilities and their classification remain
+unchanged. The five maps below remain their classification authority. Current
+file reachability is checked against source-layout, the compiler manifest,
+package manifests, profile installer, CLI/MCP dispatch, npm scripts, CI and the
+existing B0 characterization. There is no new asset registry.
+
+R2: NO_CHANGE_REQUIRED. `capability-resolver.ts` selects the existing conditions
+and rejects unknown requests. A normal implementation selects minimal-change
+and verification guidance only. All seven Optional capabilities are inactive.
+`project-hydrate.ts` and `profile-install.ts` expose one Kernel entrypoint.
+`internalDiscovery.includeUnlistedSourceSkills` has no executable consumer in
+`src`, `tools`, `package` or CI; its presence does not reproduce expanded loading.
+Retain the metadata and existing explicit/conditional access. The public npm
+product still needs Relay skills and the Standalone catalog. No shared skill,
+agent or rule is removed by name or file count.
+
+R3: CHANGED. B0 verifies that Optional implementations stay outside
+the default static graph and activate only on existing conditions. Work, Trust
+and Knowledge remain derived from their existing authorities. The retired
+phase-runner/adapters have no live source reference. Explicit review requests
+and protected review receipts remain intact. Host Worker/Reader/Writer source
+is preserved. Later full reliability verification reproduced an existing W-03
+ownership violation: accepted-completion cancellation updated `run_steps` directly
+in the state-store facade. That unchanged SQL now belongs to the existing Work
+step store. The facade calls it inside the same transaction and on the same DB
+connection, preserving its predicates and timestamp calls. No owner allowlist,
+model policy or state schema changes. Optional execution remains unchanged.
+
+R4: CHANGED. `tools/build/bootstrap.mjs --tests` compiles canonical
+TypeScript into `dist/tests`; tracked `.mjs` files forward execution to these
+outputs. npm scripts and CI depend on that relationship. They are not redundant
+copies to delete. B0 still connects the original safety counterexamples. No
+independent duplicate test with a replacement proof was established. Two legacy
+migration fixtures created a current-schema DB and injected old columns or
+lifecycle states without resetting `user_version`. They now declare version 0
+before reopening. Runtime migration and current-schema fast-path behavior and
+all existing assertions remain unchanged.
+
+R5 candidate: restore current traceability for compiler-owned Host/I/O pairs
+and their tests using `catalog/kernel-capability-surface-migrations.json`.
+The existing checker explicitly accepts its current `surfaces` field. This is
+not a migration from an invented historical path. Existing `migrations`, the
+baseline commit, frozen files and checker contract must remain unchanged.
+Classify each actual source/output/test against the existing family and record
+its consumers before adding it. Revert only those new mapping entries to undo
+the correction. Runtime behavior and package inclusion settings do not change.
+The shared npm tarball includes the updated catalog JSON because its existing
+`files` list includes `catalog/`. Kernel materialization is checked separately.
+
+### R5 current surface correction
+
+CHANGED: 47 entries were added only to the existing `surfaces` mapping: 15
+compiler-owned source/output pairs and 17 test entrypoints. No historical
+migration entry or frozen classification changed. `test:capability-assets`
+changed from FAIL (47 missing classifications) to PASS (1/1, about 22 seconds).
+
+`provider-session-and-execution-boundary` owns `moonshot-io` and
+`moonshot-io-hook` source/bin pairs, plus Host `codex-app-server-transport`,
+`host-owned-writable-attempt`, `host-worker-sessions`, the six `io-*` modules,
+and `local-worker-control`. Their actual consumers are the opt-in standalone
+I/O CLI/hook, local worker control, adapters and MCP/worker dispatch. The
+corresponding transport, continuation, local-control, disconnect and parallel
+admission tests remain on their existing npm paths. These are HOST execution
+assets; adding traceability does not enable them in an ordinary Run. Relay's
+public I/O CLI, Kernel Host execution and Standalone I/O consumers are retained.
+
+`mutation-fencing-and-git-closeout` owns Host `proof/write-containment`,
+`workspace-writer-reservation`, and `workspace/canonical-worker-receipts` pairs,
+and eight native/parallel/proof/recovery/reservation tests. Their consumers are
+trusted proof, worker admission, physical worktrees and canonical settlement.
+Kernel and Standalone retain those safety boundaries; Relay's shared package
+continues to distribute them. They are not removed or marked ignored because
+they run conditionally or because some real Native scenarios need another OS.
+
+`control-plane-state-authority` owns the two schema-open/SQLite-recovery test
+entrypoints. They preserve normal-open, migration, crash and lock recovery
+counterexamples for the existing durable authority used by Kernel/Standalone.
+Relay's shared test/package contract remains intact. All 17 entrypoints still
+forward to their canonical TypeScript test outputs; no test was replaced.
+
+For every added path the action is retain and classify the current surface.
+The alternative is the unchanged direct caller/compiler output, not a new
+dispatch layer. Undo consists of removing these 47 additions; do not modify
+the frozen ledger. Kernel and npm manifests, profile payloads and all three
+CLI entrypoint sources are byte-identical to baseline. R6 found a Standalone
+resource-lifetime defect, so its existing content lock is regenerated using
+`writeStandaloneLock`; only the utility content hash and generation provenance
+change. Membership, catalog digest and permissions remain identical. R6 also found an audit
+boundary defect, so the candidate audit payload differs and requires an actual
+baseline-started Run and Knowledge upgrade/resume check. No Provider execution,
+MCP dispatch or profile discovery contract changes; N1 remains mandatory.
+
+Initial same-boundary metrics: Kernel source 135 files / 52,725 physical code
+lines; Host source 80 files / 23,689 lines; test tree 940 files; installed Kernel
+payload 1,144 files / 33,122,688 bytes (including runtime dependencies); one public
+Kernel skill, two ordinary guidance items, zero active Optional capabilities.
+Unchanged boundaries need final evidence, not forced LOC reduction. Installing a
+profile proves file content and ownership; it does not prove a new Provider
+session automatically discovered that profile. No profile-loading change is
+currently proposed.
+
+### R6 audit boundary and regression repairs
+
+Additive required Native combination N2 (frozen before the following source
+repair): Windows × installed Standalone `project-memory` CLI. An actual isolated
+status command reproduced `ERR_INVALID_STATE`: the utility returned an async
+operation from `try` while `finally` closed its DB before that operation resumed.
+This is a resource-lifetime defect in the existing utility, not a new state or
+authority. Await the existing operations before closing their store. Status,
+codebase snapshot, review and import handoff must retain their current authority
+and explicit approval rules. N2 adds coverage; it does not replace N1.
+
+The Kernel runtime audit scanned the shared npm `bin/` directory and rejected
+Relay-only `moonshot-io.mjs` for its legitimate Relay home reference. The Kernel
+manifest excludes that CLI. Audit roots now use that existing manifest's bin
+membership and its declared entrypoint. All pre-existing Kernel directories and
+execution seeds remain scanned, together with their reachable local imports.
+The existing package include resolver is exported and reused; its implementation
+and package inclusion semantics are unchanged. There is no filename exception
+or replacement registry. Relay and Standalone entrypoints remain distributed.
+
+Invalid manifests, missing/empty bin membership, an unselected/missing entrypoint,
+unresolved imports and paths outside the package fail closed. Prefix matches
+and directory children receive realpath containment checks. Internal links are
+traversed with physical-directory cycle detection. Import resolution and visited
+identity use the actual file path, so a linked helper cannot redirect a relative
+import to a different logical sibling. The designated review chat reproduced
+these counterexamples before their fixes; the regression suite retains them.
+Undo requires reverting the audit source and resolver export and rebuilding;
+do not change the product manifests or frozen assets.
+
+The existing public guideline classification now lists `host-owned-io-writer.md`
+at its actual Host I/O consumers. Two published W8 records replace a personal
+absolute checkout path with a neutral placeholder, retaining their historical
+HEAD, dates and observations. These repairs retain the existing document checks.
+
+Full reliability verification also found a CLI operator-approval fixture without
+an owner binding. It now creates the Run through legitimate Host `ensureRun`
+with an explicit test session before checking rejection of a missing approval reference and authorized
+approval/finalization. Runtime owner checks and approval gates are unchanged.
+The original failure and W-03 violation reproduced in a fresh HEAD archive with
+fresh runtime and test builds. The existing W5 finalization counterexamples
+check untouched-step cancellation and preservation of attempted work.
+
+### R6 installed Native evidence
+
+N1 used the actual Desktop session declared in R0 and the installed
+`native-install/bin/kernel.ps1`, not the source CLI. The original installed Run
+`run-b8490553-50c5-415c-beb7-adad4940150d` implemented bounded tag normalization.
+An intentionally incomplete implementation failed real proof at mutation
+revision 1. A new CLI process resumed the same Run/Step, corrected the source,
+and obtained fresh trusted proof and `done` at revision 2. Read-only DB inspection
+confirmed the actual `codex:` session binding and its release at completion.
+Raw receipts are `native-failed.json`, `native-resumed.json`, `native-done.json`
+and `native-binding-readonly.json`.
+
+Baseline Run `run-e862d00f-b2c4-469f-b506-a71b65b610c8` committed one fact after
+real behavior proof (`native-baseline-knowledge-accepted.json`, revision 4).
+Baseline-started Run `run-1a769dd3-5f81-40b4-8be7-ffddde8bec56` selected that fact.
+After candidate installation, it resumed the same `step-1-1`, selected one fact
+with `use.available` and no degraded context, and returned fresh proof and
+`done` (`native-upgrade-after.json`, `native-upgrade-done.json`). Earlier stale
+Knowledge attempts remain in the evidence directory; they were not edited or
+counted as accepted facts. Knowledge freshness currently requires invoking the
+CLI from the sample project directory even when `--project-root` is supplied.
+This pre-existing different-working-directory limitation is not changed here.
+
+The isolated profile doctor verified 28 managed files and executable command
+resolution. This proves installation and ownership, not new-session automatic
+profile discovery. Fixture safety tests prove protected review receipt rejection,
+mutation fencing, project isolation, supersession and rollback. Their simulated
+Host transport does not establish a new real Provider review session. The
+designated review chat supplies independent code feedback, not a protected
+Kernel review receipt. No such receipt is fabricated.
+
+### R6 repository gate before authorized budget review
+
+The complete npm command stopped at active1. Before document repair it passed
+source-runtime 20/20 and active1 had 621 pass, 3 fail, 1 environment skip.
+All three failures reproduced on unchanged main `7a5f5bd8`. The two document
+failures were repaired; the focused contract now has 22 pass and 1 environment
+skip. Active2 was run separately: 1,089 pass, 1 legacy-fixture failure and 1 skip;
+that fixture is corrected above. Active3 passed 41/41. Later verification logs
+must confirm the final source state; these counts do not assert a green npm test.
+
+Before the authorized policy review, the unchanged surface-budget policy was FAIL on baseline and candidate.
+Baseline actual/limit: files 2,402/2,252; nonblank lines 368,320/347,416;
+UTF-8 bytes 17,200,195/15,360,918; estimated tokens 4,300,049/3,840,230.
+Both inventories have zero unregistered tests. Candidate deltas must be measured
+after final source freeze with normalized line endings as well as the actual
+worktree measurement. At that checkpoint no budget limit, exclusion, checker or assertion was changed. The later user-authorized review accepts a one-time allowance increase; exclusions, checker and assertions remain unchanged.
+AC09 requires fresh full proof after the reviewed policy correction. Overall completion also requires the other unresolved acceptance conditions.
+Do not label pre-existing failures as passing or let narrower proofs replace it.
+
+### R6 final candidate evidence and measured status
+
+The final candidate was installed after baseline-started Run
+`run-95f51fbf-1e7c-44af-a6c9-7bc4937b438c` selected the accepted fact.
+The installed CLI resumed the same Run and Step, retained one selected fact,
+and returned fresh trusted proof and `done` (`native-v5-resumed.json`,
+`native-v5-report.json`, `native-v5-done.json`). The final installed audit passed.
+
+N2 exercised the final installed Standalone CLI: status, codebase analysis,
+review, rejection without explicit approval, and approved candidate handoff.
+Knowledge revision remained 4. The utility returned candidate authority only;
+it did not commit Kernel Knowledge (`native-n2-summary.json`).
+
+Protected Run `run-b0602556-b944-4584-abb0-6453589bffb9` selected no fact from
+the other project. Its actual hard proof passed. Kernel issued a read-only
+review capsule, but the available Host lacked an independent review transport:
+`no-independent-review-capability`, no review receipt. The designated code
+review chat cannot replace that receipt. AC05 remains blocked.
+
+| Equivalent boundary | Baseline | Final candidate |
+| --- | ---: | ---: |
+| Shared skill files / bytes | 253 / 856,117 | unchanged |
+| Shared agent files / bytes | 33 / 176,602 | unchanged |
+| Shared rule files / bytes | 18 / 15,080 | unchanged |
+| Tool files / physical code lines | 58 / 12,407 | unchanged |
+| Kernel source files / physical code lines | 135 / 52,725 | 135 / 52,729 |
+| Host source files / physical code lines | 80 / 23,689 | unchanged |
+| Test files / physical code lines | 940 / 88,488 | 940 / 88,626 |
+| Materialized Kernel files / bytes, including dependencies | 1,144 / 33,122,688 | 1,144 / 33,126,191 |
+| Clean public npm files / unpacked bytes | 1,481 / 9,329,552 | 1,481 / final bytes in `final-metrics.json` |
+| Public Kernel skill / managed profile files | 1 / 28 | unchanged |
+| Ordinary guidance items / characters | 2 / 101 | unchanged |
+| Active Optional capabilities | 0 of 7 | unchanged |
+
+The ordinary guidance estimate is about 26 tokens at four characters per token;
+it is not a tokenizer measurement or a cost claim. The added import edge reuses
+the existing include resolver. There is no new dependency declaration, state
+schema, workflow stage, public CLI entrypoint or asset membership. The increase
+comes from boundary validation and retained regression cases, not forced deletion.
+The npm baseline uses a fresh HEAD archive and normal prepack. An earlier local
+pack contained an ignored Python cache and is not an equivalent comparison.
+`final-metrics.json` records normalized source deltas after document freeze.
+
+The isolated profile install, doctor and uninstall preserved user-owned skill
+content and appended notes. The original account snapshot later differed in four
+files: config, the system skill marker, and two OpenAI-docs skill files. Their
+writer is not established. No further differences occurred during the measured
+final operation window. One early utility probe accidentally created a default
+account track registration for this worktree. Its exact scope, source and creation
+time were verified; only that newly created registration was backed up and removed.
+This incident and the four unexplained differences limit AC08; account-wide byte
+parity is not claimed. No user profile file was restored or overwritten.
+
+Original main remains clean. The unrelated Moonremote task was initially observed
+at revision 85 and was never used for execution. A final read failed in the MCP
+connection; its current remote state is unverified. The later user instruction excludes that remote check; local preservation evidence remains applicable.
+
+The following checkpoint is recorded before fresh proof of the reviewed policy update. The latest Kernel proof receipt owns subsequent verification status.
+
+| Acceptance | Status | Evidence or remaining condition |
+| --- | --- | --- |
+| AC01 | PASS | Actual installed execution, report, proof and done |
+| AC02 | PASS | Failed revision 1 and fresh corrected revision 2 |
+| AC03 | PASS | Process resume and final candidate upgrade |
+| AC04 | PASS for tested paths | Existing safety counterexamples; hardlink tests require process-local LF setting and do not prove OS sandbox isolation |
+| AC05 | BLOCKED | Actual independent protected review transport and receipt absent |
+| AC06 | PASS | Accepted cross-Run Knowledge, other-project isolation and retained supersession cases |
+| AC07 | PASS | One public skill and unchanged conditional access |
+| AC08 | PARTIAL | Isolated preservation passed; account snapshot limitations above |
+| AC09 | NOT_RUN for revised policy | The prior policy failed; the reviewed allowance correction requires fresh complete npm proof |
+| AC10 | PASS | Frozen hashes and reversible current mappings |
+| AC11 | PASS | Equivalent measurements; no added framework or registry |
+| AC12 | PASS for local scope | Original checkout clean and unrelated local work retained; MCP/remote comparison is OUT_OF_SCOPE by user instruction |
+
+Overall status is PARTIAL. Successful focused checks and Native sample completion
+do not establish completion of this refactor Run. No push or merge was performed.
+
+---
+
+### Authorized budget policy review and MCP scope update
+
+The user included budget policy review in this task on 2026-11-15 and excluded
+MCP/Moonremote verification. The designated review chat accepted the bounded policy correction and requested the status distinctions recorded here. The local installed CLI matrix remains required;
+protected CLI review receipts are not waived. Remote checkpoint comparison is
+OUT_OF_SCOPE under that instruction, with no remote mutation performed.
+
+Policy commit `34ef0871feab770824a2e94ab6caea2e97bc20c9` predates 150 canonical
+additions already present at execution baseline `7a5f5bd8`: 109 documents,
+6 opt-in account profile assets, 15 Host/CLI modules and 20 test/helper files.
+Seventy other canonical paths changed. Existing compiler outputs are excluded
+using the unchanged checker. The new source and test paths are traced by the
+existing capability migration map; the profile and documentation consumers are
+the existing account installer and public history/guidelines. They remain shared
+product assets. No deletion is justified by their count alone.
+
+The proposed one-time allowance retains the immutable `aca19ec` baseline and
+all checker assertions. Its limits equal the reviewed final candidate, including
+this policy and decision text, with zero measured headroom and zero unregistered
+tests. There is no automatic future ratchet, new exclusion or runtime activation.
+The existing byte metric reads worktree bytes and can vary with line endings;
+this review does not change that metric or claim portable byte equivalence.
+Normalized LF measurements remain separate evidence. Independent policy review is accepted. A fresh complete npm test is still required before this correction can pass verification.
+
 ## 1. CORE MAP (21 Subcapabilities)
 
 현재 Kernel의 본질 경로인 **AI Agent Workflow**와 **Project Knowledge Lifecycle**을 성립시키는 최소 권위 집합이다. Decomplexification 시 반드시 Kernel 내부에 유지되어야 한다.

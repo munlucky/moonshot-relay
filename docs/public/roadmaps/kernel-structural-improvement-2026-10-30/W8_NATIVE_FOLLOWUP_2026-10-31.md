@@ -6,7 +6,7 @@
 
 - 통합 canonical HEAD: `edbefb267f0e70df067f75e1f717660f67f9082e` (`main`, W10 Linux Reliability 282/282 PASS 기준).
 - Moonremote Mac Linux workmachine은 별도 저장소로 `bde95dab464461e6c810af0c8458bdd9b78011d0`에 머물러 있었다. 이 상태를 최신 canonical과 혼동하거나 원본 작업 트리를 강제 동기화하지 않았다.
-- **실제 native Host:** macOS 26.5.2 / Darwin 25.5.0 / arm64, Node 24.6.0, Codex CLI 0.162.1. Mac 원본 `/Users/dev/moonshot-relay`는 `bde95dab`이고 clean이다.
+- **실제 native Host:** macOS 26.5.2 / Darwin 25.5.0 / arm64, Node 24.6.0, Codex CLI 0.162.1. Mac 원본 `<macOS-source-checkout>`는 `bde95dab`이고 clean이다.
 - `/tmp/moonshot-w8-mac-native.2oOiMO/repo`에 원본 Mac repo를 별도로 clone한 다음 GitHub `main`을 fetch하여 정확히 `edbefb26`을 detached checkout했다. Mac의 기존 native `node_modules` 108MB를 **이 격리 사본에 복사**했다. 새 버전에서 `npm ci`로 lockfile부터 재설치한 검증은 아니므로 의존성 출처 조건을 명시한다.
 
 ## 실제 Mac ARM64 검증
@@ -18,7 +18,7 @@
 ## 계정 설치 상태 (읽기 전용)
 
 - macOS 계정 `~/.codex/.moon-relay-kernel-profile-manifest.json`: **2026-10-13** 설치, 관리 파일 22개. 설치된 전체 파일 SHA-256 비교에서 19개 MATCH, `AGENTS.md`/`config.toml`/`hooks.json` 3개 DRIFT. 이 3개는 `managed-section`/`json-paths` 소유이므로 파일 전체 SHA만으로 관리 섹션 손상을 단정하지 않는다.
-- macOS `~/.moon-relay-kernel/.moon-relay/install-manifest.json`: **2026-10-29** 설치, 소유 파일 **1,143개** 기록. 설치 소스 경로는 `/Users/dev/moonshot-relay`이며 현재 checkout HEAD가 `bde95dab`으로 canonical과 다르다.
+- macOS `~/.moon-relay-kernel/.moon-relay/install-manifest.json`: **2026-10-29** 설치, 소유 파일 **1,143개** 기록. 설치 소스 경로는 `<macOS-source-checkout>`이며 현재 checkout HEAD가 `bde95dab`으로 canonical과 다르다.
 - 정확한 `edbefb26`의 격리 산출물과 계정 설치 산출물 직접 해시 비교: `scripts/kernel/persistence/knowledge-lifecycle-store.js` **DIFF**, `scripts/kernel/control-plane.js` **DIFF**, `scripts/kernel/git/closeout.js` MATCH. 따라서 **현재 Mac 계정의 완전한 canonical source/payload parity는 성립하지 않는다.** 미확인 나머지 1,140여 파일은 MATCH라고 주장하지 않는다.
 - 실제 Codex 앱/CLI 관련 프로세스가 동작 중이었다. 운영 profile/config/runtime 설치·재시작은 사용자 작업에 영향을 줄 수 있어 시행하지 않았다. 별도 account backup/merge/rollback 및 native 설치 후 Receipt 확인 전 PASS로 처리하지 않는다.
 

@@ -1,5 +1,6 @@
 import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { resolveKernelPackageInclude } from '../../kernel/package-build.js';
 
 interface AuditFinding {
   code: string;
@@ -13,7 +14,6 @@ interface ResolvedLocalImport {
 }
 
 const ACTIVE_DIRECTORIES = Object.freeze([
-  'bin',
   'scripts/kernel',
   'scripts/host/kernel',
   'scripts/switcher',
@@ -52,7 +52,13 @@ const errorCode = (error: unknown): string | null => (
     : null
 );
 
-const collectFiles = async (root: string): Promise<string[]> => {
+const collectFiles = async (root: string, packageRoot?: string, visited = new Set<string>()): Promise<string[]> => {
+  if (packageRoot) {
+    const physical = await realpath(root);
+    if (!isWithinRepo(packageRoot, physical)) throw new Error(`Kernel bin escapes package root: ${root}`);
+    if (visited.has(physical)) return [];
+    visited.add(physical);
+  }
   let entries;
   try {
     entries = await readdir(root, { withFileTypes: true });
@@ -64,13 +70,59 @@ const collectFiles = async (root: string): Promise<string[]> => {
   const files: string[] = [];
   for (const entry of entries) {
     const fullPath = path.join(root, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...await collectFiles(fullPath));
-    } else if (entry.isFile() && /\.(?:mjs|cjs|js|json|yaml|yml)$/i.test(entry.name)) {
+    const resolvedEntry = packageRoot && entry.isSymbolicLink() ? await stat(fullPath) : entry;
+    if (packageRoot && !isWithinRepo(packageRoot, await realpath(fullPath))) throw new Error(`Kernel bin escapes package root: ${fullPath}`);
+    if (resolvedEntry.isDirectory()) {
+      files.push(...await collectFiles(fullPath, packageRoot, visited));
+    } else if (resolvedEntry.isFile() && /\.(?:mjs|cjs|js|json|yaml|yml)$/i.test(entry.name)) {
       files.push(fullPath);
     }
   }
   return files;
+};
+
+// The shared npm bin directory also contains Relay-only products. Kernel
+// membership comes from its existing package contract, not a filename exception.
+const collectKernelBinFiles = async (repoRoot: string, findings: AuditFinding[]): Promise<string[]> => {
+  try {
+    const manifest = JSON.parse(await readFile(path.join(repoRoot, 'package/kernel/manifest.json'), 'utf8')) as { include?: unknown; entrypoint?: unknown };
+    const safeRelative = (entry: unknown): entry is string => typeof entry === 'string' && Boolean(entry)
+      && !path.isAbsolute(entry) && !entry.includes('\\') && !entry.split('/').includes('..');
+    if (!Array.isArray(manifest.include) || !manifest.include.length
+      || !manifest.include.every(safeRelative) || !safeRelative(manifest.entrypoint)) {
+      throw new Error('Invalid Kernel package include list');
+    }
+    const entries = manifest.include.filter((entry: string) => entry.startsWith('bin/')) as string[];
+    if (!entries.length) throw new Error('Kernel package declares no bin entrypoints');
+    const physicalRoot = await realpath(repoRoot);
+    const files: string[] = [];
+    for (const entry of entries) {
+      for (const relative of await resolveKernelPackageInclude(repoRoot, entry)) {
+        const file = path.join(repoRoot, relative);
+        if (!isWithinRepo(physicalRoot, await realpath(file))) throw new Error(`Kernel bin escapes package root: ${relative}`);
+        const entryStat = await stat(file);
+        files.push(...(entryStat.isDirectory() ? await collectFiles(file, physicalRoot) : [file]));
+      }
+    }
+    const physicalFiles = new Set<string>();
+    for (const file of files) {
+      const physical = await realpath(file);
+      if (!isWithinRepo(physicalRoot, physical)) throw new Error(`Kernel bin escapes package root: ${file}`);
+      physicalFiles.add(physical);
+    }
+    const entrypoint = await realpath(path.join(repoRoot, manifest.entrypoint));
+    if (!files.length || !(await stat(entrypoint)).isFile() || !physicalFiles.has(entrypoint)) {
+      throw new Error('Kernel entrypoint is not a selected bin file');
+    }
+    return files;
+  } catch (error: unknown) {
+    findings.push({
+      code: 'active-runtime-kernel-manifest-invalid',
+      file: 'package/kernel/manifest.json',
+      message: `Cannot establish Kernel bin membership: ${error instanceof Error ? error.message : String(error)}.`,
+    });
+    return [];
+  }
 };
 
 const IMPORT_SPECIFIER_PATTERNS: readonly RegExp[] = Object.freeze([
@@ -130,11 +182,13 @@ const resolveLocalImport = async (
 const collectReachableExecutionImports = async ({
   repoRoot,
   findings,
+  entryFiles = [],
 }: {
   repoRoot: string;
   findings: AuditFinding[];
+  entryFiles?: string[];
 }): Promise<string[]> => {
-  const queue: string[] = [];
+  const queue: string[] = [...entryFiles];
   for (const relativeFile of ACTIVE_EXECUTION_FILES) {
     const file = path.join(repoRoot, relativeFile);
     try {
@@ -148,8 +202,10 @@ const collectReachableExecutionImports = async ({
   const visited = new Set<string>();
   const reachable: string[] = [];
   while (queue.length > 0) {
-    const importer = queue.shift();
-    if (!importer || visited.has(importer)) continue;
+    const logicalImporter = queue.shift();
+    if (!logicalImporter) continue;
+    const importer = await realpath(logicalImporter);
+    if (visited.has(importer)) continue;
     visited.add(importer);
     reachable.push(importer);
 
@@ -190,6 +246,7 @@ export async function auditActiveRuntimeBoundary({
   for (const relativeDirectory of ACTIVE_DIRECTORIES) {
     files.push(...await collectFiles(path.join(repoRoot, relativeDirectory)));
   }
+  files.push(...await collectKernelBinFiles(repoRoot, findings));
   for (const relativeFile of ACTIVE_EXECUTION_FILES) {
     const file = path.join(repoRoot, relativeFile);
     try {
@@ -199,7 +256,7 @@ export async function auditActiveRuntimeBoundary({
       if (errorCode(error) !== 'ENOENT') throw error;
     }
   }
-  files.push(...await collectReachableExecutionImports({ repoRoot, findings }));
+  files.push(...await collectReachableExecutionImports({ repoRoot, findings, entryFiles: files }));
 
   const scannedFiles: string[] = [];
   for (const file of [...new Set(files)]) {

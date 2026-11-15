@@ -125,7 +125,7 @@ const auditTreeContainment = async (sourceRoot: string, outputRoot: string, excl
   await walk(outputRoot);
 };
 
-const resolvePattern = async (sourceRoot: string, entry: string): Promise<string[]> => {
+export const resolveKernelPackageInclude = async (sourceRoot: string, entry: string): Promise<string[]> => {
   const isWildcard = entry.endsWith('*');
   const cleanEntry = isWildcard ? entry.slice(0, -1) : entry;
   const directPath = path.join(sourceRoot, cleanEntry);
@@ -162,7 +162,7 @@ export const planKernelPackage = async ({ sourceRoot = process.cwd(), outputRoot
 
   const planned: PlannedFile[] = [];
   for (const entry of manifest.include) {
-    const resolvedEntries = await resolvePattern(sourceRoot, entry);
+    const resolvedEntries = await resolveKernelPackageInclude(sourceRoot, entry);
     for (const rel of resolvedEntries) {
       const normalizedRel = rel.replaceAll('\\', '/');
 

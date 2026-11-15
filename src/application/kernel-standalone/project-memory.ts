@@ -618,7 +618,7 @@ export async function runProjectMemory({
       };
     }
     if (command === 'codebase') {
-      return analyzeCodebase({
+      return await analyzeCodebase({
         project,
         stateStore,
         force: booleanArg(args.force),
@@ -627,7 +627,7 @@ export async function runProjectMemory({
     if (command === 'review') {
       const sourceFile = stringArg(args.sourceFile);
       if (!sourceFile) throw new Error('sourceFile is required for review');
-      return reviewImport({
+      return await reviewImport({
         project,
         stateStore,
         sourceFile,
@@ -637,7 +637,7 @@ export async function runProjectMemory({
     if (command === 'import') {
       const sourceFile = stringArg(args.sourceFile);
       if (!sourceFile) throw new Error('sourceFile is required for import');
-      return importSelected({
+      return await importSelected({
         project,
         stateStore,
         sourceFile,
@@ -646,7 +646,7 @@ export async function runProjectMemory({
       });
     }
     if (command === 'status') {
-      return projectMemoryStatus({ project, stateStore });
+      return await projectMemoryStatus({ project, stateStore });
     }
     throw new Error(`unknown_project_memory_command: ${command}`);
   } finally {

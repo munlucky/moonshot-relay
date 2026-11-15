@@ -135,6 +135,7 @@ test('active legacy lifecycle rows are canonicalized to FRAME while terminal his
     try {
       db.prepare("UPDATE runs SET state = 'SHAPE' WHERE run_id = ?").run('legacy-active');
       db.prepare("UPDATE runs SET state = 'SLICE', status = 'completed' WHERE run_id = ?").run('legacy-terminal');
+      db.exec('PRAGMA user_version=0;');
     } finally {
       db.close?.();
     }

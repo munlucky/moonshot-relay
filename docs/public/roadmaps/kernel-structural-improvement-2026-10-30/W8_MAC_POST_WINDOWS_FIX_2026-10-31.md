@@ -4,7 +4,7 @@
 
 **macOS native canonical source·계정 설치 Runtime·관리 프로필 PASS. 독립된 임시 Run/Session/Reviewer 복구 검증 PASS. 실제 사용 중 Codex 세션을 강제 종료한 뒤 재접속하는 E2E는 미실행이므로 해당 운영 관측은 DEFER, 통합 상태는 PARTIAL 유지.**
 
-- 정확한 대상: GitHub `main`, `685c75349280bd9acfe8dc06a0372f7455b511f6`. macOS Darwin arm64 native host, 원본 `/Users/dev/moonshot-relay` HEAD 동일·작업 트리 clean. 사용자 작업과 무관한 새 Worktree를 강제로 바꾸지 않았다.
+- 정확한 대상: GitHub `main`, `685c75349280bd9acfe8dc06a0372f7455b511f6`. macOS Darwin arm64 native host, 원본 `<macOS-source-checkout>` HEAD 동일·작업 트리 clean. 사용자 작업과 무관한 새 Worktree를 강제로 바꾸지 않았다.
 - Windows native에서 발견·수정한 Git 공통 디렉터리 8.3 short/long 경로 처리(`src/kernel/project-identity.ts`, `src/host/kernel/workspace/stable-workspace.ts`)를 반영했다. Mac에서 생성 Runtime 308개·841 edges, `build:check` changed 0/removed 0 PASS.
 - 계정의 **설치 이전** Runtime Manifest 1,143개 SHA **1,143/1,143 일치**, 손상/사용자 수정 없음. 그러나 최신 소스와 설치본의 `project-identity.js` 및 `stable-workspace.js` 두 파일의 SHA는 달랐다. 기존 계정 설치 상태와 최신 소스 차이를 구분했다.
 - 같은 macOS HEAD에서 `kernel-project-identity`, `kernel-managed-runtime`, `kernel-session-binding` **65/65 PASS**. 분리된 `HOME`/Kernel Runtime/`TMPDIR`에서 실행해 운영 DB와 사용자 세션을 건드리지 않았다.

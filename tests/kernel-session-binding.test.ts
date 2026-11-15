@@ -370,6 +370,7 @@ test('legacy binding migration is additive and idempotent across repeated databa
         ALTER TABLE session_bindings DROP COLUMN successor_run_id;
         ALTER TABLE session_bindings DROP COLUMN close_reason;
         ALTER TABLE session_bindings DROP COLUMN closed_at;
+        PRAGMA user_version=0;
       `);
     } finally {
       legacyDb.close();

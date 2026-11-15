@@ -86,6 +86,7 @@ GitHub branch protection, required status checks, CODEOWNERS review enforcement,
 | `document-memory-policy.md` | policy-anchor | `agents/*memory*`, `skills/doc-auto-sync/**`, `skills/commit-moonshot/**` |
 | `external-skill-pattern-transfer.md` | policy-anchor | `skills/moonshot-relay-maintainer/**`, `skills/moonshot-teams-runner/**`, `rules/workflow*`, `templates/agent-teams-config.yaml` |
 | `harness-bootstrap-lab.md` | operational-procedure | `tools/harness-lab/harness-lab.mjs`, `tests/harness-lab-contract.test.mjs` |
+| `host-owned-io-writer.md` | policy-anchor | `src/host/kernel/io-writer.ts`, `src/host/kernel/io-write-hook.ts`, `src/cli/moonshot-io.ts`, Host I/O acceptance tests |
 | `kernel-codex-host-dispatch-recovery.md` | policy-anchor | `scripts/host/kernel/adapters/codex.mjs`, Kernel Codex host tests |
 | `kernel-codex-independent-review.md` | policy-anchor | `scripts/host/kernel/adapters/codex.mjs`, `scripts/kernel/proof/review-receipt.mjs`, Kernel review tests |
 | `kernel-agent-recovery.md` | operational-procedure | `src/kernel/run/agent-recovery.ts`, `src/host/kernel/run/agent-recovery.ts`, `src/host/kernel/mcp-composition.ts`, Kernel recovery tests |
