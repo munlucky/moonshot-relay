@@ -247,7 +247,6 @@ export interface WorkLifecyclePersistence {
     canonicalRoot: string;
   }): boolean;
   upsertProjectWorkspaceRecord(input: PersistedProjectWorkspace): void;
-  deleteProjectWorkspaceRecord(workspaceId: string): boolean;
   mergeProjectWorkspaceReferences(input: {
     sourceWorkspaceId: string;
     targetWorkspaceId: string;
@@ -680,6 +679,17 @@ export const createWorkLifecyclePersistence = ({
       return row ?? null;
     };
 
+  const assertBindingWorkspace = (projectId: string, workspaceId: string | null): void => {
+    if (!workspaceId) return;
+    const workspace = getProjectWorkspaceRecord(workspaceId);
+    const code = !workspace ? 'binding_workspace_unregistered'
+      : workspace.projectId !== projectId ? 'binding_workspace_project_mismatch' : null;
+    if (code) throw Object.assign(new Error(code), {
+      code, errorCode: code, projectId, workspaceId,
+      nextAction: workspace ? 'return-to-bound-workspace' : 'register-observed-workspace',
+    });
+  };
+
   const listProjectWorkspaceRecords:
     WorkLifecyclePersistence['listProjectWorkspaceRecords'] = (projectId) => (
       db.prepare(`
@@ -1038,13 +1048,6 @@ export const createWorkLifecyclePersistence = ({
       );
     },
 
-    deleteProjectWorkspaceRecord(workspaceId) {
-      const result = db.prepare(
-        'DELETE FROM project_workspaces WHERE workspace_id=?',
-      ).run(workspaceId) as ChangeResult;
-      return Number(result.changes || 0) === 1;
-    },
-
     mergeProjectWorkspaceReferences({
       sourceWorkspaceId,
       targetWorkspaceId,
@@ -1058,6 +1061,9 @@ export const createWorkLifecyclePersistence = ({
             updatedBindings: 0,
             deletedWorkspace: false,
           };
+        }
+        if (!getProjectWorkspaceRecord(targetWorkspaceId)) {
+          throw Object.assign(new Error('binding_workspace_unregistered'), { code: 'binding_workspace_unregistered' });
         }
 
         const bindingUpdate = db.prepare(`
@@ -1254,6 +1260,7 @@ export const createWorkLifecyclePersistence = ({
     listSessionBindings,
 
     insertSessionBinding(input) {
+      assertBindingWorkspace(input.projectId, input.workspaceId);
       db.prepare(`
         INSERT INTO session_bindings(
           binding_id, session_id, provider, surface, run_id, project_id,
@@ -1285,6 +1292,10 @@ export const createWorkLifecyclePersistence = ({
     },
 
     updateSessionBinding({ bindingId, expected = {}, changes }) {
+      if (Object.hasOwn(changes, 'workspaceId') || changes.status === 'active') {
+        const binding = getSessionBinding(bindingId);
+        if (binding) assertBindingWorkspace(binding.projectId, changes.workspaceId === undefined ? binding.workspaceId : changes.workspaceId);
+      }
       const assignments: string[] = [];
       const values: Array<string | null> = [];
       const updateColumns: Readonly<Record<keyof SessionBindingUpdate, string>> = {

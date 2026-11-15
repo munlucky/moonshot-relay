@@ -27,7 +27,7 @@ import { isMutationBearingAction, isNativeDelegationRequested, isWorkUnitBounded
 import { resolveEnforcementStrategy } from '../../contracts/model-execution.js';
 import { admitHostExecutionContract } from '../../contracts/host-execution-contract.js';
 import { observeWorkspaceIdentity } from './workspace/workspace-identity.js';
-import { attestReviewTransport, resolveReviewTransports } from './review-transport-resolver.js';
+import { attestReviewTransport, resolveReviewTransports, resolveReviewCandidate, reviewCandidateUnavailableReason } from './review-transport-resolver.js';
 import type { ReviewTransportOverrides } from './review-transport-resolver.js';
 import { normalizeHostBoundaryRequest } from './host-boundary.js';
 import { validateIndependentSubagentReviewAttestation } from './independent-subagent-review.js';
@@ -263,6 +263,7 @@ interface DispatchKernelTurnAttemptInput {
 }
 
 interface DispatchKernelTurnInput extends Omit<DispatchKernelTurnAttemptInput, 'turn' | 'attemptOverride' | 'suppressOwnerDirect' | 'suppressParallel' | 'useHostDirectiveStrategy'> {
+  nativeAgentHost?: unknown;
   reviewFallbacks?: unknown[];
   hostAdapters?: unknown[];
   reviewTransports?: unknown[];
@@ -589,37 +590,11 @@ const isReviewActionContext = (actionContext: HostRecord = {}): boolean => Boole
 const hasOwn = (value: unknown, key: PropertyKey): boolean => Object.prototype.hasOwnProperty.call(value || {}, key);
 
 const normalizeReviewCandidate = (candidate: unknown, defaults: ReviewCandidateDefaults): ReviewCandidate => {
-  const candidateRecord = asRecord(candidate);
-  const source = candidateRecord.adapter ? candidateRecord : { adapter: candidate };
-  const adapterRecord = asRecord(source.adapter);
+  const resolved = resolveReviewCandidate(candidate, defaults);
+  const adapterRecord = asRecord(resolved.adapter);
   if (typeof adapterRecord.dispatch !== 'function') throw new TypeError('Host review adapter dispatch required');
   const adapter = { ...adapterRecord, dispatch: adapterRecord.dispatch as AdapterLike['dispatch'], capabilities: adapterRecord.capabilities || undefined, surface: adapterRecord.surface || undefined };
-  const surface = adapter?.capabilities?.surface || adapter?.surface || null;
-  const primarySurface = defaults.adapter?.capabilities?.surface || defaults.adapter?.surface || null;
-  const primaryRegistry: RegistryLike | null = defaults.registry || (primarySurface
-    ? createModelRegistry({
-      surface: primarySurface,
-      runtimeHome: defaults.runtimeHome,
-      env: defaults.env,
-      overrides: defaults.overrides,
-    })
-    : null);
-  // A same-surface fallback is only another transport for the already
-  // selected provider route; it cannot bring a second model/effort registry
-  // that silently changes that route. A different surface needs its existing
-  // provider registry to map the same Kernel model class to that provider's
-  // concrete model. Caller overrides are still inherited below, never taken
-  // from the fallback entry.
-  const registry: RegistryLike = (surface && surface === primarySurface
-    ? primaryRegistry
-    : hasOwn(source, 'registry') && source.registry
-      ? source.registry
-      : createModelRegistry({
-        surface,
-        runtimeHome: defaults.runtimeHome,
-        env: defaults.env,
-        overrides: defaults.overrides,
-      })) as RegistryLike;
+  const registry = resolved.registry as RegistryLike;
   return {
     controlPlane: defaults.controlPlane,
     adapter,
@@ -636,17 +611,6 @@ const normalizeReviewCandidate = (candidate: unknown, defaults: ReviewCandidateD
     permissionPolicy: defaults.permissionPolicy,
     economics: defaults.economics,
   };
-};
-
-const reviewCandidateUnavailableReason = (candidate: ReviewCandidate): string | null => {
-  const adapter = candidate?.adapter;
-  if (!adapter || typeof adapter.dispatch !== 'function') return 'adapter-unavailable';
-  if (adapter.nativeDelegationAvailable !== true) return 'reviewer-launcher-unavailable';
-  if (adapter.capabilities?.supportsIndependentContext !== true) return 'independent-context-unavailable';
-  if (adapter.capabilities?.supportsReadOnlyReview !== true) return 'read-only-review-unavailable';
-  const surface = adapter.capabilities?.surface || adapter.surface || null;
-  if (!surface || candidate.registry?.surface !== surface || typeof candidate.registry?.resolve !== 'function') return 'reviewer-registry-unavailable';
-  return null;
 };
 
 // A repeated Host call can replay the same stale `review` action after the
@@ -1906,10 +1870,12 @@ export const dispatchKernelTurn = async ({
   reviewFallbacks = [],
   hostAdapters = [],
   reviewTransports = [],
+  nativeAgentHost = globalThis,
 }: DispatchKernelTurnInput): Promise<HostRecord> => {
   if (!adapter) throw new Error('dispatchKernelTurn requires a Host adapter');
   const fallbackEntries = resolveReviewTransports({
     adapter,
+    registry,
     reviewFallbacks: (Array.isArray(reviewFallbacks) ? reviewFallbacks : [])
       .map((entry) => attestReviewTransport(entry, 'dispatcher:explicit-fallback'))
       .filter(Boolean),
@@ -1922,6 +1888,8 @@ export const dispatchKernelTurn = async ({
     env,
     runtimeHome,
     overrides,
+    nativeAgentHost,
+    reviewSkill: typeof actionContext.reviewSkill === 'string' ? actionContext.reviewSkill : typeof actionContext.skillName === 'string' ? actionContext.skillName : null,
   });
   const reviewIntent = isReviewActionContext(actionContext);
 
@@ -2159,7 +2127,15 @@ export const dispatchKernelTurn = async ({
     reviewReceiptId: null,
     blocker: {
       reason: 'no-independent-review-capability',
-      detail: 'No configured reviewer transport produced an independent outcome.',
+      scope: 'configured-host',
+      environmentCapability: 'not-assessed',
+      detail: 'No configured reviewer transport produced an independent outcome. This does not establish environment-wide unavailability.',
+      nextAction: 'connect-independent-review-launcher',
+      candidates: candidates.map((candidate, index) => ({
+        surface: candidate.adapter.surface || candidate.adapter.capabilities?.surface || null,
+        transport: candidate.adapter.capabilities?.supportsIndependentSubagentReview === true ? 'independent-subagent' : 'native',
+        unavailableReason: candidateUnavailableReasons[index] || null,
+      })),
     },
   };
 };

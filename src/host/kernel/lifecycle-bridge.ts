@@ -12,9 +12,7 @@ import { createGeminiAdapter } from './adapters/gemini.js';
 import { createModelRegistry } from './model-registry.js';
 import { dispatchKernelTurn } from './turn-dispatcher.js';
 import { assessReviewReadiness } from './review-readiness.js';
-import {
-  createIndependentSubagentReviewTransport,
-} from './independent-subagent-review.js';
+import { attestReviewTransport, resolveReviewTransports, resolveReviewCandidate, reviewCandidateUnavailableReason } from './review-transport-resolver.js';
 
 type UnknownRecord = Record<string, unknown>;
 type ReadinessInput = NonNullable<Parameters<typeof assessReviewReadiness>[0]>;
@@ -312,32 +310,6 @@ export const createKernelHostReviewBridge = ({
     const selected = actionContext.reviewSkill || actionContext.skillName || reviewSkill;
     return typeof selected === 'string' && selected.trim() ? selected.trim() : null;
   };
-  const nativeHostRecord = recordOf(nativeAgentHost);
-  const nativeForkSkill = nativeHostRecord.runForkedSkill;
-  const forkSkillLauncher = typeof nativeForkSkill === 'function'
-    ? nativeForkSkill.bind(nativeAgentHost) as (
-        request: UnknownRecord & { signal?: AbortSignal },
-      ) => unknown | Promise<unknown>
-    : null;
-  const effectiveReviewTransportsFor = (
-    actionContext: UnknownRecord = {},
-  ): CandidateEntry[] => {
-    const independentSubagentTransport = createIndependentSubagentReviewTransport({
-      host: nativeAgentHost,
-      forkSkillLauncher,
-      surface: effectiveSurface,
-      reviewSkill: selectedReviewSkill(actionContext),
-      env,
-    });
-    const independentAdapter = adapterOf(independentSubagentTransport);
-    return [
-      ...reviewTransports.map(entryOf),
-      ...(independentSubagentTransport.nativeDelegationAvailable
-        ? [{ adapter: independentAdapter, registry: effectiveRegistry }]
-        : []),
-    ];
-  };
-
   const reviewCandidateForReadiness = (
     actionContext: UnknownRecord = {},
   ): CandidateEntry & {
@@ -347,40 +319,23 @@ export const createKernelHostReviewBridge = ({
   } => {
     const entries: CandidateEntry[] = [
       { adapter: effectiveAdapter, registry: effectiveRegistry },
-      ...reviewFallbacks.map(entryOf),
-      ...hostAdapters.map(entryOf),
-      ...effectiveReviewTransportsFor(actionContext),
+      ...resolveReviewTransports({
+        adapter: dispatcherAdapter(effectiveAdapter), registry: effectiveRegistry, runtimeHome, env, overrides, nativeAgentHost,
+        reviewSkill: selectedReviewSkill(actionContext),
+        reviewFallbacks: reviewFallbacks.map((entry) => attestReviewTransport(entry)),
+        hostAdapters: hostAdapters.map((entry) => attestReviewTransport(entry)),
+        reviewTransports: reviewTransports.map((entry) => attestReviewTransport(entry)),
+      }).map(entryOf),
     ];
 
     for (const entry of entries) {
-      const candidate = entry.adapter || adapterOf(entry);
-      const capabilities = adapterOf(candidate.capabilities);
-      if (
-        candidate.nativeDelegationAvailable !== true
-        || typeof candidate.dispatch !== 'function'
-        || capabilities.supportsIndependentContext !== true
-        || capabilities.supportsReadOnlyReview !== true
-      ) {
-        continue;
-      }
-
-      const candidateSurface = String(
-        capabilities.surface || candidate.surface || '',
-      ).toLowerCase();
-      const candidateRegistry = entry.registry
-        ? recordOf(entry.registry)
-        : candidateSurface === effectiveSurface
-          ? effectiveRegistry
-          : recordOf(createModelRegistry({
-              surface: candidateSurface,
-              runtimeHome,
-              env,
-              overrides,
-            }));
-
+      const candidate = resolveReviewCandidate(entry, {
+        adapter: dispatcherAdapter(effectiveAdapter), registry: effectiveRegistry, runtimeHome, env, overrides,
+      });
+      if (reviewCandidateUnavailableReason(candidate)) continue;
       return {
-        adapter: candidate,
-        registry: candidateRegistry,
+        adapter: adapterOf(candidate.adapter),
+        registry: recordOf(candidate.registry),
       };
     }
 
@@ -563,7 +518,7 @@ export const createKernelHostReviewBridge = ({
           overrides,
           actionContext: actionContextForReview({
             modelInput,
-            actionContext,
+            actionContext: { ...actionContext, reviewSkill: selectedReviewSkill(actionContext) },
           }),
           parentSessionId,
           parentSessionConfig,
@@ -572,7 +527,8 @@ export const createKernelHostReviewBridge = ({
           economics,
           reviewFallbacks,
           hostAdapters,
-          reviewTransports: effectiveReviewTransportsFor(actionContext),
+          reviewTransports,
+          nativeAgentHost,
         });
         result = recordOf(dispatched) as DispatchResultLike;
         return {

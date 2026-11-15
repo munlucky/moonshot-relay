@@ -12,8 +12,9 @@ import { openKernelStateStore } from '../src/kernel/state-store.js';
 const sourceIdentity = `sha256:${'c'.repeat(64)}`;
 const workspaceIdentity = `sha256:${'e'.repeat(64)}`;
 
-const createRun = (store: TestStateStore, { runId, projectId, workspaceId }: { runId: string; projectId: string; workspaceId: string }) =>
-  store.createRun({
+const createRun = (store: TestStateStore, { runId, projectId, workspaceId }: { runId: string; projectId: string; workspaceId: string }) => {
+  registerWorkspace(store, { projectId, workspaceId });
+  return store.createRun({
     runId,
     objective: runId,
     sourceIdentity,
@@ -21,6 +22,7 @@ const createRun = (store: TestStateStore, { runId, projectId, workspaceId }: { r
     workspaceId,
     workspaceIdentity,
   });
+};
 
 const owner = ({ bindingId, sessionId, runId, projectId, workspaceId }: { bindingId: string; sessionId: string; runId: string; projectId: string; workspaceId: string }) =>
   normalizeSessionBinding({
@@ -274,6 +276,15 @@ test('blocked owner binding resumes only through the same-session lifecycle tran
     }));
     store.markRunBlocked('run-blocked-resume', 'unsupported-verification', 'completion');
     assert.equal(store.getActiveOwnerBinding({ projectId, sessionId: 'codex:resume-session' }), null);
+
+    const raw = await openSqliteDb(store.dbPath);
+    try { raw.prepare('DELETE FROM project_workspaces WHERE workspace_id=?').run('workspace-blocked-resume'); } finally { raw.close(); }
+    assert.throws(() => store.reactivateBlockedRunBinding(owner({
+      bindingId: 'binding-blocked-resume', sessionId: 'codex:resume-session', runId: 'run-blocked-resume',
+      projectId, workspaceId: 'workspace-blocked-resume',
+    })), /binding_workspace_unregistered/);
+    assert.equal(assertTestPresent(store.getRun('run-blocked-resume')).status, 'blocked');
+    registerWorkspace(store, { projectId, workspaceId: 'workspace-blocked-resume' });
 
     const resumed = store.reactivateBlockedRunBinding(owner({
       bindingId: 'binding-blocked-resume',

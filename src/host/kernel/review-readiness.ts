@@ -470,6 +470,8 @@ export const assessReviewReadiness = ({
   }
 
   const review = {
+    scope: 'configured-host',
+    environmentCapability: 'not-assessed',
     required: reviewRequired,
     reviewExecutionAvailable: reviewRequired
       ? executionAvailable

@@ -10,10 +10,10 @@
   },
   "allowedDelta": {
     "files": 394,
-    "nonblankLines": 96191,
-    "utf8Bytes": 4845922,
-    "estimatedPromptTokens": 1211480
+    "nonblankLines": 96251,
+    "utf8Bytes": 4851978,
+    "estimatedPromptTokens": 1212994
   },
-  "allowedDeltaRationale": "The immutable aca19ec baseline is retained. This one-time user-authorized policy review covers 150 already-integrated canonical additions since policy commit 34ef0871: 109 documentation-tree files, 6 opt-in account profile assets, 15 Host/CLI source modules and 20 regression/helper files, plus 70 modified paths and this bounded refactor. These assets preserve shared Relay, Kernel and Standalone consumers; they are not newly enabled default Kernel capabilities. Each limit equals the reviewed candidate inventory including this policy and decision record, with zero measured headroom and zero unregistered tests. This is not an automatic ratchet, test suppression or exception mechanism. The checker, immutable baseline, compiler exclusions and runtime policies are unchanged. Future growth requires separate review.",
+  "allowedDeltaRationale": "The immutable aca19ec baseline is retained. This one-time user-authorized policy review covers 150 already-integrated canonical additions since policy commit 34ef0871: 109 documentation-tree files, 6 opt-in account profile assets, 15 Host/CLI source modules and 20 regression/helper files, plus 70 modified paths and this bounded refactor. These assets preserve shared Relay, Kernel and Standalone consumers; they are not newly enabled default Kernel capabilities. Each limit equals the reviewed candidate inventory including this policy and decision record, with zero measured headroom and zero unregistered tests. This is not an automatic ratchet, test suppression or exception mechanism. The checker, immutable baseline, compiler exclusions and runtime policies are unchanged. Future growth requires separate review. A separately reviewed bounded correction covers shared Host review candidate and registry resolution, transactional workspace-binding integrity, and regression cases in existing suites. Its finite allowance increment is the canonical LF diff against d09301f8 including this rationale; existing checkout CRLF drift is excluded. No new files, dependency, schema, workflow stage, policy exception or unregistered test is admitted.",
   "allowedUnregisteredTests": 0
 }

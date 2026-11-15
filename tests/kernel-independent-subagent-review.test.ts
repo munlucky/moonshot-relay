@@ -120,8 +120,15 @@ test('independent subagent transport becomes the last fallback when native revie
   const fixture = await prepareReviewRun('kernel-independent-subagent', 'independent-subagent-chain');
   try {
     let request = null;
-    const transport = createIndependentSubagentReviewTransport({
-      host: {
+    const unavailable = await dispatchKernelTurn({
+      controlPlane: fixture.cp, runId: 'independent-subagent-chain',
+      adapter: createCodexAdapter({ nativeAgentHost: {} }), nativeAgentHost: {},
+      registry: createModelRegistry({ surface: 'codex', env: {} }), actionContext: REVIEW_ACTION,
+    });
+    assert.equal(assertTestRecord(unavailable.blocker).scope, 'configured-host');
+    assert.equal(assertTestRecord(unavailable.blocker).environmentCapability, 'not-assessed');
+    assert.equal(fixture.cp.listReviewReceipts('independent-subagent-chain').length, 0);
+    const nativeAgentHost = {
         spawn_independent_reviewer: async (payload: Record<string, unknown>) => {
           request = payload;
           const reviewSubject = latestReviewSubject(fixture.cp, 'independent-subagent-chain');
@@ -131,8 +138,7 @@ test('independent subagent transport becomes the last fallback when native revie
             reviewTransportAttestation: attestationFor(payload, reviewSubject),
           };
         },
-      },
-    });
+    };
     const result = await dispatchKernelTurn({
       controlPlane: fixture.cp,
       runId: 'independent-subagent-chain',
@@ -140,7 +146,7 @@ test('independent subagent transport becomes the last fallback when native revie
       registry: createModelRegistry({ surface: 'codex', env: {} }),
       parentSessionId: 'owner-session',
       actionContext: REVIEW_ACTION,
-      reviewTransports: [transport],
+      nativeAgentHost,
     });
 
     assert.equal(assertTestRecord(result.dispatch).dispatchMechanism, 'independent-subagent');
@@ -441,12 +447,13 @@ test('forked skill reviewer fails closed when the caller does not select a revie
   assert.equal(launchCount, 0);
 });
 
-test('Kernel Host bridge auto-injects the independent subagent fallback and reports ready', async () => {
+for (const conflictingRegistry of [false, true]) test(conflictingRegistry
+  ? 'Host readiness and dispatch preserve the same route despite a conflicting fallback registry'
+  : 'Kernel Host bridge auto-injects the independent subagent fallback and reports ready', async () => {
   const fixture = await prepareReviewRun('kernel-independent-bridge', 'independent-bridge-chain');
   try {
     let request = null;
-    const bridge = createKernelHostReviewBridge({
-      nativeAgentHost: {
+    const nativeAgentHost = {
         spawn_independent_reviewer: async (payload: Record<string, unknown>) => {
           request = payload;
           const reviewSubject = latestReviewSubject(fixture.cp, 'independent-bridge-chain');
@@ -456,7 +463,13 @@ test('Kernel Host bridge auto-injects the independent subagent fallback and repo
             reviewTransportAttestation: attestationFor(payload, reviewSubject, 'bridge-reviewer-session'),
           };
         },
-      },
+    };
+    const bridge = createKernelHostReviewBridge({
+      nativeAgentHost,
+      reviewTransports: conflictingRegistry ? [{
+        adapter: createIndependentSubagentReviewTransport({ host: nativeAgentHost }),
+        registry: createModelRegistry({ surface: 'codex', overrides: { review: { model: 'wrong-review-model', effort: 'low' } } }),
+      }] : [],
       env: {},
     });
     const run = await fixture.cp.getRun('independent-bridge-chain');
@@ -490,6 +503,8 @@ test('Kernel Host bridge auto-injects the independent subagent fallback and repo
     assert.equal(assertTestRecord(result.hostReview).status, 'receipt-recorded');
     assert.equal(assertTestRecord(result.hostReview).transport, 'independent-subagent');
     assert.equal(assertTestRecord(request).parent_session_id, null);
+    assert.equal(assertTestRecord(request).model, assertTestRecord(readiness.review).model);
+    assert.equal(assertTestRecord(request).reasoningEffort, assertTestRecord(readiness.review).effort);
   } finally {
     await cleanupReviewRun(fixture);
   }

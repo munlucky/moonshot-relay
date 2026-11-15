@@ -124,6 +124,45 @@ test('lifecycle diagnostics report ambiguous owners, terminal bindings, orphaned
   }
 });
 
+test('bindings require registered project authority and legacy dangling history stays visible', async () => {
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-binding-registry-'));
+  const store = await openKernelStateStore({ runtimeHome });
+  const projectId = 'registry-project';
+  try {
+    for (const workspaceId of ['missing-workspace', 'foreign-workspace']) {
+      createRun(store, { runId: workspaceId, projectId, workspaceId });
+      if (workspaceId === 'foreign-workspace') register(store, 'foreign-project', workspaceId);
+      const binding = normalizeSessionBinding({
+        bindingId: workspaceId, provider: 'codex', sessionId: `codex:${workspaceId}`,
+        runId: workspaceId, projectId, workspaceId, accessMode: 'owner',
+      });
+      assert.throws(() => store.createSessionBinding(binding),
+        workspaceId === 'missing-workspace' ? /binding_workspace_unregistered/ : /binding_workspace_project_mismatch/);
+      assert.equal(store.getRun(workspaceId)?.ownerBindingId, null);
+      assert.equal(store.getActiveOwnerBinding({ projectId, sessionId: binding.sessionId }), null);
+    }
+    register(store, projectId, 'missing-workspace');
+    store.createSessionBinding(normalizeSessionBinding({
+      bindingId: 'registered', provider: 'codex', sessionId: 'codex:registered',
+      runId: 'missing-workspace', projectId, workspaceId: 'missing-workspace', accessMode: 'owner',
+    }));
+    const raw = await openSqliteDb(store.dbPath);
+    try {
+      raw.prepare('DELETE FROM project_workspaces WHERE workspace_id=?').run('missing-workspace');
+      const active = store.diagnoseLifecycleState({ projectId });
+      assert.equal(active.status, 'degraded');
+      assert.equal(active.findings.find((finding) => finding.code === 'binding_namespace_problem')?.workspaceStatus, 'missing');
+      raw.exec("UPDATE session_bindings SET status='inactive'; UPDATE runs SET owner_binding_id=NULL");
+      const historical = store.diagnoseLifecycleState({ projectId });
+      assert.equal(historical.status, 'warning');
+      assert.equal(historical.findings.find((finding) => finding.code === 'binding_namespace_problem')?.severity, 'warning');
+    } finally { raw.close(); }
+  } finally {
+    store.close();
+    await rm(runtimeHome, { recursive: true, force: true });
+  }
+});
+
 test('doctor includes clean project lifecycle diagnostics without changing its ready contract', async () => {
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-lifecycle-doctor-cli-state-'));
   const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'kernel-lifecycle-doctor-cli-project-'));

@@ -6,6 +6,7 @@ import type { HostAdapterDispatch } from './adapter-dispatch.js';
 import { createClaudeAdapter } from './adapters/claude.js';
 import { createCodexAdapter } from './adapters/codex.js';
 import { createModelRegistry, type ModelOverrideMap } from './model-registry.js';
+import { createIndependentSubagentReviewTransport } from './independent-subagent-review.js';
 
 type UnknownRecord = Record<PropertyKey, unknown>;
 
@@ -131,6 +132,34 @@ const surfaceOf = (candidate: unknown): string => {
   ).toLowerCase();
 };
 
+// Readiness and dispatch must admit the same Host-owned execution boundary.
+export const resolveReviewCandidate = (candidate: unknown, defaults: {
+  adapter: ReviewAdapter; registry?: unknown; runtimeHome?: string | null | undefined;
+  env?: NodeJS.ProcessEnv; overrides?: ReviewTransportOverrides;
+}): ReviewTransportEntry => {
+  const { adapter, entry } = candidateParts(candidate);
+  if (!adapter) throw new TypeError('Host review adapter dispatch required');
+  const surface = surfaceOf(adapter);
+  // A same-provider transport cannot replace the primary model/effort route.
+  const registry = surface === surfaceOf(defaults.adapter)
+    ? defaults.registry || createReviewModelRegistry({ ...defaults, surface })
+    : entry?.registry || createReviewModelRegistry({ ...defaults, surface });
+  return { adapter, registry };
+};
+
+export const reviewCandidateUnavailableReason = (candidate: { adapter: unknown; registry?: unknown }): string | null => {
+  const adapter = asRecord(candidate.adapter);
+  const capabilities = asRecord(adapter?.capabilities);
+  const registry = asRecord(candidate.registry);
+  if (typeof adapter?.dispatch !== 'function') return 'adapter-unavailable';
+  if (adapter.nativeDelegationAvailable !== true) return 'reviewer-launcher-unavailable';
+  if (capabilities?.supportsIndependentContext !== true) return 'independent-context-unavailable';
+  if (capabilities?.supportsReadOnlyReview !== true) return 'read-only-review-unavailable';
+  const surface = capabilities.surface || adapter.surface;
+  if (!surface || registry?.surface !== surface || typeof registry?.resolve !== 'function') return 'reviewer-registry-unavailable';
+  return null;
+};
+
 export const resolveReviewTransports = ({
   adapter = null,
   reviewFallbacks = [],
@@ -139,6 +168,9 @@ export const resolveReviewTransports = ({
   env = process.env,
   runtimeHome = null,
   overrides = {},
+  nativeAgentHost = globalThis,
+  reviewSkill = null,
+  registry = null,
 }: {
   adapter?: ReviewAdapter | null;
   reviewFallbacks?: readonly unknown[];
@@ -147,6 +179,9 @@ export const resolveReviewTransports = ({
   env?: NodeJS.ProcessEnv;
   runtimeHome?: (string | null) | undefined;
   overrides?: ReviewTransportOverrides;
+  nativeAgentHost?: unknown;
+  reviewSkill?: string | null;
+  registry?: unknown;
 } = {}): AttestedReviewTransport[] => {
   const explicitFallbacks = reviewFallbacks.filter(hasHostAttestation);
   const additionalAdapters = [
@@ -165,6 +200,20 @@ export const resolveReviewTransports = ({
   const primarySurface = String(
     adapter?.surface || adapter?.capabilities?.surface || '',
   ).toLowerCase();
+
+  const host = asRecord(nativeAgentHost);
+  const forkSkill = host?.runForkedSkill;
+  const independent = createIndependentSubagentReviewTransport({
+    host: nativeAgentHost,
+    forkSkillLauncher: typeof forkSkill === 'function' ? forkSkill.bind(host) : null,
+    surface: primarySurface,
+    reviewSkill,
+    env,
+  });
+  if (independent.nativeDelegationAvailable) candidates.push(attestReviewTransport({
+    adapter: independent,
+    registry: registry || createReviewModelRegistry({ surface: primarySurface, runtimeHome, env, overrides }),
+  }, 'resolver:independent-subagent'));
 
   if (primarySurface === 'codex') {
     candidates.push(attestReviewTransport({

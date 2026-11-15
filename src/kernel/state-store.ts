@@ -2194,12 +2194,14 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         if (providerMismatch || workspaceMismatch) {
           findings.push({
             code: 'binding_namespace_problem',
-            severity: 'error',
+            severity: binding.status === 'active' ? 'error' : 'warning',
             bindingId: binding.bindingId,
             runId: binding.runId,
             projectId: binding.projectId,
             providerMismatch: Boolean(providerMismatch),
             workspaceMismatch: Boolean(workspaceMismatch),
+            bindingStatus: binding.status,
+            workspaceStatus: !binding.workspaceId ? 'unbound' : !workspace ? 'missing' : workspaceMismatch ? 'project-mismatch' : 'registered',
           });
         }
       }
