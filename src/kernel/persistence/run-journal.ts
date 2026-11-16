@@ -21,6 +21,7 @@ export interface RunJournalEntry {
 
 export interface RunJournalPersistence {
   listRunJournal(runId: string): RunJournalEntry[];
+  recordOwnerRecovery(runId: string, subject: string): void;
 }
 
 export const runJournalSchema = () => {
@@ -93,6 +94,11 @@ export const createRunJournalPersistence = ({
 }: {
   db: SqliteDatabase;
 }): RunJournalPersistence => ({
+  recordOwnerRecovery(runId, subject) {
+    db.prepare(`INSERT INTO run_journal(run_id, kind, subject_id, contract_revision, mutation_revision, created_at)
+      SELECT run_id, 'owner-recovered', ?, contract_revision, mutation_revision,
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now') FROM runs WHERE run_id=?`).run(subject, runId);
+  },
   listRunJournal(runId) {
     return db.prepare(`
       SELECT id, run_id AS runId, kind, subject_id AS subjectId,

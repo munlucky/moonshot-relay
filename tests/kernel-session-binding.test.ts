@@ -1,5 +1,6 @@
 import { assertTestPresent, assertTestRecord } from './helpers/assert-value.js';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -313,6 +314,49 @@ test('blocked owner binding resumes only through the same-session lifecycle tran
     store.close();
     await rm(runtimeHome, { recursive: true, force: true });
   }
+});
+
+test('explicit blocked-owner recovery preserves history and rejects stale, active and live-lease owners', async () => {
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-owner-recovery-'));
+  const store = await openKernelStateStore({ runtimeHome });
+  const runId = 'run-recover', projectId = 'project-recover', workspaceId = 'workspace-recover';
+  const original = owner({ bindingId: 'original', sessionId: 'codex:old', runId, projectId, workspaceId });
+  const replacement = owner({ bindingId: 'replacement', sessionId: 'codex:new', runId, projectId, workspaceId });
+  const approval = { expectedOwnerBindingId: 'original', approvalRef: 'user-request:recover-connection' };
+  try {
+    createRun(store, { runId, projectId, workspaceId });
+    store.createSessionBinding(original);
+    assert.throws(() => store.recoverBlockedRunOwner(replacement, approval), /owner_recovery_conflict/);
+    store.markRunBlocked(runId, 'delivery_materialization_recovery_required', 'safety');
+    const before = assertTestPresent(store.getRun(runId));
+    assert.throws(() => store.recoverBlockedRunOwner(replacement, { ...approval, approvalRef: '' }), /owner_recovery_approval_required/);
+    assert.throws(() => store.recoverBlockedRunOwner(replacement, { ...approval, approvalRef: 'a'.repeat(513) }), /owner_recovery_approval_invalid/);
+    assert.throws(() => store.recoverBlockedRunOwner(replacement, { ...approval, expectedOwnerBindingId: 'stale' }), /owner_recovery_conflict/);
+    assert.throws(() => store.recoverBlockedRunOwner({ ...replacement, projectId: 'elsewhere' }, approval), /run_project_mismatch/);
+    assert.throws(() => store.recoverBlockedRunOwner({ ...replacement, workspaceId: 'elsewhere' }, approval), /run_workspace_mismatch/);
+    store.recordLease(runId, { holder: 'old-runner', expiresAt: new Date(Date.now() + 60000).toISOString(), fencingToken: 1 });
+    assert.throws(() => store.recoverBlockedRunOwner(replacement, approval), /owner_recovery_live_lease/);
+    store.releaseLease(runId, { holder: 'old-runner' });
+    assert.equal(assertTestPresent(store.recoverBlockedRunOwner(replacement, approval)).sessionId, 'codex:new');
+    const after = assertTestPresent(store.getRun(runId));
+    assert.equal(after.ownerBindingId, 'replacement');
+    for (const key of ['status', 'blockedReason', 'blockingClass', 'mutationRevision', 'contractRevision'] as const) {
+      assert.equal(after[key], before[key], key);
+    }
+    assert.equal(after.status, 'blocked');
+    assert.equal(store.getActiveRunBinding({ projectId, sessionId: 'codex:old', runId }), null);
+    assert.equal(assertTestPresent(store.getRunOwnerBinding(runId)).sessionId, 'codex:new');
+    const journal = store.getRunJournal(runId).filter(row => row.kind === 'owner-recovered');
+    assert.equal(journal.length, 1);
+    const journalSubject = assertTestPresent(assertTestPresent(journal[0]).subjectId);
+    assert.ok(!journalSubject.includes(approval.approvalRef));
+    assert.deepEqual(JSON.parse(journalSubject), {
+      previousBindingId: 'original', bindingId: 'replacement',
+      approvalRefDigest: `sha256:${createHash('sha256')
+        .update(`${runId}\0original\0${approval.approvalRef}`).digest('hex')}`,
+    });
+    assert.throws(() => store.recoverBlockedRunOwner(replacement, approval), /owner_recovery_conflict/);
+  } finally { store.close(); await rm(runtimeHome, { recursive: true, force: true }); }
 });
 
 const crossProjectBindingRollbackSpec = async () => {

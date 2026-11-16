@@ -102,6 +102,7 @@ if (args.includes('--help') || args.includes('-h') || command === 'help') {
       'mcp-bridge': 'kernel mcp-bridge [--runtime-home <path>] [--enable-io-writer] [--enable-io-reader] (Kernel MCP; opt-in kernel_attach.ioWrite/ioRead)',
       finalize: 'kernel finalize [run-id] [--json]',
       resume: 'kernel resume [run-id] [--json]',
+      'recover-owner': 'kernel recover-owner <run-id> --expected-owner <binding-id> --approval-ref <user-authorization-ref> [--json] (inactive blocked owner only; preserves proof and blocker)',
       doctor: 'kernel doctor [--project-root <path>] [--json]',
     },
     reportExample: {
@@ -153,7 +154,7 @@ const readContextJson = async (): Promise<UnknownRecord> => {
 const runtimeHomeArg = getArgValue('--runtime-home');
 const configuredRuntimeHome = runtimeHomeArg || env.MOON_RELAY_KERNEL_HOME || null;
 const projectRoot = getArgValue('--project-root') || cwd;
-const positionalRunId = ['next', 'report', 'resume', 'abandon', 'approve'].includes(command)
+const positionalRunId = ['next', 'report', 'resume', 'abandon', 'approve', 'recover-owner'].includes(command)
   && args[1]
   && !args[1].startsWith('--')
   ? args[1]
@@ -615,6 +616,19 @@ try {
     await assertKernelTrack(targetRoot);
     const { uninstallKernel } = await import('../../kernel/installer.js');
     output(await uninstallKernel({ targetRoot }));
+  } else if (command === 'recover-owner') {
+    const runId = explicitRunId;
+    const expectedOwnerBindingId = getArgValue('--expected-owner');
+    const approvalRef = getArgValue('--approval-ref');
+    if (!runId || !expectedOwnerBindingId || !approvalRef?.trim()) {
+      throw Object.assign(new Error('owner_recovery_approval_required'), { code: 'owner_recovery_approval_required' });
+    }
+    const cp = await openControlPlane();
+    try {
+      const binding = cp.recoverBlockedOwner(runId, { expectedOwnerBindingId, approvalRef });
+      output({ schemaVersion: 1, status: 'owner-recovered', runId, bindingId: binding?.bindingId,
+        nextAction: 'resume-existing-run', proofPreserved: true });
+    } finally { await closeControlPlane(cp); }
   } else if (command === 'next') {
     // Model-visible runtime command 1 of 2. When the host supplies a task
     // contract, `next` bootstraps the run idempotently so the model never
@@ -657,11 +671,13 @@ try {
           });
         }
       } else {
-        const runId = await cp.resolveRunId({
+        // Select the exact project/worktree cursor before admission. A blocked
+        // owner's binding is inactive until ensureRun reactivates it; the
+        // command preflight in resolveRunId would reject that transition.
+        invocation = cp.resolveBoundInvocation({
           explicitRunId,
           envRunId: kernelEnv.MOON_RELAY_KERNEL_RUN_ID || null,
         });
-        invocation = { mode: 'resume', runId };
       }
     } catch (err: unknown) {
       const failure = errorRecord(err);

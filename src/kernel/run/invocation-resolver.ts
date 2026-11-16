@@ -357,7 +357,12 @@ export const resolveBoundInvocation = ({
   }
 
   if (!cursorRun) {
-    if (!contract) throw codedError('host_binding_missing', 'supply-a-task-contract');
+    if (!contract) throw codedError('host_binding_missing', 'supply-a-task-contract', {
+      remediation: {
+        action: 'supply-a-task-contract',
+        command: 'kernel next --contract-json <task-contract.json>',
+      },
+    });
     return {
       mode: 'create',
       runId: requestedRunId || createOpaqueRunId(),

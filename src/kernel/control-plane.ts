@@ -1727,6 +1727,17 @@ export const createKernelControlPlane = async ({
       };
     },
 
+    recoverBlockedOwner(runId: string, { expectedOwnerBindingId, approvalRef }: {
+      expectedOwnerBindingId: string; approvalRef: string;
+    }) {
+      if (!hostSessionId) throw Object.assign(new Error('host_binding_missing'), { code: 'host_binding_missing' });
+      return store.recoverBlockedRunOwner(normalizeSessionBinding({
+        sessionId: hostSessionId, runId, projectId: currentProject.projectId,
+        workspaceId: effectiveWorkspaceId, workspaceRoot: path.resolve(projectRoot),
+        provider: hostProvider, surface: hostSurface, accessMode: 'owner',
+      }), { expectedOwnerBindingId, approvalRef });
+    },
+
     async resolveRunId({ explicitRunId = null, envRunId = null }: { explicitRunId?: string | null; envRunId?: string | null } = {}) {
       if (explicitRunId && envRunId && String(explicitRunId) !== String(envRunId)) {
         throw Object.assign(new Error('run_binding_conflict'), {

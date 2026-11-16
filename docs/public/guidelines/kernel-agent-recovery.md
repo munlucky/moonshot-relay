@@ -38,6 +38,30 @@ history. The repeated-condition budget still comes from the existing recovery
 fingerprint comparison; Kernel owner, lease, scope, safety, proof and completion
 authority are unchanged.
 
+## Explicit recovery of an inactive blocked owner
+
+When the user explicitly authorizes connection recovery from a different Host
+session, use `kernel recover-owner <run-id> --expected-owner <observed-binding-id>
+--approval-ref <user-request-reference>` with the actual current session and
+explicit project/runtime roots. This command accepts only an inactive owner
+closed by `terminal_blocked_cleanup`, in the exact Run project/workspace, with
+no live Run lease. A stale expected owner or an active owner is rejected.
+
+Recovery creates a new binding and atomically changes the owner reference.
+It preserves the old binding, contract, mutation revision, proofs and original
+blocked reason, and appends a digest of the operator-provided reference to the Run journal.
+The `--approval-ref` value is an operator-provided audit correlation reference,
+not proof that a Host authenticated a user. Only the digest of the reference,
+bound to the Run and previous owner, is stored. Run this administrative command
+only after the caller has independently confirmed the user's authorization;
+never let a model fabricate a reference or substitute it for a trusted approval
+channel.
+
+It does not approve a judgment or repair a pending Delivery. Continue with
+native `next` and resolve the returned original blocker. Never use another
+session's ID to impersonate its owner. An authorization reference records the
+human request; it must not be invented by the agent.
+
 ## Derived-state reconciliation
 
 `kernel next --diagnose --reconcile-derived-state --json` may quarantine

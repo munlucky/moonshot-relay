@@ -1615,6 +1615,50 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
         : null;
     },
 
+    recoverBlockedRunOwner(binding: BindingInput, { expectedOwnerBindingId, approvalRef }: {
+      expectedOwnerBindingId: string; approvalRef: string;
+    }) {
+      const reject = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+      if (!expectedOwnerBindingId || !approvalRef.trim()) reject('owner_recovery_approval_required');
+      if (approvalRef.length > 512) reject('owner_recovery_approval_invalid');
+      return db.transaction(() => {
+        const run = workLifecyclePersistence.getRunLifecycleIdentity(binding.runId);
+        if (!run || run.projectId !== binding.projectId) return reject('run_project_mismatch');
+        if (!run.workspaceId || run.workspaceId !== binding.workspaceId) reject('run_workspace_mismatch');
+        if (run.status !== 'blocked' || run.ownerBindingId !== expectedOwnerBindingId) reject('owner_recovery_conflict');
+        const prior = workLifecyclePersistence.getSessionBinding(expectedOwnerBindingId);
+        if (!prior || prior.status !== 'inactive' || prior.accessMode !== 'owner'
+          || prior.runId !== binding.runId || prior.projectId !== binding.projectId
+          || prior.workspaceId !== binding.workspaceId || prior.closeReason !== 'terminal_blocked_cleanup'
+          || binding.accessMode !== 'owner' || binding.status !== 'active'
+          || binding.bindingId === prior.bindingId) reject('owner_recovery_conflict');
+        const lease = workLifecyclePersistence.getLease(binding.runId);
+        if (lease && Date.parse(lease.expiresAt) > Date.now()) reject('owner_recovery_live_lease');
+        const observed = now();
+        workLifecyclePersistence.insertSessionBinding({
+          ...binding, surface: binding.surface ?? null, workspaceId: binding.workspaceId ?? null,
+          workspaceRoot: binding.workspaceRoot ?? null, expiresAt: binding.expiresAt ?? null,
+          createdAt: observed, updatedAt: observed, closedAt: null, closeReason: null, successorRunId: null,
+        });
+        if (!workLifecyclePersistence.compareAndSetRunOwnerBinding({
+          runId: binding.runId, projectId: binding.projectId, workspaceId: binding.workspaceId ?? null,
+          expectedBindingId: expectedOwnerBindingId, bindingId: binding.bindingId,
+        })) reject('owner_recovery_conflict');
+        runJournalPersistence.recordOwnerRecovery(binding.runId, JSON.stringify({
+          previousBindingId: expectedOwnerBindingId,
+          bindingId: binding.bindingId,
+          // An operator-supplied reference is only an audit correlation key.
+          // Never persist the raw text or treat it as an authenticated approval.
+          approvalRefDigest: `sha256:${createHash('sha256')
+            .update(`${binding.runId}\0${expectedOwnerBindingId}\0${approvalRef.trim()}`)
+            .digest('hex')}`,
+        }));
+        // Keep the blocked reason, all proofs, contract and mutation revision.
+        // Native next must resolve the original blocker after ownership recovery.
+        return workLifecyclePersistence.getSessionBinding(binding.bindingId);
+      })();
+    },
+
     createSessionBinding(binding: BindingInput) {
       const create = db.transaction(() => {
         const run = workLifecyclePersistence.getRunLifecycleIdentity(binding.runId);

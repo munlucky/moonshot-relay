@@ -6,6 +6,8 @@ import { spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
+import { openKernelStateStore } from '../src/kernel/state-store.js';
 
 test('kernel CLI main(argv, deps) is import-safe and writes help through injected output', async () => {
   const stdout: string[] = [];
@@ -24,6 +26,7 @@ test('kernel CLI main(argv, deps) is import-safe and writes help through injecte
   const help = JSON.parse(stdout[0]);
   assert.equal(help.usage, 'kernel <command> [options]');
   assert.ok(help.commands.next);
+  assert.match(help.commands['recover-owner'], /--expected-owner.*--approval-ref/);
   assert.ok(help.commands['worker-host']);
   assert.match(help.commands['worker-host'], /--enable-io-writer/);
   assert.match(help.commands['mcp-bridge'], /--enable-io-writer/);
@@ -59,6 +62,48 @@ test('CLI startup opt-in reaches local capabilities and the MCP tool schema', as
         assert.equal(Object.hasOwn(attach.inputSchema.properties, 'ioRead'), flags.includes('--enable-io-reader'));
       }
     }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('CLI owner recovery followed by contract-free next reaches same-session lifecycle admission', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-cli-owner-reentry-'));
+  const projectRoot = path.join(root, 'project'), runtimeHome = path.join(root, 'runtime');
+  const runId = 'run-cli-owner-reentry';
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^MOON_RELAY_KERNEL_|^CODEX_THREAD_ID$/.test(key)));
+  env.MOON_RELAY_KERNEL_REEXEC = '1';
+  const invoke = async (args: string[]) => {
+    const lines: string[] = [];
+    await kernelMain([...args, '--project-root', projectRoot, '--runtime-home', runtimeHome,
+      '--provider', 'codex', '--session-id', 'codex:new-owner', '--json'], {
+      cwd: projectRoot, env, managedRuntimeHome: process.cwd(),
+      stdout: value => lines.push(String(value)), stderr: value => lines.push(String(value)),
+    });
+    return JSON.parse(lines.join('\n'));
+  };
+  try {
+    await mkdir(path.join(projectRoot, '.moon-relay'), { recursive: true });
+    await writeFile(path.join(projectRoot, '.moon-relay', 'track.yaml'), 'track: kernel\n');
+    await writeFile(path.join(projectRoot, '.moon-relay', 'project.identity.yaml'), 'projectId: cli-owner-reentry\n');
+    await writeFile(path.join(projectRoot, 'package.json'), JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }));
+    const cp = await createKernelControlPlane({ projectRoot, runtimeHome, requireHostBinding: true,
+      env: { ...env, MOON_RELAY_KERNEL_PROVIDER: 'codex', MOON_RELAY_KERNEL_SESSION_ID: 'codex:old-owner' } });
+    try { await cp.ensureRun({ runId, objective: 'CLI reentry', taskContract: { objective: 'CLI reentry', acceptance: ['Resume existing work'] } }); }
+    finally { await cp.close(); }
+    const store = await openKernelStateStore({ runtimeHome });
+    let expectedOwner: string;
+    try {
+      const original = store.getRunOwnerBinding(runId);
+      assert.ok(original);
+      expectedOwner = original.bindingId;
+      store.markRunBlocked(runId, 'operator-input-needed', 'external');
+    } finally { store.close(); }
+    const recovered = await invoke(['recover-owner', runId, '--expected-owner', expectedOwner,
+      '--approval-ref', 'user-request:resume-existing-task']);
+    assert.equal(recovered.status, 'owner-recovered', JSON.stringify(recovered));
+    const next = await invoke(['next', runId]);
+    assert.notEqual(next.errorCode, 'host_binding_missing', JSON.stringify(next));
+    assert.equal(next.runId, runId);
+    assert.equal(next.action?.type, 'implement', JSON.stringify(next));
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
