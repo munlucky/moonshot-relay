@@ -13,7 +13,7 @@ The first durable write is a `runtime-state.sqlite` memory promotion ledger deci
 
 ## Execution Boundary
 
-- Must run from the harness repository root, normally `C:\dev\moonshot-relay`.
+- Must run from the root of the `moonshot-relay` Git worktree; do not assume an OS-specific checkout path.
 - Must write only with `context.project_id: moonshot-relay`.
 - Must not write project-specific domain facts to the harness graph.
 - Must not read `.moonshot-relay/docs/ko/` as a source.

@@ -84,8 +84,8 @@ Report memory disposition, verification, staged paths, commit identity, and push
 
 ## References
 
-- [Commit Moonshot Reference](docs/public/reference/commit-moonshot-reference.md)
-- [Token Optimization Guidelines](docs/public/guidelines/token-optimization.md)
+- [Commit guide](../../docs/public/reference/commit-moonshot-reference.md)
+- [Token guidelines](../../docs/public/guidelines/token-optimization.md)
 
 ---
 

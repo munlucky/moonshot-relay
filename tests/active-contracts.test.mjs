@@ -94,6 +94,31 @@ test('active human-facing references do not use missing profile-local guideline 
   assert.deepEqual(violations, []);
 });
 
+test('selected source skills reference existing Markdown targets', async () => {
+  const missing = [];
+  for (const skill of ['commit-moonshot', 'session-logger']) {
+    for (const variant of ['SKILL.md', 'SKILL.ko.md']) {
+      const source = `skills/${skill}/${variant}`;
+      const content = await readFile(fromRoot(source), 'utf8');
+      for (const match of content.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)) {
+        const href = match[1].split('#')[0];
+        if (!href || /^(?:[a-z]+:|\/)/i.test(href)) continue;
+        const target = path.resolve(path.dirname(fromRoot(source)), href);
+        if (!existsSync(target)) missing.push(`${source}: ${href}`);
+      }
+    }
+  }
+  assert.deepEqual(missing, []);
+});
+
+test('harness memory promoter uses the repository boundary without a fixed OS checkout', async () => {
+  for (const file of ['agents/harness-memory-promoter.md', 'agents/harness-memory-promoter.ko.md']) {
+    const source = await readFile(fromRoot(file), 'utf8');
+    assert.doesNotMatch(source, /C:\\dev\\moonshot-relay/i, file);
+    assert.match(source, /moonshot-relay/, file);
+  }
+});
+
 test('active public guideline references resolve in source', async () => {
   const missing = [];
   const guidelineRef = /docs\/public\/guidelines\/[A-Za-z0-9_.-]+/g;

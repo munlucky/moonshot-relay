@@ -216,7 +216,7 @@
       "name": "commit-moonshot",
       "path": "skills/commit-moonshot",
       "source": "canonical",
-      "contentHash": "2fe3a8145057bf2fe4f03878e5d3b62d82ac90a9a9720eb9d4e2419dbcf0e514",
+      "contentHash": "315e4733eb410dde9db8cd1afcbdafb6dc682d70fa24be7a2409cbcaa1747e66",
       "license": "MIT",
       "stages": [],
       "permissions": [
@@ -824,7 +824,7 @@
       "name": "session-logger",
       "path": "skills/session-logger",
       "source": "canonical",
-      "contentHash": "9ed38d15326ec510a8dc540a87a000376d473467a6c975ca34d979ccfd810c40",
+      "contentHash": "38a3f457bbc873647762c4cb61eb7061097c57f3f1795db656398173cf0f5276",
       "license": "MIT",
       "stages": [],
       "permissions": [

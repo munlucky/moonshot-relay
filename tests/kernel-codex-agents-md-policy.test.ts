@@ -17,6 +17,14 @@ test('it declares structure, commands, constraints, do-not rules, and done crite
   }
 });
 
+test('the Codex profile distinguishes canonical sources from generated runtime outputs', async () => {
+  const text = await readFile('package/profile-templates/codex/AGENTS.md', 'utf8');
+  assert.match(text, /`src\/kernel\/` — canonical Kernel core/);
+  assert.match(text, /`src\/host\/kernel\/` — canonical Host/);
+  assert.match(text, /`scripts\/kernel\/` and `scripts\/host\/kernel\/` — generated runtime outputs/);
+  assert.match(text, /edit `src\/`, not these outputs/);
+});
+
 test('a model id, reasoning effort, or fast-mode setting is a violation', () => {
   assert.ok(auditAgentsMarkdown('Use gpt-5.6-sol for planning.').violations.some((v) => v.id === 'model-id'));
   assert.ok(auditAgentsMarkdown('model_reasoning_effort = "high"').violations.some((v) => v.id === 'reasoning-effort'));

@@ -7,8 +7,9 @@ Host and are deliberately absent from this file.
 ## Repository Structure
 
 - `bin/` — CLI entrypoints (`moon-relay-kernel.mjs`, `moonshot-relay.mjs`).
-- `scripts/kernel/` — Kernel core: contract, capsule, evidence, knowledge, state.
-- `scripts/host/kernel/` — Host side: prompt envelope, provider policies, adapters.
+- `src/kernel/` — canonical Kernel core: contract, capsule, evidence, knowledge, state.
+- `src/host/kernel/` — canonical Host prompt, provider policies, adapters.
+- `scripts/kernel/` and `scripts/host/kernel/` — generated runtime outputs; edit `src/`, not these outputs.
 - `schemas/` — published contract schemas.
 - `tests/` — `node --test` suites; the active suite is defined in `package.json`.
 

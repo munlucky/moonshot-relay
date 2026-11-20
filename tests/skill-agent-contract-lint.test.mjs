@@ -164,7 +164,7 @@ test('warning ratchet fails closed when the reviewed registry is missing or expl
   assert.ok(empty.findings.some((finding) => finding.code === 'skill.warning_baseline_empty'));
 });
 
-test('accepted P04 exact token budget rejects one estimated-token public skill growth', async () => {
+test('accepted P04 exact token budget rejects a real public skill overrun', async () => {
   const temp = await mkdtemp(path.join(os.tmpdir(), 'skill-token-ratchet-'));
   for (const relative of ['package', 'catalog', 'agents', 'tools/evals', 'tests/fixtures/skill-routing']) await mkdir(path.join(temp, relative), { recursive: true });
   await cp(path.join(root, 'skills/session-logger'), path.join(temp, 'skills/session-logger'), { recursive: true });
@@ -173,7 +173,7 @@ test('accepted P04 exact token budget rejects one estimated-token public skill g
   await cp(path.join(root, 'tools/evals/skill-lint-carry-forward.json'), path.join(temp, 'tools/evals/skill-lint-carry-forward.json'));
   await cp(path.join(root, 'tests/fixtures/skill-routing/public-entrypoint-cases.json'), path.join(temp, 'tests/fixtures/skill-routing/public-entrypoint-cases.json'));
   const target = path.join(temp, 'skills/session-logger/SKILL.md');
-  await writeFile(target, `${await readFile(target, 'utf8')}xxxx`);
+  await writeFile(target, `${await readFile(target, 'utf8')}\n${'additional audit fixture content '.repeat(48)}`);
   const result = await lintSkillsAndAgents({ repoRoot: temp });
   assert.ok(result.findings.some((finding) => finding.code === 'skill.token_budget_exceeded' && finding.skill === 'session-logger'));
 });

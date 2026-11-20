@@ -13,7 +13,7 @@ description: 프로젝트 승격 후보를 검토하고 승인된 범용 하네�
 
 ## 실행 경계
 
-- 반드시 하네스 저장소 루트, 일반적으로 `C:\dev\moonshot-relay`에서 실행합니다.
+- `moonshot-relay` Git 작업 트리 루트에서 실행합니다. 운영체제별 고정 체크아웃 경로를 가정하지 않습니다.
 - `context.project_id: moonshot-relay`로만 저장합니다.
 - 프로젝트 고유 도메인 사실은 하네스 graph에 저장하지 않습니다.
 - `.moonshot-relay/docs/ko/`는 소스로 읽지 않습니다.

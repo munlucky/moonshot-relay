@@ -69,8 +69,8 @@ Logs may reference compact knowledge status and provenance, never raw account-ro
 
 ## References
 
-- [Session Compaction](docs/public/guidelines/session-compaction.md)
-- [Session Logger Reference](docs/public/reference/session-logger-reference.md)
-- [rules/docs/documentation.md](rules/docs/documentation.md)
-- [rules/communication.md](rules/communication.md)
-- [rules/output-format.md](rules/output-format.md)
+- [Compaction](../../docs/public/guidelines/session-compaction.md)
+- [Logger guide](../../docs/public/reference/session-logger-reference.md)
+- [Docs rules](../../rules/docs/documentation.md)
+- [Communication](../../rules/communication.md)
+- [Output format](../../rules/output-format.md)
