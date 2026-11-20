@@ -667,6 +667,26 @@ export const buildCompactModelVisiblePromptMessage = ({
   compactJson: true,
 });
 
+// Unified selector for production adapters and dispatcher measurements. Keeps
+// the standard projection by default and enables the compact projection across
+// every provider surface only when explicitly opted in via `compact` or
+// `MOON_RELAY_KERNEL_COMPACT_PROMPT_MESSAGE=on`.
+export const resolveModelVisiblePromptMessage = ({
+  prompt = {},
+  review = false,
+  compact = false,
+  env = process.env,
+}: {
+  prompt?: unknown;
+  review?: boolean;
+  compact?: boolean;
+  env?: NodeJS.ProcessEnv;
+} = {}): string => (
+  compact === true || String(env?.MOON_RELAY_KERNEL_COMPACT_PROMPT_MESSAGE || '').trim().toLowerCase() === 'on'
+    ? buildCompactModelVisiblePromptMessage({ prompt, review })
+    : buildModelVisiblePromptMessage({ prompt, review })
+);
+
 // Evaluator-only ablation candidate. Guidance is removed only when currentWork
 // already has its own objective, so the candidate never substitutes guidance
 // for missing work identity. The replay quality gate decides whether losing the

@@ -7,7 +7,7 @@ Last-Reviewed: 2026-07-16
 ## Project Overview
 
 - **Service**: Harness Project - self-hosted repository for reusable Moonshot Relay rules, skills, agents, scripts, templates, and verification contracts
-- **Stack**: Bash, Python 3, Markdown, YAML, Git worktrees
+- **Stack**: Node.js (>=20, ESM), TypeScript, SQLite, Bash, Python 3, Markdown, YAML, Git worktrees
 - **Response Language**: Korean by default unless the request explicitly asks for another language
 
 ## Core Rules
@@ -33,13 +33,17 @@ Last-Reviewed: 2026-07-16
 
 ```text
 [project root]/
+|-- bin/
+|-- src/             # canonical Kernel/Host TS source (edit src/, not generated scripts/kernel/ or scripts/host/kernel/)
 |-- agents/
 |-- skills/
 |-- rules/
 |-- scripts/
 |-- schemas/
 |-- templates/
+|-- tests/
 |-- docs/public/
+|-- package/source-layout.json
 |-- package/profile-templates/
 `-- README.md
 ```

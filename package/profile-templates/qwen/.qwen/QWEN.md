@@ -32,6 +32,8 @@ Project-specific anchor entries belong in the consuming project, not in this ins
 
 ## References
 
+If the active runtime does not auto-expand `@path` or shell variables, read these referenced files on demand from the installed profile or resolved `MOONSHOT_RELAY_HOME` (default `~/.moonshot-relay`) when needed:
+
 - `@verification.contract.yaml`
 - `@rules/agents/agent-definition.md`
 - `${MOONSHOT_RELAY_HOME:-~/.moonshot-relay}/docs/public/guidelines/knowledge-repository-ops.md`

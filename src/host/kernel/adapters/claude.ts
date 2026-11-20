@@ -4,8 +4,8 @@
 
 import { isNativeDelegationRequested } from '../codex-actor-router.js';
 import {
-  buildModelVisiblePromptMessage,
   buildModelVisiblePromptView,
+  resolveModelVisiblePromptMessage,
 } from '../model-capsule-view.js';
 
 type UnknownRecord = Record<string, unknown>;
@@ -46,6 +46,7 @@ interface ClaudeDispatchInput extends UnknownRecord {
 interface ClaudeAdapterInput {
   launch?: Launcher | null;
   capabilities?: ClaudeCapabilities;
+  env?: NodeJS.ProcessEnv;
 }
 
 export const CLAUDE_AGENT_FOR_ROLE = Object.freeze({
@@ -305,6 +306,7 @@ const reviewPendingDispatch = ({
 export const createClaudeAdapter = ({
   launch = null,
   capabilities = {},
+  env = process.env,
 }: ClaudeAdapterInput = {}) => {
   const hasLauncher = typeof launch === 'function';
   const resolvedCapabilities = {
@@ -409,9 +411,10 @@ export const createClaudeAdapter = ({
       };
       const launched = await launch({
         invocation: providerInvocation,
-        message: buildModelVisiblePromptMessage({
+        message: resolveModelVisiblePromptMessage({
           prompt: providerPrompt,
           review: decision.role === 'reviewer',
+          env,
         }),
         modelVisiblePrompt: providerPrompt,
         prompt: providerPrompt,

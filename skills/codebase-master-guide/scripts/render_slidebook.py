@@ -11,27 +11,27 @@ Usage:
 
 Spec format (JSON):
 {
-  "projectTitle": "NFT Issuer 전수 코드 리뷰 마스터 슬라이드북",
-  "slug": "nft-issuer-guide",
+  "projectTitle": "샘플 서비스 전수 코드 리뷰 마스터 슬라이드북",
+  "slug": "sample-service-guide",
   "slides": [
     {
       "ch": "CH.00",
-      "chTitle": "온보딩 & 인프라 아키텍처",
-      "title": "[인프라 토폴로지] 5대 네트워크 망 분리",
-      "sub": "클라이언트 진입점부터 DMZ, App, DB, 외부망까지의 물리적 배치",
+      "chTitle": "온보딩 & 아키텍처",
+      "title": "[아키텍처 토폴로지] 주요 신뢰 경계",
+      "sub": "클라이언트 진입점부터 애플리케이션, 데이터 저장소, 외부 연동까지의 경계",
       "type": "card",
       "contentHtml": "<div class=\"flex-1 flex flex-col justify-between space-y-4\">...</div>"
     },
     {
       "ch": "CH.03",
-      "chTitle": "UserIssuanceService",
-      "title": "UserIssuanceService: 2단계 광클 방지!",
-      "sub": "UserIssuanceService.java:50~72",
-      "lines": "UserIssuanceService.java:50~72",
+      "chTitle": "OrderService",
+      "title": "OrderService: 중복 요청 방어",
+      "sub": "OrderService.java:50~72",
+      "lines": "OrderService.java:50~72",
       "startLine": 50,
       "highlightLines": [52, 57],
       "lang": "JAVA",
-      "code": "public IssuanceResponse issueNft(...) { ... }",
+      "code": "public OrderReceipt acceptOrder(...) { ... }",
       "comments": [
         { "line": "Line 52: blockingStatuses()", "text": "중복 차단 상태 반환" }
       ]
@@ -40,9 +40,9 @@ Spec format (JSON):
       "ch": "CH.12",
       "chTitle": "자가진단 퀴즈",
       "title": "퀴즈 1: 최초 202 접수 시 DB 상태는?",
-      "sub": "UserIssuanceService.java:119 핵심 비즈니스 로직",
+      "sub": "OrderService.java:119 핵심 비즈니스 로직",
       "type": "quiz",
-      "q": "O-HI 202 접수 시 우리 DB의 status는?",
+      "q": "HTTP 202 접수 시 우리 DB의 status는?",
       "a": "REQUESTED 상태 유지",
       "exp": "외부 202 응답은 비동기 배치 접수 완료일 뿐입니다.",
       "jumpSlideIndex": 12

@@ -19,8 +19,8 @@ import { resolveCodexModelPolicy } from './codex-model-policy.js';
 import { resolveClaudeEffort } from './claude-effort-policy.js';
 import {
   buildModelCapsuleView,
-  buildModelVisiblePromptMessage,
   buildModelVisiblePromptView,
+  resolveModelVisiblePromptMessage,
 } from './model-capsule-view.js';
 import { dispatchKernelRun } from './parallel-dispatcher.js';
 import { isMutationBearingAction, isNativeDelegationRequested, isWorkUnitBounded } from './codex-actor-router.js';
@@ -1311,12 +1311,10 @@ const dispatchKernelTurnAttempt = async ({
     return { schemaVersion: 1, runId, dispatched: false, reason: String(revalidated.rejectionCode || 'route-admission-drift'), admission: drifted, drift: revalidated.drift, modelInput, hostDirective: candidateHostDirective, executionCapsule, receipt: null };
   }
 
-  // Wave 3/7: the envelope is computed on every real turn — not only in the
-  // replay corpus — so its digests and cache policy are what the launcher and
-  // the usage receipt actually see. Computing it here does not itself change
-  // `executionContract`, so a Host still on the legacy path behaves exactly
-  // as before; a Host whose `launch()` reads `envelope.segments` gets the
-  // cache-stable prompt and breakpoints described in Waves 3-5.
+  // Wave 3/7: the envelope is computed on every real turn as Host-only cache
+  // and telemetry authority (including usage-receipt digests and breakpoints);
+  // it is intentionally never forwarded to provider launchers, which receive
+  // only the sanitized six-field `providerMessage` projection below.
   const envelope = buildTurnPromptEnvelope({
     modelInput,
     decision,
@@ -1336,11 +1334,12 @@ const dispatchKernelTurnAttempt = async ({
 
   // The adapter is the provider boundary. It receives the current Host
   // capsule for lineage/transport work and reprojects the six-field prompt
-  // there; no broad capsule view is sent to a launcher.
+  // there; no broad capsule or Host envelope is sent to a launcher.
   const modelVisiblePrompt = buildModelVisiblePromptView({ modelInput, capsule: executionCapsule });
-  const providerMessage = buildModelVisiblePromptMessage({
+  const providerMessage = resolveModelVisiblePromptMessage({
     prompt: modelVisiblePrompt,
     review: decision.role === 'reviewer',
+    env,
   });
   const promptMeasurement = measurePromptEnvelope(envelope, { providerMessage });
   const executionContract = buildExecutionContract(modelInput, decision);

@@ -2,9 +2,11 @@ schemaVersion: 1
 profileId: claude-development-profile
 role: development_profile
 canonicalSourceContract: package/package-contract.yaml
-compatibilityPolicy: move_with_wrapper_until_phase_06
+compatibilityPolicy: versioned_migration_only
 sourcePolicy:
   durableSourceRoots:
+    - src/
+    - bin/
     - skills/
     - agents/
     - rules/

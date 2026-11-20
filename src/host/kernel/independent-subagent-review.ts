@@ -8,8 +8,8 @@
 
 import { observeWorkspaceIdentity } from './workspace/workspace-identity.js';
 import {
-  buildModelVisiblePromptMessage,
   buildModelVisiblePromptView,
+  resolveModelVisiblePromptMessage,
 } from './model-capsule-view.js';
 
 type UnknownRecord = Record<string, unknown>;
@@ -209,17 +209,20 @@ const normalizeReviewOutcome = (value: unknown): UnknownRecord => {
 export const buildIndependentSubagentReviewPrompt = ({
   modelInput = {},
   executionCapsule = null,
+  env = process.env,
 }: {
   modelInput?: UnknownRecord;
   executionCapsule?: UnknownRecord | null;
+  env?: NodeJS.ProcessEnv;
 } = {}): string => {
   const providerPrompt = buildModelVisiblePromptView({
     modelInput,
     capsule: executionCapsule,
   });
-  return buildModelVisiblePromptMessage({
+  return resolveModelVisiblePromptMessage({
     prompt: providerPrompt,
     review: true,
+    env,
   });
 };
 
@@ -787,6 +790,7 @@ export const createIndependentSubagentReviewTransport = ({
         message: buildIndependentSubagentReviewPrompt({
           modelInput,
           executionCapsule,
+          env,
         }),
         parentSessionId:
           typeof parentSessionId === 'string' ? parentSessionId : null,

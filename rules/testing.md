@@ -7,5 +7,5 @@ Detect test environment before writing or running tests.
 - Do not delete existing tests without an explicit reason.
 - `docs_only` and most `local_policy` work may finish with audit plus syntax/evidence checks.
 - `behavior_change` work must report missing executable verification and stay conservative.
-- For this repository, prioritize knowledge audit and `bash -n` for changed shell scripts.
+- For this repository, run focused `node --test` suites plus `npm run typecheck`, `npm run build:check`, and `npm run check:boundaries`; run `bash -n` when shell scripts change.
 - `implementation-runner` and `completion-verifier` stay conservative when coverage is missing.

@@ -61,7 +61,7 @@ export async function evaluateReadHook(input: ReadHookInput, options: {
       permissionDecisionReason: 'Use the installed Reader for this full-file read. Pipe a JSON request '
         + JSON.stringify({ question: 'Replace with your exact question', references: [relative], maxInputBytes, maxOutputBytes: 12000, timeoutMs: 120000 })
         + ` to node "${command}" io-read - from the same working directory. `
-        + 'Check conditions and uncertainty in the answer. Sources identify supplied snapshots, not verified claims. Small reads, rg, and exact ranges remain available. '
+        + 'Check conditions and uncertainty in the answer. Sources identify supplied snapshots, not verified claims. Small reads, targeted searches, and exact ranges remain available. '
         + 'If Reader execution fails, report the error and use a bounded source read; do not repeatedly invoke the full read.' } };
   } catch { return {}; }
 }

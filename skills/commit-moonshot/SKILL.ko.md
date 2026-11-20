@@ -89,7 +89,7 @@ Report memory disposition, verification, staged paths, commit identity, and push
 
 ---
 
-User context: $ARGUMENTS
+User context: current user request.
 
 ## Project Knowledge Boundary
 

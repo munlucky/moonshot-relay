@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import { resolveKernelCapabilities, KernelCapabilityError } from '../src/kernel/capability-resolver.js';
 import { GUIDANCE_BUDGET, modelVisibleGuidanceCount } from '../src/kernel/capability-guidance.js';
 import { routeTask } from '../src/kernel/route.js';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -167,4 +168,51 @@ test('unknown caller capability is typed rejected and known forced-off capabilit
   assert.ok(routed.capabilityDecision);
   assert.equal(routed.capabilityDecision.revision, 'kernel-capability-conditions.v1');
   assert.deepEqual(routed.capabilities, []);
+});
+
+test('KR-02: control-plane next() and buildStageContext() wire discovered test surface and contract domain signals automatically', async () => {
+  const root = await kernelProject();
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'krn-capability-runtime-'));
+  try {
+    await writeFile(path.join(root, 'package.json'), JSON.stringify({
+      name: 'cap-signal-fixture',
+      scripts: { test: 'node --test' },
+    }, null, 2));
+    const cp = await createKernelControlPlane({ projectRoot: root, runtimeHome });
+    try {
+      const ensured = await cp.ensureRun({
+        runId: 'kr02-runtime-signals',
+        objective: 'Update form layout',
+        taskContract: {
+          objective: 'Update form layout',
+          acceptance: ['Form renders cleanly'],
+          taskClass: 'feature',
+          riskTier: 'T1',
+          behaviorChanging: true,
+          allowedPaths: ['src/components/Form.tsx'],
+        },
+      });
+      const nextPayload = (ensured as { next?: { capabilities?: Array<{ id?: string }> } }).next || {};
+      const nextIds = (nextPayload.capabilities || []).map((entry) => entry.id);
+      assert.ok(nextIds.includes('kernel-focused-test-guidance'), `expected focused test guidance, got ${nextIds.join(', ')}`);
+      assert.ok(nextIds.includes('kernel-conditional-frontend-guidance'), `expected frontend guidance, got ${nextIds.join(', ')}`);
+
+      const stageCtx = await cp.buildStageContext('kr02-runtime-signals', { stage: 'EXECUTE' }) as {
+        stageRecords?: Array<{ id?: string; content?: string }>;
+      };
+      const capRecord = (stageCtx.stageRecords || []).find((entry) => entry.id === 'capability-decision-kr02-runtime-signals');
+      assert.ok(capRecord?.content);
+      const parsed = JSON.parse(capRecord.content) as {
+        conditions?: { testSurfaceAvailable?: boolean };
+        selected?: Array<{ id?: string }>;
+      };
+      assert.equal(parsed.selected?.some((entry) => entry.id === 'kernel-focused-test-guidance'), true);
+      assert.equal(parsed.selected?.some((entry) => entry.id === 'kernel-conditional-frontend-guidance'), true);
+    } finally {
+      await cp.close();
+    }
+  } finally {
+    await rm(runtimeHome, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
 });

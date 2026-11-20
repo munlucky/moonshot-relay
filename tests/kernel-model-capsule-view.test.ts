@@ -6,6 +6,7 @@ import {
   buildGuidanceAblatedModelVisiblePromptView,
   buildModelVisiblePromptMessage,
   buildModelVisiblePromptView,
+  resolveModelVisiblePromptMessage,
   findControlMetadataLeaks,
   CONTROL_ONLY_CAPSULE_FIELDS,
   MODEL_VISIBLE_PROMPT_FIELDS,
@@ -335,5 +336,24 @@ test('R-10: model-visible context never truncates required acceptance and fails 
       assert.ok(error.serializedBytes > error.maxBytes);
       return true;
     },
+  );
+});
+
+test('KR-04: resolveModelVisiblePromptMessage selects baseline by default and compact when opted in via env', () => {
+  const prompt = buildModelVisiblePromptView({
+    modelInput: {
+      objective: 'Verify prompt selector.',
+      acceptance: ['Selection matches optimization switch.'],
+      action: { type: 'implement', guidance: 'Execute bounded work.' },
+    },
+  });
+  assert.equal(resolveModelVisiblePromptMessage({ prompt, env: {} }), buildModelVisiblePromptMessage({ prompt }));
+  assert.equal(
+    resolveModelVisiblePromptMessage({ prompt, env: { MOON_RELAY_KERNEL_COMPACT_PROMPT_MESSAGE: 'on' } }),
+    buildCompactModelVisiblePromptMessage({ prompt }),
+  );
+  assert.equal(
+    resolveModelVisiblePromptMessage({ prompt, review: true, env: { MOON_RELAY_KERNEL_COMPACT_PROMPT_MESSAGE: 'on' } }),
+    buildCompactModelVisiblePromptMessage({ prompt, review: true }),
   );
 });

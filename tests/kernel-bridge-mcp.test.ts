@@ -1499,3 +1499,31 @@ test('G2: independent MCP server processes reattach read-only without advancing 
   } finally { await after.close(); }
   assert.equal(await readFile(path.join(workspaceRoot, 'README.md'), 'utf8'), '# Bridge Fixture\n');
 });
+
+test('KR-01: default mcp next honors claude surface normalization and includes judgment operator-approval guidance on review block', async () => {
+  const runId = 'mcp-claude-surface-operator-guidance';
+  const fixture = await prepareMcpReviewRun(runId);
+  try {
+    const result = assertTestRecord(await handleMcpToolCall({
+      name: 'kernel_next',
+      parameters: {
+        workspaceRoot: fixture.root,
+        runId,
+        surface: 'claude_app',
+      },
+      runtimeHome: fixture.runtimeHome,
+      env: {},
+    }));
+    assert.equal(result.status, 'execution-readiness-blocked');
+    const readiness = assertTestRecord(result.executionReadiness);
+    const review = assertTestRecord(readiness.review);
+    assert.notEqual(review.modelSource, 'codex-model-policy');
+    const action = assertTestRecord(result.action);
+    assert.equal(action.type, 'blocked');
+    assert.equal(action.supportOperatorApproval, true);
+    assert.match(assertTestString(action.guidance), /operator confirmation/i);
+    assert.match(assertTestString(action.guidance), /hard evidence remains mandatory/i);
+  } finally {
+    await cleanupMcpReviewRun(fixture);
+  }
+});

@@ -28,6 +28,7 @@ test('it states the session rule without repeating the common contract', () => {
 
 test('no model id, reasoning effort, or fast-mode setting appears in the prompt', () => {
   assert.doesNotMatch(CODEX_PROVIDER_PROMPT, /gpt-5\.6/i);
+  assert.doesNotMatch(CODEX_PROVIDER_PROMPT, /gpt-6/i);
   assert.doesNotMatch(CODEX_PROVIDER_PROMPT, /model_reasoning_effort|xhigh|\bmax\b/i);
   assert.doesNotMatch(CODEX_PROVIDER_PROMPT, /fast[_\s-]?mode/i);
 });

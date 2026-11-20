@@ -415,7 +415,12 @@ const jsonPathContainerConflict = (value: unknown, jsonPath: string): string | n
 
 const jsonPathsFor = (rel: string, incoming: JsonRecord): string[] => {
   const normalized = rel.replaceAll('\\', '/');
-  if (path.posix.basename(normalized) === 'settings.json') return ['mcpServers.moon-relay-kernel'];
+  if (path.posix.basename(normalized) === 'settings.json') {
+    return [
+      'mcpServers.moon-relay-kernel',
+      ...(getJsonPath(incoming, 'hooks.SessionStart').present ? ['hooks.SessionStart'] : []),
+    ];
+  }
   if (path.posix.basename(normalized) === 'hooks.json') return ['hooks.SessionStart'];
   return Object.keys(incoming);
 };
@@ -425,7 +430,11 @@ const materializedJsonSource = ({ runtime, rel, source, mcpLauncher }: { runtime
   if (runtime === 'claude' && path.posix.basename(rel.replaceAll('\\', '/')) === 'settings.json') {
     incoming.mcpServers = {
       ...asRecord(incoming.mcpServers),
-      'moon-relay-kernel': { command: mcpLauncher, args: [] },
+      'moon-relay-kernel': {
+        command: mcpLauncher,
+        args: [],
+        env: { MOON_RELAY_KERNEL_SURFACE: 'claude' },
+      },
     };
   }
   return incoming;
@@ -434,10 +443,22 @@ const materializedJsonSource = ({ runtime, rel, source, mcpLauncher }: { runtime
 const buildJsonProjection = ({ existing, incoming, rel, hookCommand }: { existing: JsonRecord; incoming: JsonRecord; rel: string; hookCommand: string }): JsonRecord => {
   const normalized = rel.replaceAll('\\', '/');
   if (path.posix.basename(normalized) === 'hooks.json') return mergeKernelHooks(existing, incoming, hookCommand);
-  const projected = asRecord(JSON.parse(JSON.stringify(existing || {})) as unknown);
-  for (const jsonPath of jsonPathsFor(normalized, incoming)) {
+  const owned = jsonPathsFor(normalized, incoming);
+  let projected = asRecord(JSON.parse(JSON.stringify(existing || {})) as unknown);
+  for (const jsonPath of owned) {
+    if (jsonPath === 'hooks.SessionStart') continue;
     const sourceValue = getJsonPath(incoming, jsonPath);
     if (sourceValue.present) setJsonPath(projected, jsonPath, sourceValue.value);
+  }
+  if (owned.includes('hooks.SessionStart')) {
+    const incomingSessionStart = getJsonPath(incoming, 'hooks.SessionStart');
+    if (incomingSessionStart.present) {
+      projected = mergeKernelHooks(
+        projected,
+        { hooks: { SessionStart: incomingSessionStart.value } },
+        hookCommand,
+      );
+    }
   }
   return projected;
 };
@@ -561,7 +582,14 @@ const profileProjectionIsCurrent = async ({ root, sourceRoot, runtime, runtimeHo
     const value = await parseJsonFile(safeJoin(root, settings.path));
     const configured = asRecord(getJsonPath(value, 'mcpServers.moon-relay-kernel').value);
     const launcher = await materializeKernelMcpLauncher({ runtimeHome: effectiveRuntimeHome, write: false });
-    if (configured?.command !== launcher.launcherPath || JSON.stringify(configured?.args || []) !== '[]') return false;
+    if (
+      configured?.command !== launcher.launcherPath
+      || JSON.stringify(configured?.args || []) !== '[]'
+      || asRecord(configured?.env).MOON_RELAY_KERNEL_SURFACE !== 'claude'
+    ) return false;
+    const commands = kernelHookCommands(getJsonPath(value, 'hooks.SessionStart').value);
+    const expected = hookCommandFor(effectiveRuntimeHome);
+    if (commands.length === 0 || commands.some((command) => command !== expected)) return false;
   }
   if (runtime === 'codex') {
     const hooks = byPath.get('hooks.json');

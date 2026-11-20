@@ -4,8 +4,8 @@
 // routed. Assuming an unverified capability is the failure mode this prevents.
 
 import {
-  buildModelVisiblePromptMessage,
   buildModelVisiblePromptView,
+  resolveModelVisiblePromptMessage,
 } from '../model-capsule-view.js';
 
 type UnknownRecord = Record<string, unknown>;
@@ -43,7 +43,7 @@ const asRecord = (value: unknown): UnknownRecord => (
 );
 
 const buildPromptView = buildModelVisiblePromptView;
-const buildPromptMessage = buildModelVisiblePromptMessage;
+const buildPromptMessage = resolveModelVisiblePromptMessage;
 
 export const FALLBACK_CAPABILITIES = Object.freeze({
   surface: 'fable',
@@ -66,10 +66,12 @@ export const createFableAdapter = ({
   surface = 'fable',
   capabilities = {},
   launch = null,
+  env = process.env,
 }: {
   surface?: string;
   capabilities?: UnknownRecord;
   launch?: FableLaunch | null;
+  env?: NodeJS.ProcessEnv;
 } = {}) => {
   const resolved = { ...FALLBACK_CAPABILITIES, ...capabilities, surface };
   return {
@@ -103,6 +105,7 @@ export const createFableAdapter = ({
         message: buildPromptMessage({
           prompt: modelVisiblePrompt,
           review: decision.role === 'reviewer',
+          env,
         }),
         modelVisiblePrompt,
         prompt: modelVisiblePrompt,

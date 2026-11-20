@@ -1,5 +1,6 @@
 ---
 paths:
+  - "agents/**/*.md"
   - ".claude/agents/**/*.md"
 ---
 

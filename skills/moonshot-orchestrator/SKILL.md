@@ -47,9 +47,9 @@ Own and prove one implementation slice. Architecture-derived work consumes only 
 ## Procedure
 
 1. Confirm bounded scope and ready handoff guards; never replace architecture evidence with chat summaries.
-4. Apply `docs/public/guidelines/minimal-correct-implementation.md` before choosing the implementation shape, and apply `docs/public/guidelines/untrusted-content-boundary.md`.
-5. Implement, review, rerun invalidated checks, and report evidence or a typed blocker.
-6. For `moonshot-architecture` work, consume selected ADR `ADR/*.md`, `TRACEABILITY_MATRIX.md`, `ARCHITECTURE_REVIEW.md`, and the traceability slice; pass only `ARCHITECTURE_HANDOFF.promptBlock`. On violation use `scripts/architecture-feedback-render.mjs`, never raw KG.
+2. Apply `docs/public/guidelines/minimal-correct-implementation.md` before choosing the implementation shape, and apply `docs/public/guidelines/untrusted-content-boundary.md`.
+3. Implement, review, rerun invalidated checks, and report evidence or a typed blocker.
+4. For `moonshot-architecture` work, consume selected ADR `ADR/*.md`, `TRACEABILITY_MATRIX.md`, `ARCHITECTURE_REVIEW.md`, and the traceability slice; pass only `ARCHITECTURE_HANDOFF.promptBlock`. On violation use `scripts/architecture-feedback-render.mjs`, never raw KG.
 
 ## Output Contract
 

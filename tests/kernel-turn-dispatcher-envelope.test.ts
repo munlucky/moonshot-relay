@@ -117,6 +117,15 @@ test('a real dispatch records a non-null prefix digest and cache mode on the rec
       segmentMeasurements.map((entry) => assertTestRecord(entry).kind),
       ['tool-stable', 'common-host-stable', 'provider-stable', 'project-stable', 'run-stable', 'volatile'],
     );
+    assert.notEqual(measurement.renderedPromptBytes, measurement.providerMessageBytes);
+    for (const envelopeOnlyKind of ['common-host-stable', 'provider-stable']) {
+      const segment: unknown = segmentMeasurements.find(
+        (entry: unknown) => assertTestRecord(entry).kind === envelopeOnlyKind,
+      );
+      assert.ok(segment);
+      assert.equal(assertTestRecord(segment).loaded, true);
+      assert.equal(assertTestRecord(segment).includedVerbatimInProviderMessage, false);
+    }
   });
 });
 

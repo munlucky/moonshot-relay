@@ -1,9 +1,10 @@
 import { inspectProfile } from './profile-install.js';
 import path from 'node:path';
-import { access } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { resolveKernelNode } from './runtime-resolver.js';
+import { detectUnmanagedManagedSectionDuplicates, MANAGED_SECTION_ID, PROFILE_OWNERSHIP } from './profile-projection.js';
 
 export async function doctorKernelProfile({
   targetRoot,
@@ -19,7 +20,8 @@ export async function doctorKernelProfile({
   const providerRuntime = result.manifest.provider || result.manifest.runtime;
   if (runtime && providerRuntime !== runtime) return { status: 'wrong_harness', effective: 'unknown', targetRoot: result.targetRoot, expectedRuntime: runtime, actualRuntime: providerRuntime };
   if (result.status !== 'ready') return { status: 'drift', effective: 'unknown', targetRoot: result.targetRoot, recovery: 'rollback or reinstall manifest-owned static files', checks: result.checks };
-  const commandChecks = [];
+  const commandChecks: Array<Record<string, unknown>> = [];
+  const warnings: Array<Record<string, unknown>> = [];
   const requiredProfileFiles: Record<string, string[]> = {
     codex: result.manifest.layout === 'account-root-direct'
       ? ['AGENTS.md', 'config.toml', 'hooks.json', 'skills/moon-relay-kernel/SKILL.md']
@@ -30,6 +32,28 @@ export async function doctorKernelProfile({
     let present = true;
     try { await access(path.join(path.resolve(targetRoot), relativePath)); } catch { present = false; }
     commandChecks.push({ check: `profile-surface:${relativePath.replaceAll('\\', '/')}`, passed: present });
+  }
+  for (const entry of result.manifest.files || []) {
+    if (entry.ownership !== PROFILE_OWNERSHIP.MANAGED_SECTION || entry.format === 'toml-developer-instructions') continue;
+    const normalizedPath = String(entry.path || '').replaceAll('\\', '/');
+    try {
+      const content = await readFile(path.join(path.resolve(targetRoot), normalizedPath), 'utf8');
+      const duplicate = detectUnmanagedManagedSectionDuplicates(content, entry.sectionId || MANAGED_SECTION_ID);
+      if (duplicate.duplicated) {
+        const warning = {
+          path: normalizedPath,
+          reason: duplicate.reason,
+          heading: duplicate.heading,
+          remediation: 'Remove the duplicate unmanaged Kernel guidance outside the managed markers.',
+        };
+        warnings.push(warning);
+        commandChecks.push({ check: `managed-section-no-duplicate:${normalizedPath}`, passed: false, ...warning });
+      } else {
+        commandChecks.push({ check: `managed-section-no-duplicate:${normalizedPath}`, passed: true });
+      }
+    } catch {
+      // Unreadable or absent files are already reported by inspectProfile checks above.
+    }
   }
   if (runtimeHome) {
     const binDir = path.join(path.resolve(runtimeHome), 'bin');
@@ -75,6 +99,7 @@ export async function doctorKernelProfile({
     runtime: providerRuntime,
     managedFileCount: (result.manifest.files || []).length,
     checks: [...(result.checks || []), ...commandChecks],
+    warnings,
     authContentRead: false,
     sessionContentRead: false,
   };

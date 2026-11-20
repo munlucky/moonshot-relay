@@ -920,6 +920,139 @@ export const createKernelControlPlane = async ({
     });
   };
 
+  const resolveRunCapabilityDecision = ({
+    run,
+    contract = null,
+    stage = run.state,
+    obligations = [],
+    verifications = [],
+    completion = null,
+    changedPaths = null,
+  }: {
+    run: KernelRun;
+    contract?: UnknownRecord | NormalizedTaskContract | TaskContractLike | null;
+    stage?: string;
+    obligations?: PersistedRunObligation[];
+    verifications?: PersistedVerification[];
+    completion?: Completion | null;
+    changedPaths?: string[] | null;
+  }) => {
+    const baseContract = asRecord(run.taskContract);
+    const overrideContract = asRecord(contract);
+    const mergedFlagsSource = {
+      ...asRecord(baseContract.flags),
+      ...asRecord(overrideContract.flags),
+    };
+    const explicitFlags = Object.fromEntries(
+      Object.entries(mergedFlagsSource).filter(
+        (entry): entry is [string, boolean] => typeof entry[1] === 'boolean',
+      ),
+    );
+    const contractRecord: UnknownRecord = {
+      ...baseContract,
+      ...overrideContract,
+    };
+    const projectCommands = currentProjectCommands();
+    const detectedTestSurface = projectCommands.some((cmd) => (
+      ['unit-test', 'integration-test', 'e2e'].includes(String(cmd.commandClass || ''))
+    )) || obligations.some((obligation) => (
+      obligation.evidenceClass === 'hard'
+      && Array.isArray(obligation.allowedCommandRefs)
+      && obligation.allowedCommandRefs.length > 0
+      && /test/i.test(String(obligation.obligationId || ''))
+    ));
+    const stepAttempts = typeof store.getStepAttempts === 'function'
+      ? store.getStepAttempts(run.runId)
+      : [];
+    const failedVerifications = verifications.filter((entry) => entry.status === 'failed').length;
+    const failedAttempts = stepAttempts.filter((entry) => entry.status === 'failed').length;
+    const blockedOrFailedAttempts = stepAttempts.filter((entry) => (
+      entry.status === 'blocked' || entry.status === 'failed'
+    )).length;
+    const finalizationReceipt = typeof store.getFinalizationReceipt === 'function'
+      ? store.getFinalizationReceipt(run.runId)
+      : null;
+    const finalizationReceiptJson = asRecord(finalizationReceipt?.receiptJson);
+    const gitCloseoutReceipt = typeof store.getGitCloseoutReceipt === 'function'
+      ? store.getGitCloseoutReceipt(run.runId)
+      : null;
+
+    const boolFlag = (key: string): boolean | undefined => (
+      typeof explicitFlags[key] === 'boolean'
+        ? explicitFlags[key]
+        : typeof contractRecord[key] === 'boolean'
+          ? Boolean(contractRecord[key])
+          : undefined
+    );
+
+    const testSurfaceAvailable = boolFlag('testSurfaceAvailable') ?? detectedTestSurface;
+    const repeatedFailure = boolFlag('repeatedFailure') ?? (failedVerifications >= 2 || failedAttempts >= 2);
+    const repeatedBlocker = boolFlag('repeatedBlocker') ?? (run.status === 'blocked' && blockedOrFailedAttempts >= 2);
+    const completionAccepted = boolFlag('completionAccepted') ?? Boolean(
+      completion?.decision === 'accepted' || run.status === 'completed',
+    );
+    const gitCloseoutRequested = boolFlag('gitCloseoutRequested') ?? Boolean(
+      gitCloseoutReceipt
+      || asRecord(finalizationReceiptJson.gitCloseoutRequest).requested === true
+      || (
+        typeof finalizationReceipt?.gitCloseoutStatus === 'string'
+        && finalizationReceipt.gitCloseoutStatus !== 'skipped'
+      ),
+    );
+    const knowledgeCommitReceiptExists = boolFlag('knowledgeCommitReceiptExists') ?? Boolean(
+      finalizationReceiptJson.knowledgeCommitReceipt
+      || finalizationReceipt?.knowledgeStatus === 'completed',
+    );
+    const nonWildcardPaths = (value: unknown): string[] => (
+      Array.isArray(value)
+        ? value
+            .map((item) => String(item || '').trim())
+            .filter((item) => Boolean(item) && !['*', '**', '.'].includes(item))
+        : []
+    );
+    const contractDeclaredPaths = [
+      ...nonWildcardPaths(contractRecord.allowedPaths),
+      ...(Array.isArray(contractRecord.steps)
+        ? contractRecord.steps.flatMap((step) => nonWildcardPaths(asRecord(step).allowedPaths))
+        : []),
+    ];
+    const explicitChangedPaths = nonWildcardPaths(contractRecord.changedPaths);
+    const paramChangedPaths = nonWildcardPaths(changedPaths);
+    const resolvedChangedPaths = explicitChangedPaths.length > 0
+      ? explicitChangedPaths
+      : paramChangedPaths.length > 0
+        ? paramChangedPaths
+        : [...new Set(contractDeclaredPaths)];
+    const effectiveFlags = {
+      ...explicitFlags,
+      testSurfaceAvailable,
+      repeatedFailure,
+      repeatedBlocker,
+      completionAccepted,
+      gitCloseoutRequested,
+      knowledgeCommitReceiptExists,
+    };
+
+    return resolveKernelCapabilities({
+      ...contractRecord,
+      ...effectiveFlags,
+      flags: effectiveFlags,
+      objective: typeof contractRecord.objective === 'string' && contractRecord.objective
+        ? contractRecord.objective
+        : run.objective,
+      acceptance: Array.isArray(contractRecord.acceptance)
+        ? contractRecord.acceptance
+        : (run.acceptanceCriteria || []),
+      changedPaths: resolvedChangedPaths,
+      riskTier: String(contractRecord.riskTier || run.proofTier || 'T0'),
+      proofTier: String(contractRecord.proofTier || run.proofTier || 'T0'),
+      stage,
+      route: run.route?.stages || [],
+      filesChanged: Number(contractRecord.filesChanged || 0),
+      taskClass: String(contractRecord.taskClass || 'feature'),
+    });
+  };
+
   const buildKnowledgeAuthorityForRun = (currentRun: KernelRun | null, {
     context = null,
     stage = null,
@@ -2027,7 +2160,10 @@ export const createKernelControlPlane = async ({
         return { id: String(candidate.id), guidance: String(candidate.guidance), rationale: String(candidate.rationale) };
       });
 
-      const persistedEvidence = store.getVerifications(runId).map((verification) => ({
+      const stageObligations = store.getRunObligations(runId);
+      const stageVerifications = store.getVerifications(runId);
+      const stageCompletion = evaluateRunCompletion(runId, { obligations: stageObligations });
+      const persistedEvidence = stageVerifications.map((verification) => ({
         id: `verification-${verification.obligationId}`,
         type: 'evidence-digest',
         content: JSON.stringify({
@@ -2043,7 +2179,15 @@ export const createKernelControlPlane = async ({
         sourceRef: verification.evidenceRef || `verification:${verification.id}`,
         trust: 'persisted-verification',
       }));
-      const capabilityDecision = resolveKernelCapabilities({ ...taskContract, riskTier: String(taskContract.riskTier || run.proofTier), proofTier: String(taskContract.proofTier || run.proofTier), flags: Object.fromEntries(Object.entries(taskContract.flags || {}).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean')), stage, filesChanged: Number(taskContract.filesChanged || 0), taskClass: String(taskContract.taskClass || 'feature') });
+      const capabilityDecision = resolveRunCapabilityDecision({
+        run,
+        contract: taskContract,
+        stage,
+        obligations: stageObligations,
+        verifications: stageVerifications,
+        completion: stageCompletion,
+        changedPaths: normalizedChangeSet.changedPaths,
+      });
 
       const context = await buildContextReceipt({
         taskContract: { objective: run.objective, ...taskContract },
@@ -3803,18 +3947,18 @@ export const createKernelControlPlane = async ({
 
       await syncRunLocator(run);
 
-      const capabilityDecision = resolveKernelCapabilities({
-        ...(run.taskContract?.flags || {}),
-        taskClass: run.taskContract?.taskClass || 'feature',
-        riskTier: run.proofTier,
+      const verifications = store.getVerifications(runId);
+      const completion = evaluateRunCompletion(runId, { obligations });
+      const capabilityDecision = resolveRunCapabilityDecision({
+        run,
         stage: run.state,
-        route: run.route?.stages || [],
-        filesChanged: run.taskContract?.filesChanged || 0,
+        obligations,
+        verifications,
+        completion,
       });
 
-      const completion = evaluateRunCompletion(runId, { obligations });
       const payload = buildNextForRun(run, {
-        verifications: store.getVerifications(runId),
+        verifications,
         requiredObligations: run.requiredObligations,
         obligations,
         contract: run.taskContract ? contractBriefing(run.taskContract) : null,

@@ -25,7 +25,7 @@ node bin/moon-relay-kernel.mjs doctor
 ## Engineering Constraints
 
 - The Kernel core stays provider-neutral: no provider model id, SDK, endpoint,
-  or credential below `scripts/kernel/`.
+  or credential below `src/kernel/`.
 - Unmeasured telemetry is `null`, never `0`.
 - Preserve declared compatibility windows, supported runtimes, user data, and
   additive schema and database migrations. Remove obsolete paths only through

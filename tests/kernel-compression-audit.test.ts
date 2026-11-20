@@ -100,6 +100,7 @@ test('architecture handoff and historical plans distinguish current truth from l
   assert.match(reviewLoop, /currentImplementationNote/u);
 });
 import { projectKernelModelView } from '../src/kernel/run/model-view.js';
+import { buildNextPayload } from '../src/kernel/run/run-loop.js';
 import { assertImplementationWorkUnitScope } from '../src/contracts/work-unit-scope.js';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -163,4 +164,39 @@ test('model view removes duplicate snapshots without altering authority or recov
   assert.equal(projectKernelModelView(original, { verbose: true }), original);
   assert.deepEqual(object(projectKernelModelView({ status: 'blocked', failures: ['scope'], next: original })).next, compact);
   assert.equal(object(object(projectKernelModelView({ action: { type: 'done' } })).action).type, 'done');
+});
+
+test('KR-03: compact model view deduplicates exact obligation/work-unit/acceptance matches while keeping nextAction consistent', () => {
+  const step = { stepId: 's2', allowedPaths: ['src/'], forbiddenPaths: [] };
+  const obligations = [{ obligationId: 'unit', allowedCommandRefs: ['test:unit'] }];
+  const payload = {
+    runId: 'run-dedup',
+    objective: 'Compact view check',
+    acceptancePlans: [{ id: 'AC-1', statement: 'Keep single source' }],
+    acceptanceIds: ['AC-1'],
+    requiredVerifications: obligations,
+    stepId: 's2',
+    allowedPaths: ['src/'],
+    forbiddenPaths: [],
+    availableCommandRefs: ['test:unit'],
+    action: { type: 'implement', step, obligations },
+    workAuthority: { currentWorkUnit: step, goalStatus: 'active', progress: { remainingCount: 1 } },
+  };
+  const compact = object(projectKernelModelView(payload));
+  assert.equal(compact.requiredVerifications, undefined);
+  assert.equal(compact.requiredVerificationsSource, 'action.obligations');
+  assert.equal(compact.acceptanceIds, undefined);
+  assert.equal(object(compact.workAuthority).currentWorkUnit, undefined);
+  assert.equal(object(compact.workAuthority).currentWorkUnitSource, 'action.step');
+  assert.equal(compact.stepId, 's2');
+  assert.deepEqual(compact.allowedPaths, ['src/']);
+  assert.deepEqual(object(compact.action).step, step);
+  assert.equal(projectKernelModelView(payload, { verbose: true }), payload);
+
+  const inProgressNext = buildNextPayload({
+    run: { runId: 'run-progress', objective: 'Continue work', status: 'active' },
+    workAuthority: { goalStatus: 'active', progress: { remainingCount: 1 }, currentWorkUnit: { stepId: 's2' } },
+  });
+  assert.equal(inProgressNext.nextAction, 'implement');
+  assert.equal(object(inProgressNext.action).type, 'implement');
 });

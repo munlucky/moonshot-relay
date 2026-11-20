@@ -101,6 +101,7 @@ export interface OptimizationModes {
   cacheMode: CacheMode;
   modelPolicyMode: CacheMode;
   codexModelPolicyMode: CacheMode;
+  compactPromptMessageMode: CacheMode;
   claude: CacheMode;
   codex: CacheMode;
 }
@@ -122,6 +123,7 @@ export const resolveOptimizationModes = (
     cacheMode,
     modelPolicyMode: genericModelPolicyMode,
     codexModelPolicyMode,
+    compactPromptMessageMode: readMode(env.MOON_RELAY_KERNEL_COMPACT_PROMPT_MESSAGE, 'off'),
     claude: readMode(
       env.MOON_RELAY_KERNEL_CLAUDE_OPTIMIZATION,
       cacheMode,

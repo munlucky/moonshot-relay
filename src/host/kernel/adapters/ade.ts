@@ -6,8 +6,8 @@
 // the execution boundary required by ADE's short-context policy.
 
 import {
-  buildModelVisiblePromptMessage,
   buildModelVisiblePromptView,
+  resolveModelVisiblePromptMessage,
 } from '../model-capsule-view.js';
 import { ADE_CHILD_PROMPT_TOKEN_LIMIT } from '../ade-context-policy.js';
 
@@ -44,6 +44,7 @@ interface AdeAdapterInput {
   spawnAgent?: Launcher | null;
   nativeAgentHost?: unknown;
   capabilities?: AdeCapabilities;
+  env?: NodeJS.ProcessEnv;
 }
 
 interface FailureInput {
@@ -231,6 +232,7 @@ export const createAdeAdapter = ({
   spawnAgent = null,
   nativeAgentHost = globalThis,
   capabilities = {},
+  env = process.env,
 }: AdeAdapterInput = {}) => {
   const launcher = resolveLauncher({
     spawnAgent,
@@ -328,9 +330,10 @@ export const createAdeAdapter = ({
           ? { permissions: 'read_only', readOnly: true }
           : {}),
       };
-      const childPrompt = buildModelVisiblePromptMessage({
+      const childPrompt = resolveModelVisiblePromptMessage({
         prompt: providerPrompt,
         review: reviewer,
+        env,
       });
       const request: UnknownRecord = {
         task_name: agent,

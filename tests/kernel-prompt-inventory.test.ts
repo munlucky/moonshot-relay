@@ -18,7 +18,11 @@ const readInventory = async () => {
     assert.equal(typeof surface.bytes, 'number');
     return { path: String(surface.path), bytes: Number(surface.bytes) };
   });
-  return { schemaVersion: value.schemaVersion, surfaces };
+  return {
+    schemaVersion: value.schemaVersion,
+    scope: typeof value.scope === 'string' ? value.scope : null,
+    surfaces,
+  };
 };
 const readClassification = async () => {
   const value = object(JSON.parse(await readFile(`${AUDIT}/instruction-classification.json`, 'utf8')));
@@ -47,6 +51,7 @@ const readClassification = async () => {
 test('the prompt audit enumerates every Kernel prompt surface it inspected', async () => {
   const inventory = await readInventory();
   assert.equal(inventory.schemaVersion, 1);
+  assert.equal(inventory.scope, 'preset-07-kernel-core-surfaces-only');
   assert.ok(inventory.surfaces.length >= 8, 'the audit must cover the skill, the Claude agents, the Codex contract, and the provider prompts');
   for (const surface of inventory.surfaces) {
     assert.ok(existsSync(surface.path), `inventoried surface must exist: ${surface.path}`);

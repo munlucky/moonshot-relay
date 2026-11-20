@@ -33,7 +33,7 @@ export const AGENTS_FORBIDDEN_CONTENT: readonly ForbiddenContentRule[] = Object.
   },
   {
     id: 'model-id',
-    pattern: /\bgpt-5\.6(?:-(?:sol|terra|luna))?\b|\bclaude-(?:opus|sonnet|haiku)\b/i,
+    pattern: /\bgpt-(?:5\.6|6(?:\.\d+)?)(?:-(?:astra|sol|terra|luna))?\b|\bclaude-(?:opus|sonnet|haiku)\b/i,
     reason: 'model selection is a Host routing decision',
   },
   {

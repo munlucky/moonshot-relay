@@ -283,14 +283,15 @@ export const createKernelHostReviewBridge = ({
         parentSessionObserver,
       })
     : effectiveSurface === 'claude'
-      ? createClaudeAdapter({})
+      ? createClaudeAdapter({ env })
       : effectiveSurface === 'gemini'
         ? createGeminiAdapter({
             launch: overrides.geminiLauncher || null,
             capabilities: recordOf(overrides.geminiCapabilities),
+            env,
           })
         : ['ade', 'ade_cli'].includes(effectiveSurface)
-          ? createAdeAdapter({ nativeAgentHost })
+          ? createAdeAdapter({ nativeAgentHost, env })
           : null;
 
   const effectiveAdapter = adapter

@@ -22,8 +22,8 @@ hostOwns:
   - package-materialization
   - account-profile-projection
 bridge:
-  kernelContract: scripts/kernel/run/host-execution-contract.mjs
-  hostAdapter: scripts/host/kernel/host-boundary.mjs
+  kernelContract: scripts/contracts/host-execution-contract.js
+  hostAdapter: scripts/host/kernel/host-boundary.js
   schemaVersion: 1
 invariants:
   - kernel-contract-has-no-provider-model-or-session-identifiers

@@ -443,13 +443,10 @@ export const buildNextPayload = ({
   }
 
   if (Number(workAuthority?.progress?.remainingCount || 0) > 0 && (workAuthority?.goalStatus === 'active' || workAuthority?.goal?.status === 'active')) {
-    return {
-      ...base,
-      action: withExecution({
-        type: 'implement',
-        guidance: `Work unit ${workAuthority.currentWorkUnit?.stepId || ''} is in progress. Continue implementation.`.trim(),
-      }, executionProjectionOptions),
-    };
+    return currentAction(withExecution({
+      type: 'implement',
+      guidance: `Work unit ${workAuthority.currentWorkUnit?.stepId || ''} is in progress. Continue implementation.`.trim(),
+    }, executionProjectionOptions));
   }
 
   return currentAction({ type: 'report', guidance: 'All Kernel evidence obligations passed. Submit kernel report to finalize the run.' });

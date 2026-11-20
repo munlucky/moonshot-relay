@@ -22,7 +22,7 @@
       "name": "kernel-commit-closeout",
       "path": "skills/kernel-commit-closeout",
       "source": "canonical",
-      "contentHash": "7dfea211753bd6cfcb7d64f53660a8c616d24af7b63b2e0e6761108d303d9098",
+      "contentHash": "c61fe5cd58fa46fca81bc896249cb04acf09e74462113248b712a7204271fb1a",
       "license": "MIT",
       "stages": [],
       "permissions": [

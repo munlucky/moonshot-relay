@@ -50,7 +50,7 @@ export async function evaluateWriteHook(input: WriterHookInput, options: Omit<Ho
     }
     const metadata = path.join(candidate.candidateRoot, 'apply-' + randomUUID() + '.json');
     await writeFile(metadata, JSON.stringify(candidate), { flag: 'wx' });
-    return context('Luna generated an isolated candidate for the explicitly requested new file. '
+    return context('The installed Writer generated an isolated candidate for the explicitly requested new file. '
       + 'Apply it once using the ordinary shell tool from the current project directory and report the actual result. '
       + 'If apply fails, report its status. ' + applyCommand(options.runtimeHome, metadata));
   } catch (error) {

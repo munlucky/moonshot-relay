@@ -2,8 +2,8 @@
 // mechanisms it enforces; a CLI name alone proves no execution capability.
 
 import {
-  buildModelVisiblePromptMessage,
   buildModelVisiblePromptView,
+  resolveModelVisiblePromptMessage,
 } from '../model-capsule-view.js';
 import {
   admitHostExecutionContract,
@@ -58,14 +58,16 @@ const asRecord = (value: unknown): UnknownRecord => (
 
 // Bind its actual Host adapter inputs at one seam.
 const buildPromptView = buildModelVisiblePromptView;
-const buildPromptMessage = buildModelVisiblePromptMessage;
+const buildPromptMessage = resolveModelVisiblePromptMessage;
 
 export const createGeminiAdapter = ({
   launch = null,
   capabilities = {},
+  env = process.env,
 }: {
   launch?: GeminiLaunch | null;
   capabilities?: GeminiCapabilities;
+  env?: NodeJS.ProcessEnv;
 } = {}) => {
   const available = typeof launch === 'function';
   const readOnly = available && capabilities.supportsReadOnlyReview === true;
@@ -132,6 +134,7 @@ export const createGeminiAdapter = ({
         message: buildPromptMessage({
           prompt,
           review: decision.role === 'reviewer',
+          env,
         }),
         modelVisiblePrompt: prompt,
         workingDirectory,

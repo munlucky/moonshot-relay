@@ -23,10 +23,23 @@ test('the Codex profile distinguishes canonical sources from generated runtime o
   assert.match(text, /`src\/host\/kernel\/` — canonical Host/);
   assert.match(text, /`scripts\/kernel\/` and `scripts\/host\/kernel\/` — generated runtime outputs/);
   assert.match(text, /edit `src\/`, not these outputs/);
+  assert.match(text, /no provider model id, SDK, endpoint,\s+or credential below `src\/kernel\/`/);
+  assert.doesNotMatch(text, /credential below `scripts\/kernel\/`/);
+});
+
+test('the Codex profile AGENTS.md clarifies that @path references are not auto-expanded', async () => {
+  const text = await readFile('package/profile-templates/codex/.codex/AGENTS.md', 'utf8');
+  const audit = auditAgentsMarkdown(text);
+  assert.deepEqual(audit.violations, [], JSON.stringify(audit.violations));
+  assert.match(text, /does not auto-expand `@path` or shell variables/);
+  assert.match(text, /@verification\.contract\.yaml/);
 });
 
 test('a model id, reasoning effort, or fast-mode setting is a violation', () => {
   assert.ok(auditAgentsMarkdown('Use gpt-5.6-sol for planning.').violations.some((v) => v.id === 'model-id'));
+  assert.ok(auditAgentsMarkdown('Use gpt-6.1-sol for planning.').violations.some((v) => v.id === 'model-id'));
+  assert.ok(auditAgentsMarkdown('Use gpt-6-luna for implementation.').violations.some((v) => v.id === 'model-id'));
+  assert.ok(auditAgentsMarkdown('Use gpt-6-astra for general work.').violations.some((v) => v.id === 'model-id'));
   assert.ok(auditAgentsMarkdown('model_reasoning_effort = "high"').violations.some((v) => v.id === 'reasoning-effort'));
   assert.ok(auditAgentsMarkdown('Enable fast mode for this repo.').violations.some((v) => v.id === 'fast-mode'));
   assert.ok(auditAgentsMarkdown('## Current Task\nFix the parser.').violations.some((v) => v.id === 'current-task'));

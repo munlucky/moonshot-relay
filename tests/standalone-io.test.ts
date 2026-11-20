@@ -91,6 +91,7 @@ test('explicit Writer hook prepares one isolated candidate for normal apply', as
     const command = output.hookSpecificOutput?.additionalContext ?? '';
     assert.match(command, /io-apply/);
     assert.doesNotMatch(command, /export const|--apply/);
+    assert.doesNotMatch(command, /\bLuna\b/);
     const match = command.match(/'([^']+\/apply-[^']+\.json)'$/);
     assert.ok(match?.[1], command);
     const metadata = match[1];
@@ -165,6 +166,7 @@ test('Reader Hook recognizes only plain full reads and allows missing runtime/au
     const denied = await evaluateReadHook(input("Get-Content -Raw 'long file.ts'"), options);
     assert.match(JSON.stringify(denied), /permissionDecision.*deny/);
     assert.match(JSON.stringify(denied), /io-read/);
+    assert.doesNotMatch(JSON.stringify(denied), /\brg\b/);
     for (const command of ['Get-Content short.ts', 'Get-Content boundary.ts', 'rg source .', 'Get-Content -Raw ../escape.ts']) assert.deepEqual(await evaluateReadHook(input(command), options), {});
   } finally { await rm(base, { recursive: true, force: true }); }
 });

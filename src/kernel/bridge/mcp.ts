@@ -201,18 +201,36 @@ const resolveConfiguredHostBridge = (hostBridge: HandleMcpToolCallInput['hostBri
   return hostBridge || null;
 };
 
-const readinessBlockedPayload = ({ modelInput, readiness }: { modelInput: UnknownRecord; readiness: UnknownRecord }): UnknownRecord => ({
-  ...modelInput,
-  status: 'execution-readiness-blocked',
-  executionReadiness: readiness,
-  action: {
-    type: 'blocked',
-    reason: 'execution-readiness',
-    blockingClass: 'completion',
-    guidance: 'The current Host cannot complete the required review and receipt path. Resolve the Host capability, then call kernel next again.',
-  },
-  next: modelInput,
-});
+const resolveLifecycleSurface = (requestedSurface: string): 'ade' | 'claude' | 'gemini' | 'codex' => {
+  const normalized = requestedSurface.trim().toLowerCase();
+  if (['ade', 'ade_cli', 'ade-code'].includes(normalized) || normalized.startsWith('ade')) return 'ade';
+  if (normalized.startsWith('claude')) return 'claude';
+  if (normalized.startsWith('gemini') || normalized === 'antigravity') return 'gemini';
+  return 'codex';
+};
+
+const readinessBlockedPayload = ({ modelInput, readiness }: { modelInput: UnknownRecord; readiness: UnknownRecord }): UnknownRecord => {
+  const priorAction = asRecord(modelInput.action);
+  const supportsOperatorApproval = priorAction.type === 'review' && priorAction.supportOperatorApproval === true;
+  return {
+    ...modelInput,
+    status: 'execution-readiness-blocked',
+    executionReadiness: readiness,
+    action: {
+      type: 'blocked',
+      reason: 'execution-readiness',
+      blockingClass: 'completion',
+      guidance: supportsOperatorApproval
+        ? 'The current Host cannot complete the required independent review and receipt path. Resolve the Host capability, or for outstanding judgment-only obligations in a single-session environment, submit self-review findings for operator confirmation using a Host-issued approval reference (hard evidence remains mandatory).'
+        : 'The current Host cannot complete the required review and receipt path. Resolve the Host capability, then call kernel next again.',
+      ...(supportsOperatorApproval ? {
+        supportOperatorApproval: true,
+        ...(Array.isArray(priorAction.outstandingObligations) ? { outstandingObligations: priorAction.outstandingObligations } : {}),
+      } : {}),
+    },
+    next: modelInput,
+  };
+};
 
 const processHostLifecycleOutput = async ({ bridge, controlPlane, runId, modelInput, parameters = {} }: { bridge: HostLifecycleBridge | null; controlPlane: ControlPlane; runId: string | null; modelInput: UnknownRecord | null; parameters?: McpParameters }): Promise<{ output: UnknownRecord | null; hostReview: UnknownRecord | null }> => {
   if (!bridge || !modelInput || modelInput.status === 'contract-rejected') return { output: modelInput, hostReview: null };
@@ -326,7 +344,7 @@ export const handleMcpToolCall = async ({
     requireHostBinding: false,
   });
   const requestedSurface = String(parameters.surface || env.MOON_RELAY_KERNEL_SURFACE || '').trim().toLowerCase();
-  const lifecycleSurface = ['ade', 'ade_cli', 'ade-code'].includes(requestedSurface) ? 'ade' : 'codex';
+  const lifecycleSurface = resolveLifecycleSurface(requestedSurface);
   const configuredHostBridge = resolveConfiguredHostBridge(hostBridge, parameters)
     || createKernelHostReviewBridge({
       surface: lifecycleSurface,

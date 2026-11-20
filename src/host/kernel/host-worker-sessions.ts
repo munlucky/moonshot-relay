@@ -5,7 +5,7 @@ import { mkdir, realpath } from 'node:fs/promises';
 import { createKernelControlPlane } from './control-plane-runtime.js';
 import { startHostOwnedWritableAttempt, type HostOwnedWritableAttemptHandle } from './host-owned-writable-attempt.js';
 import { reserveHostWorkspaceWriter } from './workspace-writer-reservation.js';
-import { buildModelVisiblePromptMessage, buildModelVisiblePromptView } from './model-capsule-view.js';
+import { buildModelVisiblePromptView, resolveModelVisiblePromptMessage } from './model-capsule-view.js';
 import { runGit } from '../../shared/git-safe.js';
 import { verifyHostOwnedWorkerCandidate, settleHostOwnedWorkerCandidate, type WithHostWorkerExcluded } from './parallel-dispatcher.js';
 import type { CodexAppServerTransportOptions } from './codex-app-server-transport.js';
@@ -182,7 +182,7 @@ export function createHostWorkerSessions({
         }
         const promptView = buildModelVisiblePromptView({ modelInput });
         if (!promptView.objective || !promptView.currentWork) throw deny('host_worker_contract_missing');
-        const prompt = buildModelVisiblePromptMessage({ prompt: promptView });
+        const prompt = resolveModelVisiblePromptMessage({ prompt: promptView, env });
         if (cp.getCurrentStep(runId)?.stepId !== stepId) throw deny('host_worker_step_changed');
         const authority = record(modelInput.workAuthority);
         const task = record(authority.task);

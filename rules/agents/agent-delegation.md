@@ -1,5 +1,7 @@
 ---
 paths:
+  - "agents/**/*.md"
+  - "skills/**/*.md"
   - ".claude/agents/**/*.md"
   - ".claude/skills/**/*.md"
 ---

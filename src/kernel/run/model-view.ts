@@ -33,6 +33,25 @@ export const projectKernelModelView = (
 
   if (Array.isArray(view.acceptancePlans) && view.acceptancePlans.length > 0) {
     delete view.acceptance;
+    if (Array.isArray(view.acceptanceIds)) {
+      const planIds = view.acceptancePlans
+        .map((entry) => asRecord(entry)?.id)
+        .filter((id): id is string => typeof id === 'string');
+      if (JSON.stringify(view.acceptanceIds) === JSON.stringify(planIds)) {
+        delete view.acceptanceIds;
+      }
+    }
+  }
+
+  if (
+    action
+    && Array.isArray(view.requiredVerifications)
+    && Array.isArray(action.obligations)
+    && action.obligations.length > 0
+    && JSON.stringify(view.requiredVerifications) === JSON.stringify(action.obligations)
+  ) {
+    delete view.requiredVerifications;
+    view.requiredVerificationsSource = 'action.obligations';
   }
 
   const resume = asRecord(view.resume);
@@ -46,6 +65,15 @@ export const projectKernelModelView = (
     const task = asRecord(workAuthority.task);
     if (task) {
       work.task = copyWithout(task, ['objective', 'acceptanceCriteria']);
+    }
+    if (
+      action
+      && action.step
+      && work.currentWorkUnit
+      && JSON.stringify(work.currentWorkUnit) === JSON.stringify(action.step)
+    ) {
+      delete work.currentWorkUnit;
+      work.currentWorkUnitSource = 'action.step';
     }
     view.workAuthority = work;
   }

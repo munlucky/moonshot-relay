@@ -119,6 +119,43 @@ test('harness memory promoter uses the repository boundary without a fixed OS ch
   }
 });
 
+test('moonshot-phase-runner avoids hardcoded phase numbers for controlled adoption', async () => {
+  for (const file of [
+    'skills/moonshot-phase-runner/SKILL.md',
+    'skills/moonshot-phase-runner/SKILL.ko.md',
+    'skills/moonshot-phase-runner/references/compatibility-contract.md',
+  ]) {
+    const source = await readFile(fromRoot(file), 'utf8');
+    assert.doesNotMatch(source, /\bPhase 08\b/i, file);
+    assert.match(source, /designated controlled adoption phase/i, file);
+  }
+});
+
+test('public runtime skills and Kernel entrypoint avoid Claude-only $ARGUMENTS substitution', async () => {
+  const surface = JSON.parse(await readFile(fromRoot('package/runtime-surface.json'), 'utf8'));
+  const targets = [...(surface.publicRuntimeSkills || []), 'moon-relay-kernel'];
+  for (const skill of targets) {
+    for (const variant of ['SKILL.md', 'SKILL.ko.md']) {
+      const rel = `skills/${skill}/${variant}`;
+      if (!existsSync(fromRoot(rel))) continue;
+      const source = await readFile(fromRoot(rel), 'utf8');
+      assert.doesNotMatch(source, /\$ARGUMENTS\b/, rel);
+    }
+  }
+});
+
+test('codebase-master-guide avoids project-specific or client identifier leaks', async () => {
+  for (const file of [
+    'skills/codebase-master-guide/SKILL.md',
+    'skills/codebase-master-guide/references/curriculum-and-layout-spec.md',
+    'skills/codebase-master-guide/scripts/render_slidebook.py',
+    'skills/codebase-master-guide/agents/openai.yaml',
+  ]) {
+    const source = await readFile(fromRoot(file), 'utf8');
+    assert.doesNotMatch(source, /교보|dgtId|ohiRequestId|O-HI|A40900|saveNftHoldings|UserIssuanceService/i, file);
+  }
+});
+
 test('active public guideline references resolve in source', async () => {
   const missing = [];
   const guidelineRef = /docs\/public\/guidelines\/[A-Za-z0-9_.-]+/g;

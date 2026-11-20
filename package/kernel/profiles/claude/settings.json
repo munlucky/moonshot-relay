@@ -4,7 +4,23 @@
       "command": "moon-relay-kernel",
       "args": [
         "mcp-bridge"
-      ]
+      ],
+      "env": {
+        "MOON_RELAY_KERNEL_SURFACE": "claude"
+      }
     }
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "moon-relay-kernel assert-track --json"
+          }
+        ]
+      }
+    ]
   }
 }

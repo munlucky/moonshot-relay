@@ -6,7 +6,7 @@ policyClauseIds:
   - moonshot-phase-runner.policy.routing
   - moonshot-phase-runner.policy.hard-stops
   - moonshot-phase-runner.policy.output-contract
-policyDigest: 8f5c3df46a7b426b7b5963d90b1bc9de7eb0ff88f12e7a45a4a9bf5aba8c499e
+policyDigest: 86145bafac456b4ecf67a41ba8f6fe11e5548bcaa707edb58afa9067fe2cbdc0
 triggers:
   - "phase runner"
   - "run phase"
@@ -43,7 +43,7 @@ Own the public control-plane entrypoint for phase-based work. Resolve the active
 - Do not dispatch a phase with `architecture.required=true` when `ARCHITECTURE_HANDOFF.json` is missing, blocked, or lacks selected verification signals.
 - Do not stop the whole plan just because a completed phase produced review findings, failed eval evidence, or a non-accepted completion decision. Record the blocker as carry-forward evidence, keep the final completion gate closed, and continue the next actionable independent phase.
 - Do not assume phases are parallelizable from prose alone. Parallel execution requires validated plan graph metadata with dependencies satisfied and non-overlapping write sets.
-- Do not write live `.claude/**` or `.codex/**` adoption targets from staged redesign phases. Phase 08 owns controlled adoption.
+- Do not write live `.claude/**` or `.codex/**` adoption targets before the plan's designated controlled adoption phase.
 - Do not mutate live account-root, `.claude/**`, or `.codex/**` runtime profiles until the Operational Adoption Closeout gate passes from source evidence. Live adoption is a separate controlled step after harness-lab, package, eval, doctor, and runtime-surface parity evidence.
 - Do not use `agent-loop.mjs`, `moonshot-phase-dispatch.mjs`, or delegated-terminal adapters as the default execution path. They are legacy/headless compatibility adapters only.
 - Do not return final success until the in-session coordinator, fresh verifier evidence, scorecard, and repository closeout evidence agree.

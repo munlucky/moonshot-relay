@@ -5,7 +5,7 @@
 import { selectCodexProfileName } from '../codex-model-policy.js';
 import type { NativeExecutionOwner, NativeStartedTurn } from '../adapter-dispatch.js';
 import { isNativeDelegationRequested, resolveCodexActorRoute } from '../codex-actor-router.js';
-import { buildModelVisiblePromptMessage, buildModelVisiblePromptView } from '../model-capsule-view.js';
+import { buildModelVisiblePromptView, resolveModelVisiblePromptMessage } from '../model-capsule-view.js';
 import {
   buildCodexMainSessionPolicy,
   compareCodexSessionConfig,
@@ -389,9 +389,11 @@ const codexReviewerResultFields = (source: unknown): UnknownRecord => {
 export const createCodexNativeAgentLauncher = ({
   spawnAgent = null,
   host = asNativeHost(globalThis),
+  env = process.env,
 }: {
   spawnAgent?: NativeLaunch | null;
   host?: NativeAgentHost;
+  env?: NodeJS.ProcessEnv;
 } = {}): NativeLaunch | null => {
   const dispatch = resolveNativeSpawnAgent({ spawnAgent, host });
   if (!dispatch) return null;
@@ -413,7 +415,7 @@ export const createCodexNativeAgentLauncher = ({
       task_name: taskName,
       model: invocation.model,
       reasoning_effort: invocation.effort,
-      message: message || buildModelVisiblePromptMessage({ prompt: asRecord(modelVisiblePrompt) }),
+      message: message || resolveModelVisiblePromptMessage({ prompt: asRecord(modelVisiblePrompt), review: reviewer, env }),
       parent_session_id: parentSessionId,
       child_session: safeChildSession,
       working_directory: workingDirectory,
@@ -777,7 +779,7 @@ export const createCodexAdapter = ({
   runtimeHome = null,
   env = process.env,
 }: CreateCodexAdapterInput = {}) => {
-  const automaticNativeLaunch = nativeLaunch === null ? createCodexNativeAgentLauncher({ host: nativeAgentHost }) : null;
+  const automaticNativeLaunch = nativeLaunch === null ? createCodexNativeAgentLauncher({ host: nativeAgentHost, env }) : null;
   // The injected launch seam is usable only after an explicit delegation
   // request; it never changes the ordinary owner-direct default.
   const effectiveNativeLaunch = nativeLaunch || automaticNativeLaunch || launch;
@@ -814,7 +816,7 @@ export const createCodexAdapter = ({
       // Reproject at the adapter/provider boundary. A caller-supplied prompt
       // is intentionally not accepted as an authority for provider input.
       const providerPrompt = buildModelVisiblePromptView({ modelInput, capsule: executionCapsule });
-      const providerMessage = buildModelVisiblePromptMessage({ prompt: providerPrompt, review: decision.role === 'reviewer' });
+      const providerMessage = resolveModelVisiblePromptMessage({ prompt: providerPrompt, review: decision.role === 'reviewer', env });
       const providerInvocation = { model: invocation.model, effort: invocation.effort };
       const taskName = decision.role === 'reviewer' ? 'kernel_reviewer' : 'kernel_implementer';
       const nativeAvailable = Boolean(effectiveNativeLaunch && resolved.supportsSubagentModel === true);

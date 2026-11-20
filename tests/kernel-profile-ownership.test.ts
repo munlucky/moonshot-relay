@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { access, constants } from 'node:fs';
 import { cp, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { installKernelAccountRoot, installKernelProfile, inspectProfile, profileManifestPath, uninstallKernelProfile, PROFILE_PRODUCT_ID } from '../src/kernel/profile-install.js';
+import { doctorKernelProfile } from '../src/kernel/profile-doctor.js';
 import { materializeKernelMcpLauncher } from '../src/kernel/installer.js';
 
 const tempRoots: string[] = [];
@@ -37,6 +38,9 @@ test('Provider projection preserves shared data and uninstall removes only Kerne
   assert.equal(settings.mcpServers.foreign.command, 'foreign-server');
   assert.equal(settings.mcpServers['moon-relay-kernel'].args.length, 0);
   assert.equal(path.isAbsolute(settings.mcpServers['moon-relay-kernel'].command), true);
+  assert.equal(settings.mcpServers['moon-relay-kernel'].env?.MOON_RELAY_KERNEL_SURFACE, 'claude');
+  assert.ok(Array.isArray(settings.hooks?.SessionStart) && settings.hooks.SessionStart.length === 1);
+  assert.match(JSON.stringify(settings.hooks.SessionStart), /assert-track/);
 
   await writeFile(path.join(targetRoot, 'CLAUDE.md'), `${await readFile(path.join(targetRoot, 'CLAUDE.md'), 'utf8')}\n# User addition\n`);
   const afterUserEdit = JSON.parse(await readFile(path.join(targetRoot, 'settings.json'), 'utf8'));
@@ -444,6 +448,33 @@ test('antigravity profile reinstall with external skillsRoot updates canonical s
   assert.equal(second.status, 'reinstalled');
   const installedSkill = path.join(skillsRoot, 'skills', 'moon-relay-kernel', 'SKILL.md');
   assert.match(await readFile(installedSkill, 'utf8'), /Updated canonical skill/);
+});
+
+test('KR-05: doctorKernelProfile reports unmanaged duplicate Kernel guidance outside markers without modifying user text', async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'kernel-profile-dup-doctor-'));
+  tempRoots.push(home);
+  const targetRoot = path.join(home, '.claude');
+  const runtimeHome = path.join(home, '.moon-relay-kernel');
+
+  const installed = await installKernelProfile({ sourceRoot: process.cwd(), runtime: 'claude', targetRoot, runtimeHome });
+  assert.equal(installed.status, 'installed');
+
+  const claudeMdPath = path.join(targetRoot, 'CLAUDE.md');
+  const cleanText = await readFile(claudeMdPath, 'utf8');
+  const cleanDoctor = await doctorKernelProfile({ targetRoot, runtime: 'claude' });
+  assert.equal(cleanDoctor.status, 'ready');
+  assert.equal((cleanDoctor.warnings || []).length, 0);
+
+  const duplicatedText = `# Moon Relay Kernel\n\nStale pre-marker guidance.\n\n${cleanText}`;
+  await writeFile(claudeMdPath, duplicatedText);
+  const driftDoctor = await doctorKernelProfile({ targetRoot, runtime: 'claude' });
+  assert.equal(driftDoctor.status, 'drift');
+  assert.equal((driftDoctor.warnings || []).length, 1);
+  assert.ok((driftDoctor.checks || []).some((entry) => {
+    const check = assertTestRecord(entry);
+    return check.check === 'managed-section-no-duplicate:CLAUDE.md' && check.passed === false;
+  }));
+  assert.equal(await readFile(claudeMdPath, 'utf8'), duplicatedText);
 });
 
 

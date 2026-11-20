@@ -20,7 +20,9 @@ Last-Reviewed: 2026-10-25
 
 ## References
 
-- `@verification.contract.yaml`
-- `@rules/agents/agent-definition.md`
-- `${MOONSHOT_RELAY_HOME:-~/.moonshot-relay}/docs/public/guidelines/provider-neutral-model-routing.md`
-- `${MOONSHOT_RELAY_HOME:-~/.moonshot-relay}/docs/public/guidelines/kernel-agent-recovery.md`
+Codex does not auto-expand `@path` or shell variables; read these files on demand from the installed profile or resolved `MOONSHOT_RELAY_HOME` (default `~/.moonshot-relay`) when the task requires them:
+
+- `@verification.contract.yaml` (required before claiming verification or closeout policy)
+- `@rules/agents/agent-definition.md` (reference when configuring or auditing agents)
+- `${MOONSHOT_RELAY_HOME:-~/.moonshot-relay}/docs/public/guidelines/provider-neutral-model-routing.md` (reference for model routing policy)
+- `${MOONSHOT_RELAY_HOME:-~/.moonshot-relay}/docs/public/guidelines/kernel-agent-recovery.md` (reference for run recovery)

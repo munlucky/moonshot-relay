@@ -197,6 +197,57 @@ export const removeManagedSection = (
   };
 };
 
+const KNOWN_KERNEL_PROFILE_HEADING = /^#\s+(?:Moon Relay Kernel(?:\s+Codex Command Profile|\s+—\s+ADE)?|Kernel Antigravity Profile)\s*$/;
+
+export interface ManagedSectionDuplicateResult {
+  duplicated: boolean;
+  reason: 'unmanaged-duplicate-managed-body' | 'unmanaged-duplicate-kernel-heading' | null;
+  heading: string | null;
+}
+
+// Diagnostic-only detector for stale pre-marker Kernel guidance left outside
+// the managed section markers. Never mutates unmanaged user prose automatically.
+export const detectUnmanagedManagedSectionDuplicates = (
+  text: unknown,
+  sectionId = MANAGED_SECTION_ID,
+): ManagedSectionDuplicateResult => {
+  const target = String(text || '');
+  const inspected = inspectManagedSection(target, sectionId);
+  if (inspected.status !== 'present') {
+    return { duplicated: false, reason: null, heading: null };
+  }
+  const startIndex = inspected.startIndex ?? 0;
+  const endIndex = inspected.endIndex ?? startIndex;
+  const before = target.slice(0, startIndex).trim();
+  const after = target.slice(endIndex + inspected.end.length).trim();
+  const unmanaged = [before, after].filter(Boolean).join('\n').replace(/\r\n/g, '\n').trim();
+  if (!unmanaged) {
+    return { duplicated: false, reason: null, heading: null };
+  }
+  const managedBody = String(inspected.body || '').replace(/\r\n/g, '\n').trim();
+  const headingMatch = managedBody.match(/^#\s+.+$/m);
+  const managedHeading = headingMatch ? headingMatch[0].trim() : null;
+  if (managedBody && unmanaged.includes(managedBody)) {
+    return {
+      duplicated: true,
+      reason: 'unmanaged-duplicate-managed-body',
+      heading: managedHeading,
+    };
+  }
+  if (
+    managedHeading
+    && KNOWN_KERNEL_PROFILE_HEADING.test(managedHeading)
+    && unmanaged.split('\n').some((line) => line.trim() === managedHeading)
+  ) {
+    return {
+      duplicated: true,
+      reason: 'unmanaged-duplicate-kernel-heading',
+      heading: managedHeading,
+    };
+  }
+  return { duplicated: false, reason: null, heading: null };
+};
+
 const pathSegments = (jsonPath: unknown): string[] => (
   String(jsonPath || '').split('.').filter(Boolean)
 );
@@ -399,7 +450,29 @@ export const removeJsonOwnership = (
         (item) => !expectedArrayDigests.includes(valueDigest(item)),
       );
       if (retained.length !== resolved.value.length) {
-        resolved.parent[resolved.key] = retained;
+        if (retained.length === 0) {
+          delete resolved.parent[resolved.key];
+          const ancestors = pathSegments(jsonPath).slice(0, -1);
+          while (ancestors.length > 0) {
+            const parentResolution = getJsonPath(value, ancestors.join('.'));
+            const container = parentResolution.value;
+            if (
+              !parentResolution.present
+              || !container
+              || typeof container !== 'object'
+              || Array.isArray(container)
+              || Object.keys(container).length > 0
+            ) {
+              break;
+            }
+            if (parentResolution.parent && parentResolution.key) {
+              delete parentResolution.parent[parentResolution.key];
+            }
+            ancestors.pop();
+          }
+        } else {
+          resolved.parent[resolved.key] = retained;
+        }
         changed = true;
       }
     } else if (deleteJsonPath(value, jsonPath)) {

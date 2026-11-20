@@ -166,7 +166,7 @@
       "skillPath": "skills/codebase-master-guide",
       "entrypoint": "scripts/kernel/standalone/codebase-master-guide.mjs",
       "exportName": "runCodebaseMasterGuide",
-      "contentHash": "b9dfc8ce97fb1206e616a51b0cc40db41cea10f9d1f91051e4cbd91d44d59736",
+      "contentHash": "3dc6199f8775b2bcbf38216d4a7c8ebd7dde8333a41b16c81beb596b8e7735a7",
       "cli": {
         "enabled": true,
         "binName": "codebase-master-guide"
