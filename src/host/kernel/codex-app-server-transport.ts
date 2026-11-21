@@ -461,9 +461,11 @@ export async function createCodexAppServerTransport({
       const timer = setTimeout(() => fail('codex_app_server_compaction_timeout'), DEFAULT_TURN_TIMEOUT_MS);
       try {
         await rpc('thread/compact/start', { threadId });
-        return await completed;
+        const outcome = await completed;
+        if (outcome.status !== 'compacted') fail(outcome.reason);
+        return outcome;
       } catch (cause) {
-        if (object(cause)?.rpcCode === -32601) {
+        if (object(cause)?.rpcCode === -32601 && !turnId && !poisoned) {
           return { status: 'deferred', reason: 'codex_app_server_compaction_unsupported' };
         }
         // Without a terminal event, a later turn could race an accepted request.

@@ -12,7 +12,7 @@ import { type NativeExecutionObservation } from '../src/host/kernel/adapter-disp
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
 import { continueKernelCodexLoop, saveKernelLoopHandoff } from '../src/host/kernel/loop-handoff.js';
 import { resolveKernelWorktreeIdentity } from '../src/host/kernel/workspace/worktree-resolution.js';
-import { handleMcpToolCall } from '../src/kernel/bridge/mcp.js';
+import { createMcpBridgeHandler, handleMcpToolCall } from '../src/kernel/bridge/mcp.js';
 import { runHostOwnedWritableAttempt, startHostOwnedWritableAttempt } from '../src/host/kernel/host-owned-writable-attempt.js';
 import { createHostWorkerSessions } from '../src/host/kernel/host-worker-sessions.js';
 import { prepareHostWriterAttemptWorktree, snapshotHostWorkerPatch } from '../src/host/kernel/workspace/physical-worktree.js';
@@ -35,9 +35,14 @@ test('Codex context cleanup requires a matching terminal compaction and handles 
       try {
         const first = await transport.runTurn(turn(workspace));
         assert.deepEqual(await transport.compactContext(), { status: 'deferred', reason });
-        const resumed = await transport.runTurn(turn(workspace));
-        assert.equal(resumed.threadId, first.threadId);
-        assert.notEqual(resumed.turnId, first.turnId);
+        if (mode === 'loop-unsupported') {
+          const resumed = await transport.runTurn(turn(workspace));
+          assert.equal(resumed.threadId, first.threadId);
+          assert.notEqual(resumed.turnId, first.turnId);
+        } else {
+          assert.equal(transport.observeTurn().connection, 'unavailable');
+          await assert.rejects(transport.runTurn(turn(workspace)), /codex_app_server_unavailable/);
+        }
       } finally {
         await transport.close();
       }
@@ -45,8 +50,9 @@ test('Codex context cleanup requires a matching terminal compaction and handles 
   });
 });
 
-for (const native of [false, true]) {
-  test(`Kernel loop handoff completes scoped pricing work through two ${native ? 'native' : 'fixture'} Compact boundaries`, {
+for (const mode of ['native', 'loop-e2e', 'loop-guard', 'loop-unsupported', 'loop-wrong-thread', 'loop-failed-turn']) {
+  const native = mode === 'native';
+  test(`Kernel report routes the pricing loop through ${native ? 'native Compact' : mode}`, {
     skip: native && process.env.MOON_RELAY_NATIVE_COMPACT_TEST !== '1',
     timeout: 240_000,
   }, async (t) => {
@@ -111,13 +117,14 @@ for (const native of [false, true]) {
         const runId = String(next.runId);
         const transport = ownedTransport = await createCodexAppServerTransport({
           ...(native ? { cwd: workspaceRoot } : {
-            executable: process.execPath, args: [server], env: { ...process.env, TEST_MODE: 'loop-e2e' },
+            executable: process.execPath, args: [server], env: { ...process.env, TEST_MODE: mode },
           }),
           retainReadOnlyThreadForRun: runId,
         });
         const nativeTurn = (name: string, objective: string, directive: Record<string, unknown>) => ({
           model: native ? (process.env.MOON_RELAY_NATIVE_COMPACT_MODEL || 'gpt-6.2-sol') : 'fixture',
           effort: 'low',
+          timeoutMs: 90_000,
           prompt: `Module: ${name}. ${objective} Return JSON with only one integer property, value. Don't call tools.\nKernel directive: ${JSON.stringify(directive)}`,
           outputSchema: { type: 'object', required: ['value'], additionalProperties: false, properties: { value: { type: 'integer' } } },
         });
@@ -125,6 +132,26 @@ for (const native of [false, true]) {
         assert.ok(initialContract);
         let result = await transport.runTurn({ cwd: workspaceRoot, ...nativeTurn(steps[0]!.name, steps[0]!.objective, stepFrom(next)) });
         const thread = result.threadId;
+        let followingTurns = 0;
+        let followupPrompt = '';
+        const exerciseBudget = native || mode === 'loop-e2e';
+        const archivedDecision = 'ARCHIVED-PRICING-DECISION';
+        const longNotes = Array.from({ length: 32 }, (_, i) => `Historical decision ${i}: ${'가격🙂'.repeat(48)}`);
+        const handler = createMcpBridgeHandler({ runtimeHome, env,
+          codexLoop: mode === 'loop-guard' ? null : {
+            transport: { ...transport, runTurn: input => {
+              followingTurns++;
+              followupPrompt = input.prompt;
+              return transport.runTurn(input);
+            } },
+            prepareTurn(directive) {
+              const step = stepFrom(directive);
+              const work = steps.find(({ name }) => (step.allowedPaths as string[]).includes(fileFor(name)));
+              assert.ok(work);
+              return nativeTurn(work.name, work.objective, step);
+            },
+          },
+        });
         for (const [index, { name }] of steps.entries()) {
           const step = stepFrom(next);
           assert.deepEqual(step.allowedPaths, [fileFor(name)]);
@@ -133,18 +160,23 @@ for (const native of [false, true]) {
           const output = assertTestRecord(JSON.parse(result.finalMessage || '{}'));
           assert.ok(Number.isSafeInteger(output.value));
           await writeFile(path.join(workspaceRoot, fileFor(name)), JSON.stringify({ value: output.value }) + '\n');
-          const reported = await mcp('kernel_report', {
-            runId, report: { stepId: step.stepId, summary: `Set pricing value ${name}`, changedPaths: [fileFor(name)],
+          const response = await handler({ id: index, method: 'tools/call', params: { name: 'kernel_report', arguments: {
+            workspaceRoot, runId, report: { stepId: step.stepId, summary: `Set pricing value ${name}`, changedPaths: [fileFor(name)],
               verifications: [
                 { obligationId: name, commandRef: `test:${name}`, acceptanceCoverage: [`AC-${index + 1}`] },
                 ...(name === 'total' ? [{ obligationId: 'unit-test', commandRef: 'test:total' }] : []),
               ] },
-            handoff: index === 0 ? {
-              decisions: ['Round tax once to the nearest cent.'],
+            ...(index === 0 ? { handoff: {
+              decisions: [...(exerciseBudget ? [archivedDecision, ...longNotes] : []), 'Round tax once to the nearest cent.'],
               rejectedApproaches: ['Rounding per item changes the receipt total.'],
               remainingRisks: ['Tax and receipt proofs are pending.'],
-            } : {},
-          });
+            } } : exerciseBudget && index === 1 ? { handoff: {
+              decisions: ['Use the verified tax rate.'],
+              rejectedApproaches: [`Archived alternative: ${'계산🙂'.repeat(900)}`],
+            } } : mode === 'loop-guard' ? { handoff: {} } : {}),
+          } } });
+          assert.equal(response?.result?.isError, false, JSON.stringify(response));
+          const reported = assertTestRecord(JSON.parse(response!.result!.content![0]!.text));
           next = assertTestRecord(reported.next);
           assert.ok(reported.step, JSON.stringify({ status: reported.status, action: next.action, failures: reported.failures }));
           assert.equal(assertTestRecord(reported.step).state, 'passed', JSON.stringify(reported.failures));
@@ -157,11 +189,28 @@ for (const native of [false, true]) {
           assert.match(markdown, /Rounding per item changes the receipt total/);
           assert.match(markdown, new RegExp(`${name} · passed · test:${name}`));
           assert.match(markdown, /total · missing/);
+          if (exerciseBudget) {
+            const context = followupPrompt.split('\n\nUse the attached handoff')[1]!;
+            assert.ok(Buffer.byteLength(markdown) > 8192);
+            assert.ok(markdown.includes(archivedDecision));
+            assert.ok(context && Buffer.byteLength('Use the attached handoff' + context) <= 8192);
+            assert.ok(context.includes(`reports/loop-handoffs/${path.basename(boundary.file)}`));
+            assert.ok(context.includes(boundary.digest));
+            assert.ok(context.includes('## Next work\n- ' + boundary.stepId));
+            assert.ok(context.includes(steps[index + 1]!.objective));
+            assert.ok(context.includes('Round tax once to the nearest cent.'));
+            assert.ok(!context.includes(archivedDecision));
+            assert.ok(!context.includes('\uFFFD'));
+            if (index === 1) {
+              assert.ok(context.includes('Use the verified tax rate.'));
+              assert.ok(markdown.includes('계산🙂'.repeat(900)));
+            }
+          }
           const following = steps[index + 1]!;
           const resume = () => continueKernelCodexLoop({ controlPlane, transport, handoff: boundary, compact: true,
-            turn: nativeTurn(following.name, following.objective, stepFrom(next)) });
+            prepareTurn: () => nativeTurn(following.name, following.objective, stepFrom(next)) });
           const before = await mcp('kernel_attach', { runId });
-          if (index === 0) {
+          if (mode === 'loop-guard' && index === 0) {
             const badSave = await saveKernelLoopHandoff({
               controlPlane, runId, report: reported, runtimeHome: boundary.file,
             });
@@ -181,23 +230,48 @@ for (const native of [false, true]) {
             assert.deepEqual(await mcp('kernel_attach', { runId }), before);
           }
           const knowledgeBefore = controlPlane.knowledgeAuthority(runId)?.project;
-          const [continued, concurrent] = await Promise.all([resume(), resume()]);
-          assert.equal(concurrent.status, 'deferred');
+          let continuation = reported.loopContinuation;
+          if (mode === 'loop-guard') {
+            const [continued, concurrent] = await Promise.all([resume(), resume()]);
+            assert.equal(concurrent.status, 'deferred');
+            assert.equal((await resume()).status, 'deferred');
+            continuation = continued;
+          } else {
+            assert.equal(followingTurns, mode === 'loop-wrong-thread' ? 0 : index + 1);
+          }
+          const continued = assertTestRecord(continuation);
+          if (mode === 'loop-wrong-thread' || mode === 'loop-failed-turn') {
+            if (mode === 'loop-wrong-thread') {
+              assert.deepEqual(continued, { status: 'deferred', reason: 'codex_app_server_compaction_unconfirmed' });
+            } else {
+              assert.equal(continued.status, 'failed');
+              assert.equal(continued.retryable, false);
+              assert.equal(assertTestRecord(continued.turn).turnStatus, 'failed');
+            }
+            assert.equal(stepFrom(next).stepId, boundary.stepId);
+            assert.equal((await controlPlane.getRun(runId))?.status, 'active');
+            return;
+          }
           assert.equal(continued.status, 'continued', JSON.stringify(continued));
-          assert.equal(continued.cleanup.status, 'compacted', JSON.stringify(continued.cleanup));
-          assert.equal(continued.cleanup.threadId, thread);
-          assert.notEqual(continued.cleanup.turnId, continued.turn.turnId);
-          assert.equal((await resume()).status, 'deferred');
+          const cleanup = assertTestRecord(continued.cleanup);
+          const nextTurn = assertTestRecord(continued.turn);
+          if (mode === 'loop-unsupported') {
+            assert.deepEqual(cleanup, { status: 'deferred', reason: 'codex_app_server_compaction_unsupported' });
+          } else {
+            assert.equal(cleanup.status, 'compacted', JSON.stringify(cleanup));
+            assert.equal(cleanup.threadId, thread);
+            assert.notEqual(cleanup.turnId, nextTurn.turnId);
+          }
           assert.deepEqual(await mcp('kernel_attach', { runId }), before);
           assert.deepEqual(controlPlane.knowledgeAuthority(runId)?.project, knowledgeBefore);
           assert.deepEqual((await controlPlane.getRun(runId))?.taskContract, initialContract);
           if (native) t.diagnostic(JSON.stringify({
             boundary: index + 1,
             beforeContextTokens: result.contextTokens ?? 'UNAVAILABLE',
-            compactContextTokens: continued.cleanup.contextTokens ?? 'UNAVAILABLE',
-            nextTurnContextTokens: continued.turn.contextTokens ?? 'UNAVAILABLE',
+            compactContextTokens: assertTestRecord(continued.cleanup).contextTokens ?? 'UNAVAILABLE',
+            nextTurnContextTokens: nextTurn.contextTokens ?? 'UNAVAILABLE',
           }));
-          result = continued.turn;
+          result = continued.turn as typeof result;
         }
         const action = assertTestRecord(next.action);
         if (action.type !== 'done') {
@@ -302,7 +376,7 @@ input.on('line', (line) => {
       send({ id, error: { code: -1, message: 'unsafe turn' } });
       return;
     }
-    if (process.env.TEST_MODE === 'loop-e2e') {
+    if (isLoop && message.params.outputSchema) {
       const prompt = message.params.input[0].text;
       const values = { subtotal: 125, tax: 8, total: 270 };
       const key = /Module: (subtotal|tax|total)/.exec(prompt)?.[1];
@@ -382,7 +456,8 @@ input.on('line', (line) => {
       // Turn lifecycle notifications identify the Turn by turn.id, unlike
       // item notifications which include params.turnId.
       send({ method: 'turn/completed', params: { threadId, turn: { id: 'wrong-turn', status: 'interrupted' } } });
-      send({ method: 'turn/completed', params: { threadId, turn: { id: turnId, status: 'completed' } } });
+      const status = process.env.TEST_MODE === 'loop-failed-turn' && loopTurn > 1 ? 'failed' : 'completed';
+      send({ method: 'turn/completed', params: { threadId, turn: { id: turnId, status } } });
       if (process.env.TEST_MODE === 'no-tools-late') send({ method: 'item/completed', params: {
         threadId, turnId, item: { type: 'commandExecution', id: 'late' } } });
       if (process.env.TEST_MODE?.includes('report')) send(reportEvent(threadId, 'late-report', '{"status":"failed"}'));

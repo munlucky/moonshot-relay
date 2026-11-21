@@ -11,6 +11,11 @@ type ControlPlane = Awaited<ReturnType<typeof createKernelControlPlane>>;
 type RecordValue = Record<string, unknown>;
 type Report = Awaited<ReturnType<ControlPlane['report']>>;
 type Boundary = { file: string; runId: string; stepId: string; digest: string };
+type LoopTurn = Omit<CodexAppServerTurn, 'cwd' | 'writableWorker' | 'executionOwner' | 'onNativeExecution' | 'toolPolicy'>;
+export type KernelCodexLoopHost = {
+  transport: CodexAppServerTransport;
+  prepareTurn(next: RecordValue): LoopTurn;
+};
 type Notes = { decisions?: string[]; rejectedApproaches?: string[]; remainingRisks?: string[] };
 const record = (value: unknown): RecordValue =>
   value && typeof value === 'object' && !Array.isArray(value) ? value as RecordValue : {};
@@ -52,6 +57,50 @@ const list = (values: readonly unknown[], empty: string) => values.length
   : `- ${empty}`;
 const noteLines = (values: unknown) => Array.isArray(values) ? values.filter(value => typeof value === 'string' && value.trim()) : [];
 const noteEnd = '\n<!-- End of decision history -->\n';
+const HANDOFF_CONTEXT_BYTES = 8 * 1024;
+const HANDOFF_SECTION_BYTES = 2 * 1024;
+const HANDOFF_LINE_BYTES = 1024;
+const handoffInstruction = 'Use the attached handoff as context. Follow the canonical Kernel work directive and current evidence.\n\n';
+
+function clipUtf8(text: string, maxBytes: number) {
+  if (Buffer.byteLength(text) <= maxBytes) return text;
+  const bytes = Buffer.from(text);
+  const ellipsis = '…';
+  let end = maxBytes - Buffer.byteLength(ellipsis);
+  // Move the cut to the start of any character split by the byte limit.
+  while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end--;
+  return bytes.toString('utf8', 0, end) + ellipsis;
+}
+
+function handoffContext(markdown: string, { file, digest }: Boundary) {
+  const full = handoffInstruction + markdown;
+  if (Buffer.byteLength(full) <= HANDOFF_CONTEXT_BYTES) return full;
+
+  const sections = new Map(markdown.replace(noteEnd, '\n').split(/(?=^## )/mu)
+    .filter(section => section.startsWith('## '))
+    .map(section => {
+      const [heading, ...lines] = section.trimEnd().split('\n');
+      return [heading, lines] as const;
+    }));
+  let excerpt = handoffInstruction + 'Handoff excerpt. Full decisions and evidence references are in the verified runtime artifact '
+    + `reports/loop-handoffs/${path.basename(file)} (digest ${digest}).`;
+  for (const [heading, newestFirst] of [
+    ['## Next work', false],
+    ['## Decision history (advisory)', true],
+    ['## Remaining risks (advisory)', false],
+    ['## Settled work', true],
+    ['## Task', false],
+    ['## Kernel evidence', false],
+  ] as const) {
+    const lines = sections.get(heading);
+    const remaining = HANDOFF_CONTEXT_BYTES - Buffer.byteLength(excerpt);
+    if (!lines?.length || remaining < Buffer.byteLength(heading) + 8) continue;
+    if (newestFirst) lines.reverse();
+    const section = `\n\n${heading}\n${lines.map(line => clipUtf8(line, HANDOFF_LINE_BYTES)).join('\n')}`;
+    excerpt += clipUtf8(section, Math.min(remaining, HANDOFF_SECTION_BYTES));
+  }
+  return excerpt;
+}
 
 async function readArtifact(file: string) {
   const stored = await readFile(file, 'utf8');
@@ -103,7 +152,11 @@ export async function saveKernelLoopHandoff({
     if (previous && previous.lineage !== lineage) return deferred('handoff_foreign');
     const oldNotes = previous?.markdown.split(noteEnd, 1)[0]?.split('\n').slice(3)
       .filter(line => line.startsWith('- Decision — ') || line.startsWith('- Rejected — ')) ?? [];
-    const history = [...new Set([...oldNotes, ...(newNotes.length ? list(newNotes, '').split('\n') : [])])];
+    const history = new Set(oldNotes);
+    for (const note of newNotes.length ? list(newNotes, '').split('\n') : []) {
+      history.delete(note);
+      history.add(note);
+    }
     const trust = record(state.trustAuthority?.evidence);
     const evidence = [...records(trust.hard), ...records(trust.review)].map(item =>
       `${item.obligationId} · ${item.status} · ${item.commandRef ?? 'no command'} · ${item.evidenceDigest ?? item.receiptId ?? 'no receipt'} · ${record(item.freshness).status ?? 'freshness unavailable'}`);
@@ -111,7 +164,7 @@ export async function saveKernelLoopHandoff({
       state.workAuthority.progress.completedWorkUnitIds.includes(step.stepId));
     const markdown = [
       '# Kernel loop handoff\n\n## Decision history (advisory)',
-      history.join('\n') || '- No decisions recorded.',
+      [...history].join('\n') || '- No decisions recorded.',
       noteEnd.trim(),
       '## Task',
       list([state.run.objective], ''),
@@ -147,10 +200,10 @@ export async function saveKernelLoopHandoff({
 // Called by the owning Host after the active model turn and Report both settle.
 // Never calls next or report, and starts only a read-only model turn.
 export async function continueKernelCodexLoop({
-  controlPlane, transport, handoff, turn, compact,
+  controlPlane, transport, handoff, prepareTurn, compact,
 }: {
   controlPlane: ControlPlane; transport: CodexAppServerTransport; handoff: Boundary;
-  turn: Omit<CodexAppServerTurn, 'cwd' | 'writableWorker' | 'executionOwner' | 'onNativeExecution'>;
+  prepareTurn: () => LoopTurn;
   compact: boolean;
 }) {
   const { runId, stepId, file, digest } = handoff;
@@ -171,7 +224,11 @@ export async function continueKernelCodexLoop({
         && artifact.identity === hash(JSON.stringify(state.snapshot)) ? artifact : null;
     };
     if (!await matches()) return deferred('handoff_corrupt_or_stale');
+    const turn = prepareTurn();
     const cleanup = compact ? await transport.compactContext() : deferred('context_cleanup_not_requested');
+    if (compact && cleanup.status === 'deferred' && cleanup.reason !== 'codex_app_server_compaction_unsupported') {
+      return deferred(cleanup.reason);
+    }
     const confirmed = await matches();
     if (!confirmed) return deferred('handoff_corrupt_or_stale');
     const resumed = transport.observeTurn();
@@ -180,10 +237,13 @@ export async function continueKernelCodexLoop({
     }
     consumed.set(transport, digest);
     const result = await transport.runTurn({
-      ...turn, cwd: controlPlane.projectRoot,
-      prompt: `${turn.prompt}\n\nUse the attached handoff as context. Follow the canonical Kernel work directive and current evidence.\n\n${confirmed.markdown}`,
-    });
-    return { status: 'continued' as const, cleanup, turn: result };
+      ...turn, cwd: controlPlane.projectRoot, writableWorker: null, executionOwner: null, onNativeExecution: null,
+      prompt: `${turn.prompt}\n\n${handoffContext(confirmed.markdown, handoff)}`,
+    }).catch(() => null);
+    return result?.turnStatus === 'completed'
+      ? { status: 'continued' as const, cleanup, turn: result }
+      : { status: 'failed' as const, reason: result ? 'host_turn_incomplete' : 'host_turn_unconfirmed',
+          retryable: false as const, cleanup, turn: result };
   } catch {
     return deferred('loop_continuation_failed');
   } finally {

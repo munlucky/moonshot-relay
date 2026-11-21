@@ -8,7 +8,9 @@ import { projectKernelModelView } from '../run/model-view.js';
 import {
   createKernelControlPlane,
   createHostWorkerSessions,
+  continueKernelCodexLoop,
   saveKernelLoopHandoff,
+  type KernelCodexLoopHost,
   createLocalWorkerControl,
   type LocalWorkerControlOptions,
   createKernelHostReviewBridge,
@@ -53,6 +55,7 @@ interface HandleMcpToolCallInput {
   env?: NodeJS.ProcessEnv;
   hostBridge?: HostLifecycleBridge | HostBridgeFactory | null;
   nativeHost?: typeof globalThis;
+  codexLoop?: KernelCodexLoopHost | null;
 }
 
 interface McpRequest extends UnknownRecord {
@@ -75,6 +78,7 @@ interface StartMcpBridgeServerInput {
   env?: NodeJS.ProcessEnv;
   hostBridge?: HostLifecycleBridge | HostBridgeFactory | null;
   nativeHost?: typeof globalThis;
+  codexLoop?: KernelCodexLoopHost | null;
 }
 
 const asRecord = (value: unknown): UnknownRecord => (
@@ -325,6 +329,7 @@ export const handleMcpToolCall = async ({
   env = process.env,
   hostBridge = null,
   nativeHost = globalThis,
+  codexLoop = null,
 }: HandleMcpToolCallInput = {}): Promise<unknown> => {
   if (Object.hasOwn(parameters, 'ioWrite') || Object.hasOwn(parameters, 'ioRead')) {
     throw Object.assign(new Error('host_io_requires_owning_handler'), { code: 'host_io_requires_owning_handler' });
@@ -480,12 +485,20 @@ export const handleMcpToolCall = async ({
         modelInput: res.next ? asRecord(res.next) : null,
         parameters,
       });
-      if (parameters.handoff && !processed.hostReview && processed.output?.status !== 'execution-readiness-blocked') {
+      const loop = codexLoop?.transport.observeTurn().contextRunId === runId ? codexLoop : undefined;
+      if ((parameters.handoff || loop) && !processed.hostReview && processed.output?.status !== 'execution-readiness-blocked') {
+        const loopHandoff = await saveKernelLoopHandoff({
+          controlPlane: cp, runtimeHome: resolvedRuntimeHome, runId, report: res,
+          summary: parameters.report?.summary,
+          ...(parameters.handoff ? { notes: parameters.handoff } : {}),
+        });
+        const view = asRecord(projectKernelModelView(res, { verbose: parameters.verbose === true }));
+        if (loopHandoff.status !== 'saved' || !loop) return { ...view, loopHandoff };
         return {
-          ...asRecord(projectKernelModelView(res, { verbose: parameters.verbose === true })),
-          loopHandoff: await saveKernelLoopHandoff({
-            controlPlane: cp, runtimeHome: resolvedRuntimeHome, runId, report: res,
-            summary: parameters.report?.summary, notes: parameters.handoff,
+          ...view, loopHandoff,
+          loopContinuation: await continueKernelCodexLoop({
+            controlPlane: cp, transport: loop.transport, handoff: loopHandoff, compact: true,
+            prepareTurn: () => loop.prepareTurn(asRecord(view.next)),
           }),
         };
       }
@@ -536,7 +549,7 @@ export const handleMcpToolCall = async ({
   }
 };
 
-export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, hostBridge = null, nativeHost = globalThis, hostWorkerSessions = undefined, ioWriter = undefined, ioReader = undefined }: Omit<HandleMcpToolCallInput, 'name' | 'parameters'> & {
+export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, hostBridge = null, nativeHost = globalThis, hostWorkerSessions = undefined, ioWriter = undefined, ioReader = undefined, codexLoop = null }: Omit<HandleMcpToolCallInput, 'name' | 'parameters'> & {
   hostWorkerSessions?: ReturnType<typeof createHostWorkerSessions>;
   ioWriter?: LocalWorkerControlOptions['ioWriter'];
   ioReader?: LocalWorkerControlOptions['ioReader'];
@@ -633,6 +646,7 @@ export const createMcpBridgeHandler = ({ runtimeHome = null, env = process.env, 
           env,
           hostBridge,
           nativeHost,
+          codexLoop,
         });
         const modelInput = asRecord(resultData);
         let resultWithWorker: unknown = resultData;
@@ -744,11 +758,12 @@ export const startMcpBridgeServer = ({
   env = process.env,
   hostBridge = null,
   nativeHost = globalThis,
+  codexLoop = null,
   hostWorkerSessions = undefined,
   ioWriter = undefined,
   ioReader = undefined,
 }: StartMcpBridgeServerInput = {}) => {
-  const handler = createMcpBridgeHandler({ runtimeHome, env, hostBridge, nativeHost,
+  const handler = createMcpBridgeHandler({ runtimeHome, env, hostBridge, nativeHost, codexLoop,
     ...(ioWriter ? { ioWriter } : {}),
     ...(ioReader ? { ioReader } : {}),
     ...(hostWorkerSessions ? { hostWorkerSessions } : {}),
