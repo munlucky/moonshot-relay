@@ -19,17 +19,26 @@ The optional `handoff` field adds `decisions`, `rejectedApproaches` and
 `remainingRisks`. It also requests a handoff on other MCP connections.
 A successful save returns `loopHandoff.status = "saved"`. The Markdown file is in the Kernel
 runtime's `reports/loop-handoffs` directory. Its digest binds it to the observed
-Run, Worktree, contract, cursor, workspace, knowledge revision and evidence.
+Run, Worktree, contract, cursor and workspace. The file includes evidence
+references from the time of the save.
 
-An App Server Host can retain its read-only conversation with
+An App Server Host can bind a read-only conversation to a Run with
 `createCodexAppServerTransport({ retainReadOnlyThreadForRun: runId })`.
-Bind that transport and the Host's `prepareTurn(next)` function through
-`createMcpBridgeHandler({ codexLoop: { transport, prepareTurn } })`. Submit
-the report through that handler after the active model turn ends. The
-handler saves the handoff, checks the Run and cursor, requests Compact, and
-dispatches the next read-only turn using the report's existing directive.
-It returns the outcome in `loopContinuation`. Any file write or report
-still uses the normal Kernel scope and admission.
+Give `createMcpBridgeHandler({ codexLoop })` the transport and the Host's
+`prepareTurn(next)` function. Use `runKernelCodexLoopTurn` with the same
+Host for the first turn. Once the report and current turn settle, the Host
+starts a fresh ephemeral read-only Thread on the same transport. It uses
+the existing Run, Worktree, owner and `report.next`. This transition calls
+Compact zero times. File changes still require Kernel scope and admission.
+
+An idle Host receives the follow-up outcome in `loopContinuation`.
+A report submitted inside a turn returns `host_turn_settling` so that turn
+can finish. The Host receives the follow-up outcome through its
+`onContinuation({ runId, stepId, result })` callback. Use that callback to
+receive the next model output or its failure. Without a callback, the
+handler returns `host_continuation_observer_required` and starts no turn.
+An interrupted, failed or unconfirmed current turn also prevents automatic
+continuation. A report replay does not start another turn for the same directive.
 
 The Host adds up to 8 KiB of UTF-8 handoff context to the next prompt.
 When the handoff exceeds this limit, the excerpt puts the next work and
@@ -38,22 +47,18 @@ of the full Markdown file. The file retains the decision history and
 Kernel evidence references. The report directive still supplies the
 canonical scope.
 
-| Surface | Automatic cleanup |
-| --- | --- |
-| Host-owned Codex App Server conversation | Uses `thread/compact/start`. A matching completed `contextCompaction` item and completed turn establish success. |
-| Codex Desktop, interactive Codex CLI and Claude Code | Host-owned command execution and Run rebinding are unverified. The handoff can be saved while cleanup is deferred. |
-| Clear | No surface has verified the required Clear and same-Run rebinding sequence. |
+An unsettled Writer attempt, mutation lock or stale workspace blocks
+continuation. If the handoff is unavailable or corrupt, the Host uses the
+current Kernel directive. A failed or unconfirmed follow-up produces a
+failure outcome. The Host does not replay that start. The settled report
+remains authoritative.
 
-An active turn, unsettled attempt, mutation lock, stale workspace or corrupt
-handoff blocks the continuation. A confirmed unsupported Compact RPC allows
-the same idle conversation to continue. Missing or mismatched completion
-evidence blocks any further turn on that connection. A follow-up turn that
-fails returns `loopContinuation.status = "failed"` and the Host does not
-replay it. The report remains the Kernel authority in each case.
+Codex Desktop, interactive Codex CLI and Claude Code can save the handoff.
+Use the normal Run discovery and resume flow on those surfaces.
 
-With an authenticated local Codex App Server, run `npm run build`, then
-`npm run build:tests`, then `npm run test:host-loop-compaction-native`. The
-test sends three scoped pricing reports through the production MCP handler
-and checks two automatic Compact boundaries and final Kernel completion on
-the same Run. The fixture uses model-generated values and applies them
-through the test Host.
+Run `npm run build`, `npm run build:tests` and `npm run test:host-worker-handoff`
+to check the fixture. It verifies three Work Units and three Threads in one
+Run, zero automatic Compact calls, and the Host's recovery boundaries.
+With an authenticated local Codex App Server, the optional
+`npm run test:host-loop-compaction-native` checks an explicitly requested
+Compact and a subsequent turn in the same Thread.

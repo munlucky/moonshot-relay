@@ -142,6 +142,7 @@ export interface UsageReceiptInput {
   capsule?: UnknownRecord | null;
   admission?: UnknownRecord | null;
   attemptId?: unknown;
+  stepId?: unknown;
   bindingId?: unknown;
   actorSessionId: unknown;
   parentSessionId?: unknown;
@@ -162,6 +163,7 @@ export const buildUsageReceipt = ({
   capsule = null,
   admission = null,
   attemptId = null,
+  stepId = null,
   bindingId = null,
   actorSessionId,
   parentSessionId = null,
@@ -244,7 +246,7 @@ export const buildUsageReceipt = ({
     fallbackReason: dispatch.fallbackReason || null,
     capsuleId: capsuleRecord.capsuleId || null,
     capsuleDigest: provenance.capsuleDigest || null,
-    stepId: capsuleRecord.stepId || null,
+    stepId: capsuleRecord.stepId || stepId,
     admissionId: admissionRecord.admissionId || null,
     admissionDigest: admissionRecord.digest || null,
     enforcementStatus,

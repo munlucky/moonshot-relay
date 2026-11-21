@@ -21,6 +21,7 @@ type Pending = {
 export interface CodexAppServerTurn {
   cwd: string;
   prompt: string;
+  developerInstructions?: string;
   model: string;
   effort: string;
   timeoutMs?: number;
@@ -79,9 +80,10 @@ export interface CodexAppServerInterruptResult {
 }
 
 export interface CodexAppServerTransport {
-  runTurn(input: CodexAppServerTurn): Promise<CodexAppServerTurnResult>;
+  runTurn(input: CodexAppServerTurn, options?: { freshForRun?: string }): Promise<CodexAppServerTurnResult>;
   compactContext(): Promise<CodexContextCompaction>;
   observeTurn(): CodexAppServerTurnObservation;
+  currentTurnSettlement(): Promise<CodexAppServerTurnResult['turnStatus']> | null;
   interruptActiveTurn(): Promise<CodexAppServerInterruptResult>;
   close(): Promise<{ appServerExited: boolean; writerExitVerified: false }>;
 }
@@ -245,9 +247,11 @@ export async function createCodexAppServerTransport({
   let nextId = 1;
   let buffer = '';
   let active = false;
-  let retainedThread: { response: RecordValue; id: string; workspace: string; model: string; effort: string } | null = null;
+  let contextWorkspace: string | null = null;
+  let retainedThread: { response: RecordValue; id: string; model: string; effort: string; developerInstructions?: string } | null = null;
   let compactEligible = false;
   let activeTurn: { threadId: string; turnId: string } | null = null;
+  let turnSettlement: ReturnType<CodexAppServerTransport['currentTurnSettlement']> = null;
   let interruptRequest: Promise<CodexAppServerInterruptResult> | null = null;
   let interruptRequested = false;
   let shutdown: Promise<boolean> | null = null;
@@ -489,10 +493,14 @@ export async function createCodexAppServerTransport({
           : active ? 'starting' as const : 'idle' as const,
         threadId: activeTurn?.threadId || retainedThread?.id || null,
         turnId: activeTurn?.turnId || null,
-        ...(retainedThread && retainReadOnlyThreadForRun
-          ? { contextRunId: retainReadOnlyThreadForRun, contextWorkspace: retainedThread.workspace } : {}),
+        ...(contextWorkspace && retainReadOnlyThreadForRun
+          ? { contextRunId: retainReadOnlyThreadForRun, contextWorkspace } : {}),
         writerExitVerified: false as const,
       };
+    },
+
+    currentTurnSettlement() {
+      return turnSettlement;
     },
 
     interruptActiveTurn() {
@@ -506,7 +514,7 @@ export async function createCodexAppServerTransport({
       return sendInterrupt();
     },
 
-    async runTurn({ cwd: requestedCwd, prompt, model, effort, timeoutMs: turnTimeout, executionOwner = null, onNativeExecution = null, onReady = undefined, outputSchema = undefined, onUsage = undefined, toolPolicy = undefined, writableWorker = null }) {
+    async runTurn({ cwd: requestedCwd, prompt, developerInstructions, model, effort, timeoutMs: turnTimeout, executionOwner = null, onNativeExecution = null, onReady = undefined, outputSchema = undefined, onUsage = undefined, toolPolicy = undefined, writableWorker = null }, { freshForRun } = {}) {
       if (closed || poisoned || exited) throw error('codex_app_server_unavailable');
       if (active) throw error('codex_app_server_turn_already_running');
       if (!name(prompt) || !name(model) || !name(effort) || !name(requestedCwd)) {
@@ -522,19 +530,26 @@ export async function createCodexAppServerTransport({
       if (retainReadOnlyThread && (writableWorker || executionOwner || toolPolicy)) {
         throw error('codex_app_server_retained_thread_requires_read_only');
       }
+      if (freshForRun !== undefined && (!retainedThread || freshForRun !== retainReadOnlyThreadForRun)) {
+        throw error('codex_app_server_fresh_thread_binding_mismatch');
+      }
+      const reusedThread = freshForRun === undefined ? retainedThread : null;
       const effectiveTimeout = timeBudget(turnTimeout, DEFAULT_TURN_TIMEOUT_MS);
       // Reserve before the first await so concurrent callers cannot both
       // pass the admission check while resolving the same Workspace.
       active = true;
       activeTurn = null;
+      let resolveSettlement!: (status: CodexAppServerTurnResult['turnStatus']) => void;
+      turnSettlement = new Promise(resolve => { resolveSettlement = resolve; });
       interruptRequest = null;
       interruptRequested = false;
       let workspace: string;
       try {
         onReady?.();
         workspace = await realpath(requestedCwd);
-        if (retainedThread && (workspace !== retainedThread.workspace
-          || model !== retainedThread.model || effort !== retainedThread.effort)) {
+        if ((contextWorkspace && workspace !== contextWorkspace)
+          || (reusedThread && (model !== reusedThread.model || effort !== reusedThread.effort
+            || developerInstructions !== reusedThread.developerInstructions))) {
           throw error('codex_app_server_retained_thread_scope_changed');
         }
         if (!retainReadOnlyThread && attemptedWorkspaces.has(workspace)) {
@@ -553,14 +568,22 @@ export async function createCodexAppServerTransport({
         }
       } catch (cause) {
         active = false;
+        turnSettlement = null;
+        resolveSettlement('unknown');
         throw cause;
       }
       let startedTurn: { threadId: string; turnId: string } | null = null;
       let buffered: ServerMessage[] = [];
       let finalMessage: { id: string; text: string } | null = null;
       let usage: CodexAppServerUsage | null = null;
+      let usagePublished = false;
+      const publishUsage = () => {
+        if (!usage || usagePublished) return;
+        usagePublished = true;
+        try { onUsage?.({ ...usage }); }
+        catch { fail('codex_app_server_observer_failed'); }
+      };
       let contextTokens: number | null = null;
-      const reusesThread = Boolean(retainedThread);
       const finalText = (): string | null => finalMessage?.text ?? null;
       let turnCompleted = false;
       let completionResolve: ((status: CodexAppServerTurnResult['turnStatus']) => void) | null = null;
@@ -611,10 +634,7 @@ export async function createCodexAppServerTransport({
             cacheWriteInputTokens: count('cacheWriteInputTokens'), outputTokens: count('outputTokens'),
             reasoningOutputTokens: count('reasoningOutputTokens') };
           // A retained thread's cumulative counter is not per-turn usage.
-          usage = reusesThread ? null : accumulated;
-          if (!usage) return;
-          try { onUsage?.({ ...usage }); }
-          catch { fail('codex_app_server_observer_failed'); }
+          usage = reusedThread ? null : accumulated;
         } else if (message.method === 'item/started' || message.method === 'item/completed') {
           const item = object(params?.item);
           if ((outputSchema || toolPolicy === 'none') && message.method === 'item/completed' && item?.type === 'agentMessage'
@@ -646,7 +666,7 @@ export async function createCodexAppServerTransport({
       };
       listeners.add(observe);
       activeReject = (e) => { completionReject?.(e); };
-      let settled = false;
+      let settlementStatus: CodexAppServerTurnResult['turnStatus'] | null = null;
       try {
         let noToolsConfig: RecordValue = {};
         if (toolPolicy === 'none') {
@@ -668,13 +688,18 @@ export async function createCodexAppServerTransport({
             apps: { ...disableCatalog('apps'), _default: { enabled: false, default_tools_enabled: false } },
           };
         }
-        const thread = retainedThread?.response ?? await rpc('thread/start', {
+        const thread = reusedThread?.response ?? await rpc('thread/start', {
           cwd: workspace, sandbox: writableWorker ? 'workspace-write' : 'read-only',
           approvalPolicy: 'never', ephemeral: true, model,
+          ...(developerInstructions === undefined ? {} : { developerInstructions }),
           config: { model_reasoning_effort: effort, ...noToolsConfig },
         });
         const threadId = name(object(thread.thread)?.id);
         if (!threadId) throw error('codex_app_server_thread_missing');
+        if (freshForRun !== undefined && threadId === retainedThread?.id) {
+          throw error('codex_app_server_fresh_thread_reused');
+        }
+        if (retainReadOnlyThread) contextWorkspace ??= workspace;
         // Reserve this physical Workspace before asking the server to spawn a
         // model Turn. A failed/unknown turn/start cannot be retried blindly.
         attemptedWorkspaces.add(workspace);
@@ -707,10 +732,12 @@ export async function createCodexAppServerTransport({
             if (!await stopOwnedAppServer()) throw error(exited
               ? 'codex_app_server_drain_unconfirmed' : 'codex_app_server_shutdown_unconfirmed');
           }
+          publishUsage();
           if (poisoned) throw error(poisonReason || 'codex_app_server_unavailable');
-          settled = true;
+          settlementStatus = turnStatus;
           if (retainReadOnlyThread) {
-            retainedThread = { response: thread, id: threadId, workspace, model, effort };
+            retainedThread = { response: thread, id: threadId, model, effort,
+              ...(developerInstructions === undefined ? {} : { developerInstructions }) };
             compactEligible = turnStatus === 'completed';
           }
           return { threadId, turnId, turnStatus, writerExitVerified: false,
@@ -721,7 +748,8 @@ export async function createCodexAppServerTransport({
           clearTimeout(turnTimer);
         }
       } finally {
-        if (!settled) poisoned = true;
+        publishUsage();
+        if (settlementStatus === null) poisoned = true;
         activeReject = null;
         listeners.delete(observe);
         // Unknown/incomplete execution poisons the connection. Even completed
@@ -730,6 +758,8 @@ export async function createCodexAppServerTransport({
         interruptRequest = null;
         interruptRequested = false;
         active = false;
+        turnSettlement = null;
+        resolveSettlement(settlementStatus ?? 'unknown');
       }
     },
 

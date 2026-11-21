@@ -347,7 +347,7 @@ export const handleMcpToolCall = async ({
     env,
   });
 
-  const cp = await createKernelControlPlane({
+  const openControlPlane = () => createKernelControlPlane({
     runtimeHome: resolvedRuntimeHome,
     projectRoot: resolvedWorkspaceRoot,
     env: {
@@ -358,6 +358,7 @@ export const handleMcpToolCall = async ({
     },
     requireHostBinding: false,
   });
+  const cp = await openControlPlane();
   const requestedSurface = String(parameters.surface || env.MOON_RELAY_KERNEL_SURFACE || '').trim().toLowerCase();
   const lifecycleSurface = resolveLifecycleSurface(requestedSurface);
   const configuredHostBridge = resolveConfiguredHostBridge(hostBridge, parameters)
@@ -487,19 +488,41 @@ export const handleMcpToolCall = async ({
       });
       const loop = codexLoop?.transport.observeTurn().contextRunId === runId ? codexLoop : undefined;
       if ((parameters.handoff || loop) && !processed.hostReview && processed.output?.status !== 'execution-readiness-blocked') {
-        const loopHandoff = await saveKernelLoopHandoff({
+        const { handoff: loopHandoff, boundary } = await saveKernelLoopHandoff({
           controlPlane: cp, runtimeHome: resolvedRuntimeHome, runId, report: res,
           summary: parameters.report?.summary,
           ...(parameters.handoff ? { notes: parameters.handoff } : {}),
         });
         const view = asRecord(projectKernelModelView(res, { verbose: parameters.verbose === true }));
-        if (loopHandoff.status !== 'saved' || !loop) return { ...view, loopHandoff };
+        if (!boundary || !loop) return { ...view, loopHandoff };
+        const directive = asRecord(res.next);
+        const continueWith = (controlPlane: ControlPlane) =>
+          continueKernelCodexLoop({ controlPlane, host: loop, boundary, directive });
+        const settlement = loop.transport.currentTurnSettlement();
+        if (settlement) {
+          const notify = loop.onContinuation?.bind(loop);
+          if (!notify) {
+            return { ...view, loopHandoff, loopContinuation: { status: 'deferred', reason: 'host_continuation_observer_required' } };
+          }
+          // A model may Report from inside its own Turn. Release its MCP
+          // request before waiting for that Turn to settle.
+          void settlement.then(async turnStatus => {
+            if (turnStatus !== 'completed') return { status: 'deferred' as const,
+              reason: turnStatus === 'unknown' ? 'host_turn_unconfirmed' : `host_turn_${turnStatus}` };
+            const continuationControlPlane = await openControlPlane();
+            try {
+              return await continueWith(continuationControlPlane);
+            } finally {
+              await continuationControlPlane.close();
+            }
+          }).catch(() => ({ status: 'deferred' as const, reason: 'loop_continuation_failed' }))
+            .then(result => notify({ runId, stepId: boundary.stepId, result }))
+            .catch(() => undefined);
+          return { ...view, loopHandoff, loopContinuation: { status: 'deferred', reason: 'host_turn_settling' } };
+        }
         return {
           ...view, loopHandoff,
-          loopContinuation: await continueKernelCodexLoop({
-            controlPlane: cp, transport: loop.transport, handoff: loopHandoff, compact: true,
-            prepareTurn: () => loop.prepareTurn(asRecord(view.next)),
-          }),
+          loopContinuation: await continueWith(cp),
         };
       }
       if (!processed.hostReview && processed.output?.status !== 'execution-readiness-blocked') return projectKernelModelView(res, { verbose: parameters.verbose === true });

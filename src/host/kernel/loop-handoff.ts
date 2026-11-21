@@ -4,17 +4,25 @@ import path from 'node:path';
 import { atomicWriteText } from '../../kernel/durable-write.js';
 import { sanitizePersistentText } from '../../shared/persistent-sanitizer.js';
 import type { createKernelControlPlane } from './control-plane-runtime.js';
-import type { CodexAppServerTransport, CodexAppServerTurn } from './codex-app-server-transport.js';
+import type { CodexAppServerTransport, CodexAppServerTurn, CodexAppServerTurnResult } from './codex-app-server-transport.js';
+import { createHostRoutingBridge } from './host-routing.js';
+import { buildTurnPromptEnvelope } from './turn-dispatcher.js';
+import { buildUsageReceipt } from './usage-receipt.js';
 import { observeWorkspaceIdentity } from './workspace/workspace-identity.js';
 
 type ControlPlane = Awaited<ReturnType<typeof createKernelControlPlane>>;
 type RecordValue = Record<string, unknown>;
 type Report = Awaited<ReturnType<ControlPlane['report']>>;
-type Boundary = { file: string; runId: string; stepId: string; digest: string };
+type Boundary = { file: string; runId: string; stepId: string; identity: string; digest?: string };
+type Deferred = { status: 'deferred'; reason: string };
+type LoopContinuation = Deferred
+  | { status: 'continued'; cleanup: Deferred; turn: CodexAppServerTurnResult }
+  | { status: 'failed'; reason: string; retryable: false; cleanup: Deferred; turn: CodexAppServerTurnResult | null };
 type LoopTurn = Omit<CodexAppServerTurn, 'cwd' | 'writableWorker' | 'executionOwner' | 'onNativeExecution' | 'toolPolicy'>;
 export type KernelCodexLoopHost = {
   transport: CodexAppServerTransport;
   prepareTurn(next: RecordValue): LoopTurn;
+  onContinuation?(event: { runId: string; stepId: string; result: LoopContinuation }): void;
 };
 type Notes = { decisions?: string[]; rejectedApproaches?: string[]; remainingRisks?: string[] };
 const record = (value: unknown): RecordValue =>
@@ -28,7 +36,7 @@ const consumed = new WeakMap<CodexAppServerTransport, string>();
 async function observe(controlPlane: ControlPlane, runId: string) {
   const status = await controlPlane.status(runId);
   if (!status || !('run' in status)) return null;
-  const { run, workAuthority, trustAuthority, knowledgeAuthority } = status;
+  const { run, workAuthority, trustAuthority } = status;
   const step = workAuthority?.currentWorkUnit;
   if (run.status !== 'active' || !run.workspaceId || !step || step.state !== 'ready'
     || !run.ownerBindingId || run.ownerBindingId !== controlPlane.getRunOwnerBindingId(runId)) return null;
@@ -45,9 +53,7 @@ async function observe(controlPlane: ControlPlane, runId: string) {
     ownerBindingId: run.ownerBindingId, contractRevision: run.contractRevision,
     contractDigest: run.taskContract?.digest ?? null, planRevision: run.planRevision,
     mutationRevision: run.mutationRevision, cursor: workAuthority.cursor, state: run.state,
-    workspaceIdentity: workspace.identity, knowledgeRevision: knowledgeAuthority?.project.knowledgeRevision ?? null,
-    evidenceDigest: record(trustAuthority?.decision).evidenceDigest ?? null,
-    requirements: trustAuthority?.requirements, evidence: trustAuthority?.evidence,
+    workspaceIdentity: workspace.identity,
   };
   return { snapshot, run, workAuthority, trustAuthority, workspace, step };
 }
@@ -72,7 +78,7 @@ function clipUtf8(text: string, maxBytes: number) {
   return bytes.toString('utf8', 0, end) + ellipsis;
 }
 
-function handoffContext(markdown: string, { file, digest }: Boundary) {
+function handoffContext(markdown: string, { file, digest }: { file: string; digest: string }) {
   const full = handoffInstruction + markdown;
   if (Buffer.byteLength(full) <= HANDOFF_CONTEXT_BYTES) return full;
 
@@ -127,19 +133,21 @@ export async function saveKernelLoopHandoff({
   const nextStep = record(action.step);
   if (result.runId !== runId || result.idempotentReplay || prior.state !== 'passed'
     || action.type !== 'implement' || prior.stepId === nextStep.stepId) {
-    return deferred('no_settled_loop_boundary');
+    return { handoff: deferred('no_settled_loop_boundary') };
   }
+  const state = await observe(controlPlane, runId).catch(() => null);
+  if (!state || state.step.stepId !== nextStep.stepId
+    || typeof prior.stepId !== 'string' || !state.workAuthority.progress.completedWorkUnitIds.includes(prior.stepId)
+    || state.snapshot.mutationRevision !== record(record(next.workAuthority).run).mutationRevision
+    || state.snapshot.contractRevision !== record(record(next.workAuthority).task).contractRevision
+    || state.snapshot.planRevision !== record(record(next.workAuthority).run).planRevision) {
+    return { handoff: deferred('loop_boundary_changed') };
+  }
+  const lineage = hash(JSON.stringify([runId, state.run.projectId, state.run.worktreeId]));
+  const file = path.join(runtimeHome, 'reports', 'loop-handoffs', `${lineage}.md`);
+  const identity = hash(JSON.stringify(state.snapshot));
+  const boundary = { file, runId, stepId: state.step.stepId, identity };
   try {
-    const state = await observe(controlPlane, runId);
-    if (!state || state.step.stepId !== nextStep.stepId
-      || typeof prior.stepId !== 'string' || !state.workAuthority.progress.completedWorkUnitIds.includes(prior.stepId)
-      || state.snapshot.mutationRevision !== record(record(next.workAuthority).run).mutationRevision
-      || state.snapshot.contractRevision !== record(record(next.workAuthority).task).contractRevision
-      || state.snapshot.planRevision !== record(record(next.workAuthority).run).planRevision) {
-      return deferred('loop_boundary_changed');
-    }
-    const lineage = hash(JSON.stringify([runId, state.run.projectId, state.run.worktreeId]));
-    const file = path.join(runtimeHome, 'reports', 'loop-handoffs', `${lineage}.md`);
     const previous = await readArtifact(file).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== 'ENOENT') throw error;
       return undefined;
@@ -148,8 +156,7 @@ export async function saveKernelLoopHandoff({
       ...noteLines(notes?.decisions).map(note => `Decision — ${note}`),
       ...noteLines(notes?.rejectedApproaches).map(note => `Rejected — ${note}`),
     ];
-    if (previous === null) return deferred('handoff_corrupt');
-    if (previous && previous.lineage !== lineage) return deferred('handoff_foreign');
+    if (previous && previous.lineage !== lineage) return { boundary, handoff: deferred('handoff_foreign') };
     const oldNotes = previous?.markdown.split(noteEnd, 1)[0]?.split('\n').slice(3)
       .filter(line => line.startsWith('- Decision — ') || line.startsWith('- Rejected — ')) ?? [];
     const history = new Set(oldNotes);
@@ -188,57 +195,109 @@ export async function saveKernelLoopHandoff({
       `Remaining steps: ${state.workAuthority.progress.remainingWorkUnitIds.length}`,
       '',
     ].join('\n');
-    const identity = hash(JSON.stringify(state.snapshot));
     const digest = hash(lineage + identity + markdown);
     await atomicWriteText(file, `<!-- Kernel loop handoff v1 ${lineage} ${identity} ${digest} -->\n${markdown}`);
-    return { status: 'saved' as const, file, runId, stepId: state.step.stepId, digest };
+    const saved = { ...boundary, digest };
+    return { boundary: saved, handoff: { ...saved, status: 'saved' as const } };
   } catch {
-    return deferred('handoff_save_failed');
+    return { boundary, handoff: deferred('handoff_save_failed') };
   }
+}
+
+// The owning Host uses the same assembly for its first turn and its continuation.
+export async function runKernelCodexLoopTurn({
+  controlPlane, host, directive, context = '', fresh = false,
+}: {
+  controlPlane: ControlPlane; host: KernelCodexLoopHost; directive: RecordValue;
+  context?: string; fresh?: boolean;
+}) {
+  const runId = String(directive.runId);
+  const turn = host.prepareTurn(directive);
+  const capabilities = { surface: 'codex', supportsPromptCache: true, supportsUsageTokens: true,
+    supportsCacheReadTokens: true, supportsCacheWriteTokens: true };
+  let decision;
+  try {
+    decision = createHostRoutingBridge({ controlPlane }).decideModelRoute(runId, { actionKind: 'implement' });
+  } catch {
+    // The owning Host has already selected the model. Telemetry cannot gate it.
+  }
+  const resolution = { surface: 'codex', model: turn.model, effort: turn.effort,
+    modelClass: decision?.modelClass ?? 'value_coding', executionClass: decision?.executionClass ?? null,
+    source: 'invocation-override' as const, enforcementIntent: 'advisory' as const };
+  const acceptance = Array.isArray(directive.acceptancePlans)
+    ? records(directive.acceptancePlans).map(plan => plan.statement)
+    : Array.isArray(directive.acceptance) ? directive.acceptance : [];
+  const envelope = buildTurnPromptEnvelope({
+    modelInput: { ...directive, acceptance },
+    decision: { runId, role: 'implementer', actionKind: 'implement' }, resolution,
+    hostCapabilities: capabilities });
+  const instructions = envelope.segments.filter(({ kind }) => kind === 'common-host-stable' || kind === 'provider-stable');
+  const work = envelope.segments.filter(({ kind }) => kind === 'run-stable' || kind === 'volatile');
+  const startedAt = new Date().toISOString();
+  const { onUsage, ...input } = turn;
+  const result = await host.transport.runTurn({
+    ...input, cwd: controlPlane.projectRoot, writableWorker: null, executionOwner: null, onNativeExecution: null,
+    developerInstructions: [...instructions.map(({ content }) => content), turn.developerInstructions].filter(Boolean).join('\n\n'),
+    prompt: [...work.map(({ content }) => content), turn.prompt, context].filter(Boolean).join('\n\n'),
+  }, fresh ? { freshForRun: runId } : undefined);
+
+  if (result.usage) {
+    try { onUsage?.({ ...result.usage }); } catch { /* Optional Host telemetry. */ }
+  }
+  if (!decision) return result;
+  try {
+    const receipt = buildUsageReceipt({
+      decision: { ...decision }, capabilities, strategy: 'session', resolution, envelope,
+      actorSessionId: result.threadId, startedAt, finishedAt: new Date().toISOString(),
+      stepId: record(record(directive.action).step).stepId,
+      dispatch: { ...result.usage, reasoningTokens: result.usage?.reasoningOutputTokens,
+        resolvedModel: result.resolvedModel, resolvedEffort: result.resolvedEffort,
+        resultStatus: result.turnStatus === 'unknown' ? 'abandoned' : result.turnStatus,
+        dispatchMechanism: 'codex-app-server' },
+    });
+    await controlPlane.recordModelUsage(runId, receipt, { lateObservation: true });
+  } catch {
+    // A telemetry write cannot change the outcome of a dispatched Turn.
+  }
+  return result;
 }
 
 // Called by the owning Host after the active model turn and Report both settle.
 // Never calls next or report, and starts only a read-only model turn.
 export async function continueKernelCodexLoop({
-  controlPlane, transport, handoff, prepareTurn, compact,
+  controlPlane, host, boundary, directive,
 }: {
-  controlPlane: ControlPlane; transport: CodexAppServerTransport; handoff: Boundary;
-  prepareTurn: () => LoopTurn;
-  compact: boolean;
-}) {
-  const { runId, stepId, file, digest } = handoff;
-  if (consumed.get(transport) === digest) return deferred('loop_continuation_already_dispatched');
-  if (inFlight.has(file)) return deferred('loop_continuation_active');
-  inFlight.add(file);
+  controlPlane: ControlPlane; host: KernelCodexLoopHost; boundary: Boundary; directive: RecordValue;
+}): Promise<LoopContinuation> {
+  const { transport } = host;
+  const { runId, stepId, file, digest, identity } = boundary;
+  if (inFlight.has(identity)) return deferred('loop_continuation_active');
+  inFlight.add(identity);
   try {
     const native = transport.observeTurn();
     if (native.connection !== 'connected' || native.turn !== 'idle' || !native.threadId) return deferred('host_turn_not_idle');
     if (native.contextRunId !== runId || native.contextWorkspace !== await realpath(controlPlane.projectRoot)) {
       return deferred('host_context_binding_mismatch');
     }
-    const matches = async () => {
-      const artifact = await readArtifact(file);
-      const state = await observe(controlPlane, runId);
-      return artifact?.digest === digest && state?.step.stepId === stepId
-        && artifact.lineage === hash(JSON.stringify([runId, state.run.projectId, state.run.worktreeId]))
-        && artifact.identity === hash(JSON.stringify(state.snapshot)) ? artifact : null;
-    };
-    if (!await matches()) return deferred('handoff_corrupt_or_stale');
-    const turn = prepareTurn();
-    const cleanup = compact ? await transport.compactContext() : deferred('context_cleanup_not_requested');
-    if (compact && cleanup.status === 'deferred' && cleanup.reason !== 'codex_app_server_compaction_unsupported') {
-      return deferred(cleanup.reason);
+    const artifact = digest ? await readArtifact(file).catch(() => null) : null;
+    const state = await observe(controlPlane, runId);
+    if (!state || state.step.stepId !== stepId || hash(JSON.stringify(state.snapshot)) !== identity
+      || directive.runId !== runId || record(record(directive.action).step).stepId !== stepId) {
+      return deferred('loop_boundary_changed');
     }
-    const confirmed = await matches();
-    if (!confirmed) return deferred('handoff_corrupt_or_stale');
+    const revision = JSON.stringify([runId, stepId, state.run.planRevision, state.run.contractRevision, state.run.mutationRevision]);
+    if (consumed.get(transport) === revision) return deferred('loop_continuation_already_dispatched');
     const resumed = transport.observeTurn();
     if (resumed.connection !== 'connected' || resumed.turn !== 'idle' || resumed.threadId !== native.threadId) {
       return deferred('host_context_unavailable');
     }
-    consumed.set(transport, digest);
-    const result = await transport.runTurn({
-      ...turn, cwd: controlPlane.projectRoot, writableWorker: null, executionOwner: null, onNativeExecution: null,
-      prompt: `${turn.prompt}\n\n${handoffContext(confirmed.markdown, handoff)}`,
+    const lineage = hash(JSON.stringify([runId, state.run.projectId, state.run.worktreeId]));
+    const context = digest && artifact?.lineage === lineage && artifact.identity === identity && artifact.digest === digest
+      ? handoffContext(artifact.markdown, { file, digest }) : '';
+    consumed.set(transport, revision);
+    const cleanup = deferred('context_cleanup_not_requested');
+    const result = await runKernelCodexLoopTurn({
+      controlPlane, host, directive, context, fresh: true,
     }).catch(() => null);
     return result?.turnStatus === 'completed'
       ? { status: 'continued' as const, cleanup, turn: result }
@@ -247,6 +306,6 @@ export async function continueKernelCodexLoop({
   } catch {
     return deferred('loop_continuation_failed');
   } finally {
-    inFlight.delete(file);
+    inFlight.delete(identity);
   }
 }
