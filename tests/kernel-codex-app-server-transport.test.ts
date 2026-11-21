@@ -10,6 +10,9 @@ import path from 'node:path';
 import { createCodexAppServerTransport } from '../src/host/kernel/codex-app-server-transport.js';
 import { type NativeExecutionObservation } from '../src/host/kernel/adapter-dispatch.js';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
+import { continueKernelCodexLoop, saveKernelLoopHandoff } from '../src/host/kernel/loop-handoff.js';
+import { resolveKernelWorktreeIdentity } from '../src/host/kernel/workspace/worktree-resolution.js';
+import { handleMcpToolCall } from '../src/kernel/bridge/mcp.js';
 import { runHostOwnedWritableAttempt, startHostOwnedWritableAttempt } from '../src/host/kernel/host-owned-writable-attempt.js';
 import { createHostWorkerSessions } from '../src/host/kernel/host-worker-sessions.js';
 import { prepareHostWriterAttemptWorktree, snapshotHostWorkerPatch } from '../src/host/kernel/workspace/physical-worktree.js';
@@ -19,12 +22,219 @@ import { CODEX_WORKER_OUTPUT_SCHEMA } from '../src/host/kernel/adapters/codex.js
 import { executeTrustedProof } from '../src/host/kernel/proof/proof-executor.js';
 import { assertTestRecord } from './helpers/assert-value.js';
 
+test('Codex context cleanup requires a matching terminal compaction and handles unsupported RPCs', async () => {
+  await withFixture(async ({ workspace, server }) => {
+    for (const [mode, reason] of [
+      ['loop-unsupported', 'codex_app_server_compaction_unsupported'],
+      ['loop-wrong-thread', 'codex_app_server_compaction_unconfirmed'],
+    ] as const) {
+      const transport = await createCodexAppServerTransport({
+        executable: process.execPath, args: [server], retainReadOnlyThreadForRun: 'fixture-run',
+        env: { ...process.env, TEST_MODE: mode },
+      });
+      try {
+        const first = await transport.runTurn(turn(workspace));
+        assert.deepEqual(await transport.compactContext(), { status: 'deferred', reason });
+        const resumed = await transport.runTurn(turn(workspace));
+        assert.equal(resumed.threadId, first.threadId);
+        assert.notEqual(resumed.turnId, first.turnId);
+      } finally {
+        await transport.close();
+      }
+    }
+  });
+});
+
+for (const native of [false, true]) {
+  test(`Kernel loop handoff completes scoped pricing work through two ${native ? 'native' : 'fixture'} Compact boundaries`, {
+    skip: native && process.env.MOON_RELAY_NATIVE_COMPACT_TEST !== '1',
+    timeout: 240_000,
+  }, async (t) => {
+    await withFixture(async ({ workspace: workspaceRoot, server }) => {
+      const runtimeHome = await mkdtemp(path.join(tmpdir(), 'kernel-loop-handoff-'));
+      const runEnv = { ...process.env, MOON_RELAY_KERNEL_PROVIDER: 'codex', MOON_RELAY_KERNEL_SESSION_ID: 'pricing-loop-test' };
+      const env = { ...runEnv, MOON_RELAY_KERNEL_PROJECT_ID: resolveKernelWorktreeIdentity({ cwd: workspaceRoot, workspaceRoot, env: runEnv }).projectId };
+      const steps = [
+        { name: 'subtotal', objective: 'Set the unit price to 125 cents.' },
+        { name: 'tax', objective: 'Set the tax percentage to eight.' },
+        { name: 'total', objective: 'Record the expected receipt total in cents for two items using the prior price, tax and decision.' },
+      ];
+      const fileFor = (name: string) => `${name}.json`;
+      const git = (...args: string[]) => {
+        const result = spawnSync('git', args, { cwd: workspaceRoot, encoding: 'utf8' });
+        assert.equal(result.status, 0, result.stderr);
+      };
+      const pricing = [
+        "import { readFileSync } from 'node:fs';",
+        "export const value = name => JSON.parse(readFileSync(new URL(name + '.json', import.meta.url), 'utf8')).value;",
+        "export const receipt = quantity => { const subtotal = value('subtotal') * quantity; return subtotal + Math.round(subtotal * value('tax') / 100); };",
+      ].join('\n');
+      await writeFile(path.join(workspaceRoot, 'pricing.mjs'), pricing);
+      await writeFile(path.join(workspaceRoot, 'check.mjs'), [
+        "import assert from 'node:assert/strict';",
+        "import { value, receipt } from './pricing.mjs';",
+        "const name = process.argv[2];",
+        "if (name === 'total') { assert.equal(receipt(2), 270); assert.equal(value(name), receipt(2)); }",
+        "else assert.equal(value(name), { subtotal: 125, tax: 8 }[name]);",
+      ].join('\n'));
+      await writeFile(path.join(workspaceRoot, 'package.json'), JSON.stringify({
+        name: 'kernel-pricing-fixture',
+        scripts: Object.fromEntries(steps.map(({ name }) => [`test:${name}`, `node check.mjs ${name}`])),
+      }));
+      for (const { name } of steps) await writeFile(path.join(workspaceRoot, fileFor(name)), '{"value":0}\n');
+      git('init');
+      git('add', '--all');
+      git('-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'pricing fixture');
+      const controlPlane = await createKernelControlPlane({ projectRoot: workspaceRoot, runtimeHome, env });
+      let ownedTransport: Awaited<ReturnType<typeof createCodexAppServerTransport>> | null = null;
+      const mcp = async (name: string, parameters: Record<string, unknown>) =>
+        assertTestRecord(await handleMcpToolCall({ name, parameters: { workspaceRoot, ...parameters }, runtimeHome, env }));
+      const stepFrom = (directive: Record<string, unknown>) => {
+        const action = assertTestRecord(directive.action);
+        assert.equal(action.type, 'implement', JSON.stringify(action));
+        return assertTestRecord(action.step);
+      };
+      try {
+        let next = await mcp('kernel_next', {
+          contractJson: {
+            objective: 'Complete a pricing fixture from three bounded changes.',
+            complex: true, riskTier: 'T1',
+            acceptance: steps.map(({ name, objective }) => ({
+              acceptance: objective,
+              evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: [`test:${name}`], obligationId: name },
+            })),
+            steps: steps.map(({ name, objective }, index) => ({
+              objective, allowedPaths: [fileFor(name)], acceptanceIds: [`AC-${index + 1}`], obligationIds: [name],
+            })),
+          },
+        });
+        const runId = String(next.runId);
+        const transport = ownedTransport = await createCodexAppServerTransport({
+          ...(native ? { cwd: workspaceRoot } : {
+            executable: process.execPath, args: [server], env: { ...process.env, TEST_MODE: 'loop-e2e' },
+          }),
+          retainReadOnlyThreadForRun: runId,
+        });
+        const nativeTurn = (name: string, objective: string, directive: Record<string, unknown>) => ({
+          model: native ? (process.env.MOON_RELAY_NATIVE_COMPACT_MODEL || 'gpt-6.2-sol') : 'fixture',
+          effort: 'low',
+          prompt: `Module: ${name}. ${objective} Return JSON with only one integer property, value. Don't call tools.\nKernel directive: ${JSON.stringify(directive)}`,
+          outputSchema: { type: 'object', required: ['value'], additionalProperties: false, properties: { value: { type: 'integer' } } },
+        });
+        const initialContract = (await controlPlane.getRun(runId))?.taskContract;
+        assert.ok(initialContract);
+        let result = await transport.runTurn({ cwd: workspaceRoot, ...nativeTurn(steps[0]!.name, steps[0]!.objective, stepFrom(next)) });
+        const thread = result.threadId;
+        for (const [index, { name }] of steps.entries()) {
+          const step = stepFrom(next);
+          assert.deepEqual(step.allowedPaths, [fileFor(name)]);
+          assert.equal(result.turnStatus, 'completed');
+          assert.equal(result.threadId, thread);
+          const output = assertTestRecord(JSON.parse(result.finalMessage || '{}'));
+          assert.ok(Number.isSafeInteger(output.value));
+          await writeFile(path.join(workspaceRoot, fileFor(name)), JSON.stringify({ value: output.value }) + '\n');
+          const reported = await mcp('kernel_report', {
+            runId, report: { stepId: step.stepId, summary: `Set pricing value ${name}`, changedPaths: [fileFor(name)],
+              verifications: [
+                { obligationId: name, commandRef: `test:${name}`, acceptanceCoverage: [`AC-${index + 1}`] },
+                ...(name === 'total' ? [{ obligationId: 'unit-test', commandRef: 'test:total' }] : []),
+              ] },
+            handoff: index === 0 ? {
+              decisions: ['Round tax once to the nearest cent.'],
+              rejectedApproaches: ['Rounding per item changes the receipt total.'],
+              remainingRisks: ['Tax and receipt proofs are pending.'],
+            } : {},
+          });
+          next = assertTestRecord(reported.next);
+          assert.ok(reported.step, JSON.stringify({ status: reported.status, action: next.action, failures: reported.failures }));
+          assert.equal(assertTestRecord(reported.step).state, 'passed', JSON.stringify(reported.failures));
+          if (index === steps.length - 1) break;
+          const handoff = assertTestRecord(reported.loopHandoff);
+          assert.equal(handoff.status, 'saved', JSON.stringify(handoff));
+          const boundary = { file: String(handoff.file), runId, stepId: String(handoff.stepId), digest: String(handoff.digest) };
+          const markdown = await readFile(boundary.file, 'utf8');
+          assert.match(markdown, /Round tax once to the nearest cent/);
+          assert.match(markdown, /Rounding per item changes the receipt total/);
+          assert.match(markdown, new RegExp(`${name} · passed · test:${name}`));
+          assert.match(markdown, /total · missing/);
+          const following = steps[index + 1]!;
+          const resume = () => continueKernelCodexLoop({ controlPlane, transport, handoff: boundary, compact: true,
+            turn: nativeTurn(following.name, following.objective, stepFrom(next)) });
+          const before = await mcp('kernel_attach', { runId });
+          if (index === 0) {
+            const badSave = await saveKernelLoopHandoff({
+              controlPlane, runId, report: reported, runtimeHome: boundary.file,
+            });
+            assert.deepEqual(badSave, { status: 'deferred', reason: 'handoff_save_failed' });
+            await writeFile(boundary.file, markdown.replace('nearest cent', 'next cent'));
+            assert.deepEqual(await resume(), { status: 'deferred', reason: 'handoff_corrupt_or_stale' });
+            await writeFile(boundary.file, markdown);
+            await writeFile(path.join(workspaceRoot, 'pricing.mjs'), pricing + '\n// concurrent edit');
+            assert.deepEqual(await resume(), { status: 'deferred', reason: 'handoff_corrupt_or_stale' });
+            await writeFile(path.join(workspaceRoot, 'pricing.mjs'), pricing);
+            const lease = controlPlane.stateStore.acquireLease(runId, { holder: 'fixture-active-writer' });
+            assert.ok(lease.acquired && lease.lease);
+            assert.deepEqual(await resume(), { status: 'deferred', reason: 'handoff_corrupt_or_stale' });
+            controlPlane.stateStore.releaseLease(runId, {
+              holder: lease.lease.holder, fencingToken: lease.lease.fencingToken,
+            });
+            assert.deepEqual(await mcp('kernel_attach', { runId }), before);
+          }
+          const knowledgeBefore = controlPlane.knowledgeAuthority(runId)?.project;
+          const [continued, concurrent] = await Promise.all([resume(), resume()]);
+          assert.equal(concurrent.status, 'deferred');
+          assert.equal(continued.status, 'continued', JSON.stringify(continued));
+          assert.equal(continued.cleanup.status, 'compacted', JSON.stringify(continued.cleanup));
+          assert.equal(continued.cleanup.threadId, thread);
+          assert.notEqual(continued.cleanup.turnId, continued.turn.turnId);
+          assert.equal((await resume()).status, 'deferred');
+          assert.deepEqual(await mcp('kernel_attach', { runId }), before);
+          assert.deepEqual(controlPlane.knowledgeAuthority(runId)?.project, knowledgeBefore);
+          assert.deepEqual((await controlPlane.getRun(runId))?.taskContract, initialContract);
+          if (native) t.diagnostic(JSON.stringify({
+            boundary: index + 1,
+            beforeContextTokens: result.contextTokens ?? 'UNAVAILABLE',
+            compactContextTokens: continued.cleanup.contextTokens ?? 'UNAVAILABLE',
+            nextTurnContextTokens: continued.turn.contextTokens ?? 'UNAVAILABLE',
+          }));
+          result = continued.turn;
+        }
+        const action = assertTestRecord(next.action);
+        if (action.type !== 'done') {
+          const currentProof = assertTestRecord(next.verification).pending;
+          assert.deepEqual((currentProof as string[]).sort(), ['subtotal', 'tax']);
+          const verified = await mcp('kernel_report', {
+            runId, report: { summary: 'Refresh earlier evidence for the final pricing workspace',
+              verifications: steps.slice(0, 2).map(({ name }, index) => ({
+                obligationId: name, commandRef: `test:${name}`, acceptanceCoverage: [`AC-${index + 1}`],
+              })) },
+          });
+          next = assertTestRecord(verified.next);
+        }
+        assert.equal(assertTestRecord(next.action).type, 'done');
+        const attempts = controlPlane.getHostRoutingSnapshot(runId).stepAttempts;
+        const workAttempts = attempts.filter(attempt => attempt.changedPaths?.length);
+        assert.equal(workAttempts.length, steps.length);
+        assert.equal(new Set(workAttempts.map(attempt => attempt.stepId)).size, steps.length);
+        assert.ok(attempts.every(attempt => attempt.status === 'passed'));
+        assert.equal((await controlPlane.getRun(runId))?.status, 'completed');
+        assert.equal(spawnSync(process.execPath, ['check.mjs', 'total'], { cwd: workspaceRoot }).status, 0);
+      } finally {
+        await controlPlane.close();
+        await ownedTransport?.close();
+        await rm(runtimeHome, { force: true, recursive: true });
+      }
+    });
+  });
+}
+
 const fakeServer = String.raw`
 const readline = require('node:readline');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 let serial = 0;
+let loopTurn = 0;
 const send = (message) => process.stdout.write(JSON.stringify(message) + '\n');
 const input = readline.createInterface({ input: process.stdin });
 if (process.env.TEST_MODE === 'ignore-term' || process.env.TEST_MODE === 'stall-initialize-ignore-term') {
@@ -57,10 +267,26 @@ input.on('line', (line) => {
     } else {
       send({ id, result: { thread: { id: 'thr-' + (++serial) } } });
     }
+  } else if (message.method === 'thread/compact/start') {
+    const { threadId } = message.params;
+    const turnId = 'compact-' + (++loopTurn);
+    const turn = { id: turnId, status: 'completed' };
+    if (process.env.TEST_MODE === 'loop-unsupported') {
+      send({ id, error: { code: -32601, message: 'Method not found' } });
+      return;
+    }
+    send({ method: 'turn/started', params: { threadId, turn } });
+    send({ method: 'item/completed', params: {
+      threadId: process.env.TEST_MODE === 'loop-wrong-thread' ? 'foreign-thread' : threadId,
+      turnId, item: { type: 'contextCompaction', id: 'compaction' },
+    } });
+    send({ method: 'turn/completed', params: { threadId, turn } });
+    send({ id, result: {} }); // A terminal event may precede the ACK.
   } else if (message.method === 'turn/start') {
     if (process.env.TEST_MODE === 'disconnect' || process.env.TEST_MODE === 'writable-disconnect') process.exit(0);
     const threadId = message.params.threadId;
-    const turnId = 'turn-' + serial;
+    const isLoop = process.env.TEST_MODE?.startsWith('loop-');
+    const turnId = 'turn-' + (isLoop ? ++loopTurn : serial);
     const policy = message.params.sandboxPolicy;
     const workspaceWrite = process.env.TEST_MODE?.startsWith('writable');
     const allowed = workspaceWrite
@@ -75,6 +301,16 @@ input.on('line', (line) => {
     if (!allowed || !message.params.model || !message.params.effort) {
       send({ id, error: { code: -1, message: 'unsafe turn' } });
       return;
+    }
+    if (process.env.TEST_MODE === 'loop-e2e') {
+      const prompt = message.params.input[0].text;
+      const values = { subtotal: 125, tax: 8, total: 270 };
+      const key = /Module: (subtotal|tax|total)/.exec(prompt)?.[1];
+      if (!key || (key !== 'subtotal' && !prompt.includes('Round tax once to the nearest cent.'))) {
+        throw Error('missing work directive or preserved decision');
+      }
+      send({ method: 'item/completed', params: { threadId, turnId,
+        item: { type: 'agentMessage', id: 'fixture-result', phase: 'final_answer', text: JSON.stringify({ value: values[key] }) } } });
     }
     if (process.env.TEST_MODE === 'completion-before-start-ack' && serial === 1) {
       process.stdout.write([

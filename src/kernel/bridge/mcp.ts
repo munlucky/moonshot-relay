@@ -8,6 +8,7 @@ import { projectKernelModelView } from '../run/model-view.js';
 import {
   createKernelControlPlane,
   createHostWorkerSessions,
+  saveKernelLoopHandoff,
   createLocalWorkerControl,
   type LocalWorkerControlOptions,
   createKernelHostReviewBridge,
@@ -32,6 +33,7 @@ interface McpParameters extends UnknownRecord {
   surface?: string | null;
   verbose?: boolean;
   report?: UnknownRecord | null;
+  handoff?: Parameters<typeof saveKernelLoopHandoff>[0]['notes'];
   worker?: { action?: 'start' | 'interrupt'; model?: string; effort?: string; attemptId?: string } | null;
   ioWrite?: unknown;
   ioRead?: unknown;
@@ -140,6 +142,14 @@ export const KERNEL_MCP_TOOLS = [
         workspaceRoot: { type: 'string', description: 'Canonical workspace root directory' },
         runId: { type: 'string', description: 'Explicit run id' },
         report: { type: 'object', description: 'Structured report payload' },
+        handoff: {
+          type: 'object', description: 'Optional loop context to save after an accepted work boundary. Only the owning Host can later compact an idle conversation.',
+          properties: {
+            decisions: { type: 'array', items: { type: 'string' } },
+            rejectedApproaches: { type: 'array', items: { type: 'string' } },
+            remainingRisks: { type: 'array', items: { type: 'string' } },
+          },
+        },
         surface: { type: 'string', description: 'Surface identifier' },
         verbose: { type: 'boolean', description: 'Return full diagnostic snapshots instead of the compact model view' },
       },
@@ -470,6 +480,15 @@ export const handleMcpToolCall = async ({
         modelInput: res.next ? asRecord(res.next) : null,
         parameters,
       });
+      if (parameters.handoff && !processed.hostReview && processed.output?.status !== 'execution-readiness-blocked') {
+        return {
+          ...asRecord(projectKernelModelView(res, { verbose: parameters.verbose === true })),
+          loopHandoff: await saveKernelLoopHandoff({
+            controlPlane: cp, runtimeHome: resolvedRuntimeHome, runId, report: res,
+            summary: parameters.report?.summary, notes: parameters.handoff,
+          }),
+        };
+      }
       if (!processed.hostReview && processed.output?.status !== 'execution-readiness-blocked') return projectKernelModelView(res, { verbose: parameters.verbose === true });
       return projectKernelModelView({
         ...res,

@@ -51,6 +51,7 @@ export interface CodexAppServerTurnResult {
   resolvedModel?: string | null;
   resolvedEffort?: string | null;
   usage?: CodexAppServerUsage | null;
+  contextTokens?: number | null;
 }
 
 export interface CodexAppServerUsage {
@@ -66,6 +67,8 @@ export interface CodexAppServerTurnObservation {
   turn: 'idle' | 'starting' | 'running' | 'interrupt-requested' | 'unknown';
   threadId: string | null;
   turnId: string | null;
+  contextRunId?: string;
+  contextWorkspace?: string;
   // This observes only the owned App Server connection, never OS descendants.
   writerExitVerified: false;
 }
@@ -77,10 +80,15 @@ export interface CodexAppServerInterruptResult {
 
 export interface CodexAppServerTransport {
   runTurn(input: CodexAppServerTurn): Promise<CodexAppServerTurnResult>;
+  compactContext(): Promise<CodexContextCompaction>;
   observeTurn(): CodexAppServerTurnObservation;
   interruptActiveTurn(): Promise<CodexAppServerInterruptResult>;
   close(): Promise<{ appServerExited: boolean; writerExitVerified: false }>;
 }
+
+export type CodexContextCompaction =
+  | { status: 'compacted'; threadId: string; turnId: string; contextTokens: number | null }
+  | { status: 'deferred'; reason: string };
 
 export interface CodexAppServerTransportOptions {
   executable?: string;
@@ -89,6 +97,7 @@ export interface CodexAppServerTransportOptions {
   env?: NodeJS.ProcessEnv;
   requestTimeoutMs?: number;
   clientName?: string;
+  retainReadOnlyThreadForRun?: string;
 }
 
 const MAX_LINE_BYTES = 4 * 1024 * 1024;
@@ -211,7 +220,9 @@ export async function createCodexAppServerTransport({
   env = process.env,
   requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
   clientName = 'moonshot-relay-host',
+  retainReadOnlyThreadForRun,
 }: CodexAppServerTransportOptions = {}): Promise<CodexAppServerTransport> {
+  const retainReadOnlyThread = Boolean(name(retainReadOnlyThreadForRun));
   const timeout = timeBudget(requestTimeoutMs, DEFAULT_REQUEST_TIMEOUT_MS);
   if (!name(executable) || !Array.isArray(args) || !args.every(name) || !name(clientName)) {
     throw error('codex_app_server_launch_invalid');
@@ -234,6 +245,8 @@ export async function createCodexAppServerTransport({
   let nextId = 1;
   let buffer = '';
   let active = false;
+  let retainedThread: { response: RecordValue; id: string; workspace: string; model: string; effort: string } | null = null;
+  let compactEligible = false;
   let activeTurn: { threadId: string; turnId: string } | null = null;
   let interruptRequest: Promise<CodexAppServerInterruptResult> | null = null;
   let interruptRequested = false;
@@ -351,7 +364,9 @@ export async function createCodexAppServerTransport({
         const found = pending.get(message.id as number)!;
         pending.delete(message.id as number);
         clearTimeout(found.timer);
-        if (message.error != null) found.reject(error('codex_app_server_rpc_failed'));
+        if (message.error != null) found.reject(Object.assign(error('codex_app_server_rpc_failed'), {
+          rpcCode: object(message.error)?.code,
+        }));
         else if (object(message.result)) found.resolve(object(message.result)!);
         else found.reject(error('codex_app_server_rpc_invalid'));
       }
@@ -409,6 +424,59 @@ export async function createCodexAppServerTransport({
   };
 
   return {
+    async compactContext() {
+      if (!retainedThread || !compactEligible || active || closed || poisoned || exited) {
+        return { status: 'deferred', reason: 'codex_app_server_no_settled_context' };
+      }
+      const threadId = retainedThread.id;
+      active = true;
+      compactEligible = false;
+      let turnId: string | null = null;
+      let itemId: string | null = null;
+      let contextTokens: number | null = null;
+      let finish: (outcome: CodexContextCompaction) => void;
+      const completed = new Promise<CodexContextCompaction>(resolve => { finish = resolve; });
+      const observe = (message: ServerMessage) => {
+        const params = object(message.params);
+        if (params?.threadId !== threadId) return;
+        const turn = object(params.turn);
+        if (message.method === 'turn/started') turnId = name(turn?.id);
+        if (!turnId || (name(turn?.id) || name(params.turnId)) !== turnId) return;
+        if (message.method === 'item/completed') {
+          const item = object(params.item);
+          if (item?.type === 'contextCompaction') itemId = name(item.id);
+        }
+        if (message.method === 'thread/tokenUsage/updated') {
+          const tokens = object(object(params.tokenUsage)?.last)?.totalTokens;
+          if (typeof tokens === 'number' && Number.isSafeInteger(tokens) && tokens >= 0) contextTokens = tokens;
+        }
+        if (message.method === 'turn/completed') {
+          finish(itemId && turn?.status === 'completed'
+            ? { status: 'compacted', threadId, turnId, contextTokens }
+            : { status: 'deferred', reason: 'codex_app_server_compaction_unconfirmed' });
+        }
+      };
+      listeners.add(observe);
+      activeReject = () => finish({ status: 'deferred', reason: 'codex_app_server_compaction_unconfirmed' });
+      const timer = setTimeout(() => fail('codex_app_server_compaction_timeout'), DEFAULT_TURN_TIMEOUT_MS);
+      try {
+        await rpc('thread/compact/start', { threadId });
+        return await completed;
+      } catch (cause) {
+        if (object(cause)?.rpcCode === -32601) {
+          return { status: 'deferred', reason: 'codex_app_server_compaction_unsupported' };
+        }
+        // Without a terminal event, a later turn could race an accepted request.
+        fail('codex_app_server_compaction_unconfirmed');
+        return { status: 'deferred', reason: 'codex_app_server_compaction_unconfirmed' };
+      } finally {
+        clearTimeout(timer);
+        listeners.delete(observe);
+        activeReject = null;
+        active = false;
+      }
+    },
+
     observeTurn() {
       const available = !closed && !poisoned && !exited;
       return {
@@ -417,8 +485,10 @@ export async function createCodexAppServerTransport({
           : interruptRequested ? 'interrupt-requested' as const
           : activeTurn ? 'running' as const
           : active ? 'starting' as const : 'idle' as const,
-        threadId: activeTurn?.threadId || null,
+        threadId: activeTurn?.threadId || retainedThread?.id || null,
         turnId: activeTurn?.turnId || null,
+        ...(retainedThread && retainReadOnlyThreadForRun
+          ? { contextRunId: retainReadOnlyThreadForRun, contextWorkspace: retainedThread.workspace } : {}),
         writerExitVerified: false as const,
       };
     },
@@ -447,6 +517,9 @@ export async function createCodexAppServerTransport({
       if (toolPolicy !== undefined && (toolPolicy !== 'none' || writableWorker || executionOwner)) {
         throw error('codex_app_server_tool_policy_invalid');
       }
+      if (retainReadOnlyThread && (writableWorker || executionOwner || toolPolicy)) {
+        throw error('codex_app_server_retained_thread_requires_read_only');
+      }
       const effectiveTimeout = timeBudget(turnTimeout, DEFAULT_TURN_TIMEOUT_MS);
       // Reserve before the first await so concurrent callers cannot both
       // pass the admission check while resolving the same Workspace.
@@ -458,7 +531,11 @@ export async function createCodexAppServerTransport({
       try {
         onReady?.();
         workspace = await realpath(requestedCwd);
-        if (attemptedWorkspaces.has(workspace)) {
+        if (retainedThread && (workspace !== retainedThread.workspace
+          || model !== retainedThread.model || effort !== retainedThread.effort)) {
+          throw error('codex_app_server_retained_thread_scope_changed');
+        }
+        if (!retainReadOnlyThread && attemptedWorkspaces.has(workspace)) {
           throw error('codex_app_server_workspace_reuse_unverified');
         }
         if (writableWorker) {
@@ -480,6 +557,8 @@ export async function createCodexAppServerTransport({
       let buffered: ServerMessage[] = [];
       let finalMessage: { id: string; text: string } | null = null;
       let usage: CodexAppServerUsage | null = null;
+      let contextTokens: number | null = null;
+      const reusesThread = Boolean(retainedThread);
       const finalText = (): string | null => finalMessage?.text ?? null;
       let turnCompleted = false;
       let completionResolve: ((status: CodexAppServerTurnResult['turnStatus']) => void) | null = null;
@@ -515,17 +594,23 @@ export async function createCodexAppServerTransport({
         }
         if (turnCompleted) return;
         if (message.method === 'thread/tokenUsage/updated') {
+          const tokenUsage = object(params.tokenUsage);
+          const tokens = object(tokenUsage?.last)?.totalTokens;
+          if (typeof tokens === 'number' && Number.isSafeInteger(tokens) && tokens >= 0) contextTokens = tokens;
           // One fresh thread and one Turn: total includes every model request
           // in this Turn. "last" would omit earlier tool/model requests.
-          const total = object(object(params.tokenUsage)?.total);
+          const total = object(tokenUsage?.total);
           if (!total) return;
           const count = (key: string): number | null => {
             const value = total[key];
             return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
           };
-          usage = { inputTokens: count('inputTokens'), cachedInputTokens: count('cachedInputTokens'),
+          const accumulated = { inputTokens: count('inputTokens'), cachedInputTokens: count('cachedInputTokens'),
             cacheWriteInputTokens: count('cacheWriteInputTokens'), outputTokens: count('outputTokens'),
             reasoningOutputTokens: count('reasoningOutputTokens') };
+          // A retained thread's cumulative counter is not per-turn usage.
+          usage = reusesThread ? null : accumulated;
+          if (!usage) return;
           try { onUsage?.({ ...usage }); }
           catch { fail('codex_app_server_observer_failed'); }
         } else if (message.method === 'item/started' || message.method === 'item/completed') {
@@ -581,7 +666,7 @@ export async function createCodexAppServerTransport({
             apps: { ...disableCatalog('apps'), _default: { enabled: false, default_tools_enabled: false } },
           };
         }
-        const thread = await rpc('thread/start', {
+        const thread = retainedThread?.response ?? await rpc('thread/start', {
           cwd: workspace, sandbox: writableWorker ? 'workspace-write' : 'read-only',
           approvalPolicy: 'never', ephemeral: true, model,
           config: { model_reasoning_effort: effort, ...noToolsConfig },
@@ -622,8 +707,13 @@ export async function createCodexAppServerTransport({
           }
           if (poisoned) throw error(poisonReason || 'codex_app_server_unavailable');
           settled = true;
+          if (retainReadOnlyThread) {
+            retainedThread = { response: thread, id: threadId, workspace, model, effort };
+            compactEligible = turnStatus === 'completed';
+          }
           return { threadId, turnId, turnStatus, writerExitVerified: false,
             resolvedModel: name(thread.model), resolvedEffort: name(thread.reasoningEffort), usage,
+            ...(retainReadOnlyThread ? { contextTokens } : {}),
             ...(outputSchema || toolPolicy === 'none' ? { finalMessage: finalText() } : {}) };
         } finally {
           clearTimeout(turnTimer);
