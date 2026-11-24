@@ -96,6 +96,7 @@ interface ProofRequest {
  evidenceIdentity?: NormalizedEvidenceIdentity | null; freshnessInputs?: string[] | null; sharedExecution?: ReportProofExecution | null;
  [proofExecutionCacheRequest]?: ProofCacheContext | null;
  [guardedProofRequest]?: GuardedProofWorkspace | null;
+ [scopedProofObservationRequest]?: ScopedWorkspaceObservation | null;
 }
 interface ProofCacheContext { key?: string; runId?: string; sourceIdentity?: string | null; workspaceIdentity?: string | null; mutationRevision?: number | null; contractRevision?: number | null; scopeAuthority?: unknown; scopeIdentity?: unknown; }
 interface ProofCacheInput { run?: KernelRun | null; obligation?: PersistedRunObligation | null; request?: ProofRequest; scopeObservation?: ScopedWorkspaceObservation | null; }
@@ -195,6 +196,7 @@ import { buildCoordinatorSurface } from './bridge/coordinator-surface.js';
 const proofExecutionCacheContexts = new WeakMap<ReportProofExecution, ProofCacheContext>();
 const proofExecutionCacheRequest = Symbol('kernel-proof-execution-cache-request');
 const guardedProofRequest = Symbol('kernel-guarded-proof-request');
+const scopedProofObservationRequest = Symbol('kernel-scoped-proof-observation-request');
 
 const rememberProofExecutionCacheEntry = (execution: ReportProofExecution, context: ProofCacheContext | null) => {
   if (execution && typeof execution === 'object' && context) {
@@ -3540,7 +3542,7 @@ export const createKernelControlPlane = async ({
     // Hard evidence path: the Kernel runtime resolves a trusted manifest
     // command, executes it itself, and binds the result to the workspace
     // identity observed immediately before execution.
-    async executeProof(runId: string, { obligationId = 'default', commandRef, timeoutMs, acceptanceCoverage = [], flakyRerun = false, discovered = null, networkPolicy = 'inherited', evidenceIdentity: requestedEvidenceIdentity = null, freshnessInputs = null, allowEvidenceReuse = true, sharedExecution = null, [proofExecutionCacheRequest]: proofExecutionCacheContext = null, [guardedProofRequest]: guardedProof = null }: ProofRequest = {}): Promise<{ run: StoredKernelRun; execution: ReportProofExecution }> {
+    async executeProof(runId: string, { obligationId = 'default', commandRef, timeoutMs, acceptanceCoverage = [], flakyRerun = false, discovered = null, networkPolicy = 'inherited', evidenceIdentity: requestedEvidenceIdentity = null, freshnessInputs = null, allowEvidenceReuse = true, sharedExecution = null, [proofExecutionCacheRequest]: proofExecutionCacheContext = null, [guardedProofRequest]: guardedProof = null, [scopedProofObservationRequest]: providedScopeObservation = null }: ProofRequest = {}): Promise<{ run: StoredKernelRun; execution: ReportProofExecution }> {
       const run = getRunSnapshot(runId);
       if (!run) throw new Error(`Run ${runId} not found`);
       if (!discovered && !commandRef) throw new Error('Trusted proof requires a command reference');
@@ -3568,7 +3570,7 @@ export const createKernelControlPlane = async ({
 
       const scopeAuthority = authoritativeVerificationScope(declaredObligation);
       const scopedObservation = scopeAuthority
-        ? observeScopedWorkspaceIdentity({ projectRoot, scopes: scopeAuthority.scope })
+        ? (providedScopeObservation || observeScopedWorkspaceIdentity({ projectRoot, scopes: scopeAuthority.scope }))
         : null;
       const scopedProof = scopedObservation?.status === 'observed';
       const declaredFreshnessInputs = Array.isArray(scopeAuthority?.freshnessInputs) && scopeAuthority.freshnessInputs.length > 0
@@ -5263,6 +5265,7 @@ export const createKernelControlPlane = async ({
                   networkPolicy: request.networkPolicy || 'inherited',
                   allowEvidenceReuse: !guardedProof && request.allowEvidenceReuse !== false,
                   [guardedProofRequest]: guardedProof,
+                  [scopedProofObservationRequest]: scopeObservation,
                   sharedExecution: cachedExecution,
                   [proofExecutionCacheRequest]: proofExecutionCacheContext,
                 }));
@@ -5283,6 +5286,7 @@ export const createKernelControlPlane = async ({
                 networkPolicy: request.networkPolicy || 'inherited',
                 allowEvidenceReuse: !guardedProof && request.allowEvidenceReuse !== false,
                 [guardedProofRequest]: guardedProof,
+                [scopedProofObservationRequest]: scopeObservation,
                 [proofExecutionCacheRequest]: proofExecutionCacheContext,
               }));
             }
