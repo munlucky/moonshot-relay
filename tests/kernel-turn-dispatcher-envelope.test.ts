@@ -405,6 +405,52 @@ test('Correction 3: baseline-required recalculates modelInput via additional nex
   });
 });
 
+test('B2a: prepareNext and status deduplicate internal verifications, reviews, completionDecision, and command discovery queries', async () => {
+  await withRun(async (cp: TestControlPlane, runId: string) => {
+    let getVerificationsCalls = 0;
+    let listReviewReceiptsCalls = 0;
+    let getCompletionDecisionCalls = 0;
+    const origGetVerifications = cp.stateStore.getVerifications.bind(cp.stateStore);
+    const origListReviewReceipts = cp.stateStore.listReviewReceipts.bind(cp.stateStore);
+    const origGetCompletionDecision = cp.stateStore.getCompletionDecision.bind(cp.stateStore);
+
+    cp.stateStore.getVerifications = ((...args: Parameters<typeof origGetVerifications>) => {
+      getVerificationsCalls += 1;
+      return origGetVerifications(...args);
+    }) as typeof origGetVerifications;
+    cp.stateStore.listReviewReceipts = ((...args: Parameters<typeof origListReviewReceipts>) => {
+      listReviewReceiptsCalls += 1;
+      return origListReviewReceipts(...args);
+    }) as typeof origListReviewReceipts;
+    cp.stateStore.getCompletionDecision = ((...args: Parameters<typeof origGetCompletionDecision>) => {
+      getCompletionDecisionCalls += 1;
+      return origGetCompletionDecision(...args);
+    }) as typeof origGetCompletionDecision;
+
+    try {
+      const nextPayload = await cp.next(runId);
+      assert.equal(assertTestRecord(nextPayload).runId, runId);
+      assert.equal(getVerificationsCalls, 1, `next() must query getVerifications once, got ${getVerificationsCalls}`);
+      assert.equal(listReviewReceiptsCalls, 1, `next() must query listReviewReceipts once, got ${listReviewReceiptsCalls}`);
+      assert.equal(getCompletionDecisionCalls, 1, `next() must query getCompletionDecision once, got ${getCompletionDecisionCalls}`);
+
+      getVerificationsCalls = 0;
+      listReviewReceiptsCalls = 0;
+      getCompletionDecisionCalls = 0;
+
+      const statusPayload = await cp.status(runId);
+      assert.ok(statusPayload && 'run' in statusPayload);
+      assert.equal(getVerificationsCalls, 1, `status() must query getVerifications once, got ${getVerificationsCalls}`);
+      assert.equal(listReviewReceiptsCalls, 1, `status() must query listReviewReceipts once, got ${listReviewReceiptsCalls}`);
+      assert.equal(getCompletionDecisionCalls, 1, `status() must query getCompletionDecision once, got ${getCompletionDecisionCalls}`);
+    } finally {
+      cp.stateStore.getVerifications = origGetVerifications;
+      cp.stateStore.listReviewReceipts = origListReviewReceipts;
+      cp.stateStore.getCompletionDecision = origGetCompletionDecision;
+    }
+  });
+});
+
 type TestControlPlane = Awaited<ReturnType<typeof import('../src/host/kernel/control-plane-runtime.js').createKernelControlPlane>>;
 type TestStateStore = Awaited<ReturnType<typeof import('../src/kernel/state-store.js').openKernelStateStore>>;
 
