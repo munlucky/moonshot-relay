@@ -1,0 +1,330 @@
+{
+  "before_sha": "86246b72b059699d1fd628d6ec26ed36194ab569",
+  "after_sha": "9c7b5c5860c903c96f6acf524af328e1a7d63385",
+  "model": {
+    "provider": null,
+    "model_id": null,
+    "snapshot_id": null,
+    "effort": null
+  },
+  "task_set_digest": "sha256:8170d55e2d11632dbd1dd2432edabf2dbad08ca358e2690c8d41003fb2cd65ec",
+  "environment_digest": "darwin-25.5.0-arm64:node-v24.6.0:npm-11.7.0",
+  "cache_condition": "UNOBSERVED_IN_LOCAL_DETERMINISTIC_ENV",
+  "deterministic_comparisons": {
+    "B2a_admin_queries_per_next_call": {
+      "getVerifications": { "before": 5, "after": 1 },
+      "listReviewReceipts": { "before": 3, "after": 1 },
+      "getCompletionDecision": { "before": 3, "after": 1 },
+      "currentProjectCommands": { "before": 3, "after": 1 },
+      "trustAuthority_knowledgeAuthority_resume_builds": { "before": 2, "after": 1 }
+    },
+    "B2b_git_subprocesses_per_workspace_observation": {
+      "clean_workspace_observeWorkspaceIdentity": { "before": 8, "after": 2 },
+      "dirty_workspace_observeWorkspaceIdentity": { "before": 8, "after": 3 },
+      "observeScopedWorkspaceIdentity": { "before": 3, "after": 1 },
+      "clean_owner_snapshotHostWorkerPatch_alt_index_calls": { "before": 2, "after": 0 }
+    },
+    "track_a_oracle_wall_clock_ms": {
+      "A-F1_loop_e2e_ms": { "before": 23250, "after": 11964 },
+      "A-F1_loop_guard_ms": { "before": 21470, "after": 10707 },
+      "A-F1_loop_in_turn_ms": { "before": 20671, "after": 10390 },
+      "A-F1_loop_handoff_io_error_ms": { "before": 16952, "after": 7597 }
+    }
+  },
+  "runs": [
+    {
+      "task_id": "A-F1",
+      "harness": "before",
+      "fixture_digest": "git-tree:9efa3396f53965c1d4326e88da40bf2c568ad26e",
+      "oracle_digest": "sha256:01b8498ca38613ea50bb9ae2c2eea019754c0df30e9ebb2558a4e3d6b81eb38a",
+      "outcome": "NOT_RUN",
+      "safety_violations": null,
+      "trace_ref": null,
+      "trace_summary": {
+        "turns": null,
+        "admin_calls": null,
+        "search_calls": null,
+        "verify_runs": null,
+        "rework_count": null
+      },
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "cost_usd": null,
+      "wall_clock_ms": null
+    },
+    {
+      "task_id": "A-F1",
+      "harness": "after",
+      "fixture_digest": "git-tree:9efa3396f53965c1d4326e88da40bf2c568ad26e",
+      "oracle_digest": "sha256:01b8498ca38613ea50bb9ae2c2eea019754c0df30e9ebb2558a4e3d6b81eb38a",
+      "outcome": "NOT_RUN",
+      "safety_violations": null,
+      "trace_ref": null,
+      "trace_summary": {
+        "turns": null,
+        "admin_calls": null,
+        "search_calls": null,
+        "verify_runs": null,
+        "rework_count": null
+      },
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "cost_usd": null,
+      "wall_clock_ms": null
+    },
+    {
+      "task_id": "A-R1",
+      "harness": "before",
+      "fixture_digest": "git-tree:d09301f8e9c83d3d841d0e1cd2db85886ba5fe1c",
+      "oracle_digest": "sha256:73b0c9b2e4be910a95079b167cc737c23de2b4c020b0574841bea6dcd054d56e",
+      "outcome": "NOT_RUN",
+      "safety_violations": null,
+      "trace_ref": null,
+      "trace_summary": {
+        "turns": null,
+        "admin_calls": null,
+        "search_calls": null,
+        "verify_runs": null,
+        "rework_count": null
+      },
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "cost_usd": null,
+      "wall_clock_ms": null
+    },
+    {
+      "task_id": "A-R1",
+      "harness": "after",
+      "fixture_digest": "git-tree:d09301f8e9c83d3d841d0e1cd2db85886ba5fe1c",
+      "oracle_digest": "sha256:73b0c9b2e4be910a95079b167cc737c23de2b4c020b0574841bea6dcd054d56e",
+      "outcome": "NOT_RUN",
+      "safety_violations": null,
+      "trace_ref": null,
+      "trace_summary": {
+        "turns": null,
+        "admin_calls": null,
+        "search_calls": null,
+        "verify_runs": null,
+        "rework_count": null
+      },
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "cost_usd": null,
+      "wall_clock_ms": null
+    },
+    {
+      "task_id": "A-S1",
+      "harness": "before",
+      "fixture_digest": "git-tree:5ee8fb371a410892a97da0123dcba9162284a8d3",
+      "oracle_digest": "sha256:7f77ca094526dd73ee42edaa88ba6275a20109162553ef984adabe820fd52e5c",
+      "outcome": "NOT_RUN",
+      "safety_violations": null,
+      "trace_ref": null,
+      "trace_summary": {
+        "turns": null,
+        "admin_calls": null,
+        "search_calls": null,
+        "verify_runs": null,
+        "rework_count": null
+      },
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "cost_usd": null,
+      "wall_clock_ms": null
+    },
+    {
+      "task_id": "A-S1",
+      "harness": "after",
+      "fixture_digest": "git-tree:5ee8fb371a410892a97da0123dcba9162284a8d3",
+      "oracle_digest": "sha256:7f77ca094526dd73ee42edaa88ba6275a20109162553ef984adabe820fd52e5c",
+      "outcome": "NOT_RUN",
+      "safety_violations": null,
+      "trace_ref": null,
+      "trace_summary": {
+        "turns": null,
+        "admin_calls": null,
+        "search_calls": null,
+        "verify_runs": null,
+        "rework_count": null
+      },
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "cost_usd": null,
+      "wall_clock_ms": null
+    },
+    {
+      "task_id": "A-D1",
+      "harness": "before",
+      "fixture_digest": "git-tree:e268bca472118f4f10394f70f9a00eefda8608c0",
+      "oracle_digest": "sha256:9f1b58cf29546d26d7f552265023ac5b5d469a62c1e2b53270adcb23c33aefcc",
+      "outcome": "NOT_RUN",
+      "safety_violations": null,
+      "trace_ref": null,
+      "trace_summary": {
+        "turns": null,
+        "admin_calls": null,
+        "search_calls": null,
+        "verify_runs": null,
+        "rework_count": null
+      },
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "cost_usd": null,
+      "wall_clock_ms": null
+    },
+    {
+      "task_id": "A-D1",
+      "harness": "after",
+      "fixture_digest": "git-tree:e268bca472118f4f10394f70f9a00eefda8608c0",
+      "oracle_digest": "sha256:9f1b58cf29546d26d7f552265023ac5b5d469a62c1e2b53270adcb23c33aefcc",
+      "outcome": "NOT_RUN",
+      "safety_violations": null,
+      "trace_ref": null,
+      "trace_summary": {
+        "turns": null,
+        "admin_calls": null,
+        "search_calls": null,
+        "verify_runs": null,
+        "rework_count": null
+      },
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "cost_usd": null,
+      "wall_clock_ms": null
+    },
+    {
+      "task_id": "B-B1",
+      "harness": "before",
+      "fixture_digest": null,
+      "oracle_digest": null,
+      "outcome": "NOT_RUN",
+      "safety_violations": null,
+      "trace_ref": null,
+      "trace_summary": {
+        "turns": null,
+        "admin_calls": null,
+        "search_calls": null,
+        "verify_runs": null,
+        "rework_count": null
+      },
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "cost_usd": null,
+      "wall_clock_ms": null
+    },
+    {
+      "task_id": "B-B1",
+      "harness": "after",
+      "fixture_digest": null,
+      "oracle_digest": null,
+      "outcome": "NOT_RUN",
+      "safety_violations": null,
+      "trace_ref": null,
+      "trace_summary": {
+        "turns": null,
+        "admin_calls": null,
+        "search_calls": null,
+        "verify_runs": null,
+        "rework_count": null
+      },
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "cost_usd": null,
+      "wall_clock_ms": null
+    },
+    {
+      "task_id": "B-F1",
+      "harness": "before",
+      "fixture_digest": null,
+      "oracle_digest": null,
+      "outcome": "NOT_RUN",
+      "safety_violations": null,
+      "trace_ref": null,
+      "trace_summary": {
+        "turns": null,
+        "admin_calls": null,
+        "search_calls": null,
+        "verify_runs": null,
+        "rework_count": null
+      },
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "cost_usd": null,
+      "wall_clock_ms": null
+    },
+    {
+      "task_id": "B-F1",
+      "harness": "after",
+      "fixture_digest": null,
+      "oracle_digest": null,
+      "outcome": "NOT_RUN",
+      "safety_violations": null,
+      "trace_ref": null,
+      "trace_summary": {
+        "turns": null,
+        "admin_calls": null,
+        "search_calls": null,
+        "verify_runs": null,
+        "rework_count": null
+      },
+      "tokens": {
+        "input": null,
+        "output": null,
+        "cache_read": null,
+        "cache_write": null
+      },
+      "cost_usd": null,
+      "wall_clock_ms": null
+    }
+  ],
+  "unverified": [
+    "live_remote_provider_12_run_agent_execution",
+    "external_project_track_b_fixtures_B-B1_B-F1",
+    "provider_live_billing_and_cache_hit_telemetry"
+  ],
+  "decision": "PARTIAL"
+}
