@@ -134,12 +134,26 @@ export const projectKernelModelView = (
   if (action) {
     const projectContext = asRecord(action.projectContext);
     const obligations = Array.isArray(action.obligations) ? action.obligations : [];
-    if (projectContext?.knownCommands && obligations.length > 0) {
-      view.action = {
-        ...action,
-        projectContext: copyWithout(projectContext, ['knownCommands']),
+    const MAX_COMPACT_COMMAND_REFS = 8;
+    const compactObligations = obligations.map((entry) => {
+      const record = asRecord(entry);
+      if (!record || !Array.isArray(record.allowedCommandRefs) || record.allowedCommandRefs.length <= MAX_COMPACT_COMMAND_REFS) {
+        return entry;
+      }
+      return {
+        ...record,
+        allowedCommandRefs: record.allowedCommandRefs.slice(0, MAX_COMPACT_COMMAND_REFS),
+        allowedCommandRefsTotal: record.allowedCommandRefs.length,
       };
+    });
+    const nextActionRecord: UnknownRecord = {
+      ...action,
+      ...(obligations.length > 0 ? { obligations: compactObligations } : {}),
+    };
+    if (projectContext?.knownCommands && obligations.length > 0) {
+      nextActionRecord.projectContext = copyWithout(projectContext, ['knownCommands']);
     }
+    view.action = nextActionRecord;
   }
 
   return view;

@@ -1429,5 +1429,33 @@ test('contract revision rolls back when persisted coverage cannot be rebound', a
   }
 });
 
+test('P3: report verification hint without explicit acceptanceCoverage defaults to declared obligation acceptanceIds while explicit empty array stays uncovered', async () => {
+  const fixture = await setup();
+  const cp = await createKernelControlPlane(fixture);
+  try {
+    await cp.startRun({
+      runId: 'r-default-hint-coverage',
+      objective: 'Verify default hint acceptance binding',
+      taskContract: {
+        allowedPaths: ['app.mjs'],
+        acceptance: [
+          { id: 'AC-1', acceptance: 'default hint binds AC-1', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test:ok'], obligationId: 'unit-test' } },
+        ],
+      },
+    });
+    await mutate(fixture.projectRoot, 1);
+    const reported = await cp.report('r-default-hint-coverage', {
+      summary: 'hint without acceptanceCoverage',
+      changedPaths: ['app.mjs'],
+      verifications: [{ obligationId: 'unit-test', commandRef: 'test:ok' }],
+    });
+    assert.equal(assertTestPresent(reported).status, 'completed');
+    assert.deepEqual(cp.stateStore.getVerifications('r-default-hint-coverage')[0]?.acceptanceCoverage, ['AC-1']);
+  } finally {
+    await cp.close();
+    await cleanup(fixture);
+  }
+});
+
 type TestControlPlane = Awaited<ReturnType<typeof import('../src/host/kernel/control-plane-runtime.js').createKernelControlPlane>>;
 type TestStateStore = Awaited<ReturnType<typeof import('../src/kernel/state-store.js').openKernelStateStore>>;

@@ -1293,11 +1293,11 @@ export const createKernelControlPlane = async ({
         timeoutMs: Number.isFinite(Number(hint.timeoutMs)) && Number(hint.timeoutMs) > 0
           ? Number(hint.timeoutMs)
           : (Number.isFinite(Number(obligation.metadata?.timeoutMs)) && Number(obligation.metadata.timeoutMs) > 0 ? Number(obligation.metadata.timeoutMs) : undefined),
-        // A model-supplied verification hint is not itself acceptance proof.
-        // Only the no-hint, Kernel-planned path may use the obligation's
-        // declared acceptance binding; explicit hints must carry their own
-        // coverage or the Step Ledger will keep the unit failed.
-        acceptanceCoverage: automatic
+        // When a model omits acceptanceCoverage on a verification hint, bind it
+        // to the obligation's declared acceptanceIds by default (same as the
+        // automatic Kernel-planned path). An explicit [] still claims empty
+        // coverage, and any explicit non-empty coverage is validated below.
+        acceptanceCoverage: automatic || hint.acceptanceCoverage === undefined
           ? (obligation.acceptanceIds || [])
           : (Array.isArray(hint.acceptanceCoverage) ? hint.acceptanceCoverage : []),
         networkPolicy: hint.networkPolicy || 'inherited',

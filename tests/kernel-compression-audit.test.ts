@@ -204,4 +204,16 @@ test('KR-03: compact model view deduplicates exact obligation/work-unit/acceptan
   });
   assert.equal(inProgressNext.nextAction, 'implement');
   assert.equal(object(inProgressNext.action).type, 'implement');
+
+  const manyCommands = Array.from({ length: 40 }, (_, i) => `cmd:${i}`);
+  const largeObligationView = object(projectKernelModelView({
+    runId: 'run-cap-commands',
+    action: {
+      type: 'implement',
+      obligations: [{ obligationId: 'default', commandRef: 'cmd:0', allowedCommandRefs: manyCommands }],
+    },
+  }));
+  const compactObligation = object((object(largeObligationView.action).obligations as unknown[])[0]);
+  assert.equal((compactObligation.allowedCommandRefs as unknown[]).length, 8);
+  assert.equal(compactObligation.allowedCommandRefsTotal, 40);
 });

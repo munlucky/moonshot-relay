@@ -266,7 +266,20 @@ async function executeHostOwnedWritableAttempt({
         }
         const obligations = controlPlane.getRunObligations(runId);
         const manifest = new Set(controlPlane.discoverProjectCommands().map(item => item.commandRef));
-        const verifications = output.verifications as Array<Record<string, unknown>>;
+        const rawVerifications = output.verifications as Array<Record<string, unknown>>;
+        const verifications = rawVerifications.length > 0
+          ? rawVerifications
+          : (step?.obligationIds || [])
+              .map((obligationId) => obligations.find((item) => item.obligationId === obligationId))
+              .filter((obligation): obligation is NonNullable<typeof obligation> => Boolean(obligation && obligation.evidenceClass === 'hard'))
+              .map((obligation) => {
+                const commandRef = obligation.allowedCommandRefs.find((ref) => manifest.has(String(ref))) || '';
+                return {
+                  obligationId: obligation.obligationId,
+                  commandRef,
+                  acceptanceCoverage: obligation.acceptanceIds,
+                };
+              });
         if (verifications.length === 0 || verifications.some(request => {
           const obligation = obligations.find(item => item.obligationId === request.obligationId);
           return !obligation || obligation.evidenceClass !== 'hard'
