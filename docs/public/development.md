@@ -61,11 +61,13 @@ npm run test:source-runtime
 
 `npm run lint:kernel`, `npm run test:kernel`, `npm test`, `npm run test:package`는 서로 다른 검증 범위를 갖는다. 과거 Relay 호환 테스트는 기능 보존을 검사한다. 해당 테스트가 현재 Kernel authority를 대신하지 않는다.
 
-## Prompt 감사 유지보수
+## Prompt 감사 이력과 현행 Codebase-First 개선 SOT
 
-Kernel prompt 감사의 canonical 기록은 `artifacts/kernel-prompt-audit/`에 둔다. 생성된 `scripts/`가 아니라 `src/`, `skills/`, `package/profile-templates/`의 원본 owner를 기록한다. 삭제 후보는 중복이 확인되고 남는 authority와 C01 rubric/eval 연결이 있을 때만 제거한다. C01 baseline은 비교 기준으로 고정하며 C09/C10 live 평가와 C11 gate 전에는 결과에 맞춰 갱신하지 않는다.
+과거 Kernel prompt 감사의 원본 기록은 `artifacts/kernel-prompt-audit/`에 보존한다. 과거 C01 baseline 및 C09/C10/C11 평가 계약은 **해당 역사적 실험의 증거**이며, 새 개선 작업의 실측 결과로 재사용하지 않는다. 생성된 `scripts/kernel/`·`scripts/host/kernel/` 대신 `src/`, `skills/`, `package/profile-templates/`의 실제 source owner를 확인한다. 기존 safety·scope·compatibility·fresh evidence·review·completion authority는 지침 축소만을 이유로 제거하지 않는다.
 
-다음 변화가 있으면 prompt 감사를 다시 수행한다: 기본 또는 major model family 변경, provider 공식 prompting guidance 변경, tool/provider message 구조 변경, stable prompt byte/token budget 변화, 불필요 tool/subagent 호출률 변화, completion/acceptance rate 변화. 감사 목적만으로 새 workflow stage나 always-on agent를 만들지 않는다. scope·security·compatibility·evidence·review·completion authority는 prompt 길이만을 이유로 제거하지 않는다.
+2026-11-24 이후 **Codebase-First 하네스 개선 작업의 전략 SOT**는 [STRATEGY.md](roadmaps/codebase-first-harness-2026-11-24/STRATEGY.md), **실행·수용 계약**은 [PLAN.md](roadmaps/codebase-first-harness-2026-11-24/PLAN.md)이다. v3는 Freeze이며 임의의 추가 전략 개정 대신 W0에서 현재 활성 Host→Kernel→prompt→proof/Completion 호출 경로만 Top-Down 조사한다. 과거 Prompt Diet(12/12 대 11/12), Prompt Surface Audit, Decomplexification 자료는 활성 경로에 남은 항목의 Keep 이유를 찾을 때만 역조회한다.
+
+이번 개선은 `B1a → B2a → C → B1b → B2b → D → S6` 순서로 하되, **구현 중 Golden Task 에이전트 평가 없이** 현행 컴파일·결정론적 테스트·격리 설치·wire prompt dry-run만 수행한다. 전체 구현 후 **고정된 Golden-PR 6개로 Before/After 통합 평가 한 번**을 수행한다. 실패 시에만 commit 경계로 원인을 추적한다. 실제 account-root 설치와 무관한 Host-owned Worker 활성 작업은 건드리지 않는다. 새 문제는 코드/API 구조 → 기존 검사기 진단 → 필요한 회귀 테스트 → 최소 prose 순으로 해결한다.
 
 ## 패키징과 임시 설치
 
