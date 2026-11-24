@@ -1,6 +1,6 @@
 {
   "before_sha": "86246b72b059699d1fd628d6ec26ed36194ab569",
-  "after_sha": "9c7b5c5860c903c96f6acf524af328e1a7d63385",
+  "after_sha": "fbcc33db50cf6ba3bc8254da41b8ca994a2da58f",
   "model": {
     "provider": null,
     "model_id": null,
@@ -11,6 +11,27 @@
   "environment_digest": "darwin-25.5.0-arm64:node-v24.6.0:npm-11.7.0",
   "cache_condition": "UNOBSERVED_IN_LOCAL_DETERMINISTIC_ENV",
   "deterministic_comparisons": {
+    "P0_model_facing_admin_workflow_turns": {
+      "baseline_required_extra_model_round_trips": { "before": 1, "after": 0 },
+      "host_auto_review_finalization_extra_report_turns": { "before": 1, "after": 0 },
+      "ready_report_directive_auto_finalization_extra_turns": { "before": 1, "after": 0 }
+    },
+    "P1_prompt_and_knowledge_segment_stability": {
+      "project_stable_populated_from_knowledge_authority": { "before": false, "after": true },
+      "project_stable_digest_invariant_across_step_and_stage_transitions": { "before": false, "after": true },
+      "scoped_facts_and_constraints_routed_to_volatile_task_knowledge": { "before": false, "after": true }
+    },
+    "P2_deletion_first_surface_and_authority_cleanup": {
+      "prepareHostTurn_duplicate_work_unit_scope_checks_per_turn": { "before": 2, "after": 1 },
+      "claude_agent_template_control_only_fields_exposed": { "before": 3, "after": 0 },
+      "claude_agent_template_bytes_implementer_plus_reviewer": { "before": 3166, "after": 3056 },
+      "compact_model_view_omits_duplicate_availableCommandRefs_and_lifecycle_trees": { "before": false, "after": true }
+    },
+    "P3_verification_ownership_cleanup": {
+      "verification_hint_without_acceptanceCoverage_auto_binds_declared_acceptanceIds": { "before": false, "after": true },
+      "host_worker_empty_verifications_auto_derives_bound_step_obligations": { "before": false, "after": true },
+      "compact_model_view_max_allowedCommandRefs_per_obligation": { "before": 108, "after": 8 }
+    },
     "B2a_admin_queries_per_next_call": {
       "getVerifications": { "before": 5, "after": 1 },
       "listReviewReceipts": { "before": 3, "after": 1 },
