@@ -272,24 +272,44 @@ export const prepareHostTurn = async ({
     ['implement', 'fix'].includes(modelInput.action?.type || '')
     && !reviewerTurn
   ) {
-    const capsuleStep = actionContext.stepId
-      ? controlPlane.ensureRunStepsMigrated(runId).find(
-          (entry) => entry.stepId === actionContext.stepId,
-        ) || null
-      : controlPlane.getCurrentStep(runId);
-    try {
-      assertImplementationWorkUnitScope({
-        step: capsuleStep,
-        contract: run.taskContract,
-        actionType: modelInput.action?.type,
-      });
-    } catch (error: unknown) {
+    if (modelInput.status === 'scope-rejected') {
+      const rawScope = modelInput.action?.workUnitScope;
+      const workUnitScope: UnknownRecord = rawScope && typeof rawScope === 'object' && !Array.isArray(rawScope)
+        ? rawScope as UnknownRecord
+        : {};
       return buildScopeRejection({
         runId,
         modelInput,
         capabilities,
-        error,
+        error: Object.assign(new Error(String(modelInput.errorSummary || 'Implementation work unit must declare bounded allowedPaths.')), {
+          code: modelInput.failureCode || modelInput.errorCode || 'work-unit-scope-missing',
+          errorCode: modelInput.errorCode || 'WORK_UNIT_SCOPE_MISSING',
+          scopeReason: workUnitScope.reason || 'missing',
+          allowedPaths: Array.isArray(workUnitScope.allowedPaths) ? workUnitScope.allowedPaths : [],
+          workspaceWide: Array.isArray(workUnitScope.workspaceWide) ? workUnitScope.workspaceWide : [],
+        }),
       });
+    }
+    if (preloadedModelInput) {
+      const capsuleStep = actionContext.stepId
+        ? controlPlane.ensureRunStepsMigrated(runId).find(
+            (entry) => entry.stepId === actionContext.stepId,
+          ) || null
+        : controlPlane.getCurrentStep(runId);
+      try {
+        assertImplementationWorkUnitScope({
+          step: capsuleStep,
+          contract: run.taskContract,
+          actionType: modelInput.action?.type,
+        });
+      } catch (error: unknown) {
+        return buildScopeRejection({
+          runId,
+          modelInput,
+          capabilities,
+          error,
+        });
+      }
     }
   }
 

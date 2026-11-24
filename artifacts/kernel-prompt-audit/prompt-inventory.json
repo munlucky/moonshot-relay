@@ -4,8 +4,8 @@
   "surfaces": [
     {"path":"skills/moon-relay-kernel/SKILL.md","bytes":3232,"lines":38},
     {"path":"package/profile-templates/claude/.claude/agents/kernel-planner.md","bytes":1270,"lines":45},
-    {"path":"package/profile-templates/claude/.claude/agents/kernel-implementer.md","bytes":1618,"lines":49},
-    {"path":"package/profile-templates/claude/.claude/agents/kernel-reviewer.md","bytes":1548,"lines":49},
+    {"path":"package/profile-templates/claude/.claude/agents/kernel-implementer.md","bytes":1552,"lines":47},
+    {"path":"package/profile-templates/claude/.claude/agents/kernel-reviewer.md","bytes":1504,"lines":49},
     {"path":"package/profile-templates/codex/AGENTS.md","bytes":2326,"lines":51},
     {"path":"package/profile-templates/codex/.codex/AGENTS.md","bytes":1859,"lines":28},
     {"path":"src/host/kernel/prompts/common-execution.ts","bytes":2671,"lines":73},

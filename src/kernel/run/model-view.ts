@@ -48,10 +48,28 @@ export const projectKernelModelView = (
     && Array.isArray(view.requiredVerifications)
     && Array.isArray(action.obligations)
     && action.obligations.length > 0
-    && JSON.stringify(view.requiredVerifications) === JSON.stringify(action.obligations)
   ) {
-    delete view.requiredVerifications;
-    view.requiredVerificationsSource = 'action.obligations';
+    if (JSON.stringify(view.requiredVerifications) === JSON.stringify(action.obligations)) {
+      delete view.requiredVerifications;
+      view.requiredVerificationsSource = 'action.obligations';
+    }
+    if (Array.isArray(view.availableCommandRefs)) {
+      delete view.availableCommandRefs;
+    }
+  }
+
+  if (view.knowledgeSegments) {
+    delete view.knowledgeSegments;
+  }
+
+  const knowledgeAuthority = asRecord(view.knowledgeAuthority);
+  if (knowledgeAuthority && knowledgeAuthority.lifecycle) {
+    view.knowledgeAuthority = copyWithout(knowledgeAuthority, ['lifecycle', 'projection']);
+  }
+
+  const trustDecision = asRecord(asRecord(view.trustAuthority)?.decision);
+  if (view.completion && trustDecision?.completion && JSON.stringify(view.completion) === JSON.stringify(trustDecision.completion)) {
+    delete view.completion;
   }
 
   const resume = asRecord(view.resume);
