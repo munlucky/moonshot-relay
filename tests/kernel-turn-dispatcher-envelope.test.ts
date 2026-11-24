@@ -546,3 +546,127 @@ test('Host-owned Native observation binds live events to the existing Attempt an
     assert.equal('writerFenced' in seen[0], false);
   });
 });
+
+test('P1: buildTurnPromptEnvelope separates projectStable knowledge from volatile taskKnowledge across step transitions', async () => {
+  await withRun(async (cp: TestControlPlane, runId: string) => {
+    const run = assertTestPresent(await cp.getRun(runId));
+    const projectId = assertTestString(run.projectId);
+    cp.stateStore.saveKnowledgeRecord(projectId, 'kr-policy-1', {
+      recordType: 'policy_anchor',
+      status: 'committed',
+      trustTier: 'authoritative',
+      recordJson: {
+        id: 'kr-policy-1',
+        type: 'policy_anchor',
+        statement: 'All state transitions must be fail-closed',
+        status: 'committed',
+        trustTier: 'authoritative',
+        scope: [],
+        isGlobal: true,
+      },
+    });
+    cp.stateStore.saveKnowledgeRecord(projectId, 'kr-constraint-global', {
+      recordType: 'ontology_constraint',
+      status: 'committed',
+      trustTier: 'verified',
+      recordJson: {
+        id: 'kr-constraint-global',
+        type: 'ontology_constraint',
+        statement: 'Kernel authority is never delegated to raw provider output',
+        severity: 'invariant',
+        status: 'committed',
+        trustTier: 'verified',
+        scope: [],
+        isGlobal: true,
+      },
+    });
+    cp.stateStore.saveKnowledgeRecord(projectId, 'kr-constraint-scoped', {
+      recordType: 'ontology_constraint',
+      status: 'committed',
+      trustTier: 'verified',
+      recordJson: {
+        id: 'kr-constraint-scoped',
+        type: 'ontology_constraint',
+        statement: 'Auth paths must verify session lineage',
+        severity: 'critical',
+        status: 'committed',
+        trustTier: 'verified',
+        scope: ['src/auth/**'],
+        isGlobal: false,
+      },
+    });
+    cp.stateStore.saveKnowledgeRecord(projectId, 'kr-fact-1', {
+      recordType: 'semantic_fact',
+      status: 'committed',
+      trustTier: 'verified',
+      recordJson: {
+        id: 'kr-fact-1',
+        type: 'semantic_fact',
+        statement: 'Prompt envelope segments stabilize provider prefix caching',
+        status: 'committed',
+        trustTier: 'verified',
+        scope: ['src/host/**'],
+        isGlobal: false,
+      },
+    });
+    cp.stateStore.updateProjectKnowledgeRevision(projectId, 1, 2);
+
+    await cp.refreshStageKnowledge(runId, { stage: 'FRAME', strict: true });
+    const firstNext = assertTestRecord(await cp.next(runId));
+    const segments = assertTestRecord(firstNext.knowledgeSegments);
+    const projectStable = assertTestRecord(segments.projectStable);
+    assert.equal(Array.isArray(projectStable.policyAnchors), true);
+    assert.equal((projectStable.policyAnchors as unknown[]).length, 1);
+    assert.equal(Array.isArray(projectStable.ontologyConstraints), true);
+    assert.equal((projectStable.ontologyConstraints as unknown[]).length, 1);
+    assert.equal(Array.isArray(segments.taskKnowledge), true);
+    assert.ok((segments.taskKnowledge as unknown[]).length >= 1);
+
+    const decision = { runId, role: 'implementer', actionKind: 'implement', riskTier: 'T1', modelClass: 'value_coding' };
+    const resolution = { model: 'model-a', effort: 'high', executionClass: 'standard', modelClass: 'value_coding', surface: 'claude', source: 'profile-config', enforcementIntent: 'enforced' } as const;
+    const firstEnvelope = buildTurnPromptEnvelope({
+      modelInput: firstNext,
+      decision,
+      resolution,
+      hostCapabilities: { surface: 'claude' },
+    });
+    const findSeg = (env: typeof firstEnvelope, kind: string) => assertTestPresent(env.segments.find((s) => s.kind === kind));
+    const firstProjSeg = findSeg(firstEnvelope, 'project-stable');
+    const firstVolSeg = findSeg(firstEnvelope, 'volatile');
+    assert.match(firstProjSeg.content, /All state transitions must be fail-closed/);
+    assert.match(firstProjSeg.content, /Kernel authority is never delegated to raw provider output/);
+    assert.doesNotMatch(firstProjSeg.content, /Prompt envelope segments stabilize provider prefix caching/);
+    assert.match(firstVolSeg.content, /Prompt envelope segments stabilize provider prefix caching/);
+
+    // Simulate a second step/stage turn where volatile taskKnowledge and step change,
+    // while projectStable knowledge remains identical.
+    const secondNext = {
+      ...firstNext,
+      knowledgeSegments: {
+        projectStable: segments.projectStable,
+        taskKnowledge: [{ id: 'kr-fact-2', type: 'semantic_fact', statement: 'Step 2 specific fact' }],
+      },
+      action: {
+        ...assertTestRecord(firstNext.action),
+        step: {
+          stepId: 'step-2',
+          objective: 'Second work unit',
+          allowedPaths: ['src/other/**'],
+          forbiddenPaths: [],
+        },
+      },
+    };
+    const secondEnvelope = buildTurnPromptEnvelope({
+      modelInput: secondNext,
+      decision,
+      resolution,
+      hostCapabilities: { surface: 'claude' },
+    });
+    const secondProjSeg = findSeg(secondEnvelope, 'project-stable');
+    const secondVolSeg = findSeg(secondEnvelope, 'volatile');
+    assert.equal(firstProjSeg.digest, secondProjSeg.digest);
+    assert.equal(firstEnvelope.cacheIdentity.prefixDigest, secondEnvelope.cacheIdentity.prefixDigest);
+    assert.notEqual(firstVolSeg.digest, secondVolSeg.digest);
+    assert.match(secondVolSeg.content, /Step 2 specific fact/);
+  });
+});

@@ -60,6 +60,15 @@ export interface BuildProjectKnowledgeContextInput {
   env?: NodeJS.ProcessEnv;
 }
 
+export interface ProjectKnowledgeSegments extends UnknownRecord {
+  projectStable: {
+    policyAnchors: UnknownRecord[];
+    ontologyConstraints: UnknownRecord[];
+    graphSynopsis: UnknownRecord[];
+  };
+  taskKnowledge: UnknownRecord[];
+}
+
 export interface ProjectKnowledgeContext extends UnknownRecord {
   schemaVersion: number;
   projectId: string;
@@ -73,6 +82,7 @@ export interface ProjectKnowledgeContext extends UnknownRecord {
   semanticFacts: UnknownRecord[];
   graphSynopsis: UnknownRecord[];
   ontologyConstraints: UnknownRecord[];
+  segments?: ProjectKnowledgeSegments;
   staleOrUnavailable: UnknownRecord[];
   omittedByPolicy: UnknownRecord[];
   promptBlock: string;
@@ -490,6 +500,14 @@ export async function buildProjectKnowledgeContext({
   selectedFacts = collapseCanonicalRecords(selectedFacts);
   selectedConstraints = collapseCanonicalRecords(selectedConstraints);
 
+  const isGlobalOntologyConstraint = (constraint: KnowledgeRecordLike): boolean => (
+    constraint.isGlobal === true
+    || !Array.isArray(constraint.scope)
+    || constraint.scope.length === 0
+  );
+  const globalConstraints = selectedConstraints.filter(isGlobalOntologyConstraint);
+  const scopedConstraints = selectedConstraints.filter((constraint) => !isGlobalOntologyConstraint(constraint));
+
   const selectedGraph: KnowledgePromptEntry[] = collapseCanonicalRecords(
     rawGraphRelations.filter(isRecordActive),
   ).map((relation) => ({
@@ -601,6 +619,23 @@ export async function buildProjectKnowledgeContext({
     semanticFacts: budgetedFacts,
     graphSynopsis: selectedGraph,
     ontologyConstraints: selectedConstraints,
+    segments: {
+      projectStable: {
+        policyAnchors: selectedPolicy,
+        ontologyConstraints: globalConstraints,
+        graphSynopsis: selectedGraph,
+      },
+      taskKnowledge: [
+        ...scopedConstraints.map((constraint) => ({
+          ...constraint,
+          statement: `[${constraint.severity || 'invariant'}] ${renderKnowledgePromptEntry(constraint)}`,
+        })),
+        ...budgetedFacts.map((fact) => ({
+          ...fact,
+          statement: renderKnowledgePromptEntry(fact),
+        })),
+      ],
+    },
     staleOrUnavailable,
     omittedByPolicy,
     promptBlock,

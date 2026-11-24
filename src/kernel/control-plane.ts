@@ -4046,6 +4046,7 @@ export const createKernelControlPlane = async ({
         completion,
         step,
         knowledgePromptBlock: asRecord(stageContext).promptBlock || null,
+        knowledgeSegments: asRecord(stageContext).segments ? asRecord(asRecord(stageContext).segments) : null,
         context: stageContext ? asRecord(stageContext) : null,
         capabilities: capabilityDecision.selected.map((entry) => ({ id: entry.id, guidance: entry.guidance })),
       });

@@ -105,6 +105,7 @@ interface BuildNextPayloadInput {
   contract?: ContractLike | null;
   failures?: VerificationLike[];
   knowledgePromptBlock?: unknown;
+  knowledgeSegments?: UnknownRecord | null;
   capabilities?: unknown[];
   satisfiedObligations?: Iterable<unknown> | null;
   outstandingObligationIds?: Iterable<unknown> | null;
@@ -304,6 +305,7 @@ export const buildNextPayload = ({
   contract = null,
   failures = [],
   knowledgePromptBlock = null,
+  knowledgeSegments = null,
   capabilities = [],
   satisfiedObligations = null,
   outstandingObligationIds = null,
@@ -351,6 +353,7 @@ export const buildNextPayload = ({
     completionPredicate: contract?.completionPredicate || { requiredOutcomes: [] },
     verification,
     knowledge: knowledgePromptBlock,
+    ...(knowledgeSegments ? { knowledgeSegments } : {}),
     acceptancePlans,
     capabilities,
     stepId: currentWorkUnit?.stepId || null,
