@@ -725,6 +725,27 @@ export async function runKernelCliApplication(argv = [], options = {}) {
                     res = (await cp.ensureRun({ runId: invocation.runId })).next;
                 }
             }
+            const resRecord = asRecord(res);
+            const activeRunId = String(resRecord.runId || invocation?.runId || explicitRunId || '');
+            if (activeRunId && asRecord(resRecord.action).type === 'baseline-required') {
+                const commandRefs = Array.isArray(asRecord(resRecord.action).commandRefs)
+                    ? asRecord(resRecord.action).commandRefs.filter((entry) => typeof entry === 'string')
+                    : [];
+                await cp.captureBaseline(activeRunId, { commandRefs });
+                res = await cp.next(activeRunId);
+            }
+            const settledRecord = asRecord(res);
+            if (activeRunId
+                && asRecord(settledRecord.action).type === 'report'
+                && asRecord(settledRecord.verification).readyForCompletion === true) {
+                const finalized = asRecord(await cp.finalizeRun(activeRunId));
+                if (finalized.completionStatus === 'accepted') {
+                    res = {
+                        ...asRecord(await cp.next(activeRunId)),
+                        finalization: finalized,
+                    };
+                }
+            }
             await closeControlPlane(cp);
             output(res);
         }

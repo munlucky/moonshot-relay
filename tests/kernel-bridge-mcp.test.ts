@@ -337,6 +337,7 @@ test('mcp next automatically dispatches an independent Host review and returns t
     assert.equal(assertTestRecord(result.hostReview).verdict, 'pass');
     assert.equal(assertTestRecord(assertTestRecord(result.hostReview).wait).repeatedPolling, false);
     assert.notEqual(optionalTestRecord(result.action)?.type, 'review');
+    assert.equal(optionalTestRecord(result.action)?.type, 'done');
 
     // A second next must see the recorded judgment rather than re-entering the
     // readiness gate or dispatching the same review again.
@@ -352,6 +353,7 @@ test('mcp next automatically dispatches an independent Host review and returns t
     assert.equal(assertTestPresent(assertTestPresent(secondResponse).result).isError, false);
     const secondResult = parseToolText(secondResponse);
     assert.notEqual(secondResult.status, 'execution-readiness-blocked');
+    assert.equal(optionalTestRecord(secondResult.action)?.type, 'done');
 
     const cp = await createKernelControlPlane({ runtimeHome: fixture.runtimeHome, projectRoot: fixture.root });
     try {
@@ -418,10 +420,13 @@ test('mcp report dispatches pending Host review and returns the refreshed contin
     assert.match(assertTestString(assertTestRecord(result.hostReview).reviewReceiptId), /^review-receipt-[a-f0-9]{24}$/);
     const continuation = assertTestRecord(result.next);
     assert.notEqual(assertTestRecord(continuation.action).type, 'review');
+    assert.equal(assertTestRecord(continuation.action).type, 'done');
+    assert.equal(result.status, 'completed');
 
     const cp = await createKernelControlPlane({ runtimeHome: fixture.runtimeHome, projectRoot: fixture.root });
     try {
       assert.equal(cp.listReviewReceipts(runId).length, 1);
+      assert.equal((await cp.getRun(runId))?.status, 'completed');
     } finally {
       await cp.close();
     }
@@ -1525,5 +1530,35 @@ test('KR-01: default mcp next honors claude surface normalization and includes j
     assert.match(assertTestString(action.guidance), /hard evidence remains mandatory/i);
   } finally {
     await cleanupMcpReviewRun(fixture);
+  }
+});
+
+test('P0: mcp kernel_next auto-captures baseline-required without returning an administrative baseline turn', async () => {
+  const workspaceRoot = await createFixtureRepo();
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-mcp-baseline-auto-'));
+  try {
+    const response = await handleMcpToolCall({
+      name: 'kernel_next',
+      parameters: {
+        workspaceRoot,
+        runId: 'mcp-auto-baseline-run',
+        contractJson: {
+          objective: 'Update README with auto-captured baseline',
+          acceptance: ['README is updated'],
+          allowedPaths: ['README.md'],
+          flags: { baselineRequired: true },
+        },
+        surface: 'claude_app',
+      },
+      runtimeHome,
+      env: {},
+    });
+    const result = assertTestRecord(response);
+    const action = assertTestRecord(result.action);
+    assert.equal(action.type, 'implement');
+    assert.equal(assertTestRecord(assertTestRecord(action.projectContext).baseline).status, 'captured');
+  } finally {
+    await rm(runtimeHome, { recursive: true, force: true });
+    await rm(workspaceRoot, { recursive: true, force: true });
   }
 });

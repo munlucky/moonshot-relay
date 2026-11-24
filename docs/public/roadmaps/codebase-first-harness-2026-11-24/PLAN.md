@@ -133,6 +133,17 @@ W0의 핵심 필수 항목을 채우지 못하면 해당 실험 범위를 보류
 
 커밋은 B1a → B2a → C → B1b → B2b → D → S6의 변경 단위별로 **한글 상세 본문**에 수정 범위, 원인, 명령별 검증 결과, 남은 미검증 사항을 기록한다. 실제 변경 없는 단위는 빈 commit 없이 `NO_CHANGE`.
 
+### 4.1 미완료 구조적 개선 재정렬 (`P0 → P1 → P2 → P3`)
+
+1차 실행(`8889a4c7`~`9c7b5c58`)에서 완료된 내부 DB/Git 조회 최적화(`B2a/B2b`)는 보조 지표로 보존하고, `STRATEGY.md`의 본래 목표("실제 모델에 전달되는 지침, 관리 턴, 코드 탐색과 검증 비용 감소")를 달성하기 위해 미완료 구조 개선을 다음 4개 기능 묶음으로 재정렬하여 실행한다. `check:boundaries`나 과거 `prompt-inventory.json` 바이트 잠금 통과를 구조 개선 불필요의 근거로 사용하지 않는다.
+
+| 우선순위 | 구현 묶음 | 실제 확인/변경 경계 | 핵심 변경 | 완료 기준 |
+| --- | --- | --- | --- | --- |
+| **P0** | 모델-facing 관리 워크플로우 단순화 | `src/kernel/bridge/mcp.ts`, `src/kernel/control-plane.ts`, `src/kernel/run/run-loop.ts`, `src/host/kernel/host-turn.ts` | (1) MCP `kernel_report`/`kernel_next`에서 Host 자동 독립 리뷰가 `pass` 영수증(`reviewReceiptId`)을 기록하고 남은 미충족 하드/리뷰 의무가 없으면 동일 호출 내에서 최종 결산까지 자동 연결, (2) `baselineRequired`가 켜진 Run에서 깨끗한 시작 워크스페이스이면 `baseline-required` 관리 턴을 모델에 노출하지 않고 `prepareNext`가 바인딩된 baseline 캡처를 즉시 수행 후 `implement` 반환, (3) 모든 필수 증거와 Step이 통과한 상태에서 빈 finalize `report` 1턴(`action.type = 'report'`)을 추가로 요구하지 않고 `finalizeRun`을 즉시 종결하여 `action.type = 'done'` 반환 | 실제 요청에서 모델의 추가 관리 호출·턴(`baseline-required` 왕복, Host 리뷰 후 빈 `report`, 완료 직전 빈 finalize `report`)이 제거되고 독립 검토·승인·외부 Writer 보호는 유지 |
+| **P1** | Prompt·Knowledge 전달 구조 통합 | `src/kernel/knowledge/context-load.ts`, `src/kernel/control-plane.ts`, `src/host/kernel/turn-dispatcher.ts`, `src/host/kernel/context-segments.ts` | 프로젝트 전역 안정 지식(`policyAnchors`, 전역 `ontologyConstraints`, `graphSynopsis`)을 `projectStable` 세그먼트로, 단계·변경 경로·쿼리에 따라 변하는 사실(`semanticFacts`, 경로 한정 제약)을 `volatile.taskKnowledge`로 구조화 분리하여 `buildTurnPromptEnvelope`에 연결 | 단계·스텝이 바뀌어도 `project-stable` digest가 불필요하게 변하지 않고 변동 정보는 `volatile`에서 갱신되며 6개 핵심 모델 필드 의미가 보존됨 |
+| **P2** | Codebase Deletion-first 구조 정리 | `src/host/kernel/host-turn.ts`, `src/kernel/run/model-view.ts`, `package/profile-templates/claude/.claude/agents/kernel-{implementer,reviewer}.md`, `artifacts/kernel-prompt-audit/prompt-inventory.json`, `tests/kernel-prompt-inventory.test.ts` | (1) `prepareNext`가 이미 단일 권위로 검증하는 `assertImplementationWorkUnitScope` / `scope-rejected`를 `prepareHostTurn`에서 중복 실행·재구성하던 경로 통합, (2) `projectKernelModelView` compact 모드에서 이미 `action`과 `verification`에 투영된 비대한 중복 권위 트리(`trustAuthority`, `knowledgeAuthority`, `workAuthority`, `completion`, 100개+ `availableCommandRefs`)를 요약/제거(`--verbose`는 전체 유지), (3) 에이전트 템플릿의 `CONTROL_ONLY_CAPSULE_FIELDS`(`capsuleId`, `workspaceIdentity`, `mutationRevision`) 입출력 안내를 제거하고 인벤토리 계약 현행화 | 중복 권위 검증과 모델-visible 페이로드 중복 바이트가 실제로 감소하고 기존 패키징·설치·회귀 테스트 유지 |
+| **P3** | Verification 책임 정리 | `src/kernel/control-plane.ts`, `src/host/kernel/host-owned-writable-attempt.ts`, `src/kernel/run/run-loop.ts` | (1) `proofRequestsForReport`에서 모델이 `verifications` 힌트에 `acceptanceCoverage`를 생략해도 선언된 `obligation.acceptanceIds`를 기본 바인딩으로 사용(위조·불일치만 fail-closed 거절), (2) `host-owned-writable-attempt.ts`에서 Worker가 `verifications: []`를 반환해도 Step과 Obligation에 바인딩된 하드 검증을 결정론적으로 도출, (3) `describeObligations`의 `allowedCommandRefs`가 100여 개 매니페스트 전체 대신 바인딩된 대표 명령 중심으로 노출되도록 정리 | 동일한 필수 검증과 fail-closed 안전성을 유지한 채 모델의 검증 명세·제출 부담과 페이로드 크기가 감소 |
+
 ## 5. 최종 평가 (구현 모두 종료한 뒤 1회)
 
 **선행 조건:** 모든 적용 단위의 결정론적 필수 Gate 통과; 최종 `after_sha` 및 청정 HUT 설치가 가능; W0 fixture/oracle/모델/권한 고정.

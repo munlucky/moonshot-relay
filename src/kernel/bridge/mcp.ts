@@ -246,24 +246,43 @@ const readinessBlockedPayload = ({ modelInput, readiness }: { modelInput: Unknow
   };
 };
 
-const processHostLifecycleOutput = async ({ bridge, controlPlane, runId, modelInput, parameters = {} }: { bridge: HostLifecycleBridge | null; controlPlane: ControlPlane; runId: string | null; modelInput: UnknownRecord | null; parameters?: McpParameters }): Promise<{ output: UnknownRecord | null; hostReview: UnknownRecord | null }> => {
-  if (!bridge || !modelInput || modelInput.status === 'contract-rejected') return { output: modelInput, hostReview: null };
-  const action = asRecord(modelInput.action);
+const isReadyReportDirective = (modelInput: UnknownRecord): boolean => {
+  if (asRecord(modelInput.action).type !== 'report') return false;
+  const verification = asRecord(modelInput.verification);
+  const pending = Array.isArray(verification.pending) ? verification.pending : [];
+  const failed = Array.isArray(verification.failed) ? verification.failed : [];
+  return pending.length === 0 && failed.length === 0;
+};
+
+const processHostLifecycleOutput = async ({ bridge, controlPlane, runId, modelInput, parameters = {} }: { bridge: HostLifecycleBridge | null; controlPlane: ControlPlane; runId: string | null; modelInput: UnknownRecord | null; parameters?: McpParameters }): Promise<{ output: UnknownRecord | null; hostReview: UnknownRecord | null; finalization?: UnknownRecord | null }> => {
+  if (!modelInput || modelInput.status === 'contract-rejected') return { output: modelInput, hostReview: null, finalization: null };
+  let activeModelInput = modelInput;
+  if (runId && asRecord(activeModelInput.action).type === 'baseline-required'
+    && typeof controlPlane.captureBaseline === 'function'
+    && typeof controlPlane.next === 'function') {
+    const commandRefs = Array.isArray(asRecord(activeModelInput.action).commandRefs)
+      ? (asRecord(activeModelInput.action).commandRefs as unknown[]).filter((entry): entry is string => typeof entry === 'string')
+      : [];
+    await controlPlane.captureBaseline(runId, { commandRefs });
+    activeModelInput = asRecord(await controlPlane.next(runId));
+  }
+  if (!bridge) return { output: activeModelInput, hostReview: null, finalization: null };
+  const action = asRecord(activeModelInput.action);
   const implementationOnly = ['implement', 'fix', 'debug'].includes(String(action.type || '').toLowerCase());
   const readinessValue = typeof bridge.assess === 'function'
-    ? await bridge.assess({ controlPlane, runId, modelInput, implementationOnly })
+    ? await bridge.assess({ controlPlane, runId, modelInput: activeModelInput, implementationOnly })
     : null;
   const readiness = readinessValue ? asRecord(readinessValue) : null;
   const readinessReview = asRecord(readiness?.review);
-  const reviewRequired = Boolean(readinessReview.required || isKernelReviewAction(modelInput));
+  const reviewRequired = Boolean(readinessReview.required || isKernelReviewAction(activeModelInput));
 
   // A required review must be executable and receipt-attestable before the Host
   // lets an owner mutate through this lifecycle. The model cannot opt out by
   // adding a parameter to the MCP call; implementation-only is a trusted Host
   // policy decision, not model input.
-  if (reviewRequired && (!readiness || !readiness.canExecuteCurrentWork || (isKernelReviewAction(modelInput) && !readiness.canCompleteGoal))) {
+  if (reviewRequired && (!readiness || !readiness.canExecuteCurrentWork || (isKernelReviewAction(activeModelInput) && !readiness.canCompleteGoal))) {
     return {
-      output: readinessBlockedPayload({ modelInput, readiness: readiness || {
+      output: readinessBlockedPayload({ modelInput: activeModelInput, readiness: readiness || {
         schemaVersion: 1,
         status: 'BLOCKED',
         canStartMutation: false,
@@ -274,13 +293,27 @@ const processHostLifecycleOutput = async ({ bridge, controlPlane, runId, modelIn
         nextAction: 'stop-before-mutation',
       } }),
       hostReview: null,
+      finalization: null,
     };
   }
 
-  if (!isKernelReviewAction(modelInput) || typeof bridge.dispatchReview !== 'function') {
+  if (!isKernelReviewAction(activeModelInput) || typeof bridge.dispatchReview !== 'function') {
+    let settledOutput = activeModelInput;
+    let finalization: UnknownRecord | null = null;
+    if (runId
+      && isReadyReportDirective(settledOutput)
+      && typeof controlPlane.finalizeRun === 'function'
+      && typeof controlPlane.next === 'function') {
+      const finalized = asRecord(await controlPlane.finalizeRun(runId));
+      if (finalized.completionStatus === 'accepted') {
+        finalization = finalized;
+        settledOutput = asRecord(await controlPlane.next(runId));
+      }
+    }
     return {
-      output: reviewRequired ? { ...modelInput, executionReadiness: readiness } : modelInput,
+      output: reviewRequired ? { ...settledOutput, executionReadiness: readiness } : settledOutput,
       hostReview: null,
+      finalization,
     };
   }
 
@@ -290,7 +323,7 @@ const processHostLifecycleOutput = async ({ bridge, controlPlane, runId, modelIn
   const dispatched = asRecord(await bridge.dispatchReview({
     controlPlane,
     runId,
-    modelInput,
+    modelInput: activeModelInput,
     actionContext: {
       actionKind: 'review_engineering',
       obligationId: outstandingObligations[0] || null,
@@ -309,16 +342,36 @@ const processHostLifecycleOutput = async ({ bridge, controlPlane, runId, modelIn
     readiness,
     wait: { owner: 'host', strategy: 'single-bounded-dispatch', repeatedPolling: false },
   };
-  const refreshedNext = dispatched.reviewReceiptId && typeof controlPlane.next === 'function'
+  let refreshedNext = dispatched.reviewReceiptId && typeof controlPlane.next === 'function'
     ? asRecord(await controlPlane.next(runId as string))
-    : modelInput;
+    : activeModelInput;
+  let finalization: UnknownRecord | null = null;
+  if (runId
+    && dispatched.reviewReceiptId
+    && hostReview.verdict === 'pass'
+    && isReadyReportDirective(refreshedNext)
+    && typeof controlPlane.finalizeRun === 'function'
+    && typeof controlPlane.next === 'function') {
+    const changedPaths = Array.isArray(asRecord(parameters.report).changedPaths)
+      ? (asRecord(parameters.report).changedPaths as unknown[]).filter((entry): entry is string => typeof entry === 'string')
+      : [];
+    const finalized = asRecord(await controlPlane.finalizeRun(runId, {
+      ...(changedPaths.length > 0 ? { changedPaths, changedFileCount: changedPaths.length } : {}),
+    }));
+    if (finalized.completionStatus === 'accepted') {
+      finalization = finalized;
+      refreshedNext = asRecord(await controlPlane.next(runId));
+    }
+  }
   return {
     output: {
       ...refreshedNext,
       executionReadiness: readiness,
       hostReview,
+      ...(finalization ? { finalization } : {}),
     },
     hostReview,
+    finalization,
   };
 };
 
@@ -525,9 +578,19 @@ export const handleMcpToolCall = async ({
           loopContinuation: await continueWith(cp),
         };
       }
-      if (!processed.hostReview && processed.output?.status !== 'execution-readiness-blocked') return projectKernelModelView(res, { verbose: parameters.verbose === true });
+      if (!processed.hostReview && !processed.finalization && processed.output?.status !== 'execution-readiness-blocked' && processed.output === res.next) {
+        return projectKernelModelView(res, { verbose: parameters.verbose === true });
+      }
+      const finalizedCompletion = asRecord(processed.finalization).completionStatus === 'accepted';
       return projectKernelModelView({
         ...res,
+        ...(finalizedCompletion ? {
+          status: asRecord(processed.finalization).finalizationStatus === 'completed' ? 'completed' : 'finalization-incomplete',
+          workUnitStatus: 'complete',
+          goalStatus: 'complete',
+          continuation: { action: 'none', stepId: null },
+          finalization: processed.finalization,
+        } : {}),
         next: processed.output,
         ...(processed.hostReview ? { hostReview: processed.hostReview } : {}),
       }, { verbose: parameters.verbose === true });
