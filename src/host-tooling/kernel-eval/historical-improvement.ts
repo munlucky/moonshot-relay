@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { canonicalKnowledgeIdentity } from '../../kernel/knowledge/identity.js';
+import { decodeKnowledgeContextReceipt } from '../../kernel/persistence/knowledge-lifecycle-store.js';
 import { buildGitWorkspaceIdentity } from '../../host/kernel/workspace/workspace-identity.js';
 import {
   attributeExecutionUsage,
@@ -507,7 +508,7 @@ export const loadHistoricalWorkCases = ({
 
       const ownerSessions = unique(groupBindings.filter((row) => row.access_mode === 'owner').map((row) => text(row.session_id)));
       const provenanceKinds = unique(executionEvidence.map((row) => row.provenanceKind));
-      const contextRecords = groupContexts.map((row) => parseJson(row.receipt_json));
+      const contextRecords = groupContexts.map((row) => decodeKnowledgeContextReceipt(parseJson(row.receipt_json)));
       const candidateRecords = groupCandidates.map((row) => ({ row, body: parseJson(row.candidate_json) }));
       const rejectionReasons: Record<string, number> = {};
       for (const candidate of candidateRecords) {

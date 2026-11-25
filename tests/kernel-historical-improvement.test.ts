@@ -33,6 +33,11 @@ import {
   type ModelPromptReplayProtocol,
 } from '../src/host-tooling/kernel-eval/model-prompt-replay.js';
 import { buildGitWorkspaceIdentity } from '../src/host/kernel/workspace/workspace-identity.js';
+import {
+  decodeKnowledgeContextReceipt,
+  encodeKnowledgeContextReceipt,
+} from '../src/kernel/persistence/knowledge-lifecycle-store.js';
+import { openKernelStateStore } from '../src/kernel/state-store.js';
 
 const digest = (value: Buffer): string => createHash('sha256').update(value).digest('hex');
 
@@ -973,4 +978,158 @@ test('C10: historical replay delegates quality-rework-efficiency scoring to the 
     }),
     /protocol cases must exactly match the candidate cases/,
   );
+});
+
+test('W2: receipt v2 encoding is lossless across store upsert, errorCode, duplicates, order, extension fields, null/empty, and mixed v1/v2 historical analysis', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'krn-w2-receipt-'));
+  try {
+    const complexReceipt = {
+      schemaVersion: 1,
+      projectId: 'project-w2',
+      stage: 'EXECUTE',
+      status: 'unavailable',
+      semanticFacts: [{ id: 'f-1', type: 'semantic_fact', statement: 'fact 1' }],
+      policyAnchors: [],
+      graphSynopsis: [],
+      ontologyConstraints: [],
+      staleOrUnavailable: [
+        { id: 'rec-dup', reason: 'freshness_stale' },
+        { id: 'rec-2', reason: 'freshness_needs_deep_verify', extraTag: 'keep-me', nested: { n: 2 } },
+        { id: 'rec-dup', reason: 'freshness_stale' },
+        { id: 'context-store', reason: 'load_failed', errorCode: 'EIO_READ_FAIL' },
+      ],
+      omittedByPolicy: [
+        { id: 'om-1', reason: 'query_irrelevant' },
+        { id: 'om-2', reason: 'quarantined_trust_tier', meta: true },
+      ],
+    };
+    const emptyReceipt = {
+      schemaVersion: 1,
+      projectId: 'project-w2',
+      stage: 'CLOSE',
+      status: 'ready-empty',
+      semanticFacts: [],
+      staleOrUnavailable: [],
+      omittedByPolicy: [],
+      optionalNull: null,
+    };
+
+    const encoded = encodeKnowledgeContextReceipt(complexReceipt) as Record<string, unknown>;
+    assert.equal(encoded.receiptEncodingVersion, 2);
+    assert.deepEqual(decodeKnowledgeContextReceipt(encoded), complexReceipt);
+    assert.deepEqual(decodeKnowledgeContextReceipt(encodeKnowledgeContextReceipt(emptyReceipt)), emptyReceipt);
+
+    // Store round-trip + (run_id, stage) upsert + legacy v1 row preservation
+    const runtimeHome = path.join(dir, 'home');
+    const store = await openKernelStateStore({ runtimeHome });
+    try {
+      store.createRun({ runId: 'run-w2-a', projectId: 'project-w2', objective: 'w2 test', sourceIdentity: 'src-w2-a' });
+      store.recordKnowledgeContextReceipt('run-w2-a', {
+        stage: 'EXECUTE',
+        knowledgeRevision: 1,
+        digest: 'd1',
+        receiptJson: complexReceipt,
+      });
+      const fetched1 = store.getKnowledgeContextReceipt('run-w2-a', 'EXECUTE');
+      assert.deepEqual(fetched1?.receiptJson, complexReceipt);
+
+      // Upsert same (run_id, stage)
+      const updatedReceipt = { ...complexReceipt, knowledgeRevision: 2 };
+      store.recordKnowledgeContextReceipt('run-w2-a', {
+        stage: 'EXECUTE',
+        knowledgeRevision: 2,
+        digest: 'd2',
+        receiptJson: updatedReceipt,
+      });
+      const fetched2 = store.getKnowledgeContextReceipt('run-w2-a', 'EXECUTE');
+      assert.deepEqual(fetched2?.receiptJson, updatedReceipt);
+      assert.equal(fetched2?.digest, 'd2');
+
+      // Empty/null receipt stays clean
+      store.recordKnowledgeContextReceipt('run-w2-a', {
+        stage: 'CLOSE',
+        knowledgeRevision: 2,
+        digest: 'd3',
+        receiptJson: emptyReceipt,
+      });
+      assert.deepEqual(store.getKnowledgeContextReceipt('run-w2-a', 'CLOSE')?.receiptJson, emptyReceipt);
+    } finally {
+      store.close();
+    }
+
+    // v1-only vs v2-only vs mixed v1/v2 Historical Analysis equivalence
+    const buildHistoryDb = (dbPath: string, mode: 'v1' | 'v2' | 'mixed') => {
+      const db = new DatabaseSync(dbPath);
+      db.exec(`
+        CREATE TABLE runs (
+          run_id TEXT PRIMARY KEY, objective TEXT, status TEXT, state TEXT,
+          contract_revision INTEGER, plan_revision INTEGER, mutation_revision INTEGER,
+          source_identity TEXT, run_start_git_commit_sha TEXT, run_start_workspace_identity TEXT,
+          current_workspace_identity TEXT, baseline_workspace_entries TEXT, workspace_id TEXT,
+          project_id TEXT, updated_at TEXT
+        );
+        CREATE TABLE session_bindings (
+          binding_id TEXT PRIMARY KEY, session_id TEXT, provider TEXT, surface TEXT,
+          run_id TEXT, project_id TEXT, workspace_id TEXT, access_mode TEXT, status TEXT,
+          successor_run_id TEXT
+        );
+        CREATE TABLE run_step_attempts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, attempt_id TEXT, run_id TEXT,
+          parent_attempt_id TEXT, provenance_kind TEXT, actor_session_id TEXT,
+          usage_receipt_id TEXT, plan_revision INTEGER, mutation_revision INTEGER,
+          status TEXT, workspace_id TEXT, workspace_identity_start TEXT,
+          workspace_identity_end TEXT, result_commit_sha TEXT, started_at TEXT
+        );
+        CREATE TABLE verifications (
+          run_id TEXT, status TEXT, exit_code INTEGER, evidence_digest TEXT,
+          source_identity TEXT, verified_source_identity TEXT, verified_mutation_revision INTEGER
+        );
+        CREATE TABLE knowledge_context_receipts (run_id TEXT, stage TEXT, receipt_json TEXT);
+        CREATE TABLE knowledge_candidates (
+          candidate_id TEXT PRIMARY KEY, run_id TEXT, project_id TEXT,
+          proposed_type TEXT, status TEXT, candidate_json TEXT
+        );
+        CREATE TABLE model_usage_receipts (
+          receipt_id TEXT PRIMARY KEY, run_id TEXT, attempt_id TEXT, binding_id TEXT,
+          actor_session_id TEXT, input_tokens INTEGER, cached_input_tokens INTEGER, output_tokens INTEGER
+        );
+        CREATE TABLE completion_decisions (run_id TEXT PRIMARY KEY, decision TEXT);
+        CREATE TABLE git_closeout_receipts (run_id TEXT PRIMARY KEY, commit_sha TEXT);
+      `);
+      db.prepare(`INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        'run-1', 'obj1', 'completed', 'CLOSE', 1, 1, 1, 'src1', null, null, 'wsid1', '[]', 'ws1', 'project-w2', '2026-10-01T00:00:00Z',
+      );
+      db.prepare(`INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        'run-2', 'obj2', 'completed', 'CLOSE', 1, 1, 1, 'src2', null, null, 'wsid2', '[]', 'ws2', 'project-w2', '2026-10-02T00:00:00Z',
+      );
+      const r1 = mode === 'v2' || mode === 'mixed' ? encodeKnowledgeContextReceipt(complexReceipt) : complexReceipt;
+      const r2 = mode === 'v2' ? encodeKnowledgeContextReceipt(complexReceipt) : complexReceipt;
+      db.prepare('INSERT INTO knowledge_context_receipts VALUES (?,?,?)').run('run-1', 'EXECUTE', JSON.stringify(r1));
+      db.prepare('INSERT INTO knowledge_context_receipts VALUES (?,?,?)').run('run-2', 'PROVE', JSON.stringify(r2));
+      db.close();
+    };
+
+    const dbV1 = path.join(dir, 'v1.sqlite');
+    const dbV2 = path.join(dir, 'v2.sqlite');
+    const dbMixed = path.join(dir, 'mixed.sqlite');
+    buildHistoryDb(dbV1, 'v1');
+    buildHistoryDb(dbV2, 'v2');
+    buildHistoryDb(dbMixed, 'mixed');
+
+    const casesV1 = loadHistoricalWorkCases({ dbPath: dbV1 });
+    const casesV2 = loadHistoricalWorkCases({ dbPath: dbV2 });
+    const casesMixed = loadHistoricalWorkCases({ dbPath: dbMixed });
+    assert.deepEqual(casesV2, casesV1);
+    assert.deepEqual(casesMixed, casesV1);
+
+    const analysisV1 = analyzeHistoricalKnowledgeSupply({ cases: casesV1 });
+    const analysisV2 = analyzeHistoricalKnowledgeSupply({ cases: casesV2 });
+    const analysisMixed = analyzeHistoricalKnowledgeSupply({ cases: casesMixed });
+    assert.deepEqual(analysisV2, analysisV1);
+    assert.deepEqual(analysisMixed, analysisV1);
+    assert.equal(analysisV1.metrics.staleCount, 4);
+    assert.equal(analysisV1.metrics.deepVerifyCount, 2);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

@@ -168,6 +168,108 @@ const changeCount = (value: unknown): number => (
     : 0
 );
 
+const RECEIPT_ENCODING_VERSION = 2;
+
+const isPlainRecord = (value: unknown): value is UnknownRecord => (
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+);
+
+const encodeAuditList = (
+  list: unknown,
+  reasonIndex: Map<string, number>,
+  reasonTable: string[],
+): unknown => {
+  if (!Array.isArray(list)) return list;
+  return list.map((entry) => {
+    if (
+      !isPlainRecord(entry)
+      || typeof entry.id !== 'string'
+      || typeof entry.reason !== 'string'
+    ) {
+      return entry;
+    }
+    let idx = reasonIndex.get(entry.reason);
+    if (idx === undefined) {
+      idx = reasonTable.length;
+      reasonTable.push(entry.reason);
+      reasonIndex.set(entry.reason, idx);
+    }
+    const keys = Object.keys(entry);
+    if (keys.length === 2) return [entry.id, idx];
+    const extra: UnknownRecord = {};
+    for (const key of keys) {
+      if (key === 'id' || key === 'reason') continue;
+      extra[key] = entry[key];
+    }
+    return [entry.id, idx, extra];
+  });
+};
+
+const decodeAuditList = (list: unknown, reasonTable: unknown[]): unknown => {
+  if (!Array.isArray(list)) return list;
+  return list.map((entry) => {
+    if (
+      Array.isArray(entry)
+      && typeof entry[0] === 'string'
+      && typeof entry[1] === 'number'
+      && typeof reasonTable[entry[1]] === 'string'
+    ) {
+      const base: UnknownRecord = {
+        id: entry[0],
+        reason: reasonTable[entry[1]] as string,
+      };
+      if (entry.length >= 3 && isPlainRecord(entry[2])) {
+        return { ...base, ...entry[2] };
+      }
+      return base;
+    }
+    return entry;
+  });
+};
+
+export const encodeKnowledgeContextReceipt = (value: unknown): unknown => {
+  if (!isPlainRecord(value)) return value;
+  if ('receiptEncodingVersion' in value || 'receiptReasonTable' in value) return value;
+  const hasStale = Array.isArray(value.staleOrUnavailable) && value.staleOrUnavailable.length > 0;
+  const hasOmitted = Array.isArray(value.omittedByPolicy) && value.omittedByPolicy.length > 0;
+  if (!hasStale && !hasOmitted) return value;
+  if (
+    (hasStale && (value.staleOrUnavailable as unknown[]).some(Array.isArray))
+    || (hasOmitted && (value.omittedByPolicy as unknown[]).some(Array.isArray))
+  ) {
+    return value;
+  }
+  const reasonIndex = new Map<string, number>();
+  const reasonTable: string[] = [];
+  const encoded: UnknownRecord = { ...value };
+  if (hasStale) {
+    encoded.staleOrUnavailable = encodeAuditList(value.staleOrUnavailable, reasonIndex, reasonTable);
+  }
+  if (hasOmitted) {
+    encoded.omittedByPolicy = encodeAuditList(value.omittedByPolicy, reasonIndex, reasonTable);
+  }
+  if (reasonTable.length === 0) return value;
+  encoded.receiptEncodingVersion = RECEIPT_ENCODING_VERSION;
+  encoded.receiptReasonTable = reasonTable;
+  return encoded;
+};
+
+export const decodeKnowledgeContextReceipt = (value: unknown): UnknownRecord => {
+  if (!isPlainRecord(value)) return {};
+  if (value.receiptEncodingVersion !== RECEIPT_ENCODING_VERSION) return value;
+  const reasonTable = Array.isArray(value.receiptReasonTable) ? value.receiptReasonTable : [];
+  const decoded: UnknownRecord = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === 'receiptEncodingVersion' || key === 'receiptReasonTable') continue;
+    if (key === 'staleOrUnavailable' || key === 'omittedByPolicy') {
+      decoded[key] = decodeAuditList(entry, reasonTable);
+    } else {
+      decoded[key] = entry;
+    }
+  }
+  return decoded;
+};
+
 export const createKnowledgeLifecycleStore = ({
   db,
   now = () => new Date().toISOString(),
@@ -765,7 +867,7 @@ export const createKnowledgeLifecycleStore = ({
       const stage = String(input.stage || '');
       const knowledgeRevision = input.knowledgeRevision ?? null;
       const digest = input.digest ?? null;
-      const receiptJson = input.receiptJson ?? {};
+      const receiptJson = encodeKnowledgeContextReceipt(input.receiptJson ?? {});
       db.prepare(`
         INSERT INTO knowledge_context_receipts(run_id, stage, knowledge_revision, digest, receipt_json, created_at)
         VALUES(?, ?, ?, ?, ?, ?)
@@ -786,7 +888,9 @@ export const createKnowledgeLifecycleStore = ({
           digest, receipt_json as receiptJson, created_at as createdAt
         FROM knowledge_context_receipts WHERE run_id=? AND stage=?
       `).get(runId, stage) as KnowledgeContextRow | undefined;
-      return row ? { ...row, receiptJson: parseJson<UnknownRecord>(row.receiptJson, {}) } : null;
+      return row
+        ? { ...row, receiptJson: decodeKnowledgeContextReceipt(parseJson<UnknownRecord>(row.receiptJson, {})) }
+        : null;
     },
 
     recordKnowledgeCandidate(candidateId, runId, input) {
