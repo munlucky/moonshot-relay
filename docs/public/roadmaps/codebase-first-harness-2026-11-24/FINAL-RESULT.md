@@ -81,3 +81,4 @@
    - 승인된 외부 저장소 fixture가 마운트되어 있지 않으므로 가짜 외부 프로젝트를 생성하지 않고 `NOT_RUN`으로 유지했다.
 3. **기존 Worktree 타임아웃 민감 테스트 관찰**:
    - `tests/kernel-codex-app-server-transport.test.ts` 내 222자 깊이 임시 worktree에서 `requestTimeoutMs: 1200~1500`을 사용하는 일부 writable worker 서브테스트는 로컬 macOS 샌드박스의 `git worktree add` 직후 첫 child spawn 지연(~1.6초)에 민감함을 확인했으며, 기존 테스트의 타임아웃 상수를 임의로 완화해 통과를 가장하지 않았다.
+4. **후속 Kernel RCA-1~4 실사용 검증 대기 (8fa428ab)**: 2026-11-25의 별도 개선 작업으로 구현·결정론적 회귀 검증이 완료됐으나, 다음 실제 사용자 개발 작업에서 Replan 재발, Proof 실패 오분류, Finalization과 Step 상태 불일치, 실패 Verification 재사용 및 완료율·관리 비용의 비열화를 확인하는 실사용 효과 검증은 아직 수행하지 않았다. 상태: LIVE_VALIDATION_PENDING (기존 Codebase-First 평가의 NOT_RUN 판정 변경 없음).
