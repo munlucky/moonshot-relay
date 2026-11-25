@@ -202,3 +202,205 @@ test('W2: scope-only records remain selectable with projectRoot freshness checks
     await rm(runtimeHome, { recursive: true, force: true });
   }
 });
+
+test('W1: FRAME stage-excluded known_failure_pattern with changed source still reports freshness_needs_deep_verify and stale status', async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'krn-w1-stage-stale-'));
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'krn-w1-stage-stale-home-'));
+  try {
+    await writeFile(path.join(projectRoot, 'shared.ts'), 'export const v = 1;\n');
+    const failurePattern = attachFreshness({
+      id: 'kn-failure-pattern',
+      type: 'known_failure_pattern',
+      statement: 'Known failure pattern for shared.ts',
+      status: 'committed',
+      trustTier: 'verified',
+      scope: [],
+    }, { projectRoot, sourceRefs: ['shared.ts'] });
+    await writeFile(path.join(projectRoot, 'shared.ts'), 'export const v = 2;\n');
+
+    const ctx = await buildProjectKnowledgeContext({
+      projectId: 'p-w1-stage',
+      stage: 'FRAME',
+      runId: 'r-w1-stage',
+      projectRoot,
+      stateStore: makeStore([failurePattern]),
+      env: { MOON_RELAY_KERNEL_HOME: runtimeHome },
+    });
+
+    assert.equal(ctx.status, 'stale');
+    assert.equal(ctx.degradedContext, true);
+    assert.equal(ctx.semanticFacts.length, 0);
+    assert.deepEqual(ctx.staleOrUnavailable, [
+      { id: 'kn-failure-pattern', reason: 'freshness_needs_deep_verify' },
+    ]);
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+    await rm(runtimeHome, { recursive: true, force: true });
+  }
+});
+
+test('W1: records sharing one sourceRef with different stored sourceDigests are judged independently', async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'krn-w1-shared-ref-'));
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'krn-w1-shared-ref-home-'));
+  try {
+    await writeFile(path.join(projectRoot, 'shared.ts'), 'export const v = 1;\n');
+    const staleRecord = attachFreshness({
+      id: 'kn-old-digest',
+      type: 'semantic_fact',
+      statement: 'Captured at v1',
+      status: 'committed',
+      trustTier: 'verified',
+      scope: [],
+    }, { projectRoot, sourceRefs: ['shared.ts'] });
+
+    await writeFile(path.join(projectRoot, 'shared.ts'), 'export const v = 2;\n');
+    const freshRecord = attachFreshness({
+      id: 'kn-new-digest',
+      type: 'semantic_fact',
+      statement: 'Captured at v2',
+      status: 'committed',
+      trustTier: 'verified',
+      scope: [],
+    }, { projectRoot, sourceRefs: ['shared.ts'] });
+
+    const ctx = await buildProjectKnowledgeContext({
+      projectId: 'p-w1-shared',
+      stage: 'FRAME',
+      runId: 'r-w1-shared',
+      projectRoot,
+      stateStore: makeStore([staleRecord, freshRecord]),
+      env: { MOON_RELAY_KERNEL_HOME: runtimeHome },
+    });
+
+    assert.deepEqual(ctx.semanticFacts.map((r) => r.id), ['kn-new-digest']);
+    assert.deepEqual(ctx.staleOrUnavailable, [
+      { id: 'kn-old-digest', reason: 'freshness_needs_deep_verify' },
+    ]);
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+    await rm(runtimeHome, { recursive: true, force: true });
+  }
+});
+
+test('W1: preserves kg_relation, scoped ontology_constraint, quarantined trust tier, and procedure expiry boundaries', async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'krn-w1-boundaries-'));
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'krn-w1-boundaries-home-'));
+  try {
+    await writeFile(path.join(projectRoot, 'core.ts'), 'export const core = 1;\n');
+    const relation = attachFreshness({
+      id: 'kn-rel-1',
+      type: 'kg_relation',
+      from: 'core.ts',
+      relation: 'owns',
+      to: 'state',
+      status: 'committed',
+      trustTier: 'verified',
+      scope: [],
+    }, { projectRoot, sourceRefs: ['core.ts'] });
+    const scopedConstraint = attachFreshness({
+      id: 'kn-const-1',
+      type: 'ontology_constraint',
+      statement: 'Must stay pure',
+      severity: 'invariant',
+      status: 'committed',
+      trustTier: 'verified',
+      scope: ['core.ts'],
+    }, { projectRoot, sourceRefs: ['core.ts'] });
+    const quarantined = attachFreshness({
+      id: 'kn-quarantined',
+      type: 'semantic_fact',
+      statement: 'Quarantined note',
+      status: 'committed',
+      trustTier: 'quarantined',
+      scope: [],
+    }, { projectRoot, sourceRefs: ['core.ts'] });
+    const expiredProcedure = attachFreshness({
+      id: 'kn-expired-proc',
+      type: 'episodic_observation',
+      statement: 'Expired procedure',
+      status: 'committed',
+      trustTier: 'verified',
+      scope: [],
+      practiceJson: { kind: 'procedure', metadata: { validUntil: '2020-01-01T00:00:00.000Z' }, body: { steps: ['a'] } },
+    }, { projectRoot, sourceRefs: ['core.ts'] });
+
+    const ctx = await buildProjectKnowledgeContext({
+      projectId: 'p-w1-bound',
+      stage: 'EXECUTE',
+      runId: 'r-w1-bound',
+      changedPaths: ['core.ts'],
+      projectRoot,
+      stateStore: makeStore([relation, scopedConstraint, quarantined, expiredProcedure]),
+      env: { MOON_RELAY_KERNEL_HOME: runtimeHome },
+    });
+
+    assert.equal(ctx.graphSynopsis.length, 1);
+    assert.deepEqual(ctx.ontologyConstraints.map((c) => c.id), ['kn-const-1']);
+    assert.ok(ctx.omittedByPolicy.some((e) => e.id === 'kn-quarantined' && e.reason === 'quarantined_trust_tier'));
+    assert.ok(ctx.staleOrUnavailable.some((e) => e.id === 'kn-expired-proc' && e.reason === 'procedure_expired'));
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+    await rm(runtimeHome, { recursive: true, force: true });
+  }
+});
+
+test('W1: detects mid-call same-size file modification and falls back to live uncached observation', async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'krn-w1-midcall-'));
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'krn-w1-midcall-home-'));
+  const fsSync = await import('node:fs');
+  try {
+    const targetPath = path.join(projectRoot, 'mutable.ts');
+    fsSync.writeFileSync(targetPath, 'aaaa');
+    const rec1 = attachFreshness({
+      id: 'kn-rec-1',
+      type: 'semantic_fact',
+      statement: 'First record on mutable.ts',
+      status: 'committed',
+      trustTier: 'verified',
+      scope: [],
+    }, { projectRoot, sourceRefs: ['mutable.ts'] });
+
+    // Mutate mutable.ts with the EXACT same byte length ('bbbb') during the
+    // first pass when rec2.sourceRefs is accessed, simulating a concurrent
+    // write within the same filesystem mtime tick.
+    let mutated = false;
+    const rec2Base = attachFreshness({
+      id: 'kn-rec-2',
+      type: 'semantic_fact',
+      statement: 'Second record on mutable.ts',
+      status: 'committed',
+      trustTier: 'verified',
+      scope: [],
+    }, { projectRoot, sourceRefs: ['mutable.ts'] });
+    const rec2 = { ...rec2Base };
+    Object.defineProperty(rec2, 'sourceRefs', {
+      enumerable: true,
+      get() {
+        if (!mutated) {
+          mutated = true;
+          fsSync.writeFileSync(targetPath, 'bbbb');
+        }
+        return ['mutable.ts'];
+      },
+    });
+
+    const ctx = await buildProjectKnowledgeContext({
+      projectId: 'p-w1-midcall',
+      stage: 'FRAME',
+      runId: 'r-w1-midcall',
+      projectRoot,
+      stateStore: makeStore([rec1, rec2]),
+      env: { MOON_RELAY_KERNEL_HOME: runtimeHome },
+    });
+
+    assert.equal(ctx.status, 'stale');
+    assert.equal(ctx.semanticFacts.length, 0);
+    assert.deepEqual(ctx.staleOrUnavailable, [
+      { id: 'kn-rec-1', reason: 'freshness_needs_deep_verify' },
+      { id: 'kn-rec-2', reason: 'freshness_needs_deep_verify' },
+    ]);
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+    await rm(runtimeHome, { recursive: true, force: true });
+  }
+});

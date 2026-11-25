@@ -14,7 +14,7 @@ import {
   matchesKnowledgeQuery,
   scoreRelevance,
 } from './path-scope.js';
-import { cheapReVerify } from './freshness.js';
+import { cheapReVerify, createSourceDigestMemo, type SourceDigestMemo } from './freshness.js';
 import { canonicalKnowledgeIdentity } from './identity.js';
 
 type UnknownRecord = Record<string, unknown>;
@@ -344,187 +344,227 @@ export async function buildProjectKnowledgeContext({
     contextLoadError = error;
   }
 
-  const staleOrUnavailable: UnknownRecord[] = [];
-  const omittedByPolicy: UnknownRecord[] = [];
+  const evaluateCandidates = (sourceMemo: SourceDigestMemo | null) => {
+    const staleOrUnavailable: UnknownRecord[] = [];
+    const omittedByPolicy: UnknownRecord[] = [];
 
-  // Filter 1: Exclude stale or superseded records.
-  const isRecordActive = (record: KnowledgeRecordLike): boolean => {
-    if (['superseded', 'rejected', 'archived'].includes(String(record.status || ''))) {
-      staleOrUnavailable.push({
-        id: record.id || 'unknown',
-        reason: `status_${record.status}`,
-      });
-      return false;
-    }
-    if (record.trustTier === 'quarantined' && stage !== 'FRAME') {
-      omittedByPolicy.push({
-        id: record.id || 'unknown',
-        reason: 'quarantined_trust_tier',
-      });
-      return false;
-    }
-
-    const procedure = procedureParts(record);
-    if (procedure?.metadata.validUntil) {
-      const validUntil = Date.parse(String(procedure.metadata.validUntil));
-      if (!Number.isFinite(validUntil)) {
+    // Filter 1: Exclude stale or superseded records.
+    const isRecordActive = (record: KnowledgeRecordLike): boolean => {
+      if (['superseded', 'rejected', 'archived'].includes(String(record.status || ''))) {
         staleOrUnavailable.push({
           id: record.id || 'unknown',
-          reason: 'procedure_valid_until_invalid',
+          reason: `status_${record.status}`,
         });
         return false;
       }
-      if (validUntil <= Date.now()) {
-        staleOrUnavailable.push({
-          id: record.id || 'unknown',
-          reason: 'procedure_expired',
-        });
-        return false;
-      }
-    }
-
-    // Provenance freshness is not semantic validity. Missing source paths can
-    // be caused by repository relocation, so reusable semantic/project facts
-    // stay selectable until an explicit semantic invalidation (for example a
-    // supersession) occurs. Source evolution at the same path still requires
-    // deep verification, and trust-critical records remain source-bound.
-    if (projectRoot && Array.isArray(record.sourceRefs) && record.sourceRefs.length > 0) {
-      const freshness = cheapReVerify(record, { projectRoot });
-      if (
-        (freshness.status === 'stale' && !canReuseWithMissingProvenance(record, freshness))
-        || freshness.status === 'needs_deep_verify'
-      ) {
-        staleOrUnavailable.push({
-          id: record.id || 'unknown',
-          reason: `freshness_${freshness.status}`,
-        });
-        return false;
-      }
-    }
-    return true;
-  };
-
-  const collapseCanonicalRecords = (
-    records: KnowledgeRecordLike[],
-  ): KnowledgeRecordLike[] => {
-    const selected = new Map<string, KnowledgeRecordLike>();
-    for (const record of records) {
-      const identity = contextRecordIdentity(record);
-      const current = selected.get(identity);
-      if (!current) {
-        selected.set(identity, record);
-        continue;
-      }
-      if (preferContextRepresentative(record, current)) {
-        omittedByPolicy.push({
-          id: current.id || 'unknown',
-          reason: 'canonical_duplicate',
-        });
-        selected.set(identity, record);
-      } else {
+      if (record.trustTier === 'quarantined' && stage !== 'FRAME') {
         omittedByPolicy.push({
           id: record.id || 'unknown',
-          reason: 'canonical_duplicate',
+          reason: 'quarantined_trust_tier',
         });
+        return false;
       }
-    }
-    return [...selected.values()];
-  };
 
-  let selectedPolicy = rawPolicyAnchors.filter(isRecordActive);
-  let selectedFacts = rawSemanticFacts.filter(isRecordActive);
-  let selectedConstraints = rawOntologyConstraints.filter(isRecordActive);
+      const procedure = procedureParts(record);
+      if (procedure?.metadata.validUntil) {
+        const validUntil = Date.parse(String(procedure.metadata.validUntil));
+        if (!Number.isFinite(validUntil)) {
+          staleOrUnavailable.push({
+            id: record.id || 'unknown',
+            reason: 'procedure_valid_until_invalid',
+          });
+          return false;
+        }
+        if (validUntil <= Date.now()) {
+          staleOrUnavailable.push({
+            id: record.id || 'unknown',
+            reason: 'procedure_expired',
+          });
+          return false;
+        }
+      }
 
-  // Filter 2: STAGE_TYPE_POLICY filtering.
-  const allowedTypes = STAGE_TYPE_POLICY[stage];
-  if (allowedTypes.length > 0) {
-    selectedFacts = selectedFacts.filter((fact) => {
-      const type = fact.type || fact.recordType || 'semantic_fact';
-      if (allowedTypes.includes(type)) return true;
-      omittedByPolicy.push({
-        id: fact.id || 'unknown',
-        reason: `type_${type}_not_in_${stage}`,
+      // Provenance freshness is not semantic validity. Missing source paths can
+      // be caused by repository relocation, so reusable semantic/project facts
+      // stay selectable until an explicit semantic invalidation (for example a
+      // supersession) occurs. Source evolution at the same path still requires
+      // deep verification, and trust-critical records remain source-bound.
+      if (projectRoot && Array.isArray(record.sourceRefs) && record.sourceRefs.length > 0) {
+        const freshness = cheapReVerify(record, { projectRoot, memo: sourceMemo });
+        if (
+          (freshness.status === 'stale' && !canReuseWithMissingProvenance(record, freshness))
+          || freshness.status === 'needs_deep_verify'
+        ) {
+          staleOrUnavailable.push({
+            id: record.id || 'unknown',
+            reason: `freshness_${freshness.status}`,
+          });
+          return false;
+        }
+      }
+      return true;
+    };
+
+    const collapseCanonicalRecords = (
+      records: KnowledgeRecordLike[],
+    ): KnowledgeRecordLike[] => {
+      const selected = new Map<string, KnowledgeRecordLike>();
+      for (const record of records) {
+        const identity = contextRecordIdentity(record);
+        const current = selected.get(identity);
+        if (!current) {
+          selected.set(identity, record);
+          continue;
+        }
+        if (preferContextRepresentative(record, current)) {
+          omittedByPolicy.push({
+            id: current.id || 'unknown',
+            reason: 'canonical_duplicate',
+          });
+          selected.set(identity, record);
+        } else {
+          omittedByPolicy.push({
+            id: record.id || 'unknown',
+            reason: 'canonical_duplicate',
+          });
+        }
+      }
+      return [...selected.values()];
+    };
+
+    let selectedPolicy = rawPolicyAnchors.filter(isRecordActive);
+    let selectedFacts = rawSemanticFacts.filter(isRecordActive);
+    let selectedConstraints = rawOntologyConstraints.filter(isRecordActive);
+
+    // Filter 2: STAGE_TYPE_POLICY filtering.
+    const allowedTypes = STAGE_TYPE_POLICY[stage];
+    if (allowedTypes.length > 0) {
+      selectedFacts = selectedFacts.filter((fact) => {
+        const type = fact.type || fact.recordType || 'semantic_fact';
+        if (allowedTypes.includes(type)) return true;
+        omittedByPolicy.push({
+          id: fact.id || 'unknown',
+          reason: `type_${type}_not_in_${stage}`,
+        });
+        return false;
       });
-      return false;
+    }
+
+    // Filter 3: Procedure scope, then metadata-only relevance scoring.
+    selectedFacts = selectedFacts
+      .filter((fact) => {
+        if (procedureScopeMatches(fact, changedPaths)) return true;
+        omittedByPolicy.push({
+          id: fact.id || 'unknown',
+          reason: 'procedure_scope_outside',
+        });
+        return false;
+      })
+      .map((fact) => {
+        const searchView = procedureSearchView(fact);
+        return {
+          fact,
+          score: scoreRelevance({
+            item: searchView,
+            objective,
+            paths: changedPaths,
+          }),
+          queryRelevant: matchesKnowledgeQuery({
+            item: searchView,
+            objective,
+            paths: changedPaths,
+          }),
+        };
+      })
+      .filter(({ fact, queryRelevant }) => {
+        if (queryRelevant) return true;
+        omittedByPolicy.push({
+          id: fact.id || 'unknown',
+          reason: 'query_irrelevant',
+        });
+        return false;
+      })
+      .sort((left, right) => right.score - left.score)
+      .map(({ fact }) => fact);
+
+    selectedConstraints = selectedConstraints.filter((constraint) => {
+      if (!constraint.scope || constraint.scope.length === 0) return true;
+      if (changedPaths.length === 0) return true;
+      return changedPaths.some((changedPath) => (
+        matchPathScope(changedPath, constraint.scope || [])
+      ));
     });
+
+    // Collapse only after active/fresh, stage, scope, and relevance filtering so
+    // a stale or wrong-stage row can never replace a usable representative.
+    selectedPolicy = collapseCanonicalRecords(selectedPolicy);
+    selectedFacts = collapseCanonicalRecords(selectedFacts);
+    selectedConstraints = collapseCanonicalRecords(selectedConstraints);
+
+    const isProjectStableRecord = (record: KnowledgeRecordLike): boolean => (
+      record.trustTier !== 'quarantined'
+      && (!Array.isArray(record.scope) || record.scope.length === 0)
+    );
+    const stablePolicy = selectedPolicy.filter((policy) => policy.trustTier !== 'quarantined');
+    const stageOnlyPolicy = selectedPolicy.filter((policy) => policy.trustTier === 'quarantined');
+    const globalConstraints = selectedConstraints.filter(isProjectStableRecord);
+    const scopedConstraints = selectedConstraints.filter((constraint) => !isProjectStableRecord(constraint));
+
+    const collapsedGraph = collapseCanonicalRecords(
+      rawGraphRelations.filter(isRecordActive),
+    );
+    const toGraphEntry = (relation: KnowledgeRecordLike): KnowledgePromptEntry => ({
+      from: relation.from || null,
+      to: relation.to || null,
+      relation: relation.relation || null,
+      statement: `${relation.from} ${relation.relation} ${relation.to}`,
+    });
+    const selectedGraph: KnowledgePromptEntry[] = collapsedGraph.map(toGraphEntry);
+    const stableGraph: KnowledgePromptEntry[] = collapsedGraph
+      .filter((relation) => relation.trustTier !== 'quarantined')
+      .map(toGraphEntry);
+    const stageOnlyGraph: KnowledgePromptEntry[] = collapsedGraph
+      .filter((relation) => relation.trustTier === 'quarantined')
+      .map(toGraphEntry);
+
+    return {
+      staleOrUnavailable,
+      omittedByPolicy,
+      selectedPolicy,
+      selectedFacts,
+      selectedConstraints,
+      stablePolicy,
+      stageOnlyPolicy,
+      globalConstraints,
+      scopedConstraints,
+      selectedGraph,
+      stableGraph,
+      stageOnlyGraph,
+    };
+  };
+
+  // Reuse file-content hashes within this single synchronous call only, then
+  // verify reused paths by content SHA-256 (never mtime) before accepting.
+  // If any reused path changed mid-call, fall back to uncached observation.
+  const sourceMemo = projectRoot ? createSourceDigestMemo() : null;
+  let evaluated = evaluateCandidates(sourceMemo);
+  if (sourceMemo && !sourceMemo.verifyUnchanged()) {
+    evaluated = evaluateCandidates(null);
   }
-
-  // Filter 3: Procedure scope, then metadata-only relevance scoring.
-  selectedFacts = selectedFacts
-    .filter((fact) => {
-      if (procedureScopeMatches(fact, changedPaths)) return true;
-      omittedByPolicy.push({
-        id: fact.id || 'unknown',
-        reason: 'procedure_scope_outside',
-      });
-      return false;
-    })
-    .map((fact) => {
-      const searchView = procedureSearchView(fact);
-      return {
-        fact,
-        score: scoreRelevance({
-          item: searchView,
-          objective,
-          paths: changedPaths,
-        }),
-        queryRelevant: matchesKnowledgeQuery({
-          item: searchView,
-          objective,
-          paths: changedPaths,
-        }),
-      };
-    })
-    .filter(({ fact, queryRelevant }) => {
-      if (queryRelevant) return true;
-      omittedByPolicy.push({
-        id: fact.id || 'unknown',
-        reason: 'query_irrelevant',
-      });
-      return false;
-    })
-    .sort((left, right) => right.score - left.score)
-    .map(({ fact }) => fact);
-
-  selectedConstraints = selectedConstraints.filter((constraint) => {
-    if (!constraint.scope || constraint.scope.length === 0) return true;
-    if (changedPaths.length === 0) return true;
-    return changedPaths.some((changedPath) => (
-      matchPathScope(changedPath, constraint.scope || [])
-    ));
-  });
-
-  // Collapse only after active/fresh, stage, scope, and relevance filtering so
-  // a stale or wrong-stage row can never replace a usable representative.
-  selectedPolicy = collapseCanonicalRecords(selectedPolicy);
-  selectedFacts = collapseCanonicalRecords(selectedFacts);
-  selectedConstraints = collapseCanonicalRecords(selectedConstraints);
-
-  const isProjectStableRecord = (record: KnowledgeRecordLike): boolean => (
-    record.trustTier !== 'quarantined'
-    && (!Array.isArray(record.scope) || record.scope.length === 0)
-  );
-  const stablePolicy = selectedPolicy.filter((policy) => policy.trustTier !== 'quarantined');
-  const stageOnlyPolicy = selectedPolicy.filter((policy) => policy.trustTier === 'quarantined');
-  const globalConstraints = selectedConstraints.filter(isProjectStableRecord);
-  const scopedConstraints = selectedConstraints.filter((constraint) => !isProjectStableRecord(constraint));
-
-  const collapsedGraph = collapseCanonicalRecords(
-    rawGraphRelations.filter(isRecordActive),
-  );
-  const toGraphEntry = (relation: KnowledgeRecordLike): KnowledgePromptEntry => ({
-    from: relation.from || null,
-    to: relation.to || null,
-    relation: relation.relation || null,
-    statement: `${relation.from} ${relation.relation} ${relation.to}`,
-  });
-  const selectedGraph: KnowledgePromptEntry[] = collapsedGraph.map(toGraphEntry);
-  const stableGraph: KnowledgePromptEntry[] = collapsedGraph
-    .filter((relation) => relation.trustTier !== 'quarantined')
-    .map(toGraphEntry);
-  const stageOnlyGraph: KnowledgePromptEntry[] = collapsedGraph
-    .filter((relation) => relation.trustTier === 'quarantined')
-    .map(toGraphEntry);
+  const {
+    staleOrUnavailable,
+    omittedByPolicy,
+    selectedPolicy,
+    selectedFacts,
+    selectedConstraints,
+    stablePolicy,
+    stageOnlyPolicy,
+    globalConstraints,
+    scopedConstraints,
+    selectedGraph,
+    stableGraph,
+    stageOnlyGraph,
+  } = evaluated;
 
   // Record-based budget truncation.
   const maxBudgetTokens = STAGE_BUDGETS[stage];
