@@ -1,6 +1,6 @@
 {
   "before_sha": "86246b72b059699d1fd628d6ec26ed36194ab569",
-  "after_sha": "fbcc33db50cf6ba3bc8254da41b8ca994a2da58f",
+  "after_sha": "54558aada92dfcf6d8e78358eab3a521a63b7937",
   "model": {
     "provider": null,
     "model_id": null,
@@ -19,6 +19,8 @@
     "P1_prompt_and_knowledge_segment_stability": {
       "project_stable_populated_from_knowledge_authority": { "before": false, "after": true },
       "project_stable_digest_invariant_across_step_and_stage_transitions": { "before": false, "after": true },
+      "provider_message_stable_prefix_byte_identical_across_stages_and_steps": { "before": false, "after": true },
+      "eligiblePrefixTokens_aligned_to_actual_provider_message_prefix": { "before": false, "after": true },
       "scoped_facts_and_constraints_routed_to_volatile_task_knowledge": { "before": false, "after": true }
     },
     "P2_deletion_first_surface_and_authority_cleanup": {
@@ -30,7 +32,8 @@
     "P3_verification_ownership_cleanup": {
       "verification_hint_without_acceptanceCoverage_auto_binds_declared_acceptanceIds": { "before": false, "after": true },
       "host_worker_empty_verifications_auto_derives_bound_step_obligations": { "before": false, "after": true },
-      "compact_model_view_max_allowedCommandRefs_per_obligation": { "before": 108, "after": 8 }
+      "compact_model_view_proof_policy_fallback_commandRefs_exposed": { "before": 108, "after": 1 },
+      "compact_model_view_explicit_binding_arbitrary_cap_removed": { "before": false, "after": true }
     },
     "B2a_admin_queries_per_next_call": {
       "getVerifications": { "before": 5, "after": 1 },
