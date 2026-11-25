@@ -19,7 +19,7 @@ implementer's reasoning — you judge the change, not the conversation.
 ```yaml
 objective: ""
 acceptance: []
-subject: {changedPaths: [], workspaceIdentity: "", mutationRevision: 0}
+subject: {changedPaths: []}
 verificationEvidence: []
 reviewScope: {stage: "", requiredChecks: []}
 riskTier: ""

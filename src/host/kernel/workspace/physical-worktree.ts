@@ -573,28 +573,40 @@ export const snapshotHostWorkerPatch = async ({
     const observed = observeWorkspaceIdentity({ projectRoot: workspaceRoot });
     const before = observed.identity;
     const beforeIndex = git(['ls-files', '--stage', '-z'], { altIndex: false });
-    const head = git(['rev-parse', '--verify', 'HEAD'], { altIndex: false }).trim();
+    const head = (observed.method === 'git' && observed.headCommitSha)
+      ? observed.headCommitSha
+      : git(['rev-parse', '--verify', 'HEAD'], { altIndex: false }).trim();
     if (!/^[a-f\d]{40,64}$/iu.test(head)) throw new Error('host_worker_snapshot_head_missing');
     const base = baseCommit || head;
     if (!/^[a-f\d]{40,64}$/iu.test(base)) throw new Error('host_worker_snapshot_base_invalid');
-    git(['read-tree', head]);
     if (observed.method !== 'git' || !observed.changedPaths) throw new Error('host_worker_snapshot_paths_unavailable');
-    stageSelectedPaths({ repoRoot: workspaceRoot, paths: observed.changedPaths, env });
-    const changedPaths = git(['diff', '--cached', '--name-only', '-z', base])
-      .split('\0').filter(Boolean).sort();
-    // Create a detached commit object for the existing integration engine.
-    // Never move a Worktree HEAD/ref or the Worker's own index. A commit
-    // candidate may be recorded as an immutable observation. It grants no
-    // Delivery authority while OS Writer exclusion remains unproven.
-    const resultCommitSha = changedPaths.length > 0
-      ? git(['commit-tree', git(['write-tree']).trim(), '-p', base,
-        '-m', 'Host-owned Worker unverified result snapshot']).trim()
-      : null;
-    const patch = resultCommitSha
-      ? git(['show', '--format=', '--binary', resultCommitSha])
-      : '';
-    const after = observeWorkspaceIdentity({ projectRoot: workspaceRoot }).identity;
-    const endingHead = git(['rev-parse', '--verify', 'HEAD'], { altIndex: false }).trim();
+    let changedPaths: string[] = [];
+    let resultCommitSha: string | null = null;
+    let patch = '';
+    if (observed.changedPaths.length > 0 || base !== head) {
+      git(['read-tree', head]);
+      if (observed.changedPaths.length > 0) {
+        stageSelectedPaths({ repoRoot: workspaceRoot, paths: observed.changedPaths, env });
+      }
+      changedPaths = git(['diff', '--cached', '--name-only', '-z', base])
+        .split('\0').filter(Boolean).sort();
+      // Create a detached commit object for the existing integration engine.
+      // Never move a Worktree HEAD/ref or the Worker's own index. A commit
+      // candidate may be recorded as an immutable observation. It grants no
+      // Delivery authority while OS Writer exclusion remains unproven.
+      resultCommitSha = changedPaths.length > 0
+        ? git(['commit-tree', git(['write-tree']).trim(), '-p', base,
+          '-m', 'Host-owned Worker unverified result snapshot']).trim()
+        : null;
+      patch = resultCommitSha
+        ? git(['show', '--format=', '--binary', resultCommitSha])
+        : '';
+    }
+    const afterObserved = observeWorkspaceIdentity({ projectRoot: workspaceRoot });
+    const after = afterObserved.identity;
+    const endingHead = (afterObserved.method === 'git' && afterObserved.headCommitSha)
+      ? afterObserved.headCommitSha
+      : git(['rev-parse', '--verify', 'HEAD'], { altIndex: false }).trim();
     if (before !== after || endingHead !== head
       || beforeIndex !== git(['ls-files', '--stage', '-z'], { altIndex: false })) {
       throw Object.assign(new Error('host_worker_snapshot_workspace_changed'), {

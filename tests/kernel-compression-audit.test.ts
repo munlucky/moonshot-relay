@@ -179,12 +179,17 @@ test('KR-03: compact model view deduplicates exact obligation/work-unit/acceptan
     allowedPaths: ['src/'],
     forbiddenPaths: [],
     availableCommandRefs: ['test:unit'],
+    knowledgeSegments: { projectStable: { policyAnchors: [] }, taskKnowledge: [] },
+    knowledgeAuthority: { schemaVersion: 1, project: { projectId: 'p1', runId: 'run-dedup', knowledgeRevision: '1' }, authority: { source: 'sqlite', durable: true, lifecycleStatus: 'active' }, lifecycle: { retrieve: { status: 'retrieved' } }, records: { total: 0, byStatus: {}, byType: {} }, projection: { authoritative: false, status: 'derived', knowledgeRevision: '1', committedCount: 0, supersededCount: 0 } },
     action: { type: 'implement', step, obligations },
     workAuthority: { currentWorkUnit: step, goalStatus: 'active', progress: { remainingCount: 1 } },
   };
   const compact = object(projectKernelModelView(payload));
   assert.equal(compact.requiredVerifications, undefined);
   assert.equal(compact.requiredVerificationsSource, 'action.obligations');
+  assert.equal(compact.availableCommandRefs, undefined);
+  assert.equal(compact.knowledgeSegments, undefined);
+  assert.equal(object(compact.knowledgeAuthority).lifecycle, undefined);
   assert.equal(compact.acceptanceIds, undefined);
   assert.equal(object(compact.workAuthority).currentWorkUnit, undefined);
   assert.equal(object(compact.workAuthority).currentWorkUnitSource, 'action.step');
@@ -199,4 +204,27 @@ test('KR-03: compact model view deduplicates exact obligation/work-unit/acceptan
   });
   assert.equal(inProgressNext.nextAction, 'implement');
   assert.equal(object(inProgressNext.action).type, 'implement');
+
+  const manyCommands = Array.from({ length: 40 }, (_, i) => `cmd:${i}`);
+  const policyFallbackView = object(projectKernelModelView({
+    runId: 'run-policy-commands',
+    action: {
+      type: 'implement',
+      obligations: [{ obligationId: 'default', commandRef: 'cmd:0', bindingMode: 'proof-policy', allowedCommandRefs: manyCommands }],
+    },
+  }));
+  const compactPolicyObligation = object((object(policyFallbackView.action).obligations as unknown[])[0]);
+  assert.deepEqual(compactPolicyObligation.allowedCommandRefs, ['cmd:0']);
+  assert.equal(compactPolicyObligation.allowedCommandRefsTotal, undefined);
+
+  const explicitCommands = Array.from({ length: 12 }, (_, i) => `test:explicit-${i}`);
+  const explicitBindingView = object(projectKernelModelView({
+    runId: 'run-explicit-commands',
+    action: {
+      type: 'implement',
+      obligations: [{ obligationId: 'acceptance-ac-1', commandRef: 'test:explicit-0', bindingMode: 'explicit', allowedCommandRefs: explicitCommands }],
+    },
+  }));
+  const compactExplicitObligation = object((object(explicitBindingView.action).obligations as unknown[])[0]);
+  assert.deepEqual(compactExplicitObligation.allowedCommandRefs, explicitCommands);
 });

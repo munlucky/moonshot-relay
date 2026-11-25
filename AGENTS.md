@@ -1,6 +1,6 @@
 # Moonshot Relay Agent TOC
 
-Last-Reviewed: 2026-06-06
+Last-Reviewed: 2026-11-24
 
 This repository's canonical source is the tracked root-level harness source, not the local `.claude/`, `.codex/`, or `.qwen/` runtime profiles.
 
@@ -53,6 +53,8 @@ knowledgeAnchors:
 
 - `README.md`
 - `docs/public/development.md`
+- `docs/public/roadmaps/codebase-first-harness-2026-11-24/STRATEGY.md` — 확정된 Codebase-First 개선 전략 (v3 Freeze)
+- `docs/public/roadmaps/codebase-first-harness-2026-11-24/PLAN.md` — 본 개선 작업의 실행·검증 계약
 - `docs/public/repository-layout.md`
 - `docs/public/installer-usage.md`
 - `docs/public/guidelines/knowledge-repository-ops.md`

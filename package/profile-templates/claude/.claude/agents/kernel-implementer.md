@@ -17,7 +17,6 @@ One execution capsule from the Kernel. It is the whole brief: there is no
 conversation behind it.
 
 ```yaml
-capsuleId: ""
 objective: ""
 acceptance: []
 constraints: []
@@ -31,7 +30,6 @@ verification: {obligations: []}   # obligationId + allowedCommandRefs
 Return only this.
 
 ```yaml
-capsuleId: ""          # the capsule you were given
 summary: ""
 changedPaths: []
 verifications: []      # commandRefs the Kernel should execute

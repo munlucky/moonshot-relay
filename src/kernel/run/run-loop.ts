@@ -1,6 +1,7 @@
 import { TRANSITIONS, type KernelState } from '../transition.js';
 import { sanitizePersistentPayload } from '../../shared/persistent-sanitizer.js';
 import { resolveWorkBlockingClass } from './work-authority.js';
+import { selectBoundCommandRef } from './obligation-compiler.js';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -16,12 +17,16 @@ interface ObligationLike extends UnknownRecord {
   obligationId?: string | null;
   evidenceClass?: string | null;
   verificationMethod?: string | null;
+  sourceType?: string | null;
   allowedCommandRefs?: string[];
   acceptanceIds?: string[];
   metadata?: {
     verificationScope?: unknown;
     scope?: unknown;
     timeoutMs?: unknown;
+    evidencePlanCommandBinding?: boolean;
+    explicitCommandBinding?: boolean;
+    commandCandidates?: Array<{ sourceType?: string | null; commandRefs?: string[] }>;
     [key: string]: unknown;
   } | null;
 }
@@ -105,6 +110,7 @@ interface BuildNextPayloadInput {
   contract?: ContractLike | null;
   failures?: VerificationLike[];
   knowledgePromptBlock?: unknown;
+  knowledgeSegments?: UnknownRecord | null;
   capabilities?: unknown[];
   satisfiedObligations?: Iterable<unknown> | null;
   outstandingObligationIds?: Iterable<unknown> | null;
@@ -242,17 +248,37 @@ export const summarizeVerification = ({
   };
 };
 
+const hasExplicitObligationCommandBinding = (declared: ObligationLike | undefined): boolean => Boolean(
+  declared?.metadata?.evidencePlanCommandBinding === true
+  || declared?.metadata?.explicitCommandBinding === true
+  || (Array.isArray(declared?.metadata?.commandCandidates)
+    && declared.metadata.commandCandidates.some((candidate) => (
+      candidate
+      && candidate.sourceType !== 'proof-policy'
+      && Array.isArray(candidate.commandRefs)
+      && candidate.commandRefs.length > 0
+    ))),
+);
+
 // What the model needs to satisfy an obligation: the class of evidence that
 // counts and the exact commands that are bound to it. Without this the model
 // has to guess, and guessing is what produced forged obligation names.
 const describeObligations = (obligations: ObligationLike[] = [], obligationIds: string[] = []) => obligationIds.map((obligationId) => {
   const declared = obligations.find((obligation) => obligation.obligationId === obligationId);
+  const evidenceClass = declared?.evidenceClass || 'hard';
+  const boundCommandRef = declared
+    ? selectBoundCommandRef(declared as Parameters<typeof selectBoundCommandRef>[0])
+    : null;
+  const bindingMode = evidenceClass === 'judgment'
+    ? null
+    : (hasExplicitObligationCommandBinding(declared) ? 'explicit' : 'proof-policy');
   return {
     obligationId,
-    evidenceClass: declared?.evidenceClass || 'hard',
+    evidenceClass,
     verificationMethod: declared?.verificationMethod || 'kernel-executed-command',
     allowedCommandRefs: declared?.allowedCommandRefs || [],
-    commandRef: declared?.allowedCommandRefs?.[0] || null,
+    commandRef: boundCommandRef || declared?.allowedCommandRefs?.[0] || null,
+    ...(bindingMode ? { bindingMode } : {}),
     acceptanceIds: declared?.acceptanceIds || [],
     verificationScope: declared?.metadata?.verificationScope || declared?.metadata?.scope || null,
     timeoutMs: Number.isFinite(Number(declared?.metadata?.timeoutMs)) ? Number(declared?.metadata?.timeoutMs) : null,
@@ -304,6 +330,7 @@ export const buildNextPayload = ({
   contract = null,
   failures = [],
   knowledgePromptBlock = null,
+  knowledgeSegments = null,
   capabilities = [],
   satisfiedObligations = null,
   outstandingObligationIds = null,
@@ -351,6 +378,7 @@ export const buildNextPayload = ({
     completionPredicate: contract?.completionPredicate || { requiredOutcomes: [] },
     verification,
     knowledge: knowledgePromptBlock,
+    ...(knowledgeSegments ? { knowledgeSegments } : {}),
     acceptancePlans,
     capabilities,
     stepId: currentWorkUnit?.stepId || null,

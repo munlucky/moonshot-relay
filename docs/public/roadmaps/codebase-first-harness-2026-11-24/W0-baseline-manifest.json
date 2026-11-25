@@ -1,0 +1,45 @@
+{
+  "before_sha": "86246b72b059699d1fd628d6ec26ed36194ab569",
+  "doc_sot_sha": "86246b72b059699d1fd628d6ec26ed36194ab569",
+  "observed_main_sha": "73b9b69e1ee7c1e9223b23c2830430735d0d53b3",
+  "hut_build_digest": "sha256:da87e430dc514c4d9f18df46a4bb27590f95842c31d0a2df95954ad361429fc0",
+  "source_layout_digest": "sha256:29ab270af51d3fef298c5b6d86690a4f532a0ba4c1d508dd741ea71d73690763",
+  "environment_digest": "darwin-25.5.0-arm64:node-v24.6.0:npm-11.7.0",
+  "task_set_digest": "sha256:8170d55e2d11632dbd1dd2432edabf2dbad08ca358e2690c8d41003fb2cd65ec",
+  "model_id": null,
+  "model_snapshot_id": null,
+  "effort": null,
+  "execution_surface": "owner-direct/codex-app-server",
+  "cache_condition": "UNOBSERVED_IN_LOCAL_DETERMINISTIC_ENV",
+  "provider_raw_usage_fields": {
+    "codex": [
+      "input_tokens",
+      "cached_input_tokens",
+      "output_tokens"
+    ],
+    "claude": [
+      "input_tokens",
+      "cache_read_input_tokens",
+      "cache_creation_input_tokens",
+      "output_tokens"
+    ],
+    "gemini": [
+      "input_tokens",
+      "output_tokens"
+    ],
+    "qwen": [
+      "input_tokens",
+      "output_tokens"
+    ]
+  },
+  "replay_repetitions": 1,
+  "repeat_task_ids": [
+    "A-F1",
+    "A-S1"
+  ],
+  "budget": {
+    "default_runs": 12,
+    "max_total_runs": 16,
+    "intermediate_unit_llm_eval_runs": 0
+  }
+}

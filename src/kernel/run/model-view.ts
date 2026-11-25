@@ -48,10 +48,28 @@ export const projectKernelModelView = (
     && Array.isArray(view.requiredVerifications)
     && Array.isArray(action.obligations)
     && action.obligations.length > 0
-    && JSON.stringify(view.requiredVerifications) === JSON.stringify(action.obligations)
   ) {
-    delete view.requiredVerifications;
-    view.requiredVerificationsSource = 'action.obligations';
+    if (JSON.stringify(view.requiredVerifications) === JSON.stringify(action.obligations)) {
+      delete view.requiredVerifications;
+      view.requiredVerificationsSource = 'action.obligations';
+    }
+    if (Array.isArray(view.availableCommandRefs)) {
+      delete view.availableCommandRefs;
+    }
+  }
+
+  if (view.knowledgeSegments) {
+    delete view.knowledgeSegments;
+  }
+
+  const knowledgeAuthority = asRecord(view.knowledgeAuthority);
+  if (knowledgeAuthority && knowledgeAuthority.lifecycle) {
+    view.knowledgeAuthority = copyWithout(knowledgeAuthority, ['lifecycle', 'projection']);
+  }
+
+  const trustDecision = asRecord(asRecord(view.trustAuthority)?.decision);
+  if (view.completion && trustDecision?.completion && JSON.stringify(view.completion) === JSON.stringify(trustDecision.completion)) {
+    delete view.completion;
   }
 
   const resume = asRecord(view.resume);
@@ -116,12 +134,32 @@ export const projectKernelModelView = (
   if (action) {
     const projectContext = asRecord(action.projectContext);
     const obligations = Array.isArray(action.obligations) ? action.obligations : [];
-    if (projectContext?.knownCommands && obligations.length > 0) {
-      view.action = {
-        ...action,
-        projectContext: copyWithout(projectContext, ['knownCommands']),
+    const compactObligations = obligations.map((entry) => {
+      const record = asRecord(entry);
+      if (!record || !Array.isArray(record.allowedCommandRefs)) return entry;
+      // Explicit bindings (evidence-plan, knowledge, caller) expose every bound
+      // command without any arbitrary cap. Only broad proof-policy class
+      // fallbacks narrow the compact model view to the deterministically
+      // selected primary commandRef while Kernel retains the full allowlist.
+      if (record.bindingMode !== 'proof-policy' || record.allowedCommandRefs.length <= 1) {
+        return entry;
+      }
+      const selectedCommandRef = typeof record.commandRef === 'string' && record.commandRef
+        ? record.commandRef
+        : String(record.allowedCommandRefs[0] || '');
+      return {
+        ...record,
+        allowedCommandRefs: selectedCommandRef ? [selectedCommandRef] : [],
       };
+    });
+    const nextActionRecord: UnknownRecord = {
+      ...action,
+      ...(obligations.length > 0 ? { obligations: compactObligations } : {}),
+    };
+    if (projectContext?.knownCommands && obligations.length > 0) {
+      nextActionRecord.projectContext = copyWithout(projectContext, ['knownCommands']);
     }
+    view.action = nextActionRecord;
   }
 
   return view;

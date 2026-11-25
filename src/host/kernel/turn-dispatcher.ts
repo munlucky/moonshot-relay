@@ -20,6 +20,7 @@ import { resolveClaudeEffort } from './claude-effort-policy.js';
 import {
   buildModelCapsuleView,
   buildModelVisiblePromptView,
+  estimateModelVisibleStablePrefixTokens,
   resolveModelVisiblePromptMessage,
 } from './model-capsule-view.js';
 import { dispatchKernelRun } from './parallel-dispatcher.js';
@@ -803,14 +804,11 @@ const buildReviewerOutcomeForIngestion = ({ outcome, executionCapsule }: { outco
 };
 
 // Compiles the Host prompt envelope for one turn from the Kernel's `next`
-// payload. Project-stable knowledge is left empty here: `next`
-// exposes it today only as `knowledge`, a single pre-rendered text block
-// that mixes project- and task-scoped facts, so it cannot yet be split into
-// the project-stable / volatile layers the envelope expects. Splitting that
-// requires a Kernel-side change to `buildStageContext`'s return shape and is
-// tracked separately; this wiring does not fabricate a split it cannot prove.
-// Likewise no tool schema reaches this generic dispatcher yet, so the tool
-// manifest is empty rather than guessed.
+// payload. Project-stable knowledge (policy anchors, global ontology
+// constraints, and architectural graph relations) is routed to `projectStable`
+// so its prefix digest stays invariant across stage and work-unit transitions,
+// while stage/path-scoped facts and constraints are routed to
+// `volatile.taskKnowledge`.
 export const buildTurnPromptEnvelope = ({
   modelInput = {},
   decision = {},
@@ -832,7 +830,17 @@ export const buildTurnPromptEnvelope = ({
   // reading the wrong path silently produced an empty step, no allowed/
   // forbidden paths, and a null control stepId on every real turn.
   const step = asRecord(action.step);
+  const knowledgeSegments = asRecord(modelInput.knowledgeSegments);
+  const projectStableKnowledge = asRecord(knowledgeSegments.projectStable);
+  const taskKnowledge = Array.isArray(knowledgeSegments.taskKnowledge)
+    ? knowledgeSegments.taskKnowledge
+    : [];
   const contextSegments = buildKernelContextSegments({
+    projectStable: {
+      ...(Array.isArray(projectStableKnowledge.policyAnchors) ? { policyAnchors: projectStableKnowledge.policyAnchors } : {}),
+      ...(Array.isArray(projectStableKnowledge.ontologyConstraints) ? { ontologyConstraints: projectStableKnowledge.ontologyConstraints } : {}),
+      ...(Array.isArray(projectStableKnowledge.graphSynopsis) ? { graphSynopsis: projectStableKnowledge.graphSynopsis } : {}),
+    },
     runStable: {
       objective: modelInput.objective,
       acceptance: modelInput.acceptance || [],
@@ -844,6 +852,7 @@ export const buildTurnPromptEnvelope = ({
       step: { stepId: step.stepId, objective: step.objective },
       allowedPaths: step.allowedPaths || [],
       forbiddenPaths: step.forbiddenPaths || [],
+      ...(taskKnowledge.length > 0 ? { taskKnowledge } : {}),
       evidence: verificationProjectionToEvidence(modelInput.verification || modelInput.evidence),
       // action.obligations is the *outstanding* subset recomputed every turn
       // (run-loop.js's buildNextPayload derives it from what has not yet
@@ -1561,11 +1570,15 @@ const dispatchKernelTurnAttempt = async ({
       // Gating this on 'on' discarded the only receipt-level evidence of
       // that measurement.
       modelEscalationReason: firstMappedEscalationReason(modelPolicyRecommendation?.reasons),
-      // The denominator eligibleHitRatio needs: the token estimate of every
-      // segment this turn declared cacheable. Without it every live receipt
-      // reports a null eligiblePrefixTokens, so summarizeCacheEconomics() can
-      // never publish a real hit ratio outside the replay corpus.
-      eligiblePrefixTokens: envelope.segments.filter((segment) => segment.cacheable).reduce((total, segment) => total + segment.tokenEstimate, 0),
+      // Match eligiblePrefixTokens to the actual cacheable prefix bytes sent in
+      // `providerMessage` (instructions + project-stable + run-stable header
+      // before `currentWork`), rather than envelope-only segments omitted from
+      // the provider wire message.
+      eligiblePrefixTokens: estimateModelVisibleStablePrefixTokens({
+        prompt: modelVisiblePrompt,
+        review: decision.role === 'reviewer',
+        env,
+      }),
     },
   });
   await controlPlane.recordModelUsage(runId, receipt);

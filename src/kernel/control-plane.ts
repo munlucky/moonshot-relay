@@ -96,10 +96,11 @@ interface ProofRequest {
  evidenceIdentity?: NormalizedEvidenceIdentity | null; freshnessInputs?: string[] | null; sharedExecution?: ReportProofExecution | null;
  [proofExecutionCacheRequest]?: ProofCacheContext | null;
  [guardedProofRequest]?: GuardedProofWorkspace | null;
+ [scopedProofObservationRequest]?: ScopedWorkspaceObservation | null;
 }
 interface ProofCacheContext { key?: string; runId?: string; sourceIdentity?: string | null; workspaceIdentity?: string | null; mutationRevision?: number | null; contractRevision?: number | null; scopeAuthority?: unknown; scopeIdentity?: unknown; }
 interface ProofCacheInput { run?: KernelRun | null; obligation?: PersistedRunObligation | null; request?: ProofRequest; scopeObservation?: ScopedWorkspaceObservation | null; }
-interface AuthorityOptions { completion?: Completion | null; obligations?: PersistedRunObligation[] | null; verifications?: PersistedVerification[] | null; reviews?: ReviewReceipt[] | null; completionDecision?: ReturnType<KernelStateStore['getCompletionDecision']>; step?: PersistedWorkStep | null; context?: UnknownRecord | null; stage?: string | null; workAuthority?: ReturnType<typeof buildWorkAuthorityView> | null; }
+interface AuthorityOptions { completion?: Completion | null; obligations?: PersistedRunObligation[] | null; verifications?: PersistedVerification[] | null; reviews?: ReviewReceipt[] | null; completionDecision?: ReturnType<KernelStateStore['getCompletionDecision']>; step?: PersistedWorkStep | null; context?: UnknownRecord | null; stage?: string | null; workAuthority?: ReturnType<typeof buildWorkAuthorityView> | null; scopedIdentities?: Record<string, ScopedWorkspaceObservation> | null; }
 import type { KernelHostServices } from './host-services.js';
 import type { openKernelStateStore } from './state-store.js';
 type KernelStateStore = Awaited<ReturnType<typeof openKernelStateStore>>;
@@ -195,6 +196,7 @@ import { buildCoordinatorSurface } from './bridge/coordinator-surface.js';
 const proofExecutionCacheContexts = new WeakMap<ReportProofExecution, ProofCacheContext>();
 const proofExecutionCacheRequest = Symbol('kernel-proof-execution-cache-request');
 const guardedProofRequest = Symbol('kernel-guarded-proof-request');
+const scopedProofObservationRequest = Symbol('kernel-scoped-proof-observation-request');
 
 const rememberProofExecutionCacheEntry = (execution: ReportProofExecution, context: ProofCacheContext | null) => {
   if (execution && typeof execution === 'object' && context) {
@@ -841,14 +843,20 @@ export const createKernelControlPlane = async ({
     store.recordEvidencePack(runId, { tier: 'E2', pack, digest, mutationRevision: updated.mutationRevision });
   };
 
-  const refreshProofPolicyBindings = (runId: string) => {
+  const refreshProofPolicyBindings = (runId: string, {
+    commands = null,
+    existingObligations = null,
+  }: {
+    commands?: ProjectCommand[] | null;
+    existingObligations?: PersistedRunObligation[] | null;
+  } = {}) => {
     // Declaring refreshed bindings makes them required. Retired contract
     // obligations must remain historical even when the catalog changes.
-    const before = store.getRunObligations(runId).filter((obligation) => obligation.status !== 'superseded');
+    const before = (existingObligations || store.getRunObligations(runId)).filter((obligation) => obligation.status !== 'superseded');
     const rebound = rebindProofPolicyCommands({
       obligations: before,
       projectRoot,
-      commands: currentProjectCommands(),
+      commands: commands || currentProjectCommands(),
     });
     const bindingShape = (obligation: PersistedRunObligation | ReturnType<typeof rebindProofPolicyCommands>[number]) => JSON.stringify({
       obligationId: obligation.obligationId,
@@ -864,30 +872,47 @@ export const createKernelControlPlane = async ({
 
   const verificationScopeIdentities = (runId: string, obligations: PersistedRunObligation[] = store.getRunObligations(runId)) => {
     const identities: Record<string, ScopedWorkspaceObservation> = {};
+    const byScopeKey = new Map<string, ScopedWorkspaceObservation>();
     for (const obligation of obligations) {
       const authority = authoritativeVerificationScope(obligation);
       if (!authority) continue;
-      identities[obligation.obligationId] = observeScopedWorkspaceIdentity({
-        projectRoot,
-        scopes: authority.scope,
-      });
+      const scopeKey = JSON.stringify(authority.scope);
+      let observed = byScopeKey.get(scopeKey);
+      if (!observed) {
+        observed = observeScopedWorkspaceIdentity({
+          projectRoot,
+          scopes: authority.scope,
+        });
+        byScopeKey.set(scopeKey, observed);
+      }
+      identities[obligation.obligationId] = observed;
     }
     return identities;
   };
 
-  const evaluateRunCompletion = (runId: string, { obligations = null }: { obligations?: PersistedRunObligation[] | null } = {}): Completion => {
+  const evaluateRunCompletion = (runId: string, {
+    obligations = null,
+    verifications = null,
+    reviews = null,
+    scopedIdentities = null,
+  }: {
+    obligations?: PersistedRunObligation[] | null;
+    verifications?: PersistedVerification[] | null;
+    reviews?: ReviewReceipt[] | null;
+    scopedIdentities?: Record<string, ScopedWorkspaceObservation> | null;
+  } = {}): Completion => {
     const run = store.getRun(runId);
     if (!run) throw new Error('run_not_found');
     const resolvedObligations = obligations || store.getRunObligations(runId);
     return evaluateTrustCompletion({
       run,
-      verifications: store.getVerifications(runId),
+      verifications: verifications || store.getVerifications(runId),
       obligations: resolvedObligations,
       waivers: store.getWaivers(runId),
-      reviewReceipts: store.listReviewReceipts(runId),
+      reviewReceipts: reviews || store.listReviewReceipts(runId),
       releaseEvidence: store.getLatestEvidencePack(runId),
       mutationProvenance: store.getMutationProvenance(runId),
-      verificationScopeIdentities: verificationScopeIdentities(runId, resolvedObligations),
+      verificationScopeIdentities: scopedIdentities || verificationScopeIdentities(runId, resolvedObligations),
     });
   };
 
@@ -896,13 +921,21 @@ export const createKernelControlPlane = async ({
     obligations = null,
     verifications = null,
     reviews = null,
-    completionDecision = null,
+    completionDecision = undefined,
     step = null,
+    scopedIdentities = null,
   }: AuthorityOptions = {}) => {
     if (!currentRun) return null;
     const resolvedObligations = obligations || store.getRunObligations(currentRun.runId);
     const resolvedVerifications = verifications || store.getVerifications(currentRun.runId);
-    const resolvedCompletion = completion || evaluateRunCompletion(currentRun.runId, { obligations: resolvedObligations });
+    const resolvedScopedIdentities = scopedIdentities || verificationScopeIdentities(currentRun.runId, resolvedObligations);
+    const resolvedReviews = reviews || store.listReviewReceipts(currentRun.runId);
+    const resolvedCompletion = completion || evaluateRunCompletion(currentRun.runId, {
+      obligations: resolvedObligations,
+      verifications: resolvedVerifications,
+      reviews: resolvedReviews,
+      scopedIdentities: resolvedScopedIdentities,
+    });
     const resolvedSteps = typeof store.getRunSteps === 'function'
       ? store.getRunSteps(currentRun.runId, { planRevision: currentRun.planRevision })
       : [];
@@ -911,10 +944,10 @@ export const createKernelControlPlane = async ({
       run: currentRun,
       obligations: resolvedObligations,
       verifications: resolvedVerifications,
-      reviews: reviews || store.listReviewReceipts(currentRun.runId),
+      reviews: resolvedReviews,
       completion: resolvedCompletion,
-      completionDecision: completionDecision || store.getCompletionDecision(currentRun.runId),
-      verificationScopeIdentities: verificationScopeIdentities(currentRun.runId, resolvedObligations),
+      completionDecision: completionDecision !== undefined ? completionDecision : store.getCompletionDecision(currentRun.runId),
+      verificationScopeIdentities: resolvedScopedIdentities,
       routeAdmissions: typeof store.listRouteAdmissions === 'function' ? store.listRouteAdmissions(currentRun.runId) : [],
       step: resolvedStep,
     });
@@ -928,6 +961,7 @@ export const createKernelControlPlane = async ({
     verifications = [],
     completion = null,
     changedPaths = null,
+    projectCommands: providedProjectCommands = null,
   }: {
     run: KernelRun;
     contract?: UnknownRecord | NormalizedTaskContract | TaskContractLike | null;
@@ -936,6 +970,7 @@ export const createKernelControlPlane = async ({
     verifications?: PersistedVerification[];
     completion?: Completion | null;
     changedPaths?: string[] | null;
+    projectCommands?: ProjectCommand[] | null;
   }) => {
     const baseContract = asRecord(run.taskContract);
     const overrideContract = asRecord(contract);
@@ -952,7 +987,7 @@ export const createKernelControlPlane = async ({
       ...baseContract,
       ...overrideContract,
     };
-    const projectCommands = currentProjectCommands();
+    const projectCommands = providedProjectCommands || currentProjectCommands();
     const detectedTestSurface = projectCommands.some((cmd) => (
       ['unit-test', 'integration-test', 'e2e'].includes(String(cmd.commandClass || ''))
     )) || obligations.some((obligation) => (
@@ -1087,6 +1122,8 @@ export const createKernelControlPlane = async ({
     completion = null,
     obligations = null,
     verifications = null,
+    reviews = null,
+    completionDecision = undefined,
     step = null,
     context = null,
     workAuthority = null,
@@ -1094,7 +1131,12 @@ export const createKernelControlPlane = async ({
     if (!currentRun) return null;
     const resolvedObligations = obligations || store.getRunObligations(currentRun.runId);
     const resolvedVerifications = verifications || store.getVerifications(currentRun.runId);
-    const resolvedCompletion = completion || evaluateRunCompletion(currentRun.runId, { obligations: resolvedObligations });
+    const resolvedReviews = reviews || store.listReviewReceipts(currentRun.runId);
+    const resolvedCompletion = completion || evaluateRunCompletion(currentRun.runId, {
+      obligations: resolvedObligations,
+      verifications: resolvedVerifications,
+      reviews: resolvedReviews,
+    });
     const resolvedContext = context
       || store.getKnowledgeContextReceipt(currentRun.runId, currentRun.state)?.receiptJson
       || store.getKnowledgeContextReceipt(currentRun.runId, 'FRAME')?.receiptJson
@@ -1115,8 +1157,8 @@ export const createKernelControlPlane = async ({
       step: resolvedStep,
       verifications: resolvedVerifications,
       obligations: resolvedObligations,
-      reviews: store.listReviewReceipts(currentRun.runId),
-      completionDecision: store.getCompletionDecision(currentRun.runId),
+      reviews: resolvedReviews,
+      completionDecision: completionDecision !== undefined ? completionDecision : store.getCompletionDecision(currentRun.runId),
       finalizationReceipt: store.getFinalizationReceipt(currentRun.runId),
       gitCloseout: store.getGitCloseoutReceipt(currentRun.runId),
       routeDecisions,
@@ -1131,8 +1173,18 @@ export const createKernelControlPlane = async ({
     const currentRun = run || (options.runId ? getRunSnapshot(options.runId) : null);
     if (!currentRun) return { schemaVersion: 1, status: 'not_found', runId: options.runId || null };
     const obligations = options.obligations || refreshProofPolicyBindings(currentRun.runId);
-    const completion = options.completion || evaluateRunCompletion(currentRun.runId, { obligations });
     const verifications = options.verifications || store.getVerifications(currentRun.runId);
+    const reviews = options.reviews || store.listReviewReceipts(currentRun.runId);
+    const completionDecision = options.completionDecision !== undefined
+      ? options.completionDecision
+      : store.getCompletionDecision(currentRun.runId);
+    const scopedIdentities = options.scopedIdentities || verificationScopeIdentities(currentRun.runId, obligations);
+    const completion = options.completion || evaluateRunCompletion(currentRun.runId, {
+      obligations,
+      verifications,
+      reviews,
+      scopedIdentities,
+    });
     const steps = typeof store.getRunSteps === 'function'
       ? store.getRunSteps(currentRun.runId)
       : [];
@@ -1146,6 +1198,9 @@ export const createKernelControlPlane = async ({
       completion,
       obligations,
       verifications,
+      reviews,
+      completionDecision,
+      scopedIdentities,
       step: options.step || null,
     });
     const knowledgeAuthority = options.knowledgeAuthority || buildKnowledgeAuthorityForRun(currentRun, {
@@ -1164,6 +1219,8 @@ export const createKernelControlPlane = async ({
         completion,
         obligations,
         verifications,
+        reviews,
+        completionDecision,
         step: options.step || null,
         context: options.context || null,
         workAuthority,
@@ -1236,11 +1293,11 @@ export const createKernelControlPlane = async ({
         timeoutMs: Number.isFinite(Number(hint.timeoutMs)) && Number(hint.timeoutMs) > 0
           ? Number(hint.timeoutMs)
           : (Number.isFinite(Number(obligation.metadata?.timeoutMs)) && Number(obligation.metadata.timeoutMs) > 0 ? Number(obligation.metadata.timeoutMs) : undefined),
-        // A model-supplied verification hint is not itself acceptance proof.
-        // Only the no-hint, Kernel-planned path may use the obligation's
-        // declared acceptance binding; explicit hints must carry their own
-        // coverage or the Step Ledger will keep the unit failed.
-        acceptanceCoverage: automatic
+        // When a model omits acceptanceCoverage on a verification hint, bind it
+        // to the obligation's declared acceptanceIds by default (same as the
+        // automatic Kernel-planned path). An explicit [] still claims empty
+        // coverage, and any explicit non-empty coverage is validated below.
+        acceptanceCoverage: automatic || hint.acceptanceCoverage === undefined
           ? (obligation.acceptanceIds || [])
           : (Array.isArray(hint.acceptanceCoverage) ? hint.acceptanceCoverage : []),
         networkPolicy: hint.networkPolicy || 'inherited',
@@ -3485,7 +3542,7 @@ export const createKernelControlPlane = async ({
     // Hard evidence path: the Kernel runtime resolves a trusted manifest
     // command, executes it itself, and binds the result to the workspace
     // identity observed immediately before execution.
-    async executeProof(runId: string, { obligationId = 'default', commandRef, timeoutMs, acceptanceCoverage = [], flakyRerun = false, discovered = null, networkPolicy = 'inherited', evidenceIdentity: requestedEvidenceIdentity = null, freshnessInputs = null, allowEvidenceReuse = true, sharedExecution = null, [proofExecutionCacheRequest]: proofExecutionCacheContext = null, [guardedProofRequest]: guardedProof = null }: ProofRequest = {}): Promise<{ run: StoredKernelRun; execution: ReportProofExecution }> {
+    async executeProof(runId: string, { obligationId = 'default', commandRef, timeoutMs, acceptanceCoverage = [], flakyRerun = false, discovered = null, networkPolicy = 'inherited', evidenceIdentity: requestedEvidenceIdentity = null, freshnessInputs = null, allowEvidenceReuse = true, sharedExecution = null, [proofExecutionCacheRequest]: proofExecutionCacheContext = null, [guardedProofRequest]: guardedProof = null, [scopedProofObservationRequest]: providedScopeObservation = null }: ProofRequest = {}): Promise<{ run: StoredKernelRun; execution: ReportProofExecution }> {
       const run = getRunSnapshot(runId);
       if (!run) throw new Error(`Run ${runId} not found`);
       if (!discovered && !commandRef) throw new Error('Trusted proof requires a command reference');
@@ -3513,7 +3570,7 @@ export const createKernelControlPlane = async ({
 
       const scopeAuthority = authoritativeVerificationScope(declaredObligation);
       const scopedObservation = scopeAuthority
-        ? observeScopedWorkspaceIdentity({ projectRoot, scopes: scopeAuthority.scope })
+        ? (providedScopeObservation || observeScopedWorkspaceIdentity({ projectRoot, scopes: scopeAuthority.scope }))
         : null;
       const scopedProof = scopedObservation?.status === 'observed';
       const declaredFreshnessInputs = Array.isArray(scopeAuthority?.freshnessInputs) && scopeAuthority.freshnessInputs.length > 0
@@ -3885,13 +3942,14 @@ export const createKernelControlPlane = async ({
       let run = getRunSnapshot(runId);
       if (!run) return { schemaVersion: 1, runId, status: 'not_found' };
       const projectCommands = currentProjectCommands();
+      const initialObligations = store.getRunObligations(runId);
       try {
         preflightTaskContract({
           contract: run.taskContract || {},
           projectRoot,
           ...contractPathAccess,
           commands: projectCommands,
-          obligations: store.getRunObligations(runId),
+          obligations: initialObligations,
         });
       } catch (error) {
         return buildContractPreflightRejection({
@@ -3899,7 +3957,7 @@ export const createKernelControlPlane = async ({
           error,
           contract: run.taskContract || {},
           commands: projectCommands,
-          obligations: store.getRunObligations(runId),
+          obligations: initialObligations,
         });
       }
       const deliveryRecovery = await this.recoverPendingDeliveryMaterialization(runId);
@@ -3924,7 +3982,10 @@ export const createKernelControlPlane = async ({
         stageContext = store.getKnowledgeContextReceipt(runId, 'FRAME')?.receiptJson || null;
       }
 
-      const obligations = refreshProofPolicyBindings(runId);
+      const obligations = refreshProofPolicyBindings(runId, {
+        commands: projectCommands,
+        existingObligations: initialObligations,
+      });
       const isProve = String(run.state || '').toUpperCase() === 'PROVE';
 
       if (run.status === 'blocked' && run.blockedReason === 'unsupported-verification') {
@@ -3947,23 +4008,45 @@ export const createKernelControlPlane = async ({
 
       await syncRunLocator(run);
 
+      // K2: the model is handed ONE work unit, never the whole plan. A synthetic
+      // step carries the run itself, so a simple task looks exactly as before.
+      const migratedSteps = this.ensureRunStepsMigrated(runId);
+      const requestedStep = stepId
+        ? migratedSteps.find((entry) => entry.stepId === stepId && entry.planRevision === run.planRevision) || null
+        : null;
+      const step = requestedStep || selectCurrentStep(migratedSteps, { planRevision: run.planRevision });
+
       const verifications = store.getVerifications(runId);
-      const completion = evaluateRunCompletion(runId, { obligations });
+      const reviews = store.listReviewReceipts(runId);
+      const completionDecision = store.getCompletionDecision(runId);
+      const scopedIdentities = verificationScopeIdentities(runId, obligations);
+      const completion = evaluateRunCompletion(runId, {
+        obligations,
+        verifications,
+        reviews,
+        scopedIdentities,
+      });
       const capabilityDecision = resolveRunCapabilityDecision({
         run,
         stage: run.state,
         obligations,
         verifications,
         completion,
+        projectCommands,
       });
 
       const payload = buildNextForRun(run, {
         verifications,
+        reviews,
+        completionDecision,
+        scopedIdentities,
         requiredObligations: run.requiredObligations,
         obligations,
         contract: run.taskContract ? contractBriefing(run.taskContract) : null,
         completion,
+        step,
         knowledgePromptBlock: asRecord(stageContext).promptBlock || null,
+        knowledgeSegments: asRecord(stageContext).segments ? asRecord(asRecord(stageContext).segments) : null,
         context: stageContext ? asRecord(stageContext) : null,
         capabilities: capabilityDecision.selected.map((entry) => ({ id: entry.id, guidance: entry.guidance })),
       });
@@ -3989,12 +4072,6 @@ export const createKernelControlPlane = async ({
             : run.implementationContext.baseline,
         };
       }
-      // K2: the model is handed ONE work unit, never the whole plan. A synthetic
-      // step carries the run itself, so a simple task looks exactly as before.
-      const requestedStep = stepId
-        ? this.ensureRunStepsMigrated(runId).find((entry) => entry.stepId === stepId && entry.planRevision === run.planRevision)
-        : null;
-      const step = requestedStep || this.getCurrentStep(runId);
       if (step?.state === 'failed' && step.blockedReason === hostWorkerProofFailure
         && ['implement', 'fix'].includes(payload.action?.type || '')) {
         const retry = store.getStepAttempts(runId, { stepId: step.stepId }).at(-1);
@@ -4050,27 +4127,10 @@ export const createKernelControlPlane = async ({
       payload.completion = computeCompletionView({
         run,
         step,
-        verifications: store.getVerifications(runId),
+        verifications,
         obligations,
-        reviews: store.listReviewReceipts(runId),
-        completionDecision: store.getCompletionDecision(runId),
-      });
-      payload.trustAuthority = buildTrustAuthorityForRun(run, {
-        completion,
-        obligations,
-        verifications: store.getVerifications(runId),
-        step,
-      });
-      payload.knowledgeAuthority = buildKnowledgeAuthorityForRun(run, {
-        context: stageContext,
-        stage: run.state,
-      });
-      payload.resume = resumeViewForRun(run, {
-        completion,
-        obligations,
-        verifications: store.getVerifications(runId),
-        step,
-        context: stageContext,
+        reviews,
+        completionDecision,
       });
       return payload;
     },
@@ -5206,6 +5266,7 @@ export const createKernelControlPlane = async ({
                   networkPolicy: request.networkPolicy || 'inherited',
                   allowEvidenceReuse: !guardedProof && request.allowEvidenceReuse !== false,
                   [guardedProofRequest]: guardedProof,
+                  [scopedProofObservationRequest]: scopeObservation,
                   sharedExecution: cachedExecution,
                   [proofExecutionCacheRequest]: proofExecutionCacheContext,
                 }));
@@ -5226,6 +5287,7 @@ export const createKernelControlPlane = async ({
                 networkPolicy: request.networkPolicy || 'inherited',
                 allowEvidenceReuse: !guardedProof && request.allowEvidenceReuse !== false,
                 [guardedProofRequest]: guardedProof,
+                [scopedProofObservationRequest]: scopeObservation,
                 [proofExecutionCacheRequest]: proofExecutionCacheContext,
               }));
             }
@@ -5622,21 +5684,43 @@ export const createKernelControlPlane = async ({
       const run = getRunSnapshot(runId);
       if (!run) return null;
       await syncRunLocator(run);
-      const completion = evaluateRunCompletion(runId);
+      const obligations = store.getRunObligations(runId);
       const verifications = store.getVerifications(runId);
+      const reviewReceipts = store.listReviewReceipts(runId);
+      const completionDecision = store.getCompletionDecision(runId);
+      const scopedIdentities = verificationScopeIdentities(runId, obligations);
+      const completion = evaluateRunCompletion(runId, {
+        obligations,
+        verifications,
+        reviews: reviewReceipts,
+        scopedIdentities,
+      });
       const context = store.getKnowledgeContextReceipt(runId, run.state)?.receiptJson
         || store.getKnowledgeContextReceipt(runId, 'FRAME')?.receiptJson
         || null;
+      const workAuthority = this.workAuthority(runId);
+      const trustAuthority = buildTrustAuthorityForRun(run, {
+        completion,
+        obligations,
+        verifications,
+        reviews: reviewReceipts,
+        completionDecision,
+        scopedIdentities,
+      });
       return {
         run,
-        workAuthority: this.workAuthority(runId),
-        trustAuthority: this.trustAuthority(runId),
+        workAuthority,
+        trustAuthority,
         knowledgeAuthority: this.knowledgeAuthority(runId, { stage: run.state, context }),
         completion,
         resume: resumeViewForRun(run, {
           completion,
+          obligations,
           verifications,
+          reviews: reviewReceipts,
+          completionDecision,
           context,
+          workAuthority,
         }),
         measurement: buildKernelMeasurement({
           run,
@@ -5646,7 +5730,7 @@ export const createKernelControlPlane = async ({
           attempts: store.getStepAttempts(runId),
           routeDecisions: store.listModelRouteDecisions(runId),
           usageReceipts: store.listModelUsageReceipts(runId),
-          reviewReceipts: store.listReviewReceipts(runId),
+          reviewReceipts,
         }),
       };
     },

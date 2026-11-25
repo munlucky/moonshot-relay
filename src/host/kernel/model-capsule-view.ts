@@ -183,11 +183,54 @@ const projectKnowledgeRecord = (value: unknown): Projection => {
     ['revision', optionalInteger],
     ['type', optionalText],
     ['id', optionalText],
+    ['severity', optionalText],
+    ['from', optionalText],
+    ['relation', optionalText],
+    ['to', optionalText],
     ['statement', optionalText],
   ]);
   return projected && Object.keys(projected).length > 0
     ? projected
     : OMIT;
+};
+
+const knowledgeSortKey = (entry: unknown): string => {
+  if (typeof entry === 'string') return `0:${entry}`;
+  if (!isRecord(entry)) return `9:${String(entry)}`;
+  return [
+    '1',
+    text(own(entry, 'type')),
+    text(own(entry, 'id')) || text(own(entry, 'recordId')),
+    text(own(entry, 'from')),
+    text(own(entry, 'relation')),
+    text(own(entry, 'to')),
+    text(own(entry, 'statement')) || text(own(entry, 'summary')),
+  ].join('|');
+};
+
+const sortedKnowledgeList = (values: readonly unknown[]): readonly unknown[] => freezeList(
+  values
+    .map(projectKnowledgeRecord)
+    .filter((entry) => entry !== OMIT)
+    .sort((left, right) => knowledgeSortKey(left).localeCompare(knowledgeSortKey(right))),
+);
+
+const projectStableKnowledgeSegments = (segmentsValue: unknown): readonly unknown[] | null => {
+  if (!isRecord(segmentsValue)) return null;
+  const projectStable = own(segmentsValue, 'projectStable');
+  if (!isRecord(projectStable)) return null;
+  const combined: unknown[] = [];
+  for (const key of ['policyAnchors', 'ontologyConstraints', 'graphSynopsis'] as const) {
+    const items = own(projectStable, key);
+    if (Array.isArray(items)) combined.push(...items);
+  }
+  return sortedKnowledgeList(combined);
+};
+
+const projectTaskKnowledgeSegments = (segmentsValue: unknown): readonly unknown[] => {
+  if (!isRecord(segmentsValue)) return freezeList([]);
+  const taskKnowledge = own(segmentsValue, 'taskKnowledge');
+  return Array.isArray(taskKnowledge) ? sortedKnowledgeList(taskKnowledge) : freezeList([]);
 };
 
 const knowledgeValue = (
@@ -409,18 +452,25 @@ const projectCurrentWork = (
       own(value, 'verificationEvidence'),
     );
   }
+  if (hasOwn(value, 'taskKnowledge')) {
+    const taskKnowledge = knowledgeValue(own(value, 'taskKnowledge'));
+    if (Array.isArray(taskKnowledge) && taskKnowledge.length > 0) {
+      projected.taskKnowledge = taskKnowledge;
+    }
+  }
   return Object.freeze(projected);
 };
 
 // Final prompt vocabulary is intentionally smaller than the persisted capsule
-// and the full `next` response. These are work-facing concepts; routing,
-// provider, lease, cache, CAS, and Git metadata stay on the Host/Kernel side.
+// and the full `next` response. Fields are ordered strictly by rate of change
+// (project-stable -> run-stable -> volatile) so every byte before `currentWork`
+// in the serialized provider message forms a stable cacheable prefix.
 export const MODEL_VISIBLE_PROMPT_FIELDS = Object.freeze([
+  'relevantProjectKnowledge',
   'objective',
   'acceptance',
   'constraints',
   'currentWork',
-  'relevantProjectKnowledge',
   'requiredEvidence',
 ] as const);
 
@@ -451,14 +501,14 @@ const sanitizePromptView = (
 ): Readonly<UnknownRecord> => {
   const source = isRecord(value) ? value : {};
   return Object.freeze({
+    relevantProjectKnowledge: knowledgeValue(
+      own(source, 'relevantProjectKnowledge'),
+    ),
     objective: text(own(source, 'objective')),
     acceptance: acceptanceList(own(source, 'acceptance')),
     constraints: stringList(own(source, 'constraints')),
     currentWork: projectCurrentWork(
       own(source, 'currentWork'),
-    ),
-    relevantProjectKnowledge: knowledgeValue(
-      own(source, 'relevantProjectKnowledge'),
     ),
     requiredEvidence: evidenceList(
       own(source, 'requiredEvidence'),
@@ -518,11 +568,16 @@ export const buildModelVisiblePromptView = ({
     || isRecord(own(sourceCapsule, 'reviewScope'))
     || hasOwn(sourceCapsule, 'verificationEvidence');
 
+  const rawKnowledgeSegments = own(input, 'knowledgeSegments');
+  const segmentedStableKnowledge = projectStableKnowledgeSegments(rawKnowledgeSegments);
+  const segmentedTaskKnowledge = projectTaskKnowledgeSegments(rawKnowledgeSegments);
+
   const currentWork = (
     stepCandidate
     || actionType
     || guidance
     || hasReviewContext
+    || segmentedTaskKnowledge.length > 0
   )
     ? projectCurrentWork({
         type: actionType,
@@ -552,6 +607,9 @@ export const buildModelVisiblePromptView = ({
               }
             : {}
         ),
+        ...(segmentedTaskKnowledge.length > 0
+          ? { taskKnowledge: segmentedTaskKnowledge }
+          : {}),
       })
     : null;
   const rawInputVerification = own(input, 'verification');
@@ -571,6 +629,17 @@ export const buildModelVisiblePromptView = ({
 
   return assertModelVisiblePromptBudget(
     sanitizePromptView({
+      relevantProjectKnowledge: segmentedStableKnowledge !== null
+        ? segmentedStableKnowledge
+        : (
+          knowledgeValue(own(input, 'knowledge'))
+          || knowledgeValue(
+            own(
+              own(sourceCapsule, 'repositoryContext'),
+              'knowledgeRecords',
+            ),
+          )
+        ),
       objective,
       acceptance: firstProjectedList(
         acceptanceList,
@@ -583,18 +652,34 @@ export const buildModelVisiblePromptView = ({
         own(sourceCapsule, 'constraints'),
       ),
       currentWork,
-      relevantProjectKnowledge:
-        knowledgeValue(own(input, 'knowledge'))
-        || knowledgeValue(
-          own(
-            own(sourceCapsule, 'repositoryContext'),
-            'knowledgeRecords',
-          ),
-        ),
       requiredEvidence,
     }),
   );
 };
+
+const baselineMessageInstructions = (review: boolean): readonly string[] => [
+  review
+    ? 'Perform the independent Kernel review described below.'
+    : 'Perform the bounded Kernel worker action described below.',
+  'Inspect the current workspace only within the declared work context.',
+  'Do not invoke Kernel next/report commands, do not delegate, and do not claim completion authority.',
+  review
+    ? 'A pass verdict requires every reviewed acceptance claim to be supported by the current files and evidence.'
+    : 'Use exact identifiers from requiredEvidence when reporting verification and do not invent replacements.',
+  'Return only the JSON object required by the configured output schema.',
+];
+
+const compactMessageInstructions = (review: boolean): readonly string[] => [
+  review
+    ? 'Perform the independent Kernel review below.'
+    : 'Perform the bounded Kernel worker action below.',
+  'Stay within the declared work context.',
+  'Do not call Kernel next/report, delegate, or claim completion authority.',
+  review
+    ? 'Pass only when current files and evidence support every reviewed acceptance claim.'
+    : 'Use requiredEvidence identifiers exactly; do not invent replacements.',
+  'Return only JSON required by the configured output schema.',
+];
 
 const renderModelVisiblePromptMessage = ({
   prompt,
@@ -616,6 +701,33 @@ const renderModelVisiblePromptMessage = ({
   ].join('\n');
 };
 
+const renderModelVisibleStablePrefix = ({
+  prompt,
+  instructions,
+  compactJson,
+}: {
+  prompt: unknown;
+  instructions: readonly string[];
+  compactJson: boolean;
+}): string => {
+  const safePrompt = sanitizePromptView(prompt);
+  const stableHeader = {
+    relevantProjectKnowledge: safePrompt.relevantProjectKnowledge,
+    objective: safePrompt.objective,
+    acceptance: safePrompt.acceptance,
+    constraints: safePrompt.constraints,
+  };
+  const serializedHeader = compactJson
+    ? JSON.stringify(stableHeader).replace(/\}$/, ',')
+    : JSON.stringify(stableHeader, null, 2).replace(/\n\}$/, ',\n  ');
+  return [
+    ...instructions,
+    '',
+    'MODEL VISIBLE CONTEXT',
+    serializedHeader,
+  ].join('\n');
+};
+
 // This is the only text projection sent to a provider. Sanitize again at the
 // message boundary so a custom launcher cannot bypass the six-field contract
 // by supplying a hand-built prompt object.
@@ -627,17 +739,7 @@ export const buildModelVisiblePromptMessage = ({
   review?: boolean;
 } = {}): string => renderModelVisiblePromptMessage({
   prompt,
-  instructions: [
-    review
-      ? 'Perform the independent Kernel review described below.'
-      : 'Perform the bounded Kernel worker action described below.',
-    'Inspect the current workspace only within the declared work context.',
-    'Do not invoke Kernel next/report commands, do not delegate, and do not claim completion authority.',
-    review
-      ? 'A pass verdict requires every reviewed acceptance claim to be supported by the current files and evidence.'
-      : 'Use exact identifiers from requiredEvidence when reporting verification and do not invent replacements.',
-    'Return only the JSON object required by the configured output schema.',
-  ],
+  instructions: baselineMessageInstructions(review),
   compactJson: false,
 });
 
@@ -653,17 +755,7 @@ export const buildCompactModelVisiblePromptMessage = ({
   review?: boolean;
 } = {}): string => renderModelVisiblePromptMessage({
   prompt,
-  instructions: [
-    review
-      ? 'Perform the independent Kernel review below.'
-      : 'Perform the bounded Kernel worker action below.',
-    'Stay within the declared work context.',
-    'Do not call Kernel next/report, delegate, or claim completion authority.',
-    review
-      ? 'Pass only when current files and evidence support every reviewed acceptance claim.'
-      : 'Use requiredEvidence identifiers exactly; do not invent replacements.',
-    'Return only JSON required by the configured output schema.',
-  ],
+  instructions: compactMessageInstructions(review),
   compactJson: true,
 });
 
@@ -686,6 +778,32 @@ export const resolveModelVisiblePromptMessage = ({
     ? buildCompactModelVisiblePromptMessage({ prompt, review })
     : buildModelVisiblePromptMessage({ prompt, review })
 );
+
+export const resolveModelVisibleStablePrefix = ({
+  prompt = {},
+  review = false,
+  compact = false,
+  env = process.env,
+}: {
+  prompt?: unknown;
+  review?: boolean;
+  compact?: boolean;
+  env?: NodeJS.ProcessEnv;
+} = {}): string => {
+  const useCompact = compact === true || String(env?.MOON_RELAY_KERNEL_COMPACT_PROMPT_MESSAGE || '').trim().toLowerCase() === 'on';
+  return renderModelVisibleStablePrefix({
+    prompt,
+    instructions: useCompact ? compactMessageInstructions(review) : baselineMessageInstructions(review),
+    compactJson: useCompact,
+  });
+};
+
+export const estimateModelVisibleStablePrefixTokens = (options: {
+  prompt?: unknown;
+  review?: boolean;
+  compact?: boolean;
+  env?: NodeJS.ProcessEnv;
+} = {}): number => Math.ceil(resolveModelVisibleStablePrefix(options).length / 4);
 
 // Evaluator-only ablation candidate. Guidance is removed only when currentWork
 // already has its own objective, so the candidate never substitutes guidance

@@ -177,31 +177,22 @@ const observeScopedGitWorkspace = (
   projectRoot: string,
   scopes: string[],
 ): Omit<ScopedWorkspaceObservation, 'status' | 'projectRoot' | 'scopes' | 'observedAt'> => {
-  const inRepo = runGit(['rev-parse', '--is-inside-work-tree'], projectRoot);
-  if (!inRepo || inRepo.trim() !== 'true') {
-    return {
-      identity: null,
-      method: 'unavailable',
-      reason: 'git-worktree-unavailable',
-    };
-  }
-  const tracked = runGit(['ls-files', '-z'], projectRoot);
-  const untracked = runGit(
-    ['ls-files', '--others', '--exclude-standard', '-z'],
+  const combined = runGit(
+    ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
     projectRoot,
   );
-  if (tracked === null || untracked === null) {
+  if (combined === null) {
+    const inRepo = runGit(['rev-parse', '--is-inside-work-tree'], projectRoot);
     return {
       identity: null,
       method: 'unavailable',
-      reason: 'file-enumeration-failed',
+      reason: (!inRepo || inRepo.trim() !== 'true')
+        ? 'git-worktree-unavailable'
+        : 'file-enumeration-failed',
     };
   }
 
-  const candidates = [...new Set([
-    ...nulSeparated(tracked),
-    ...nulSeparated(untracked),
-  ])];
+  const candidates = [...new Set(nulSeparated(combined))];
   const entries: Array<[string, string]> = [];
   for (const candidate of candidates) {
     const safe = safeProjectRelativePath(projectRoot, candidate);
@@ -252,55 +243,33 @@ const observeScopedGitWorkspace = (
 const observeGitWorkspace = (
   projectRoot: string,
 ): Omit<WorkspaceObservation, 'projectRoot' | 'observedAt'> | null => {
-  const inRepo = runGit(['rev-parse', '--is-inside-work-tree'], projectRoot);
-  if (!inRepo || inRepo.trim() !== 'true') return null;
-
-  const headTree = (
-    runGit(['rev-parse', 'HEAD^{tree}'], projectRoot) || 'no-head'
-  ).trim();
-  const headCommit = (
-    runGit(['rev-parse', 'HEAD'], projectRoot) || 'no-head'
-  ).trim();
   const status = runGit(
     ['status', '--porcelain=v1', '-z', '--untracked-files=all'],
     projectRoot,
   );
-  const unstaged = runGit(
-    ['diff', '--name-only', '-z', '--no-renames'],
-    projectRoot,
-  );
-  const staged = runGit(
-    ['diff', '--cached', '--name-only', '-z', '--no-renames'],
-    projectRoot,
-  );
-  const untracked = runGit(
-    ['ls-files', '--others', '--exclude-standard', '-z'],
-    projectRoot,
-  );
-  const index = runGit(['ls-files', '--stage', '-z'], projectRoot);
-  if (
-    status === null
-    || unstaged === null
-    || staged === null
-    || untracked === null
-    || index === null
-  ) {
-    return null;
-  }
+  if (status === null) return null;
 
+  const headRefs = runGit(['rev-parse', 'HEAD^{tree}', 'HEAD'], projectRoot);
+  const [headTree = 'no-head', headCommit = 'no-head'] = headRefs
+    ? headRefs.trim().split(/\r?\n/u).map((line) => line.trim() || 'no-head')
+    : ['no-head', 'no-head'];
+
+  const statusEntries = parseGitStatusEntries(status);
   const statusByPath = new Map(
-    parseGitStatusEntries(status).map((entry) => [entry.path, entry.statusCode]),
+    statusEntries.map((entry) => [entry.path, entry.statusCode]),
   );
+  const changedPaths = [...new Set(
+    statusEntries.map((entry) => entry.path),
+  )].sort();
+
+  const index = changedPaths.length > 0
+    ? runGit(['ls-files', '--stage', '-z', '--', ...changedPaths], projectRoot)
+    : '';
+  if (index === null) return null;
+
   const indexByPath = new Map(
     parseGitIndexEntries(index).map((entry) => [entry.path, entry]),
   );
-
-  const changedPaths = [...new Set([
-    ...parseGitStatusPaths(status),
-    ...parseGitPathList(unstaged),
-    ...parseGitPathList(staged),
-    ...parseGitPathList(untracked),
-  ])].sort();
   const changeEntries: WorkspaceChangeEntry[] = changedPaths.map((relPath) => ({
     path: relPath,
     digest: hashFileContent(path.join(projectRoot, relPath)),
