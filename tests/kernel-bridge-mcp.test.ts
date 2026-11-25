@@ -15,6 +15,7 @@ import { createKernelHostReviewBridge } from '../src/host/kernel/lifecycle-bridg
 import { assessReviewReadiness } from '../src/host/kernel/review-readiness.js';
 import { createModelRegistry } from '../src/host/kernel/model-registry.js';
 import { CODEX_EXECUTION_POLICY } from '../src/host/kernel/codex-model-policy.js';
+import { runHostOwnedWritableAttempt } from '../src/host/kernel/host-owned-writable-attempt.js';
 
 const tempRoots: string[] = [];
 
@@ -1560,5 +1561,203 @@ test('P0: mcp kernel_next auto-captures baseline-required without returning an a
   } finally {
     await rm(runtimeHome, { recursive: true, force: true });
     await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test('P0 counterexample: mcp report does NOT auto-finalize when Host independent review returns fail', async () => {
+  const runId = 'mcp-report-review-fail-counterexample';
+  const fixture = await prepareMcpReviewRun(runId);
+  try {
+    const reviewer = createClaudeAdapter({
+      launch: async ({ invocation }) => ({
+        resolvedModel: assertTestRecord(invocation).model,
+        observedModel: assertTestRecord(invocation).model,
+        resolvedEffort: assertTestRecord(invocation).effort,
+        observedEffort: assertTestRecord(invocation).effort,
+        sessionId: 'mcp-report-failing-reviewer',
+        outcome: {
+          verdict: 'fail',
+          findings: [{ severity: 'important', category: 'security', path: 'app.mjs', summary: 'missing guard', requiredAction: 'fix' }],
+          risks: ['unguarded boundary'],
+          evidenceRefs: ['review://mcp-fail'],
+        },
+      }),
+    });
+    const bridge = createKernelHostReviewBridge({
+      adapter: reviewer,
+      registry: createModelRegistry({
+        surface: 'claude',
+        env: {
+          MOON_RELAY_KERNEL_MODEL_FRONTIER: 'mcp-review-frontier',
+          MOON_RELAY_KERNEL_MODEL_FRONTIER_EFFORT: 'high',
+        },
+      }),
+      runtimeHome: fixture.runtimeHome,
+      env: {},
+      parentSessionId: 'mcp-report-owner-session',
+    });
+    const handler = createMcpBridgeHandler({ runtimeHome: fixture.runtimeHome, env: {}, hostBridge: bridge });
+    const response = await handler({
+      jsonrpc: '2.0',
+      id: 91,
+      method: 'tools/call',
+      params: {
+        name: 'kernel_report',
+        arguments: {
+          workspaceRoot: fixture.root,
+          runId,
+          surface: 'claude_app',
+          report: {
+            summary: 'submit change that fails independent review',
+            changedPaths: ['app.mjs'],
+          },
+        },
+      },
+    });
+    assert.equal(assertTestPresent(assertTestPresent(response).result).isError, false);
+    const result = parseToolText(response);
+    assert.equal(assertTestRecord(result.hostReview).verdict, 'fail');
+    assert.notEqual(result.status, 'completed');
+    const continuation = assertTestRecord(result.next);
+    assert.equal(assertTestRecord(continuation.action).type, 'fix');
+
+    const cp = await createKernelControlPlane({ runtimeHome: fixture.runtimeHome, projectRoot: fixture.root });
+    try {
+      assert.equal((await cp.getRun(runId))?.status, 'active');
+    } finally {
+      await cp.close();
+    }
+  } finally {
+    await cleanupMcpReviewRun(fixture);
+  }
+});
+
+test('P3: runHostOwnedWritableAttempt derives bound step verifications when Worker returns verifications: [] and fails closed when no manifest command is bound', async () => {
+  const workspaceRoot = await createFixtureRepo();
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-p3-worker-derive-'));
+  const reservationRoot = await mkdtemp(path.join(os.tmpdir(), 'kernel-p3-worker-res-'));
+  const server = path.join(runtimeHome, 'empty-verifications-writer.cjs');
+  await writeFile(server, String.raw`
+const fs = require('node:fs');
+const path = require('node:path');
+const send = (value) => process.stdout.write(JSON.stringify(value) + '\n');
+require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') send({ id: message.id, result: {} });
+  if (message.method === 'thread/start') send({ id: message.id, result: { thread: { id: 'p3-thread' } } });
+  if (message.method === 'turn/start') {
+    fs.writeFileSync(path.join(message.params.cwd, 'README.md'), '# Updated without explicit verifications\n');
+    send({ id: message.id, result: { turn: { id: 'p3-turn', status: 'inProgress' } } });
+    send({ method: 'item/completed', params: {
+      threadId: message.params.threadId,
+      turnId: 'p3-turn',
+      item: {
+        type: 'agentMessage',
+        id: 'p3-final',
+        phase: 'final_answer',
+        text: JSON.stringify({
+          status: 'completed',
+          summary: 'Updated README with empty verifications array',
+          changedPaths: ['README.md'],
+          risks: [],
+          verifications: [],
+          requestedVerifications: [],
+          judgments: [],
+          knowledgeObservations: [],
+          blocker: null,
+        }),
+      },
+    } });
+    send({ method: 'turn/completed', params: { threadId: message.params.threadId, turn: { id: 'p3-turn', status: 'completed' } } });
+  }
+});
+`);
+
+  let derivedWorktree: string | null = null;
+  let unboundWorktree: string | null = null;
+  try {
+    // 1. Positive path: manifest declares `test`, so empty verifications: [] deterministically derives the Step's bound hard proof.
+    const cp = await createKernelControlPlane({ projectRoot: workspaceRoot, runtimeHome });
+    try {
+      const runId = 'run-p3-derived';
+      await cp.startRun({
+        runId,
+        objective: 'Update README via worker',
+        taskContract: { acceptance: ['README updated'], allowedPaths: ['README.md'] },
+      });
+      const attempt = assertTestPresent(cp.beginAttempt(runId, { provenanceKind: 'host-owned-worker' }));
+      const attemptId = assertTestString(attempt.attemptId);
+      const baseCommit = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: workspaceRoot, encoding: 'utf8' }).stdout.trim();
+      const observed = await runHostOwnedWritableAttempt({
+        controlPlane: cp,
+        repoRoot: workspaceRoot,
+        runtimeHome,
+        reservationRoot,
+        baseCommit,
+        runId,
+        stepId: attempt.stepId,
+        attemptId,
+        prompt: 'update README',
+        model: 'test-model',
+        effort: 'high',
+        turnTimeoutMs: 5000,
+        transportOptions: { executable: process.execPath, args: [server], requestTimeoutMs: 5000 },
+      });
+      derivedWorktree = observed.workspaceRoot;
+      assert.deepEqual(observed.resultHandoff, { status: 'recorded', failureCode: null });
+      const persistedAttempt = assertTestPresent(cp.getAttemptById(runId, attemptId));
+      const workerReport = assertTestRecord(persistedAttempt.workerReport);
+      assert.deepEqual(workerReport.verifications, [
+        { obligationId: 'default', commandRef: 'test', acceptanceCoverage: ['AC-1'] },
+      ]);
+      await cp.abandon(runId, { reason: 'p3-fixture-cleanup' });
+    } finally {
+      await cp.close();
+      if (derivedWorktree) spawnSync('git', ['worktree', 'remove', '--force', derivedWorktree], { cwd: workspaceRoot });
+    }
+
+    // 2. Counterexample: when package.json declares NO runnable script, empty verifications: [] still fails closed.
+    await writeFile(path.join(workspaceRoot, 'package.json'), JSON.stringify({ name: 'bridge-fixture-empty', scripts: {} }));
+    spawnSync('git', ['add', 'package.json'], { cwd: workspaceRoot, encoding: 'utf8' });
+    spawnSync('git', ['commit', '-m', 'remove scripts', '--quiet'], { cwd: workspaceRoot, encoding: 'utf8' });
+
+    const cpUnbound = await createKernelControlPlane({ projectRoot: workspaceRoot, runtimeHome });
+    try {
+      const runId = 'run-p3-unbound-counterexample';
+      await cpUnbound.startRun({
+        runId,
+        objective: 'Update README without bound scripts',
+        taskContract: { acceptance: ['README updated'], allowedPaths: ['README.md'] },
+      });
+      const attempt = assertTestPresent(cpUnbound.beginAttempt(runId, { provenanceKind: 'host-owned-worker' }));
+      const attemptId = assertTestString(attempt.attemptId);
+      const baseCommit = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: workspaceRoot, encoding: 'utf8' }).stdout.trim();
+      const observed = await runHostOwnedWritableAttempt({
+        controlPlane: cpUnbound,
+        repoRoot: workspaceRoot,
+        runtimeHome,
+        reservationRoot,
+        baseCommit,
+        runId,
+        stepId: attempt.stepId,
+        attemptId,
+        prompt: 'update README',
+        model: 'test-model',
+        effort: 'high',
+        turnTimeoutMs: 5000,
+        transportOptions: { executable: process.execPath, args: [server], requestTimeoutMs: 5000 },
+      });
+      unboundWorktree = observed.workspaceRoot;
+      assert.deepEqual(observed.resultHandoff, {
+        status: 'blocked',
+        failureCode: 'host_worker_report_verification_unbound',
+      });
+      assert.equal(cpUnbound.getAttemptById(runId, attemptId)?.workerReport, null);
+    } finally {
+      await cpUnbound.close();
+      if (unboundWorktree) spawnSync('git', ['worktree', 'remove', '--force', unboundWorktree], { cwd: workspaceRoot });
+    }
+  } finally {
+    await Promise.all([workspaceRoot, runtimeHome, reservationRoot].map((dir) => rm(dir, { recursive: true, force: true })));
   }
 });

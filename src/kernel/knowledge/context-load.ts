@@ -500,22 +500,31 @@ export async function buildProjectKnowledgeContext({
   selectedFacts = collapseCanonicalRecords(selectedFacts);
   selectedConstraints = collapseCanonicalRecords(selectedConstraints);
 
-  const isGlobalOntologyConstraint = (constraint: KnowledgeRecordLike): boolean => (
-    constraint.isGlobal === true
-    || !Array.isArray(constraint.scope)
-    || constraint.scope.length === 0
+  const isProjectStableRecord = (record: KnowledgeRecordLike): boolean => (
+    record.trustTier !== 'quarantined'
+    && (!Array.isArray(record.scope) || record.scope.length === 0)
   );
-  const globalConstraints = selectedConstraints.filter(isGlobalOntologyConstraint);
-  const scopedConstraints = selectedConstraints.filter((constraint) => !isGlobalOntologyConstraint(constraint));
+  const stablePolicy = selectedPolicy.filter((policy) => policy.trustTier !== 'quarantined');
+  const stageOnlyPolicy = selectedPolicy.filter((policy) => policy.trustTier === 'quarantined');
+  const globalConstraints = selectedConstraints.filter(isProjectStableRecord);
+  const scopedConstraints = selectedConstraints.filter((constraint) => !isProjectStableRecord(constraint));
 
-  const selectedGraph: KnowledgePromptEntry[] = collapseCanonicalRecords(
+  const collapsedGraph = collapseCanonicalRecords(
     rawGraphRelations.filter(isRecordActive),
-  ).map((relation) => ({
-      from: relation.from || null,
-      to: relation.to || null,
-      relation: relation.relation || null,
-      statement: `${relation.from} ${relation.relation} ${relation.to}`,
-    }));
+  );
+  const toGraphEntry = (relation: KnowledgeRecordLike): KnowledgePromptEntry => ({
+    from: relation.from || null,
+    to: relation.to || null,
+    relation: relation.relation || null,
+    statement: `${relation.from} ${relation.relation} ${relation.to}`,
+  });
+  const selectedGraph: KnowledgePromptEntry[] = collapsedGraph.map(toGraphEntry);
+  const stableGraph: KnowledgePromptEntry[] = collapsedGraph
+    .filter((relation) => relation.trustTier !== 'quarantined')
+    .map(toGraphEntry);
+  const stageOnlyGraph: KnowledgePromptEntry[] = collapsedGraph
+    .filter((relation) => relation.trustTier === 'quarantined')
+    .map(toGraphEntry);
 
   // Record-based budget truncation.
   const maxBudgetTokens = STAGE_BUDGETS[stage];
@@ -621,15 +630,20 @@ export async function buildProjectKnowledgeContext({
     ontologyConstraints: selectedConstraints,
     segments: {
       projectStable: {
-        policyAnchors: selectedPolicy,
+        policyAnchors: stablePolicy,
         ontologyConstraints: globalConstraints,
-        graphSynopsis: selectedGraph,
+        graphSynopsis: stableGraph,
       },
       taskKnowledge: [
+        ...stageOnlyPolicy.map((policy) => ({
+          ...policy,
+          statement: policy.statement || policy.title || renderKnowledgePromptEntry(policy),
+        })),
         ...scopedConstraints.map((constraint) => ({
           ...constraint,
           statement: `[${constraint.severity || 'invariant'}] ${renderKnowledgePromptEntry(constraint)}`,
         })),
+        ...stageOnlyGraph,
         ...budgetedFacts.map((fact) => ({
           ...fact,
           statement: renderKnowledgePromptEntry(fact),

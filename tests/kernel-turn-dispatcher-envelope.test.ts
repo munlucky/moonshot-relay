@@ -19,7 +19,11 @@ import { createClaudeAdapter } from '../src/host/kernel/adapters/claude.js';
 import { createCodexAdapter } from '../src/host/kernel/adapters/codex.js';
 import { bindNativeCommandEvent, type NativeExecutionObservation } from '../src/host/kernel/adapter-dispatch.js';
 import { createFableAdapter } from '../src/host/kernel/adapters/fable.js';
-import { MODEL_VISIBLE_PROMPT_FIELDS } from '../src/host/kernel/model-capsule-view.js';
+import {
+  estimateModelVisibleStablePrefixTokens,
+  MODEL_VISIBLE_PROMPT_FIELDS,
+  resolveModelVisibleStablePrefix,
+} from '../src/host/kernel/model-capsule-view.js';
 
 // Regression for a Codex review finding on PR #19: buildPromptEnvelope was
 // exercised only by the replay corpus and unit tests, never by a real
@@ -669,4 +673,162 @@ test('P1: buildTurnPromptEnvelope separates projectStable knowledge from volatil
     assert.notEqual(firstVolSeg.digest, secondVolSeg.digest);
     assert.match(secondVolSeg.content, /Step 2 specific fact/);
   });
+});
+
+test('P1: real dispatchKernelTurn preserves byte-identical providerMessage stable prefix across FRAME -> EXECUTE stage and step transitions', async () => {
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'krn-p1-live-home-'));
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'krn-p1-live-proj-'));
+  spawnSync('git', ['init', '--quiet'], { cwd: projectRoot, encoding: 'utf8' });
+  spawnSync('git', ['config', 'user.name', 'P1 Test'], { cwd: projectRoot, encoding: 'utf8' });
+  spawnSync('git', ['config', 'user.email', 'p1@example.invalid'], { cwd: projectRoot, encoding: 'utf8' });
+  await writeFile(path.join(projectRoot, 'package.json'), JSON.stringify({
+    name: 'p1-live-fixture',
+    scripts: { test: 'node -e "process.exit(0)"' },
+  }));
+  await writeFile(path.join(projectRoot, 'step1.txt'), 'v0\n');
+  await writeFile(path.join(projectRoot, 'step2.txt'), 'v0\n');
+  spawnSync('git', ['add', '.'], { cwd: projectRoot, encoding: 'utf8' });
+  spawnSync('git', ['commit', '-m', 'init', '--quiet'], { cwd: projectRoot, encoding: 'utf8' });
+
+  const cp = await createKernelControlPlane({ runtimeHome, projectRoot });
+  try {
+    const runId = 'r-p1-provider-prefix';
+    const started = await cp.startRun({
+      runId,
+      objective: 'Verify provider message prefix invariance across stages and steps',
+      taskContract: {
+        complex: true,
+        constraints: ['preserve fail-closed invariants'],
+        acceptance: [
+          { acceptance: 'step 1 updated', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test'], obligationId: 'step1-test' } },
+          { acceptance: 'step 2 updated', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test'], obligationId: 'step2-test' } },
+        ],
+        steps: [
+          { objective: 'Update step1.txt', allowedPaths: ['step1.txt'], acceptanceIds: ['AC-1'], obligationIds: ['step1-test'] },
+          { objective: 'Update step2.txt', allowedPaths: ['step2.txt'], acceptanceIds: ['AC-2'], obligationIds: ['step2-test'] },
+        ],
+      },
+    });
+    const projectId = assertTestString(started.projectId);
+    cp.stateStore.saveKnowledgeRecord(projectId, 'kr-policy-live', {
+      recordType: 'policy_anchor',
+      status: 'committed',
+      trustTier: 'authoritative',
+      recordJson: {
+        id: 'kr-policy-live',
+        type: 'policy_anchor',
+        statement: 'Never weaken Kernel completion gates',
+        status: 'committed',
+        trustTier: 'authoritative',
+        scope: [],
+        isGlobal: true,
+      },
+    });
+    cp.stateStore.saveKnowledgeRecord(projectId, 'kr-policy-quarantined', {
+      recordType: 'policy_anchor',
+      status: 'committed',
+      trustTier: 'quarantined',
+      recordJson: {
+        id: 'kr-policy-quarantined',
+        type: 'policy_anchor',
+        statement: 'FRAME-only quarantined anchor must not pollute projectStable',
+        status: 'committed',
+        trustTier: 'quarantined',
+        scope: [],
+        isGlobal: true,
+      },
+    });
+    cp.stateStore.saveKnowledgeRecord(projectId, 'kr-domain-frame-only', {
+      recordType: 'domain_term',
+      status: 'committed',
+      trustTier: 'verified',
+      recordJson: {
+        id: 'kr-domain-frame-only',
+        type: 'domain_term',
+        statement: 'Verify provider prefix terminology in FRAME',
+        status: 'committed',
+        trustTier: 'verified',
+        scope: [],
+        isGlobal: true,
+      },
+    });
+    cp.stateStore.saveKnowledgeRecord(projectId, 'kr-api-execute-only', {
+      recordType: 'api_contract',
+      status: 'committed',
+      trustTier: 'verified',
+      recordJson: {
+        id: 'kr-api-execute-only',
+        type: 'api_contract',
+        statement: 'Verify provider prefix API contract in EXECUTE',
+        status: 'committed',
+        trustTier: 'verified',
+        scope: [],
+        isGlobal: true,
+      },
+    });
+    cp.stateStore.updateProjectKnowledgeRevision(projectId, 1, 2);
+    await cp.refreshStageKnowledge(runId, { stage: 'FRAME', strict: true });
+
+    const seenMessages: string[] = [];
+    const seenPrompts: Record<string, unknown>[] = [];
+    const adapter = createClaudeAdapter({
+      launch: async (providerInput) => {
+        const record = assertTestRecord(providerInput);
+        seenMessages.push(assertTestString(record.message));
+        seenPrompts.push(assertTestRecord(record.modelVisiblePrompt));
+        return {
+          resolvedModel: assertTestRecord(record.invocation).model,
+          observedModel: assertTestRecord(record.invocation).model,
+          resolvedEffort: assertTestRecord(record.invocation).effort,
+          observedEffort: assertTestRecord(record.invocation).effort,
+          sessionId: `claude-p1-session-${seenMessages.length}`,
+        };
+      },
+    });
+    const registry = createModelRegistry({ surface: 'claude', env: FRONTIER_ENV });
+    const actionContext = { executionMode: 'native-subagent', delegationRequested: true };
+
+    // Turn 1: Run is in FRAME, executing Step 1
+    const turn1 = await dispatchKernelTurn({ controlPlane: cp, runId, adapter, registry, env: FRONTIER_ENV, actionContext });
+    assert.equal(turn1.dispatched, true);
+
+    // Complete Step 1 via cp.report -> advances Run state through EXECUTE -> PROVE and Step cursor to Step 2
+    await writeFile(path.join(projectRoot, 'step1.txt'), 'v1\n');
+    const step1Report = await cp.report(runId, {
+      summary: 'completed step 1',
+      capsuleId: assertTestPresent(turn1.executionCapsule).capsuleId,
+      stepId: assertTestPresent(turn1.executionCapsule).stepId,
+      changedPaths: ['step1.txt'],
+      verifications: [{ obligationId: 'step1-test', commandRef: 'test' }],
+    });
+    assert.equal(assertTestRecord(assertTestRecord(step1Report).step).state, 'passed');
+
+    // Move Run into EXECUTE for Step 2 and refresh stage knowledge so stage-dependent facts change
+    await cp.refreshStageKnowledge(runId, { stage: 'PROVE', strict: true });
+    const turn2 = await dispatchKernelTurn({ controlPlane: cp, runId, adapter, registry, env: FRONTIER_ENV, actionContext });
+    assert.equal(turn2.dispatched, true);
+    assert.equal(seenMessages.length, 2);
+
+    assert.deepEqual(Object.keys(seenPrompts[0]), [...MODEL_VISIBLE_PROMPT_FIELDS]);
+    assert.deepEqual(Object.keys(seenPrompts[0]).slice(0, 4), ['relevantProjectKnowledge', 'objective', 'acceptance', 'constraints']);
+    assert.doesNotMatch(JSON.stringify(seenPrompts[0].relevantProjectKnowledge), /Stage:|quarantined|domain_term|api_contract/);
+    assert.match(JSON.stringify(seenPrompts[0].relevantProjectKnowledge), /Never weaken Kernel completion gates/);
+    assert.match(JSON.stringify(assertTestRecord(seenPrompts[0].currentWork).taskKnowledge), /quarantined|FRAME/);
+    assert.doesNotMatch(JSON.stringify(assertTestRecord(seenPrompts[1].currentWork).taskKnowledge || []), /quarantined/);
+
+    const prefix1 = resolveModelVisibleStablePrefix({ prompt: seenPrompts[0], env: FRONTIER_ENV });
+    const prefix2 = resolveModelVisibleStablePrefix({ prompt: seenPrompts[1], env: FRONTIER_ENV });
+    assert.equal(prefix1, prefix2, 'actual providerMessage stable prefix must stay byte-identical across stages and steps');
+    assert.equal(seenMessages[0].startsWith(prefix1), true);
+    assert.equal(seenMessages[1].startsWith(prefix2), true);
+    assert.notEqual(seenMessages[0], seenMessages[1], 'volatile tail must still reflect step and stage taskKnowledge updates');
+
+    const expectedPrefixTokens = estimateModelVisibleStablePrefixTokens({ prompt: seenPrompts[0], env: FRONTIER_ENV });
+    assert.equal(assertTestRecord(turn1.receipt).eligiblePrefixTokens, expectedPrefixTokens);
+    assert.equal(assertTestRecord(turn2.receipt).eligiblePrefixTokens, expectedPrefixTokens);
+  } finally {
+    await cp.close();
+    await rm(runtimeHome, { recursive: true, force: true });
+    await rm(projectRoot, { recursive: true, force: true });
+  }
 });

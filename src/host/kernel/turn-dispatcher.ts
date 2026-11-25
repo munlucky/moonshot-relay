@@ -20,6 +20,7 @@ import { resolveClaudeEffort } from './claude-effort-policy.js';
 import {
   buildModelCapsuleView,
   buildModelVisiblePromptView,
+  estimateModelVisibleStablePrefixTokens,
   resolveModelVisiblePromptMessage,
 } from './model-capsule-view.js';
 import { dispatchKernelRun } from './parallel-dispatcher.js';
@@ -1569,11 +1570,15 @@ const dispatchKernelTurnAttempt = async ({
       // Gating this on 'on' discarded the only receipt-level evidence of
       // that measurement.
       modelEscalationReason: firstMappedEscalationReason(modelPolicyRecommendation?.reasons),
-      // The denominator eligibleHitRatio needs: the token estimate of every
-      // segment this turn declared cacheable. Without it every live receipt
-      // reports a null eligiblePrefixTokens, so summarizeCacheEconomics() can
-      // never publish a real hit ratio outside the replay corpus.
-      eligiblePrefixTokens: envelope.segments.filter((segment) => segment.cacheable).reduce((total, segment) => total + segment.tokenEstimate, 0),
+      // Match eligiblePrefixTokens to the actual cacheable prefix bytes sent in
+      // `providerMessage` (instructions + project-stable + run-stable header
+      // before `currentWork`), rather than envelope-only segments omitted from
+      // the provider wire message.
+      eligiblePrefixTokens: estimateModelVisibleStablePrefixTokens({
+        prompt: modelVisiblePrompt,
+        review: decision.role === 'reviewer',
+        env,
+      }),
     },
   });
   await controlPlane.recordModelUsage(runId, receipt);

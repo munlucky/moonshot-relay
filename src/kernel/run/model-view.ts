@@ -134,16 +134,22 @@ export const projectKernelModelView = (
   if (action) {
     const projectContext = asRecord(action.projectContext);
     const obligations = Array.isArray(action.obligations) ? action.obligations : [];
-    const MAX_COMPACT_COMMAND_REFS = 8;
     const compactObligations = obligations.map((entry) => {
       const record = asRecord(entry);
-      if (!record || !Array.isArray(record.allowedCommandRefs) || record.allowedCommandRefs.length <= MAX_COMPACT_COMMAND_REFS) {
+      if (!record || !Array.isArray(record.allowedCommandRefs)) return entry;
+      // Explicit bindings (evidence-plan, knowledge, caller) expose every bound
+      // command without any arbitrary cap. Only broad proof-policy class
+      // fallbacks narrow the compact model view to the deterministically
+      // selected primary commandRef while Kernel retains the full allowlist.
+      if (record.bindingMode !== 'proof-policy' || record.allowedCommandRefs.length <= 1) {
         return entry;
       }
+      const selectedCommandRef = typeof record.commandRef === 'string' && record.commandRef
+        ? record.commandRef
+        : String(record.allowedCommandRefs[0] || '');
       return {
         ...record,
-        allowedCommandRefs: record.allowedCommandRefs.slice(0, MAX_COMPACT_COMMAND_REFS),
-        allowedCommandRefsTotal: record.allowedCommandRefs.length,
+        allowedCommandRefs: selectedCommandRef ? [selectedCommandRef] : [],
       };
     });
     const nextActionRecord: UnknownRecord = {
