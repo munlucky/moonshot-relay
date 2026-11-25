@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises';
+import { zstdCompressSync } from 'node:zlib';
 import { openKernelStateStore } from '../src/kernel/state-store.js';
 import { buildCodebaseIndex } from '../src/host/kernel/codebase/codebase-index.js';
 import { discoverProviderSessions, readProviderSession } from '../src/host/kernel/knowledge-input/session-provider.js';
@@ -167,5 +168,56 @@ test('Kernel commit deny judgement matches the shared staging policy', () => {
   for (const allowed of ['src/app.mjs', 'scripts/kernel/git/closeout.js']) {
     assert.equal(isDeniedStagingPath(allowed), false, `expected allow: ${allowed}`);
     assert.equal(isPathStagable(allowed), true, `shared policy must agree: ${allowed}`);
+  }
+});
+
+
+test('Codex native JSONL/Zstandard sessions are discovered newest-first and retain safe metadata', async () => {
+  const sessionRoot = await mkdtemp(path.join(os.tmpdir(), 'codex-native-session-'));
+  const env = { ...process.env, MOON_RELAY_CODEX_SESSION_ROOT: sessionRoot };
+  try {
+    const nested = path.join(sessionRoot, '2026', '11', '25');
+    await mkdir(nested, { recursive: true });
+    const sessionId = '01a1aa6e-426a-7663-8098-367fa22b225a';
+    const compressedPath = path.join(nested, `rollout-2026-11-25T00-00-00-${sessionId}.jsonl.zst`);
+    const events = [
+      { type: 'session_meta', payload: { id: sessionId, timestamp: '2026-11-25T00:00:00Z', cwd: '/projects/native-app' } },
+      { type: 'turn_context', payload: { cwd: '/projects/native-app' } },
+      { type: 'response_item', payload: { type: 'message', content: 'private transcript must not cross Knowledge boundary' } },
+    ];
+    const compressed = zstdCompressSync(Buffer.from(events.map((event) => JSON.stringify(event)).join('\n') + '\n'));
+    await writeFile(compressedPath, compressed);
+
+    // The old 500-file traversal cap could hide recent sessions behind unrelated files.
+    for (let index = 0; index < 502; index += 1) {
+      await writeFile(path.join(sessionRoot, `old-${index}.json`), JSON.stringify({
+        sessionId: `old-${index}`, cwd: '/projects/other',
+      }));
+    }
+    const future = new Date('2030-01-01T00:00:00Z');
+    await utimes(compressedPath, future, future);
+    const discovered = await discoverProviderSessions('codex', { env, limit: 600 });
+    assert.equal(discovered.sessions.length, 503);
+    assert.equal(discovered.sessions[0].nativeSessionId, sessionId);
+    assert.equal(discovered.sessions[0].workingDirectory, '/projects/native-app');
+
+    const input = await readProviderSession('codex', sessionId, { env });
+    assert.equal(input.workingDirectory, '/projects/native-app');
+    assert.equal(input.sourceDigest, discovered.sessions[0].sourceDigest);
+    assert.match(input.sourceDigest, /^sha256:[a-f0-9]{64}$/);
+    assert.equal(input.objective, null);
+    assert.equal(JSON.stringify(input).includes('private transcript'), false);
+
+    const filtered = await discoverProviderSessions('codex', {
+      env, since: '2029-01-01T00:00:00Z', limit: 600,
+    });
+    assert.equal(filtered.sessions.length, 1);
+    assert.equal(filtered.sessions[0].nativeSessionId, sessionId);
+
+    const corruptFile = path.join(nested, 'broken.jsonl.zst');
+    await writeFile(corruptFile, 'invalid-zstandard-payload');
+    await assert.rejects(readProviderSession('codex', 'broken', { locator: corruptFile, env }));
+  } finally {
+    await rm(sessionRoot, { recursive: true, force: true });
   }
 });

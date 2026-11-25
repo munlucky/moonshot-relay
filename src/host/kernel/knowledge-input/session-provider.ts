@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, type Stats } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createInterface } from 'node:readline';
+import { createZstdDecompress } from 'node:zlib';
 import type {
   HostSessionDescriptor,
   HostSessionDiscovery,
@@ -15,7 +17,6 @@ import { redactText } from '../../../shared/redaction.js';
 type UnknownRecord = Record<string, unknown>;
 
 const ALLOWED_EXTENSIONS = new Set(['.json', '.jsonl', '.ndjson']);
-const MAX_FILES = 500;
 const SUPPORTED_PROVIDERS = new Set(['codex', 'claude']);
 
 const EXPLICIT_ROOTS: Record<string, string[]> = {
@@ -43,37 +44,39 @@ const rawDigest = (raw: string): string => (
   'sha256:' + createHash('sha256').update(raw).digest('hex')
 );
 
-const collectFiles = async (
-  roots: readonly string[],
-  result: string[] = [],
-): Promise<string[]> => {
-  if (result.length >= MAX_FILES) return result;
-  for (const root of roots) {
+const collectFiles = async (roots: readonly string[]): Promise<string[]> => {
+  const files = new Set<string>();
+  const visited = new Set<string>();
+  const visit = async (root: string): Promise<void> => {
+    if (visited.has(root)) return;
+    visited.add(root);
     let entries = [];
     try {
       entries = await readdir(root, { withFileTypes: true });
     } catch {
-      continue;
+      return;
     }
     for (const entry of entries) {
-      if (result.length >= MAX_FILES) break;
       const full = path.join(root, entry.name);
       if (entry.isDirectory()) {
-        await collectFiles([full], result);
+        await visit(full);
       } else if (
         entry.isFile()
-        && ALLOWED_EXTENSIONS.has(path.extname(entry.name).toLowerCase())
+        && (ALLOWED_EXTENSIONS.has(path.extname(entry.name).toLowerCase())
+          || entry.name.toLowerCase().endsWith('.jsonl.zst'))
       ) {
-        result.push(full);
+        files.add(full);
       }
     }
-  }
-  return result;
+  };
+  for (const root of roots) await visit(root);
+  return [...files];
 };
 
 const parseSessionFile = (text: string): UnknownRecord => {
   try {
-    return asRecord(JSON.parse(text));
+    const parsed = asRecord(JSON.parse(text));
+    return parsed.type === 'session_meta' ? asRecord(parsed.payload) : parsed;
   } catch {
     const lines = text.split(/\r?\n/).filter(Boolean);
     const events = lines
@@ -86,6 +89,14 @@ const parseSessionFile = (text: string): UnknownRecord => {
         }
       })
       .filter((entry): entry is UnknownRecord => Boolean(entry));
+    const sessionMeta = events.find((event) => event.type === 'session_meta');
+    if (sessionMeta) {
+      const parsed = asRecord(sessionMeta.payload);
+      const turnContext = events.find((event) => (
+        event.type === 'turn_context' && asRecord(event.payload).cwd
+      ));
+      return { ...parsed, cwd: parsed.cwd || asRecord(turnContext?.payload).cwd };
+    }
     const metadata = events.find((event) => (
       event.sessionId
       || event.id
@@ -96,6 +107,30 @@ const parseSessionFile = (text: string): UnknownRecord => {
       ? { ...metadata, eventCount: lines.length }
       : { eventCount: lines.length };
   }
+};
+
+const readSessionSource = async (file: string): Promise<{
+  parsed: UnknownRecord;
+  sourceDigest: string;
+}> => {
+  if (file.toLowerCase().endsWith('.json')) {
+    const raw = await readFile(file, 'utf8');
+    return { parsed: parseSessionFile(raw), sourceDigest: rawDigest(raw) };
+  }
+  const source = createReadStream(file);
+  const digest = createHash('sha256');
+  source.on('data', (chunk: Buffer) => { digest.update(chunk); });
+  const decoded = file.toLowerCase().endsWith('.jsonl.zst')
+    ? source.pipe(createZstdDecompress())
+    : source;
+  const lines: string[] = [];
+  for await (const line of createInterface({ input: decoded, crlfDelay: Infinity })) {
+    if (lines.length < 200 && line.trim()) lines.push(line);
+  }
+  return {
+    parsed: parseSessionFile(lines.join('\n')),
+    sourceDigest: `sha256:${digest.digest('hex')}`,
+  };
 };
 
 const toKnowledgeInput = ({
@@ -185,8 +220,9 @@ export function resolveProviderSessionRoots(
     }
   }
 
+  const codexSessions = path.join(profileRoot, 'sessions');
   const roots = name === 'codex'
-    ? [path.join(profileRoot, 'sessions'), profileRoot]
+    ? [existsSync(codexSessions) ? codexSessions : profileRoot]
     : [path.join(profileRoot, 'projects'), path.join(profileRoot, 'sessions'), profileRoot];
   return {
     provider: name,
@@ -220,13 +256,20 @@ export async function discoverProviderSessions(
 
   const files = await collectFiles(resolution.roots);
   const threshold = since ? new Date(since).getTime() : 0;
-  const sessions: HostSessionDescriptor[] = [];
+  const candidates: Array<{ file: string; info: Stats }> = [];
+  for (let index = 0; index < files.length; index += 64) {
+    const batch = await Promise.all(files.slice(index, index + 64).map(async (file) => {
+      const info = await stat(file).catch(() => null);
+      return info && (!threshold || info.mtimeMs >= threshold) ? { file, info } : null;
+    }));
+    for (const item of batch) if (item) candidates.push(item);
+  }
+  candidates.sort((left, right) => right.info.mtimeMs - left.info.mtimeMs || left.file.localeCompare(right.file));
 
-  for (const file of files) {
-    const info = await stat(file).catch(() => null);
-    if (!info || (threshold && info.mtimeMs < threshold)) continue;
-    const raw = await readFile(file, 'utf8').catch(() => '');
-    const parsed = parseSessionFile(raw);
+  const sessions: HostSessionDescriptor[] = [];
+  const selected = candidates.slice(0, Number(limit) > 0 ? Math.floor(Number(limit)) : 50);
+  for (const { file, info } of selected) {
+    const { parsed, sourceDigest } = await readSessionSource(file);
     const nativeSessionId = String(
       parsed.nativeSessionId
       || parsed.sessionId
@@ -237,7 +280,7 @@ export async function discoverProviderSessions(
       provider,
       nativeSessionId,
       locator: file,
-      sourceDigest: rawDigest(raw),
+      sourceDigest,
       workingDirectory: safeText(parsed.workingDirectory || parsed.cwd || parsed.projectRoot),
       remote: safeText(parsed.remote || parsed.gitRemote),
       updatedAt: safeText(parsed.updatedAt) || info.mtime.toISOString(),
@@ -278,13 +321,12 @@ export async function readProviderSession(
     );
   }
 
-  const raw = await readFile(file, 'utf8');
-  const parsed = parseSessionFile(raw);
+  const { parsed, sourceDigest } = await readSessionSource(file);
   return toKnowledgeInput({
     provider,
     nativeSessionId,
     locator: file,
-    sourceDigest: rawDigest(raw),
+    sourceDigest,
     parsed,
   });
 }

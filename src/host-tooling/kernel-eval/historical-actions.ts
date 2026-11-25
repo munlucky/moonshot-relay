@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { createInterface } from 'node:readline';
+import { createZstdDecompress } from 'node:zlib';
 import { DatabaseSync } from 'node:sqlite';
 import { classifyCommandName } from '../../contracts/command-catalog.js';
 import { discoverProviderSessions } from '../../host/kernel/knowledge-input/session-provider.js';
@@ -349,15 +351,20 @@ export const loadHistoricalActionSessions = async ({
   for (const descriptor of discovery.sessions) {
     if (!descriptor.locator || seenLocators.has(descriptor.locator)) continue;
     seenLocators.add(descriptor.locator);
-    const raw = await readFile(descriptor.locator, 'utf8').catch(() => '');
-    if (!raw) continue;
-    const events = raw.split(/\r?\n/u).filter(Boolean).flatMap((line) => {
+    const source = createReadStream(descriptor.locator);
+    const decoded = descriptor.locator.toLowerCase().endsWith('.jsonl.zst')
+      ? source.pipe(createZstdDecompress())
+      : source;
+    const events: UnknownRecord[] = [];
+    for await (const line of createInterface({ input: decoded, crlfDelay: Infinity })) {
+      if (!line.trim()) continue;
       try {
-        return [record(JSON.parse(line))];
+        events.push(record(JSON.parse(line)));
       } catch {
-        return [];
+        // Ignore malformed individual records, not failures to read the source.
       }
-    });
+    }
+    if (events.length === 0) continue;
     const meta = record(events.find((event) => event.type === 'session_meta')?.payload);
     const sessionId = normalizeSessionId(meta.session_id || meta.id || descriptor.nativeSessionId);
     if (!sessionId) continue;
@@ -405,7 +412,7 @@ export const loadHistoricalActionSessions = async ({
       schemaVersion: 'kernel-historical-action-session.v1',
       provider: 'codex',
       sessionId,
-      sourceDigest: sha256(raw),
+      sourceDigest: descriptor.sourceDigest,
       workspaceRootDigest: matchedRoot ? sha256(matchedRoot) : null,
       gitRevision,
       generationRelevance: classifyGenerationRelevance({
