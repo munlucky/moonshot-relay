@@ -69,6 +69,7 @@ export interface RunForStepCompletion {
 export interface StepAttemptLike {
   stepId?: string | null;
   status?: string | null;
+  failureCategory?: string | null;
   workspaceIdentityStart?: string | null;
   workspaceIdentityEnd?: string | null;
   resultDigest?: string | null;
@@ -245,17 +246,18 @@ export const detectStepStagnation = ({
   threshold = 3,
 }: DetectStepStagnationInput = {}) => {
   const stepAttempts = attempts.filter((attempt) => attempt.stepId === step?.stepId);
-  const recent = stepAttempts.slice(-threshold);
+  const failureAttempts = stepAttempts.filter((attempt) => attempt.failureCategory !== 'judgment-pending');
+  const recent = failureAttempts.slice(-threshold);
   const consecutiveFailures = recent.length >= threshold && recent.every((attempt) => attempt.status === 'failed');
 
-  const workspaceUnchanged = stepAttempts.filter((attempt) => (
+  const workspaceUnchanged = failureAttempts.filter((attempt) => (
     attempt.status === 'failed'
     && Boolean(attempt.workspaceIdentityStart)
     && attempt.workspaceIdentityStart === attempt.workspaceIdentityEnd
   )).length >= 2;
 
   const repeatedResult = (() => {
-    const digests = stepAttempts
+    const digests = failureAttempts
       .map((attempt) => attempt.resultDigest)
       .filter((digest): digest is string => Boolean(digest));
     return digests.length >= 2 && digests.at(-1) === digests.at(-2);

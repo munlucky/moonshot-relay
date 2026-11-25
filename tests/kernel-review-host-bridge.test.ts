@@ -1268,7 +1268,7 @@ test('one trusted proof execution is shared across identical hard obligations in
   }
 });
 
-test('persisted failed proof skips identical execution and reruns on meaningful Evidence Identity delta', async () => {
+test('persisted failed proof does not reuse failure and reruns on identical or changed Evidence Identity', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-failed-proof-delta-'));
   const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-failed-proof-delta-state-'));
   const marker = path.join(runtimeHome, 'proof-execution-count.log');
@@ -1304,10 +1304,10 @@ test('persisted failed proof skips identical execution and reruns on meaningful 
   try {
     await cp.startRun({
       runId: 'failed-proof-delta',
-      objective: 'avoid identical failed proof reruns',
+      objective: 'never reuse prior failed proof across retries',
       taskContract: {
         allowedPaths: ['app.mjs'],
-        acceptance: ['failed proof reruns only after meaningful evidence delta'],
+        acceptance: ['failed proof executes fresh on retry and on meaningful evidence delta'],
         requiredVerifications: [{ obligationId: 'default', method: 'unit-test', commandRefs: ['test:fail'] }],
       },
     });
@@ -1329,9 +1329,9 @@ test('persisted failed proof skips identical execution and reruns on meaningful 
       evidenceIdentity: identity(),
     });
     assert.equal(identical.execution.recordedStatus, 'failed');
-    assert.equal(identical.execution.reused, true);
-    assert.equal(identical.execution.actualCommandExecution, false);
-    assert.equal(await executionCount(), 1, 'identical failed evidence must not execute again');
+    assert.ok(!identical.execution.reused, 'prior failed verification must not be reused');
+    assert.equal(identical.execution.actualCommandExecution, true);
+    assert.equal(await executionCount(), 2, 'failed verification must execute fresh rather than reusing failure');
 
     for (const changedIdentity of [
       identity({ sourceInputDigest: 'sha256:source-b' }),
@@ -1347,7 +1347,7 @@ test('persisted failed proof skips identical execution and reruns on meaningful 
       assert.equal(rerun.execution.recordedStatus, 'failed');
       assert.equal(rerun.execution.actualCommandExecution, true);
     }
-    assert.equal(await executionCount(), 5, 'each meaningful evidence delta must re-enable execution');
+    assert.equal(await executionCount(), 6, 'each retry and meaningful evidence delta must execute fresh');
   } finally {
     await cp.close();
     await rm(runtimeHome, { recursive: true, force: true });

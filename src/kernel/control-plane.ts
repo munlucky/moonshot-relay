@@ -2074,35 +2074,76 @@ export const createKernelControlPlane = async ({
           const activeContract = contractChanged ? merged : existing.taskContract;
           const currentRun = requireRun(runId);
           const currentStep = this.getCurrentStep(runId);
-          const amendedStep = resolveDeclaredStepForReplan(activeContract, currentStep);
-          const requiresSyntheticReplan = contractChanged && activeContract.steps.length === 0;
-          const requiresScopeReplan = contractChanged && (requiresSyntheticReplan || stepScopeChanged(currentStep, amendedStep));
           const currentPlan = store.getRunSteps(runId, { planRevision: currentRun.planRevision });
+          const normalizedCandidatePlan = planRunSteps({
+            run: currentRun,
+            contract: activeContract,
+            obligations: store.getRunObligations(runId),
+            route: currentRun.route || {},
+            planRevision: currentRun.planRevision,
+          }).steps;
+          const completed = store.getRunSteps(runId).filter((step) => step.state === 'passed');
+          const findCompletedMatch = (candidate: typeof normalizedCandidatePlan[number]) => completed.find((step) => (
+            String(step.objective || '') === String(candidate.objective || '')
+            && !stepScopeChanged(step, candidate)
+          ));
+          const remainingCandidates = activeContract.steps.length > 0
+            ? normalizedCandidatePlan.filter((candidate) => !findCompletedMatch(candidate))
+            : normalizedCandidatePlan;
+          const pendingCurrentPlan = currentPlan.filter((step) => step.state !== 'passed');
+          const normalizedAmendedStep = resolveDeclaredStepForReplan(
+            { steps: remainingCandidates.length > 0 ? remainingCandidates : normalizedCandidatePlan },
+            currentStep,
+          );
+          const blockedOnUnsupportedVerification = existing.status === 'blocked'
+            && existing.blockedReason === 'unsupported-verification';
+          const requiresSyntheticReplan = contractChanged && activeContract.steps.length === 0 && (
+            blockedOnUnsupportedVerification
+            || currentPlan.length !== normalizedCandidatePlan.length
+            || Boolean(currentStep?.synthetic) !== Boolean(normalizedAmendedStep?.synthetic)
+            || String(currentStep?.objective || '') !== String(normalizedAmendedStep?.objective || '')
+            || stepScopeChanged(currentStep, normalizedAmendedStep)
+          );
+          const currentStepChanged = currentStep !== null && (
+            !normalizedAmendedStep
+            || String(currentStep.objective || '') !== String(normalizedAmendedStep.objective || '')
+            || stepScopeChanged(currentStep, normalizedAmendedStep)
+          );
+          const remainingPlanChanged = activeContract.steps.length > 0
+            && planDiffersFromContract(pendingCurrentPlan, remainingCandidates);
+          const requiresScopeReplan = contractChanged && (
+            requiresSyntheticReplan
+            || currentStepChanged
+            || remainingPlanChanged
+          );
           const requiresCompletedPlanReplan = !currentStep
             && activeContract.steps.length > 0
-            && planDiffersFromContract(currentPlan, activeContract.steps);
+            && planDiffersFromContract(pendingCurrentPlan, remainingCandidates);
           if (requiresScopeReplan || requiresCompletedPlanReplan) {
             // Replacing one scope must not discard the pending tail of the
             // contract. Passed rows remain history; only unfinished or changed
             // units enter the replacement plan.
-            const completed = store.getRunSteps(runId).filter((step) => step.state === 'passed');
-            const completedDeclaration = (declared: ContractStep) => completed.find((step) => (
-              String(step.objective || '') === String(declared.objective || '')
-              && !stepScopeChanged(step, { ...declared, acceptanceIds: step.acceptanceIds, obligationIds: step.obligationIds })
-            ));
+            const completedDeclaration = (declared: ContractStep, index: number) => {
+              const normalizedCandidate = normalizedCandidatePlan[index];
+              if (normalizedCandidate) return findCompletedMatch(normalizedCandidate);
+              return completed.find((step) => (
+                String(step.objective || '') === String(declared.objective || '')
+                && !stepScopeChanged(step, { ...declared, acceptanceIds: step.acceptanceIds, obligationIds: step.obligationIds })
+              ));
+            };
             const replacementSteps = activeContract.steps
-              .filter((declared: ContractStep) => !completedDeclaration(declared))
+              .filter((declared: ContractStep, index: number) => !completedDeclaration(declared, index))
               .map((declared: ContractStep) => ({
                 ...declared,
                 ...(Array.isArray(declared.dependsOn) ? { dependsOn: declared.dependsOn.map((id) => {
-                  const dependency = activeContract.steps.find((entry) => entry.stepId === id);
-                  return dependency ? completedDeclaration(dependency)?.stepId || id : id;
+                  const depIndex = activeContract.steps.findIndex((entry) => entry.stepId === id);
+                  const dependency = depIndex >= 0 ? activeContract.steps[depIndex] : null;
+                  return dependency ? completedDeclaration(dependency, depIndex)?.stepId || id : id;
                 }) } : {}),
               }));
             if (requiresSyntheticReplan || replacementSteps.length > 0) await this.replanSteps(runId, {
               steps: requiresSyntheticReplan ? [] : replacementSteps,
-              resumeBlockedReason: existing.status === 'blocked'
-                && existing.blockedReason === 'unsupported-verification'
+              resumeBlockedReason: blockedOnUnsupportedVerification
                 ? 'unsupported-verification'
                 : null,
             });
@@ -3696,24 +3737,34 @@ export const createKernelControlPlane = async ({
         };
       }
 
-      const exactPrior = allowEvidenceReuse
+      const exactPriorCandidate = allowEvidenceReuse
         && !flakyRerun
         && !discovered
-        && typeof store.findExactVerification === 'function'
-        ? store.findExactVerification({
-          projectId: run.projectId,
-          obligationId,
-          evidenceIdentity,
-          contractRevision: run.contractRevision,
-        })
+        ? (typeof store.findExactReusableVerification === 'function'
+          ? store.findExactReusableVerification({
+            projectId: run.projectId,
+            obligationId,
+            evidenceIdentity,
+            contractRevision: run.contractRevision,
+          })
+          : typeof store.findExactVerification === 'function'
+            ? store.findExactVerification({
+              projectId: run.projectId,
+              obligationId,
+              evidenceIdentity,
+              contractRevision: run.contractRevision,
+            })
+            : null)
+        : null;
+      const exactPrior = exactPriorCandidate
+        && exactPriorCandidate.status === 'passed'
+        && exactPriorCandidate.exitCode === 0
+        && exactPriorCandidate.evidenceDigest
+        ? exactPriorCandidate
         : null;
       if (exactPrior?.evidenceDigest) {
-        const priorStatus = exactPrior.status === 'passed' && exactPrior.exitCode === 0
-          ? 'passed'
-          : 'failed';
-        const priorExitCode = priorStatus === 'passed'
-          ? 0
-          : (Number.isInteger(exactPrior.exitCode) ? exactPrior.exitCode : 1);
+        const priorStatus = 'passed';
+        const priorExitCode = 0;
         const reuseReceipt = buildEvidenceReuseReceipt({
           runId,
           obligationId,

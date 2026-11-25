@@ -4,7 +4,9 @@ import { isProtectedObligation } from '../proof/protected-obligations.js';
 import type { KernelState } from '../transition.js';
 import type { TaskContractLike, ContractStep } from '../task/task-contract.js';
 interface StepIdentity { stepId?: unknown; objective?: unknown; sequence?: unknown }
-interface StepScope extends StepIdentity { allowedPaths?: unknown; forbiddenPaths?: unknown; acceptanceIds?: unknown; obligationIds?: unknown }
+interface StepScope extends StepIdentity { allowedPaths?: unknown; forbiddenPaths?: unknown; acceptanceIds?: unknown; obligationIds?: unknown; dependencyIds?: unknown; synthetic?: unknown }
+
+const stripStepRevisionSuffix = (value: unknown): string => String(value || '').replace(/@r\d+(?:-\d+)?$/u, '');
 export const canonicalChangedPaths = (paths: unknown): string[] => [...new Set((Array.isArray(paths) ? paths : [])
   .map((entry) => String(entry).replaceAll('\\', '/').replace(/^\.\//u, ''))
   .filter(Boolean))].sort();
@@ -54,10 +56,15 @@ export const buildRunRoute = (contract: { taskClass?: unknown }, riskSummary: un
   return ['FRAME', 'EXECUTE', 'PROVE', 'CLOSE'];
 };
 
-export const resolveDeclaredStepForReplan = (contract: { steps?: ContractStep[] } | null, step: StepIdentity | null): ContractStep | null => {
+export const resolveDeclaredStepForReplan = (contract: { steps?: Array<ContractStep | StepScope> } | null, step: StepIdentity | null): (ContractStep | StepScope) | null => {
   if (!step || !Array.isArray(contract?.steps)) return null;
-  const byId = contract.steps.find((entry) => entry.stepId && String(entry.stepId) === step.stepId);
+  const byId = contract.steps.find((entry) => entry.stepId && String(entry.stepId) === String(step.stepId || ''));
   if (byId) return byId;
+  const baseStepId = stripStepRevisionSuffix(step.stepId);
+  if (baseStepId) {
+    const byBaseId = contract.steps.find((entry) => entry.stepId && stripStepRevisionSuffix(entry.stepId) === baseStepId);
+    if (byBaseId) return byBaseId;
+  }
   const byObjective = contract.steps.find((entry) => String(entry.objective || '') === String(step.objective || ''));
   if (byObjective) return byObjective;
   return contract.steps[Number(step.sequence) - 1] || null;
@@ -66,10 +73,14 @@ export const resolveDeclaredStepForReplan = (contract: { steps?: ContractStep[] 
 export const stepScopeChanged = (step: StepScope | null, declared: StepScope | null): boolean => {
   if (!step || !declared) return false;
   const normalized = (value: unknown) => [...new Set((Array.isArray(value) ? value : []).map(String))].sort();
+  const normalizedDeps = (value: unknown) => [...new Set((Array.isArray(value) ? value : []).map(stripStepRevisionSuffix).filter(Boolean))].sort();
+  const depsChanged = Array.isArray(step.dependencyIds) && Array.isArray(declared.dependencyIds)
+    && JSON.stringify(normalizedDeps(step.dependencyIds)) !== JSON.stringify(normalizedDeps(declared.dependencyIds));
   return JSON.stringify(normalized(step.allowedPaths)) !== JSON.stringify(normalized(declared.allowedPaths))
     || JSON.stringify(normalized(step.forbiddenPaths)) !== JSON.stringify(normalized(declared.forbiddenPaths))
     || JSON.stringify(normalized(step.acceptanceIds)) !== JSON.stringify(normalized(declared.acceptanceIds))
-    || JSON.stringify(normalized(step.obligationIds)) !== JSON.stringify(normalized(declared.obligationIds));
+    || JSON.stringify(normalized(step.obligationIds)) !== JSON.stringify(normalized(declared.obligationIds))
+    || depsChanged;
 };
 
 export const planDiffersFromContract = (steps: StepScope[] = [], declared: StepScope[] = []): boolean => {

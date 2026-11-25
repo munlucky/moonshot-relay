@@ -966,6 +966,41 @@ export const createWorkCursorApi = ({
     });
 
     const passed = failures.length === 0 && evaluation.complete;
+    const obligations = store.getRunObligations(runId);
+    const verifications = store.getVerifications(runId);
+    const obligationsById = new Map(obligations.map((obligation) => [String(obligation.obligationId), obligation]));
+    const verificationsById = new Map(verifications.map((verification) => [String(verification.obligationId), verification]));
+    const unsatisfiedObligationIds = evaluation.reasons
+      .filter((reason) => reason.startsWith('obligation-unsatisfied:'))
+      .map((reason) => reason.slice('obligation-unsatisfied:'.length));
+    const uncoveredAcceptanceIds = evaluation.reasons
+      .filter((reason) => reason.startsWith('acceptance-uncovered:'))
+      .map((reason) => reason.slice('acceptance-uncovered:'.length));
+    const hasOnlyPendingReasons = evaluation.reasons.length > 0
+      && evaluation.reasons.every((reason) => (
+        reason.startsWith('obligation-unsatisfied:') || reason.startsWith('acceptance-uncovered:')
+      ));
+    const allUnsatisfiedArePendingJudgments = unsatisfiedObligationIds.every((obligationId) => {
+      const obligation = obligationsById.get(obligationId);
+      const verification = verificationsById.get(obligationId);
+      return obligation?.evidenceClass === 'judgment' && verification?.status !== 'failed';
+    });
+    const allUncoveredAcceptanceArePendingJudgments = uncoveredAcceptanceIds.every((acceptanceId) => {
+      const bound = obligations.filter((obligation) => (
+        Array.isArray(obligation.acceptanceIds)
+        && obligation.acceptanceIds.some((id) => String(id) === acceptanceId)
+      ));
+      return bound.length > 0 && bound.every((obligation) => {
+        const verification = verificationsById.get(String(obligation.obligationId));
+        return obligation.evidenceClass === 'judgment' && verification?.status !== 'failed';
+      });
+    });
+    const pendingJudgmentOnly = !passed
+      && failures.length === 0
+      && hasOnlyPendingReasons
+      && (unsatisfiedObligationIds.length > 0 || uncoveredAcceptanceIds.length > 0)
+      && allUnsatisfiedArePendingJudgments
+      && allUncoveredAcceptanceArePendingJudgments;
     const currentStep = store.getRunStep(runId, step.stepId);
     if (currentStep?.state === 'passed') {
       if (!passed || currentStep.resultDigest !== resultDigest || currentStep.workspaceIdentityEnd !== observation.identity) {
@@ -987,9 +1022,11 @@ export const createWorkCursorApi = ({
         workspaceIdentityEnd: observation.identity,
         changedPaths: report.changedPaths,
         resultDigest,
-        verificationRefs: store.getVerifications(runId).map((verification) => verification.evidenceRef).filter(Boolean),
+        verificationRefs: verifications.map((verification) => verification.evidenceRef).filter(Boolean),
         failureReasons: passed ? [] : [...evaluation.reasons, ...failures.map((failure) => failure.errorSummary).filter(Boolean)],
-        failureCategory: passed ? null : (failures[0]?.failureCategory || 'proof'),
+        failureCategory: passed
+          ? null
+          : (failures[0]?.failureCategory || (pendingJudgmentOnly ? 'judgment-pending' : 'proof')),
     } : null;
     if (attempt && persistAttempt && attemptSettlement) {
       store.finishStepAttempt(attempt.id, attemptSettlement);

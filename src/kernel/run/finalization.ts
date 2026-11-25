@@ -16,6 +16,13 @@ import { projectRunState } from '../state-projector.js';
 import { authoritativeVerificationScope } from '../../contracts/verification-settlement.js';
 import { assertCompletionProvenance } from '../proof/completion-provenance.js';
 import { evaluateTrustCompletion, type EvaluateTrustCompletionInput } from '../proof/trust-authority.js';
+import {
+  allStepsPassed,
+  dependenciesSatisfied,
+  evaluateStepCompletion,
+  TERMINAL_STEP_STATES,
+} from './run-step-ledger.js';
+import { canonicalDigest } from '../../shared/canonical-digest.js';
 import { resolveRunArtifactPaths } from '../artifact-paths.js';
 import { deduplicateKnowledgeCandidates, deriveKnowledgeStatus, extractStructuredKnowledgeCandidates } from '../knowledge/capture.js';
 import { mkdir } from 'node:fs/promises';
@@ -109,7 +116,8 @@ interface PersistableCandidate extends ReviewKnowledgeCandidate {
   status?: (string) | undefined;
 }
 
-type FinalizationStore = Pick<Awaited<ReturnType<typeof import('../state-store.js').openKernelStateStore>>, "getRun" | "listKnowledgeRecords" | "getKnowledgeApproval" | "ensureRunObligation" | "getRunObligations" | "getVerifications" | "recordCandidateEvidenceBinding" | "getProjectKnowledgeRevision" | "commitKnowledgeTransaction" | "getCompletionDecision" | "getMutationProvenance" | "observeWorkspaceIdentity" | "recordGitCloseoutReceipt" | "getGitCloseoutReceipt" | "recordKnowledgeReviewReceipt" | "recordKnowledgeCandidate" | "setKnowledgeStatus" | "recordFinalizationReceipt" | "setFinalizationStatus" | "getFinalizationReceipt" | "getWaivers" | "listReviewReceipts" | "getLatestEvidencePack" | "recordKnowledgeApproval" | "transition" | "persistCompletionDecision" | "getProjectRunSignals" | "getKnowledgeCandidates" | "recordKnowledgeCommitReceipt" | "getKnowledgeCommitReceipt" | "getDeferredKnowledgeRuns">;
+type FinalizationStore = Pick<Awaited<ReturnType<typeof import('../state-store.js').openKernelStateStore>>, "getRun" | "listKnowledgeRecords" | "getKnowledgeApproval" | "ensureRunObligation" | "getRunObligations" | "getVerifications" | "recordCandidateEvidenceBinding" | "getProjectKnowledgeRevision" | "commitKnowledgeTransaction" | "getCompletionDecision" | "getMutationProvenance" | "observeWorkspaceIdentity" | "recordGitCloseoutReceipt" | "getGitCloseoutReceipt" | "recordKnowledgeReviewReceipt" | "recordKnowledgeCandidate" | "setKnowledgeStatus" | "recordFinalizationReceipt" | "setFinalizationStatus" | "getFinalizationReceipt" | "getWaivers" | "listReviewReceipts" | "getLatestEvidencePack" | "recordKnowledgeApproval" | "transition" | "persistCompletionDecision" | "getProjectRunSignals" | "getKnowledgeCandidates" | "recordKnowledgeCommitReceipt" | "getKnowledgeCommitReceipt" | "getDeferredKnowledgeRuns">
+  & Partial<Pick<Awaited<ReturnType<typeof import('../state-store.js').openKernelStateStore>>, "getRunSteps" | "getStepAttempts" | "updateRunStep">>;
 
 type SettlementStore = Pick<FinalizationStore,
   'getRun' | 'getFinalizationReceipt' | 'getCompletionDecision'
@@ -430,6 +438,128 @@ const buildVerificationScopeIdentities = ({ store, runId, projectRoot, observeSc
   return identities;
 };
 
+const reconcileStepsBeforeFinalization = ({
+  store,
+  run,
+  preflight,
+}: {
+  store: FinalizationStore;
+  run: ReturnType<typeof requireRun>;
+  preflight: ReturnType<typeof evaluateTrustCompletion>;
+}) => {
+  if (typeof store.getRunSteps !== 'function') {
+    return { settled: true, unsettledSteps: [] as Array<{ stepId: string; state: string; blockedReason: string | null }> };
+  }
+  const planRevision = Number.isInteger(run.planRevision) ? Number(run.planRevision) : null;
+  let currentSteps = store.getRunSteps(run.runId, { planRevision });
+  if (currentSteps.length === 0 || allStepsPassed(currentSteps, planRevision)) {
+    return { settled: true, unsettledSteps: [] as Array<{ stepId: string; state: string; blockedReason: string | null }> };
+  }
+
+  const hasAttempts = (step: (typeof currentSteps)[number]) => (
+    Number(step.attemptCount || 0) > 0
+    || (typeof store.getStepAttempts === 'function' && store.getStepAttempts(run.runId, { stepId: step.stepId }).length > 0)
+  );
+  const isUntouched = (step: (typeof currentSteps)[number]) => (
+    (step.state === 'planned' || step.state === 'ready') && !hasAttempts(step)
+  );
+
+  // Preserve W5 semantics: a Run accepted before any Step was executed cancels
+  // its untouched Steps inside persistCompletionDecision without fabricating
+  // passed Steps.
+  if (currentSteps.every(isUntouched)) {
+    return { settled: true, unsettledSteps: [] as Array<{ stepId: string; state: string; blockedReason: string | null }> };
+  }
+
+  // When an attempted Step failed/stalled (e.g., waiting for late judgments)
+  // and all required evidence is now satisfied on the same source, settle it
+  // through the legal Step Ledger transitions before accepting completion.
+  if (typeof store.updateRunStep === 'function') {
+    const verifications = store.getVerifications(run.runId);
+    const acceptance = (Array.isArray(run.taskContract?.acceptance) ? run.taskContract.acceptance : []).map((item) => {
+      const entry = asRecord(item);
+      return { id: String(entry.id || ''), statement: String(entry.statement || '') };
+    });
+
+    for (const step of [...currentSteps].sort((a, b) => a.sequence - b.sequence)) {
+      if ((TERMINAL_STEP_STATES as readonly string[]).includes(step.state)) continue;
+      if (isUntouched(step)) continue;
+      const allSteps = store.getRunSteps(run.runId);
+      if (!dependenciesSatisfied(step, allSteps)) continue;
+
+      const complete = step.synthetic
+        ? Boolean(preflight.readyExceptClose)
+          && Boolean(run.currentWorkspaceIdentity)
+          && (!Array.isArray(preflight.unsatisfiedObligations) || preflight.unsatisfiedObligations.length === 0)
+        : evaluateStepCompletion({
+          step,
+          verifications,
+          run,
+          acceptance,
+        }).complete;
+      if (!complete) continue;
+
+      let state = step.state;
+      if (state === 'failed' || state === 'blocked') {
+        store.updateRunStep(run.runId, step.stepId, { state: 'ready', blockedReason: null });
+        state = 'ready';
+      }
+      if (state === 'planned') {
+        store.updateRunStep(run.runId, step.stepId, { state: 'ready' });
+        state = 'ready';
+      }
+      if (state === 'ready') {
+        store.updateRunStep(run.runId, step.stepId, {
+          state: 'running',
+          startedAt: step.startedAt || new Date().toISOString(),
+          workspaceIdentityStart: step.workspaceIdentityStart || run.currentWorkspaceIdentity || null,
+        });
+        state = 'running';
+      }
+      if (state === 'running') {
+        store.updateRunStep(run.runId, step.stepId, { state: 'reported' });
+        state = 'reported';
+      }
+      if (state === 'reported') {
+        store.updateRunStep(run.runId, step.stepId, { state: 'verifying' });
+        state = 'verifying';
+      }
+      if (state === 'verifying') {
+        store.updateRunStep(run.runId, step.stepId, {
+          state: 'passed',
+          blockedReason: null,
+          completedAt: new Date().toISOString(),
+          workspaceIdentityEnd: run.currentWorkspaceIdentity || null,
+          resultDigest: step.resultDigest || canonicalDigest({
+            stepId: step.stepId,
+            planRevision: step.planRevision,
+            mutationRevision: run.mutationRevision,
+            settledBy: 'finalization',
+          }),
+        });
+      }
+
+      const updatedAll = store.getRunSteps(run.runId);
+      for (const dependent of updatedAll) {
+        if (dependent.state === 'planned' && dependenciesSatisfied(dependent, updatedAll)) {
+          store.updateRunStep(run.runId, dependent.stepId, { state: 'ready' });
+        }
+      }
+    }
+    currentSteps = store.getRunSteps(run.runId, { planRevision });
+  }
+
+  if (allStepsPassed(currentSteps, planRevision)) {
+    return { settled: true, unsettledSteps: [] as Array<{ stepId: string; state: string; blockedReason: string | null }> };
+  }
+  return {
+    settled: false,
+    unsettledSteps: currentSteps
+      .filter((step) => !(TERMINAL_STEP_STATES as readonly string[]).includes(step.state))
+      .map((step) => ({ stepId: step.stepId, state: step.state, blockedReason: step.blockedReason || null })),
+  };
+};
+
 export const finalizeRun = async ({
   store,
   runtimeHome,
@@ -511,13 +641,35 @@ export const finalizeRun = async ({
       unmetGates: Object.entries(preflight.gates || {}).filter(([key, value]) => key !== 'isClosed' && !value).map(([key]) => key),
     });
   }
+  const existingDecision = store.getCompletionDecision(runId);
+  const isFinalizationRetry = existingDecision?.decision === 'accepted' && run.status === 'completed';
+
+  if (!isFinalizationRetry) {
+    const stepReconciliation = reconcileStepsBeforeFinalization({ store, run, preflight });
+    if (!stepReconciliation.settled) {
+      return blockedReceipt(store, runId, {
+        schemaVersion: 1,
+        runId,
+        projectId: run.projectId,
+        completionStatus: 'blocked',
+        knowledgeStatus: 'skipped',
+        projectionStatus: 'none',
+        gitCloseoutStatus: 'skipped',
+        finalizationStatus: 'incomplete_gates',
+        completionResult: preflight,
+        reviewResult: { status: 'no_candidates' },
+        reason: 'work_steps_unsettled',
+        unmetGates: ['stepsSettled'],
+        unsettledSteps: stepReconciliation.unsettledSteps,
+      });
+    }
+  }
+
   if (run.state !== 'CLOSE' && run.status !== 'completed') {
     store.transition(runId, 'CLOSE');
   }
 
   // Step 2: Assess & persist completion authority.
-  const existingDecision = store.getCompletionDecision(runId);
-  const isFinalizationRetry = existingDecision?.decision === 'accepted' && run.status === 'completed';
   const completionEval = isFinalizationRetry
     ? { ...evaluateCompletion(), decision: 'accepted', digest: String(existingDecision.evidenceDigest), decisionPayload: asRecord(existingDecision.decisionJson) }
     : evaluateCompletion();
