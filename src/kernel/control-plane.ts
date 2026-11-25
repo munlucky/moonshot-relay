@@ -75,16 +75,53 @@ type ReportCheckpoint = {
   activeStep: PersistedWorkStep | null; stepAttemptId: string | null;
   actualChangedPaths: string[]; reportedChangedPaths: string[]; reportKey: string | null;
 }
-const readReportCheckpoint = (value: unknown): ReportCheckpoint | null => {
+export const serializeReportCheckpointForPersistence = (checkpoint: ReportCheckpoint): UnknownRecord => {
+  if (
+    !checkpoint.parallelSettlement
+    && !checkpoint.workerWorkspace
+    && checkpoint.liveWorkspaceObservation !== null
+    && checkpoint.observation === checkpoint.liveWorkspaceObservation
+  ) {
+    const { liveWorkspaceObservation: _omitted, ...rest } = checkpoint;
+    return {
+      ...rest,
+      schemaVersion: 2,
+      liveWorkspaceObservationMode: 'same-as-observation',
+    };
+  }
+  return checkpoint as unknown as UnknownRecord;
+};
+
+export const readReportCheckpoint = (value: unknown): ReportCheckpoint | null => {
   if (!value) return null;
   const record = asRecord(value);
-  if (record.schemaVersion !== 1 || typeof record.runId !== 'string'
-    || !Number.isInteger(record.mutationRevision) || !Number.isInteger(record.planRevision)
-    || !record.report || !record.observation || !record.observed
-    || !['executed', 'failures', 'actualChangedPaths', 'reportedChangedPaths'].every(key => Array.isArray(record[key]))) {
+  const validBase = typeof record.runId === 'string'
+    && Number.isInteger(record.mutationRevision) && Number.isInteger(record.planRevision)
+    && Boolean(record.report) && Boolean(record.observation) && Boolean(record.observed)
+    && ['executed', 'failures', 'actualChangedPaths', 'reportedChangedPaths'].every(key => Array.isArray(record[key]));
+  if (!validBase) {
     throw new Error('REPORT_CHECKPOINT_INVALID');
   }
-  return record as ReportCheckpoint;
+  if (record.schemaVersion === 1) {
+    return record as ReportCheckpoint;
+  }
+  if (record.schemaVersion === 2) {
+    if (
+      record.liveWorkspaceObservationMode !== 'same-as-observation'
+      || record.parallelSettlement !== null
+      || record.workerWorkspace !== false
+      || ('liveWorkspaceObservation' in record && record.liveWorkspaceObservation !== undefined)
+    ) {
+      throw new Error('REPORT_CHECKPOINT_INVALID');
+    }
+    const { liveWorkspaceObservationMode: _mode, ...rest } = record;
+    return {
+      ...rest,
+      schemaVersion: 1,
+      liveWorkspaceObservation: record.observation as WorkspaceObservation,
+    } as ReportCheckpoint;
+  }
+  throw new Error('REPORT_CHECKPOINT_INVALID');
 };
 
 interface ProofRequest {
@@ -5489,7 +5526,12 @@ export const createKernelControlPlane = async ({
         ...(guardedProof && parallelSettlement && stepAttempt?.provenanceKind === 'host-owned-worker'
           ? { guardedHostWorkerProof: true } : {}),
         stepAttemptId: stepAttempt?.attemptId || null, actualChangedPaths, reportedChangedPaths, reportKey };
-      if (stepAttempt?.attemptId) store.checkpointStepReport(stepAttempt.attemptId, checkpoint);
+      if (stepAttempt?.attemptId) {
+        store.checkpointStepReport(
+          stepAttempt.attemptId,
+          serializeReportCheckpointForPersistence(checkpoint),
+        );
+      }
       return this.settleVerifiedReport(runId, checkpoint, { fencingToken });
     },
 

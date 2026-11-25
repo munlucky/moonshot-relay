@@ -10,6 +10,10 @@ import { createKernelControlPlane } from '../src/host/kernel/control-plane-runti
 import { dispatchKernelTurn } from '../src/host/kernel/turn-dispatcher.js';
 import { createClaudeAdapter } from '../src/host/kernel/adapters/claude.js';
 import { createModelRegistry } from '../src/host/kernel/model-registry.js';
+import {
+  readReportCheckpoint,
+  serializeReportCheckpointForPersistence,
+} from '../src/kernel/control-plane.js';
 
 const childSource = String.raw`
 import { readFile, writeFile } from 'node:fs/promises';
@@ -421,6 +425,220 @@ await cp.report(payload.runId,payload);process.exit(3);`);
 test('report recovery finishes the same operation after finalization before result persistence', () => verifyFinalizationCheckpoint(null));
 test('Git report checkpoint reuses a completed closeout after process restart and rejects external drift', () => verifyFinalizationCheckpoint('completed'));
 test('Git report checkpoint resumes after commit creation without another commit or proof', () => verifyFinalizationCheckpoint('commit_created'));
+
+test('W3: direct report persists single-observation v2 checkpoint, settles from memory, and restores v1/v2 identically with fail-closed validation', async () => {
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'w3-checkpoint-home-'));
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'w3-checkpoint-project-'));
+  let cp: TestControlPlane | null = null;
+  try {
+    await writeFile(path.join(projectRoot, 'package.json'), JSON.stringify({ scripts: { test: 'node -p 1' } }));
+    spawnSync('git', ['init', '-b', 'main'], { cwd: projectRoot, encoding: 'utf8' });
+    spawnSync('git', ['config', 'user.name', 'W3 Fixture'], { cwd: projectRoot, encoding: 'utf8' });
+    spawnSync('git', ['config', 'user.email', 'w3@example.invalid'], { cwd: projectRoot, encoding: 'utf8' });
+    await writeFile(path.join(projectRoot, 'app.mjs'), 'export const v = 1;\n');
+    spawnSync('git', ['add', '.'], { cwd: projectRoot, encoding: 'utf8' });
+    spawnSync('git', ['commit', '-m', 'init'], { cwd: projectRoot, encoding: 'utf8' });
+
+    cp = await createKernelControlPlane({ runtimeHome, projectRoot });
+    const runId = 'w3-direct-checkpoint';
+    await cp.startRun({
+      runId,
+      objective: 'verify W3 checkpoint persistence and recovery',
+      taskContract: { acceptance: ['works'], allowedPaths: ['app.mjs'] },
+    });
+    await writeFile(path.join(projectRoot, 'app.mjs'), 'export const v = 2;\n');
+
+    // 1. Normal direct report: persists v2 without liveWorkspaceObservation,
+    //    settles directly from in-memory logical checkpoint (no DB re-read).
+    let settleSawLiveObs = false;
+    const origSettle = cp.settleVerifiedReport.bind(cp);
+    cp.settleVerifiedReport = (id, checkpoint, opts) => {
+      settleSawLiveObs = Boolean(
+        checkpoint.schemaVersion === 1
+        && checkpoint.observation
+        && checkpoint.liveWorkspaceObservation === checkpoint.observation,
+      );
+      return origSettle(id, checkpoint, opts);
+    };
+    const res = await cp.report(runId, { summary: 'direct delivery', changedPaths: ['app.mjs'] });
+    assert.equal(assertTestPresent(res).status, 'completed');
+    assert.equal(settleSawLiveObs, true, 'immediate settlement must receive full in-memory logical checkpoint');
+
+    const storedAttempt = assertTestPresent(cp.stateStore.getStepAttempts(runId)[0]);
+    const rawPersisted = assertTestRecord(storedAttempt.reportCheckpoint);
+    assert.equal(rawPersisted.schemaVersion, 2);
+    assert.equal(rawPersisted.liveWorkspaceObservationMode, 'same-as-observation');
+    assert.equal('liveWorkspaceObservation' in rawPersisted, false);
+    assert.ok(rawPersisted.observed, 'observed field must be preserved');
+
+    // Restore v2 -> identical logical v1 checkpoint
+    const restoredFromV2 = assertTestPresent(readReportCheckpoint(rawPersisted));
+    assert.equal(restoredFromV2.schemaVersion, 1);
+    assert.deepEqual(restoredFromV2.liveWorkspaceObservation, restoredFromV2.observation);
+
+    // 2. CAS immutability: attempting to overwrite persisted v2 with v1 throws REPORT_CHECKPOINT_CONFLICT
+    assert.throws(
+      () => cp!.stateStore.checkpointStepReport(assertTestString(storedAttempt.attemptId), restoredFromV2),
+      (err: unknown) => assertTestRecord(err).code === 'REPORT_CHECKPOINT_CONFLICT',
+    );
+
+    // 3. Parallel / worker checkpoints NEVER collapse into v2 and keep liveWorkspaceObservation = null
+    const parallelLogical = {
+      ...restoredFromV2,
+      workerWorkspace: true,
+      parallelSettlement: { expectedMutationRevision: 0, deliveryWorkspaceIdentity: 'ws-id' },
+      liveWorkspaceObservation: null,
+    };
+    const persistedParallel = serializeReportCheckpointForPersistence(parallelLogical as Parameters<typeof serializeReportCheckpointForPersistence>[0]);
+    assert.equal(persistedParallel.schemaVersion, 1);
+    assert.equal(persistedParallel.liveWorkspaceObservation, null);
+    assert.equal(persistedParallel.workerWorkspace, true);
+    const restoredParallel = assertTestPresent(readReportCheckpoint(persistedParallel));
+    assert.equal(restoredParallel.liveWorkspaceObservation, null);
+    assert.equal(restoredParallel.workerWorkspace, true);
+
+    // 4. Fail-closed on invalid/ambiguous v2 combinations
+    for (const invalid of [
+      { ...rawPersisted, parallelSettlement: { expectedMutationRevision: 0 } },
+      { ...rawPersisted, workerWorkspace: true },
+      { ...rawPersisted, liveWorkspaceObservationMode: 'unknown' },
+      { ...rawPersisted, liveWorkspaceObservation: rawPersisted.observation },
+      { ...rawPersisted, schemaVersion: 3 },
+    ]) {
+      assert.throws(() => readReportCheckpoint(invalid), /REPORT_CHECKPOINT_INVALID/);
+    }
+  } finally {
+    await cp?.close();
+    await rm(runtimeHome, { recursive: true, force: true });
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test('W3: legacy v1 checkpoint recovers on restart without rewriting to v2 and preserves v1 CAS immutability', async () => {
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'w3-v1-compat-home-'));
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), 'w3-v1-compat-project-'));
+  let cp: TestControlPlane | null = null;
+  try {
+    await writeFile(path.join(projectRoot, 'package.json'), JSON.stringify({ scripts: { test: 'node -p 1' } }));
+    spawnSync('git', ['init', '-b', 'main'], { cwd: projectRoot, encoding: 'utf8' });
+    spawnSync('git', ['config', 'user.name', 'W3 V1 Fixture'], { cwd: projectRoot, encoding: 'utf8' });
+    spawnSync('git', ['config', 'user.email', 'w3v1@example.invalid'], { cwd: projectRoot, encoding: 'utf8' });
+    await writeFile(path.join(projectRoot, 'app.mjs'), 'export const v = 1;\n');
+    spawnSync('git', ['add', '.'], { cwd: projectRoot, encoding: 'utf8' });
+    spawnSync('git', ['commit', '-m', 'init'], { cwd: projectRoot, encoding: 'utf8' });
+
+    cp = await createKernelControlPlane({ runtimeHome, projectRoot });
+    const runId = 'w3-legacy-v1-recovery';
+    await cp.startRun({
+      runId,
+      objective: 'recover from legacy v1 checkpoint without rewriting',
+      taskContract: { acceptance: ['works'], allowedPaths: ['app.mjs'] },
+    });
+    await writeFile(path.join(projectRoot, 'app.mjs'), 'export const v = 2;\n');
+
+    // Intercept settlement right after checkpoint write, rewrite DB row to legacy v1
+    // (simulating an attempt checkpointed before W3), and leave report_result_json NULL.
+    let capturedV2: Record<string, unknown> | null = null;
+    const origCheckpoint = cp.stateStore.checkpointStepReport.bind(cp.stateStore);
+    cp.stateStore.checkpointStepReport = (attemptId, checkpoint) => {
+      capturedV2 = assertTestRecord(checkpoint);
+      const legacyV1 = readReportCheckpoint(checkpoint);
+      return origCheckpoint(attemptId, legacyV1);
+    };
+    cp.settleVerifiedReport = async () => ({ status: 'simulated-crash' } as never);
+    const payload = { summary: 'legacy v1 delivery', changedPaths: ['app.mjs'] };
+    await cp.report(runId, payload);
+    assert.equal(assertTestRecord(capturedV2).schemaVersion, 2);
+
+    const attemptBeforeRestart = assertTestPresent(cp.stateStore.getStepAttempts(runId)[0]);
+    const storedV1 = assertTestRecord(attemptBeforeRestart.reportCheckpoint);
+    assert.equal(storedV1.schemaVersion, 1, 'simulated legacy v1 row must be v1 on disk');
+    assert.ok(storedV1.liveWorkspaceObservation, 'legacy v1 row carries liveWorkspaceObservation');
+    await cp.close();
+    cp = null;
+
+    // Restart with fresh control plane: must recover from v1 and NOT rewrite v1 -> v2
+    cp = await createKernelControlPlane({ runtimeHome, projectRoot });
+    const recovered = await cp.report(runId, { ...payload, reportKey: assertTestString(attemptBeforeRestart.reportKey) });
+    assert.equal(assertTestPresent(recovered).status, 'completed');
+
+    const attemptAfterRestart = assertTestPresent(cp.stateStore.getStepAttempts(runId)[0]);
+    assert.equal(assertTestRecord(attemptAfterRestart.reportCheckpoint).schemaVersion, 1, 'legacy v1 row must never be rewritten as v2');
+
+    // Attempting to overwrite v1 row with v2 fails closed with REPORT_CHECKPOINT_CONFLICT
+    assert.throws(
+      () => cp!.stateStore.checkpointStepReport(assertTestString(attemptAfterRestart.attemptId), capturedV2),
+      (err: unknown) => assertTestRecord(err).code === 'REPORT_CHECKPOINT_CONFLICT',
+    );
+  } finally {
+    await cp?.close();
+    await rm(runtimeHome, { recursive: true, force: true });
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test('W3: finalization re-observation failure falls back to liveWorkspaceObservation on both immediate settlement and v2 restart recovery', async () => {
+  for (const mode of ['immediate', 'restart-v2'] as const) {
+    const runtimeHome = await mkdtemp(path.join(os.tmpdir(), `w3-fallback-${mode}-home-`));
+    const projectRoot = await mkdtemp(path.join(os.tmpdir(), `w3-fallback-${mode}-project-`));
+    let cp: TestControlPlane | null = null;
+    try {
+      await writeFile(path.join(projectRoot, 'package.json'), JSON.stringify({ scripts: { test: 'node -p 1' } }));
+      spawnSync('git', ['init', '-b', 'main'], { cwd: projectRoot, encoding: 'utf8' });
+      spawnSync('git', ['config', 'user.name', 'W3 Fallback'], { cwd: projectRoot, encoding: 'utf8' });
+      spawnSync('git', ['config', 'user.email', 'w3fb@example.invalid'], { cwd: projectRoot, encoding: 'utf8' });
+      await writeFile(path.join(projectRoot, 'app.mjs'), 'export const v = 1;\n');
+      spawnSync('git', ['add', '.'], { cwd: projectRoot, encoding: 'utf8' });
+      spawnSync('git', ['commit', '-m', 'init'], { cwd: projectRoot, encoding: 'utf8' });
+
+      cp = await createKernelControlPlane({ runtimeHome, projectRoot });
+      const runId = `w3-fallback-${mode}`;
+      await cp.startRun({
+        runId,
+        objective: 'verify liveWorkspaceObservation fallback on finalization re-observation failure',
+        taskContract: { acceptance: ['works'], allowedPaths: ['app.mjs'] },
+      });
+      await writeFile(path.join(projectRoot, 'app.mjs'), 'export const v = 2;\n');
+
+      const payload = { summary: 'fallback delivery', changedPaths: ['app.mjs'] };
+      if (mode === 'restart-v2') {
+        cp.settleVerifiedReport = async () => ({ status: 'simulated-crash' } as never);
+        await cp.report(runId, payload);
+        const pending = assertTestPresent(cp.stateStore.getStepAttempts(runId)[0]);
+        assert.equal(assertTestRecord(pending.reportCheckpoint).schemaVersion, 2);
+        await cp.close();
+        cp = null;
+
+        // Restart and settle from v2 checkpoint; verify restored checkpoint carries liveWorkspaceObservation
+        // and finalizeRun receives actual changedPaths ['app.mjs'] even if final re-observation fails.
+        cp = await createKernelControlPlane({ runtimeHome, projectRoot });
+        let finalChangedPaths: unknown = null;
+        const origFinalize = cp.finalizeRun.bind(cp);
+        cp.finalizeRun = (id, opts) => {
+          finalChangedPaths = assertTestRecord(opts).changedPaths;
+          return origFinalize(id, opts);
+        };
+        const recovered = await cp.report(runId, { ...payload, reportKey: assertTestString(pending.reportKey) });
+        assert.equal(assertTestPresent(recovered).status, 'completed');
+        assert.deepEqual(finalChangedPaths, ['app.mjs']);
+      } else {
+        let finalChangedPaths: unknown = null;
+        const origFinalize = cp.finalizeRun.bind(cp);
+        cp.finalizeRun = (id, opts) => {
+          finalChangedPaths = assertTestRecord(opts).changedPaths;
+          return origFinalize(id, opts);
+        };
+        const res = await cp.report(runId, payload);
+        assert.equal(assertTestPresent(res).status, 'completed');
+        assert.deepEqual(finalChangedPaths, ['app.mjs']);
+      }
+    } finally {
+      await cp?.close();
+      await rm(runtimeHome, { recursive: true, force: true });
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  }
+});
 
 
 type TestControlPlane = Awaited<ReturnType<typeof import("../src/host/kernel/control-plane-runtime.js").createKernelControlPlane>>;
