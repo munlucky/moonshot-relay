@@ -753,22 +753,6 @@ try {
       await cp.captureBaseline(activeRunId, { commandRefs });
       res = await cp.next(activeRunId);
     }
-    const settledRecord = asRecord(res);
-    const settledVerification = asRecord(settledRecord.verification);
-    const settledPending = Array.isArray(settledVerification.pending) ? settledVerification.pending : [];
-    const settledFailed = Array.isArray(settledVerification.failed) ? settledVerification.failed : [];
-    if (activeRunId
-      && asRecord(settledRecord.action).type === 'report'
-      && settledPending.length === 0
-      && settledFailed.length === 0) {
-      const finalized = asRecord(await cp.finalizeRun(activeRunId));
-      if (finalized.completionStatus === 'accepted') {
-        res = {
-          ...asRecord(await cp.next(activeRunId)),
-          finalization: finalized,
-        };
-      }
-    }
     await closeControlPlane(cp);
     output(res);
   } else if (command === 'report') {

@@ -366,13 +366,28 @@ export const evaluateTrustCompletion = ({
     return { required: true, usable: allReasons.length === 0, receiptId: parsed.receiptId, reasons: allReasons };
   };
 
+  const coveredAcceptance = new Set([
+    ...verifications.filter(isVerificationValid).flatMap((v) => normalizedCoverageFor(v) || []),
+    ...waivers.flatMap((w) => w.acceptanceCoverage || []),
+  ]);
+
   const obligationSatisfied = (obligationId: string) => {
     const declared = declaredById.get(obligationId);
     const expectedClass = declared?.evidenceClass || 'hard';
     const verification = latestByObligation.get(obligationId);
     if (verification && isVerificationValid(verification)) {
       if (expectedClass === 'judgment') {
-        if (verification.evidenceClass === 'judgment') return reviewLineageFor(obligationId, verification, declared).usable;
+        if (verification.evidenceClass === 'judgment') {
+          if (!reviewLineageFor(obligationId, verification, declared).usable) return false;
+          const requiredAcceptanceIds = Array.isArray(declared?.acceptanceIds)
+            ? declared.acceptanceIds.map(String).filter(Boolean)
+            : [];
+          if (requiredAcceptanceIds.length > 0) {
+            const coverage = normalizedCoverageFor(verification) || [];
+            if (!requiredAcceptanceIds.every((acId) => coverage.includes(acId) || coveredAcceptance.has(acId))) return false;
+          }
+          return true;
+        }
       } else if (verification.executor === 'kernel-runtime' && verification.evidenceClass === 'hard') {
         return true;
       } else if (!runMutatedWorkspace && verification.evidenceClass !== 'judgment') {
@@ -431,10 +446,6 @@ export const evaluateTrustCompletion = ({
   const goalEvidenceSatisfied = goalEvidenceObligations.length > 0
     && (requiredGoalEvidence.length === 0 || goalEvidenceCount > 0);
 
-  const coveredAcceptance = new Set([
-    ...verifications.filter(isVerificationValid).flatMap((v) => normalizedCoverageFor(v) || []),
-    ...waivers.flatMap((w) => w.acceptanceCoverage || []),
-  ]);
   // Coverage may be declared by acceptance id (AC-1) or by statement.
   const contractAcceptance = Array.isArray(run.taskContract?.acceptance) ? run.taskContract.acceptance : [];
   // Completion must not trust a legacy verification row merely because it

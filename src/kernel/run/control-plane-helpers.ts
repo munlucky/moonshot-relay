@@ -70,7 +70,7 @@ export const resolveDeclaredStepForReplan = (contract: { steps?: Array<ContractS
   return contract.steps[Number(step.sequence) - 1] || null;
 };
 
-export const stepScopeChanged = (step: StepScope | null, declared: StepScope | null): boolean => {
+export const stepImplementationScopeChanged = (step: StepScope | null, declared: StepScope | null): boolean => {
   if (!step || !declared) return false;
   const normalized = (value: unknown) => [...new Set((Array.isArray(value) ? value : []).map(String))].sort();
   const normalizedDeps = (value: unknown) => [...new Set((Array.isArray(value) ? value : []).map(stripStepRevisionSuffix).filter(Boolean))].sort();
@@ -78,9 +78,15 @@ export const stepScopeChanged = (step: StepScope | null, declared: StepScope | n
     && JSON.stringify(normalizedDeps(step.dependencyIds)) !== JSON.stringify(normalizedDeps(declared.dependencyIds));
   return JSON.stringify(normalized(step.allowedPaths)) !== JSON.stringify(normalized(declared.allowedPaths))
     || JSON.stringify(normalized(step.forbiddenPaths)) !== JSON.stringify(normalized(declared.forbiddenPaths))
-    || JSON.stringify(normalized(step.acceptanceIds)) !== JSON.stringify(normalized(declared.acceptanceIds))
-    || JSON.stringify(normalized(step.obligationIds)) !== JSON.stringify(normalized(declared.obligationIds))
     || depsChanged;
+};
+
+export const stepScopeChanged = (step: StepScope | null, declared: StepScope | null): boolean => {
+  if (!step || !declared) return false;
+  const normalized = (value: unknown) => [...new Set((Array.isArray(value) ? value : []).map(String))].sort();
+  return stepImplementationScopeChanged(step, declared)
+    || JSON.stringify(normalized(step.acceptanceIds)) !== JSON.stringify(normalized(declared.acceptanceIds))
+    || JSON.stringify(normalized(step.obligationIds)) !== JSON.stringify(normalized(declared.obligationIds));
 };
 
 export const planDiffersFromContract = (steps: StepScope[] = [], declared: StepScope[] = []): boolean => {

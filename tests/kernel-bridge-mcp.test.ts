@@ -1761,3 +1761,443 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
     await Promise.all([workspaceRoot, runtimeHome, reservationRoot].map((dir) => rm(dir, { recursive: true, force: true })));
   }
 });
+
+test('S3 MCP report replay returns stored result without re-dispatching reviewer from stale review directive', async () => {
+  const workspaceRoot = await createFixtureRepo();
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-mcp-replay-review-'));
+  const runId = 'mcp-s3-report-replay-no-review';
+  try {
+    await mkdir(path.join(workspaceRoot, '.moon-relay'), { recursive: true });
+    await writeFile(path.join(workspaceRoot, '.moon-relay', 'track.yaml'), 'track: kernel\n');
+    await writeFile(path.join(workspaceRoot, 'package.json'), JSON.stringify({
+      name: 'replay-review-fixture',
+      scripts: { test: 'node -e "process.exit(0)"', lint: 'node -e "process.exit(0)"' },
+    }));
+    await writeFile(path.join(workspaceRoot, 'app.mjs'), 'export const value = 0;\n');
+    spawnSync('git', ['add', '.'], { cwd: workspaceRoot, encoding: 'utf8' });
+    spawnSync('git', ['commit', '-m', 'add app', '--quiet'], { cwd: workspaceRoot, encoding: 'utf8' });
+
+    let reviewerLaunches = 0;
+    const reviewer = createClaudeAdapter({
+      launch: async ({ invocation }) => {
+        reviewerLaunches += 1;
+        return {
+          resolvedModel: assertTestRecord(invocation).model,
+          observedModel: assertTestRecord(invocation).model,
+          resolvedEffort: assertTestRecord(invocation).effort,
+          observedEffort: assertTestRecord(invocation).effort,
+          sessionId: 'mcp-replay-reviewer',
+          outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://replay'] },
+        };
+      },
+    });
+    const bridge = createKernelHostReviewBridge({
+      adapter: reviewer,
+      registry: createModelRegistry({
+        surface: 'claude',
+        env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'mcp-replay-frontier', MOON_RELAY_KERNEL_MODEL_FRONTIER_EFFORT: 'high' },
+      }),
+      runtimeHome,
+      env: {},
+      parentSessionId: 'mcp-replay-owner',
+    });
+    // Pre-register an implementation principal so independent review lineage is valid.
+    const cpInit = await createKernelControlPlane({ runtimeHome, projectRoot: workspaceRoot });
+    let stepId: string;
+    let capsuleId: string;
+    let attemptId: string;
+    try {
+      await cpInit.startRun({
+        runId,
+        objective: 'secure update with replay test',
+        taskContract: {
+          surfaces: ['security_boundary'],
+          acceptance: ['secure update passes'],
+          allowedPaths: ['app.mjs'],
+        },
+      });
+      const implementer = createClaudeAdapter({
+        launch: async ({ invocation }) => ({
+          resolvedModel: assertTestRecord(invocation).model,
+          observedModel: assertTestRecord(invocation).model,
+          resolvedEffort: assertTestRecord(invocation).effort,
+          observedEffort: assertTestRecord(invocation).effort,
+          sessionId: 'mcp-replay-implementer',
+        }),
+      });
+      const implTurn = await dispatchKernelTurn({
+        controlPlane: cpInit,
+        runId,
+        adapter: implementer,
+        registry: createModelRegistry({
+          surface: 'claude',
+          env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'configured-frontier', MOON_RELAY_KERNEL_MODEL_VALUE: 'configured-value' },
+        }),
+        actionContext: { executionMode: 'native-subagent', delegationRequested: true },
+      });
+      stepId = assertTestString(assertTestPresent(implTurn.executionCapsule).stepId);
+      capsuleId = assertTestString(assertTestPresent(implTurn.executionCapsule).capsuleId);
+      attemptId = assertTestString(assertTestPresent(cpInit.stateStore.getStepAttempts(runId).at(-1)).attemptId);
+    } finally {
+      await cpInit.close();
+    }
+
+    const handler = createMcpBridgeHandler({ runtimeHome, env: {}, hostBridge: bridge });
+    await writeFile(path.join(workspaceRoot, 'app.mjs'), 'export const value = 1;\n');
+
+    const reportArgs = {
+      workspaceRoot,
+      runId,
+      surface: 'claude_app',
+      report: {
+        stepId,
+        capsuleId,
+        attemptId,
+        summary: 'submit step-1 work and trigger independent review once',
+        changedPaths: ['app.mjs'],
+      },
+    };
+    const first = parseToolText(await handler({
+      jsonrpc: '2.0', id: 201, method: 'tools/call',
+      params: { name: 'kernel_report', arguments: reportArgs },
+    }));
+    assert.equal(reviewerLaunches, 1);
+    assert.equal(first.status, 'completed');
+    assert.equal(assertTestRecord(assertTestRecord(first.next).action).type, 'done');
+
+    // Retransmit the exact same report payload: its stored attempt reportResult
+    // still contains the historical next.action.type='review'. MCP must replay
+    // that stored result WITHOUT re-dispatching the reviewer!
+    const replayedRes = await handler({
+      jsonrpc: '2.0', id: 202, method: 'tools/call',
+      params: { name: 'kernel_report', arguments: reportArgs },
+    });
+    const replayed = parseToolText(replayedRes);
+    assert.equal(reviewerLaunches, 1, 'replayed report must not re-run reviewer from historical review directive');
+    assert.equal(replayed.idempotentReplay, true, JSON.stringify(replayed));
+    assert.equal(assertTestRecord(assertTestRecord(replayed.next).action).type, 'review', 'stored historical report result is preserved verbatim');
+    assert.equal(replayed.hostReview, undefined);
+
+    // Current run state remains completed with exactly 1 review receipt.
+    const status = parseToolText(await handler({
+      jsonrpc: '2.0', id: 203, method: 'tools/call',
+      params: { name: 'kernel_status', arguments: { workspaceRoot, runId } },
+    }));
+    assert.equal(assertTestRecord(status.run).status, 'completed');
+  } finally {
+    await rm(runtimeHome, { recursive: true, force: true });
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test('S3 MCP concurrent authorized resume settles once while foreign session and read-only attach never mutate', async () => {
+  const runId = 'mcp-s3-concurrent-resume';
+  const fixture = await prepareMcpReviewRun(runId);
+  const ownerSession = 'codex:mcp-s3-owner';
+  try {
+    const cp = await createKernelControlPlane({
+      runtimeHome: fixture.runtimeHome,
+      projectRoot: fixture.root,
+      env: { MOON_RELAY_KERNEL_PROVIDER: 'codex', MOON_RELAY_KERNEL_SESSION_ID: ownerSession },
+      requireHostBinding: true,
+    });
+    try {
+      // Adopt owner binding on this unowned fixture run and pre-approve judgment without finalizing
+      await cp.ensureRun({ runId });
+      await cp.approveObligation({
+        runId, obligationId: 'security-review', approver: 'operator',
+        reason: 'ready for concurrent resume', approvalRef: 'operator-ref:mcp-s3',
+        autoFinalize: false,
+      });
+    } finally {
+      await cp.close();
+    }
+
+    // 1. Read-only attach must not finalize
+    const ownerHandler1 = createMcpBridgeHandler({
+      runtimeHome: fixture.runtimeHome,
+      env: { MOON_RELAY_KERNEL_PROVIDER: 'codex', MOON_RELAY_KERNEL_SESSION_ID: ownerSession },
+    });
+    const attached = parseToolText(await ownerHandler1({
+      jsonrpc: '2.0', id: 210, method: 'tools/call',
+      params: { name: 'kernel_attach', arguments: { workspaceRoot: fixture.root, runId } },
+    }));
+    assert.equal(attached.status, 'attached');
+    assert.equal(attached.runStatus, 'active');
+
+    // 2. Foreign session kernel_next must be rejected without mutating
+    const foreignHandler = createMcpBridgeHandler({
+      runtimeHome: fixture.runtimeHome,
+      env: { MOON_RELAY_KERNEL_PROVIDER: 'codex', MOON_RELAY_KERNEL_SESSION_ID: 'codex:mcp-s3-foreign' },
+    });
+    const foreignRes = await foreignHandler({
+      jsonrpc: '2.0', id: 211, method: 'tools/call',
+      params: { name: 'kernel_next', arguments: { workspaceRoot: fixture.root, runId, surface: 'codex_app' } },
+    });
+    assert.equal(assertTestRecord(assertTestRecord(foreignRes).result).isError, true);
+    assert.equal(parseToolText(foreignRes).code, 'host_binding_missing');
+
+    // 3. Two concurrent authorized owner connections resume simultaneously -> settle cleanly once
+    const ownerHandler2 = createMcpBridgeHandler({
+      runtimeHome: fixture.runtimeHome,
+      env: { MOON_RELAY_KERNEL_PROVIDER: 'codex', MOON_RELAY_KERNEL_SESSION_ID: ownerSession },
+    });
+    const [r1, r2] = await Promise.all([
+      ownerHandler1({ jsonrpc: '2.0', id: 212, method: 'tools/call', params: { name: 'kernel_next', arguments: { workspaceRoot: fixture.root, runId, surface: 'codex_app' } } }),
+      ownerHandler2({ jsonrpc: '2.0', id: 213, method: 'tools/call', params: { name: 'kernel_next', arguments: { workspaceRoot: fixture.root, runId, surface: 'codex_app' } } }),
+    ]);
+    const b1 = parseToolText(r1);
+    const b2 = parseToolText(r2);
+    assert.ok(
+      assertTestRecord(b1.action).type === 'done' || assertTestRecord(b2.action).type === 'done',
+      JSON.stringify({ b1, b2 }),
+    );
+    const cpCheck = await createKernelControlPlane({ runtimeHome: fixture.runtimeHome, projectRoot: fixture.root });
+    try {
+      const runAfter = assertTestPresent(await cpCheck.getRun(runId));
+      assert.equal(runAfter.status, 'completed');
+      assert.equal(runAfter.finalizationStatus, 'completed');
+      assert.equal(cpCheck.listReviewReceipts(runId).length, 1);
+    } finally {
+      await cpCheck.close();
+    }
+  } finally {
+    await cleanupMcpReviewRun(fixture);
+  }
+});
+
+test('S3 partial finalization never returns done through MCP kernel_report or kernel_next', async () => {
+  const workspaceRoot = await createFixtureRepo();
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-mcp-partial-fin-'));
+  const runId = 'mcp-s3-partial-finalization';
+  try {
+    const headBefore = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: workspaceRoot, encoding: 'utf8' }).stdout.trim();
+    const countBefore = Number(spawnSync('git', ['rev-list', '--count', 'HEAD'], { cwd: workspaceRoot, encoding: 'utf8' }).stdout.trim());
+
+    const handler = createMcpBridgeHandler({ runtimeHome, env: {} });
+    await handler({
+      jsonrpc: '2.0', id: 220, method: 'tools/call',
+      params: {
+        name: 'kernel_next',
+        arguments: {
+          workspaceRoot,
+          runId,
+          contractJson: {
+            objective: 'Verify partial finalization never returns done',
+            acceptance: ['README updated'],
+            allowedPaths: ['README.md'],
+          },
+        },
+      },
+    });
+    await writeFile(path.join(workspaceRoot, 'README.md'), '# Bridge Fixture\n\npartial finalization test\n');
+    // Request commit_and_push in a local repo with no remote: completion is accepted,
+    // commit succeeds (HEAD advances +1), push fails -> finalizationStatus='partial'.
+    // Public responses must NEVER return done!
+    const reported = parseToolText(await handler({
+      jsonrpc: '2.0', id: 221, method: 'tools/call',
+      params: {
+        name: 'kernel_report',
+        arguments: {
+          workspaceRoot,
+          runId,
+          report: {
+            summary: 'updated README with requested push that fails',
+            changedPaths: ['README.md'],
+            gitCloseoutRequest: {
+              requested: true,
+              mode: 'commit_and_push',
+              approvalReceipt: 'explicit-s3-approval',
+            },
+          },
+        },
+      },
+    }));
+    const headAfter = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: workspaceRoot, encoding: 'utf8' }).stdout.trim();
+    const countAfter = Number(spawnSync('git', ['rev-list', '--count', 'HEAD'], { cwd: workspaceRoot, encoding: 'utf8' }).stdout.trim());
+    const statusPorcelain = spawnSync('git', ['status', '--porcelain'], { cwd: workspaceRoot, encoding: 'utf8' }).stdout.trim();
+
+    assert.equal(reported.status, 'finalization-incomplete', JSON.stringify(reported));
+    const fin = assertTestRecord(reported.finalization);
+    assert.equal(fin.completionStatus, 'accepted');
+    assert.equal(fin.finalizationStatus, 'partial');
+    assert.notEqual(headAfter, headBefore, 'commit_and_push must actually create the local commit before push fails');
+    assert.equal(countAfter, countBefore + 1, 'exactly one commit must be created');
+    assert.equal(statusPorcelain, '', 'README.md must be committed in the working tree');
+    assert.doesNotMatch(String(fin.gitCloseoutError || ''), /Unsupported git closeout mode/i);
+    assert.notEqual(assertTestRecord(assertTestRecord(reported.next).action).type, 'done');
+    assert.equal(assertTestRecord(assertTestRecord(reported.next).action).type, 'finalize');
+
+    const cpCheck = await createKernelControlPlane({ runtimeHome, projectRoot: workspaceRoot });
+    try {
+      const gitReceipt = assertTestPresent(cpCheck.stateStore.getGitCloseoutReceipt(runId));
+      assert.equal(gitReceipt.status, 'push_failed', JSON.stringify(gitReceipt));
+      assert.equal(gitReceipt.commitSha, headAfter);
+      assert.match(String(gitReceipt.errorMessage || fin.gitCloseoutError || ''), /push|remote|origin/i);
+    } finally {
+      await cpCheck.close();
+    }
+
+    const resumed = parseToolText(await handler({
+      jsonrpc: '2.0', id: 222, method: 'tools/call',
+      params: { name: 'kernel_next', arguments: { workspaceRoot, runId } },
+    }));
+    assert.notEqual(assertTestRecord(resumed.action).type, 'done');
+    assert.equal(assertTestRecord(resumed.action).type, 'finalize');
+    const countAfterResume = Number(spawnSync('git', ['rev-list', '--count', 'HEAD'], { cwd: workspaceRoot, encoding: 'utf8' }).stdout.trim());
+    const headAfterResume = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: workspaceRoot, encoding: 'utf8' }).stdout.trim();
+    assert.equal(countAfterResume, countBefore + 1, 'resume must not create a duplicate commit');
+    assert.equal(headAfterResume, headAfter);
+  } finally {
+    await rm(runtimeHome, { recursive: true, force: true });
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test('S3 P1: approved Git closeout on MCP report executes exactly once after independent review and survives retransmission + resume', async () => {
+  const workspaceRoot = await createFixtureRepo();
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-mcp-review-git-closeout-'));
+  const runId = 'mcp-s3-review-git-closeout';
+  try {
+    await writeFile(path.join(workspaceRoot, 'package.json'), JSON.stringify({
+      name: 'bridge-fixture',
+      scripts: { test: 'node -e "process.exit(0)"', lint: 'node -e "process.exit(0)"' },
+    }));
+    await writeFile(path.join(workspaceRoot, 'app.mjs'), 'export const value = 0;\n');
+    spawnSync('git', ['add', 'package.json', 'app.mjs'], { cwd: workspaceRoot, encoding: 'utf8' });
+    spawnSync('git', ['commit', '-m', 'add app fixture with lint script'], { cwd: workspaceRoot, encoding: 'utf8' });
+    const headBefore = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: workspaceRoot, encoding: 'utf8' }).stdout.trim();
+    const countBefore = Number(spawnSync('git', ['rev-list', '--count', 'HEAD'], { cwd: workspaceRoot, encoding: 'utf8' }).stdout.trim());
+
+    let reviewerLaunches = 0;
+    const reviewer = createClaudeAdapter({
+      launch: async ({ invocation }) => {
+        reviewerLaunches += 1;
+        return {
+          resolvedModel: assertTestRecord(invocation).model,
+          observedModel: assertTestRecord(invocation).model,
+          resolvedEffort: assertTestRecord(invocation).effort,
+          observedEffort: assertTestRecord(invocation).effort,
+          sessionId: 'mcp-git-closeout-reviewer',
+          outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://git-closeout-pass'] },
+        };
+      },
+    });
+    const bridge = createKernelHostReviewBridge({
+      adapter: reviewer,
+      registry: createModelRegistry({
+        surface: 'claude',
+        env: {
+          MOON_RELAY_KERNEL_MODEL_FRONTIER: 'mcp-review-frontier',
+          MOON_RELAY_KERNEL_MODEL_FRONTIER_EFFORT: 'high',
+        },
+      }),
+      runtimeHome,
+      env: {},
+      parentSessionId: 'mcp-git-closeout-owner',
+    });
+
+    const cpInit = await createKernelControlPlane({ runtimeHome, projectRoot: workspaceRoot });
+    let stepId: string;
+    let capsuleId: string;
+    let attemptId: string;
+    try {
+      await cpInit.startRun({
+        runId,
+        objective: 'Update app.mjs with approved commit after independent review',
+        taskContract: {
+          surfaces: ['security_boundary'],
+          acceptance: ['export a non-zero value'],
+          allowedPaths: ['app.mjs'],
+        },
+      });
+      const implementer = createClaudeAdapter({
+        launch: async ({ invocation }) => ({
+          resolvedModel: assertTestRecord(invocation).model,
+          observedModel: assertTestRecord(invocation).model,
+          resolvedEffort: assertTestRecord(invocation).effort,
+          observedEffort: assertTestRecord(invocation).effort,
+          sessionId: 'mcp-git-closeout-implementer',
+        }),
+      });
+      const implTurn = await dispatchKernelTurn({
+        controlPlane: cpInit,
+        runId,
+        adapter: implementer,
+        registry: createModelRegistry({
+          surface: 'claude',
+          env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'configured-frontier', MOON_RELAY_KERNEL_MODEL_VALUE: 'configured-value' },
+        }),
+        actionContext: { executionMode: 'native-subagent', delegationRequested: true },
+      });
+      stepId = assertTestString(assertTestPresent(implTurn.executionCapsule).stepId);
+      capsuleId = assertTestString(assertTestPresent(implTurn.executionCapsule).capsuleId);
+      attemptId = assertTestString(assertTestPresent(cpInit.stateStore.getStepAttempts(runId).at(-1)).attemptId);
+    } finally {
+      await cpInit.close();
+    }
+
+    const handler = createMcpBridgeHandler({ runtimeHome, env: {}, hostBridge: bridge });
+    await writeFile(path.join(workspaceRoot, 'app.mjs'), 'export const value = 42;\n');
+
+    const reportArgs = {
+      workspaceRoot,
+      runId,
+      surface: 'claude_app',
+      report: {
+        stepId,
+        capsuleId,
+        attemptId,
+        summary: 'updated app.mjs and requested local commit once independent review passes',
+        changedPaths: ['app.mjs'],
+        gitCloseoutRequest: {
+          requested: true,
+          mode: 'commit',
+          approvalReceipt: 'approved-after-review-commit',
+          commitMessage: 'feat: update app value after review',
+        },
+      },
+    };
+
+    const reported = parseToolText(await handler({
+      jsonrpc: '2.0', id: 230, method: 'tools/call',
+      params: { name: 'kernel_report', arguments: reportArgs },
+    }));
+    const headAfter = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: workspaceRoot, encoding: 'utf8' }).stdout.trim();
+    const countAfter = Number(spawnSync('git', ['rev-list', '--count', 'HEAD'], { cwd: workspaceRoot, encoding: 'utf8' }).stdout.trim());
+    const porcelainAfter = spawnSync('git', ['status', '--porcelain'], { cwd: workspaceRoot, encoding: 'utf8' }).stdout.trim();
+
+    assert.equal(reviewerLaunches, 1);
+    assert.equal(reported.status, 'completed', JSON.stringify(reported));
+    assert.equal(assertTestRecord(assertTestRecord(reported.next).action).type, 'done');
+    const fin = assertTestRecord(reported.finalization);
+    assert.equal(fin.finalizationStatus, 'completed');
+    assert.equal(fin.gitCloseoutStatus, 'completed', JSON.stringify(fin));
+    assert.equal(assertTestRecord(fin.gitCloseoutReceipt).commitSha, headAfter);
+    assert.notEqual(headAfter, headBefore, 'HEAD must advance after approved closeout');
+    assert.equal(countAfter, countBefore + 1, 'HEAD must advance by exactly one commit');
+    assert.equal(porcelainAfter, '', 'app.mjs must be committed with clean working tree');
+
+    // Retransmit the exact same report -> HEAD must stay identical and reviewer must not rerun.
+    const replayed = parseToolText(await handler({
+      jsonrpc: '2.0', id: 231, method: 'tools/call',
+      params: { name: 'kernel_report', arguments: reportArgs },
+    }));
+    assert.equal(replayed.idempotentReplay, true);
+    assert.equal(reviewerLaunches, 1);
+    assert.equal(spawnSync('git', ['rev-parse', 'HEAD'], { cwd: workspaceRoot, encoding: 'utf8' }).stdout.trim(), headAfter);
+    assert.equal(Number(spawnSync('git', ['rev-list', '--count', 'HEAD'], { cwd: workspaceRoot, encoding: 'utf8' }).stdout.trim()), countBefore + 1);
+
+    // Reconnect via kernel_next -> returns done and HEAD remains unchanged.
+    const resumed = parseToolText(await handler({
+      jsonrpc: '2.0', id: 232, method: 'tools/call',
+      params: { name: 'kernel_next', arguments: { workspaceRoot, runId } },
+    }));
+    assert.equal(assertTestRecord(resumed.action).type, 'done');
+    assert.equal(spawnSync('git', ['rev-parse', 'HEAD'], { cwd: workspaceRoot, encoding: 'utf8' }).stdout.trim(), headAfter);
+    assert.equal(Number(spawnSync('git', ['rev-list', '--count', 'HEAD'], { cwd: workspaceRoot, encoding: 'utf8' }).stdout.trim()), countBefore + 1);
+  } finally {
+    await rm(runtimeHome, { recursive: true, force: true });
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});

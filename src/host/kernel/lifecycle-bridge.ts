@@ -225,7 +225,9 @@ const summarizeReviewDispatch = (
   return {
     schemaVersion: KERNEL_HOST_REVIEW_BRIDGE_SCHEMA_VERSION,
     status: result.reviewReceiptId
-      ? 'receipt-recorded'
+      ? (review.proofSettled === false
+        ? 'proof-settlement-failed'
+        : (review.blockedReason ? 'settlement-blocked' : 'receipt-recorded'))
       : result.dispatched
         ? (review.status || 'pending')
         : 'blocked',

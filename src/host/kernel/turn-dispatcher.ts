@@ -625,12 +625,22 @@ const currentReviewReceiptFor = ({ controlPlane, runId, obligationId }: { contro
     : null
 );
 
-const buildDeduplicatedReviewResponse = ({ runId, turn = null, receipt }: { runId: string; turn?: TurnLike | null; receipt?: import('../../contracts/generated/kernel.review-receipt.js').KernelReviewReceipt | null }): HostRecord => ({
+const buildDeduplicatedReviewResponse = ({
+  runId,
+  turn = null,
+  receipt,
+  settlement = null,
+}: {
+  runId: string;
+  turn?: TurnLike | null;
+  receipt?: import('../../contracts/generated/kernel.review-receipt.js').KernelReviewReceipt | null;
+  settlement?: HostRecord | null;
+}): HostRecord => ({
   schemaVersion: 1,
   runId,
   dispatched: false,
   deduplicated: true,
-  reason: 'review-already-recorded',
+  reason: settlement?.blockedReason ? String(settlement.blockedReason) : 'review-already-recorded',
   modelInput: turn?.modelInput || null,
   hostDirective: turn?.hostDirective || null,
   executionCapsule: turn?.executionCapsule || turn?.hostDirective?.executionCapsule || null,
@@ -642,7 +652,11 @@ const buildDeduplicatedReviewResponse = ({ runId, turn = null, receipt }: { runI
   review: {
     required: true,
     independent: true,
-    status: 'receipt-recorded',
+    status: settlement?.status || 'receipt-recorded',
+    ...(settlement?.reviewReceiptAccepted !== undefined ? { reviewReceiptAccepted: settlement.reviewReceiptAccepted } : {}),
+    ...(settlement?.proofSettled !== undefined ? { proofSettled: settlement.proofSettled } : {}),
+    ...(settlement?.settlementStatus !== undefined ? { settlementStatus: settlement.settlementStatus } : {}),
+    ...(settlement?.blockedReason ? { blockedReason: settlement.blockedReason, errorSummary: settlement.errorSummary || null } : {}),
     review: {
       verdict: receipt?.verdict || 'pass',
       findings: receipt?.findings || [],
@@ -653,6 +667,14 @@ const buildDeduplicatedReviewResponse = ({ runId, turn = null, receipt }: { runI
   },
   reviewReceipt: receipt,
   reviewReceiptId: receipt?.receiptId || null,
+  ...(settlement?.finalization ? { finalization: settlement.finalization } : {}),
+  ...(settlement?.next ? { next: settlement.next } : {}),
+  ...(settlement?.blockedReason ? {
+    blocker: {
+      reason: settlement.blockedReason,
+      detail: settlement.errorSummary || null,
+    },
+  } : {}),
   receipt: null,
   report: null,
 });
@@ -1677,11 +1699,21 @@ const dispatchKernelTurnAttempt = async ({
       reviewerSessionId: dispatch.actorSessionId || undefined,
       outcome: reviewerOutcome,
     }));
+    const reviewReceipt = review.reviewReceipt || null;
+    const reviewReceiptId = review.reviewReceipt?.receiptId || review.reviewReceiptId || null;
     return withReviewAttemptMeta({
       ...response,
       review,
-      reviewReceipt: review.reviewReceipt || null,
-      reviewReceiptId: review.reviewReceipt?.receiptId || null,
+      reviewReceipt,
+      reviewReceiptId,
+      ...(review.finalization ? { finalization: review.finalization } : {}),
+      ...(review.next ? { next: review.next } : {}),
+      ...(review.blockedReason ? {
+        blocker: {
+          reason: review.blockedReason,
+          detail: review.errorSummary || null,
+        },
+      } : {}),
     }, { fallbackEligible: false });
   } catch (error: unknown) {
     const reviewError = errorRecord(error);
@@ -1913,7 +1945,15 @@ export const dispatchKernelTurn = async ({
       runId,
       obligationId: actionContext.obligationId,
     });
-    if (existing) return buildDeduplicatedReviewResponse({ runId, receipt: existing });
+    if (existing) {
+      const settlement = typeof controlPlane.settleReviewReceipt === 'function'
+        ? asRecord(await controlPlane.settleReviewReceipt(runId, {
+          obligationId: String(actionContext.obligationId),
+          receiptId: existing.receiptId,
+        }))
+        : null;
+      return buildDeduplicatedReviewResponse({ runId, receipt: existing, settlement });
+    }
   }
 
   // Preserve the original owner-direct and parallel paths byte-for-byte for
@@ -1964,7 +2004,13 @@ export const dispatchKernelTurn = async ({
       attempt: Object.keys(turnAttempt).length > 0 ? turnAttempt : null,
       reason: 'review-already-recorded',
     });
-    return buildDeduplicatedReviewResponse({ runId, turn, receipt: existing });
+    const settlement = typeof controlPlane.settleReviewReceipt === 'function'
+      ? asRecord(await controlPlane.settleReviewReceipt(runId, {
+        obligationId: typeof decision.obligationId === 'string' ? decision.obligationId : existing.obligationId,
+        receiptId: existing.receiptId,
+      }))
+      : null;
+    return buildDeduplicatedReviewResponse({ runId, turn, receipt: existing, settlement });
   }
   const reviewStepId = decision.stepId || turnAttempt.stepId || turnExecutionCapsule?.stepId;
   const reviewPlanRevision = turnExecutionCapsule?.planRevision ?? turnAttempt.planRevision ?? null;

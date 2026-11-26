@@ -247,15 +247,7 @@ const readinessBlockedPayload = ({ modelInput, readiness }: { modelInput: Unknow
   };
 };
 
-const isReadyReportDirective = (modelInput: UnknownRecord): boolean => {
-  if (asRecord(modelInput.action).type !== 'report') return false;
-  const verification = asRecord(modelInput.verification);
-  const pending = Array.isArray(verification.pending) ? verification.pending : [];
-  const failed = Array.isArray(verification.failed) ? verification.failed : [];
-  return pending.length === 0 && failed.length === 0;
-};
-
-const processHostLifecycleOutput = async ({ bridge, controlPlane, runId, modelInput, parameters = {} }: { bridge: HostLifecycleBridge | null; controlPlane: ControlPlane; runId: string | null; modelInput: UnknownRecord | null; parameters?: McpParameters }): Promise<{ output: UnknownRecord | null; hostReview: UnknownRecord | null; finalization?: UnknownRecord | null }> => {
+const processHostLifecycleOutput = async ({ bridge, controlPlane, runId, modelInput }: { bridge: HostLifecycleBridge | null; controlPlane: ControlPlane; runId: string | null; modelInput: UnknownRecord | null; parameters?: McpParameters }): Promise<{ output: UnknownRecord | null; hostReview: UnknownRecord | null; finalization?: UnknownRecord | null }> => {
   if (!modelInput || modelInput.status === 'contract-rejected') return { output: modelInput, hostReview: null, finalization: null };
   let activeModelInput = modelInput;
   if (runId && asRecord(activeModelInput.action).type === 'baseline-required'
@@ -267,7 +259,10 @@ const processHostLifecycleOutput = async ({ bridge, controlPlane, runId, modelIn
     await controlPlane.captureBaseline(runId, { commandRefs });
     activeModelInput = asRecord(await controlPlane.next(runId));
   }
-  if (!bridge) return { output: activeModelInput, hostReview: null, finalization: null };
+  const kernelFinalization = asRecord(activeModelInput.finalization).completionStatus
+    ? asRecord(activeModelInput.finalization)
+    : null;
+  if (!bridge) return { output: activeModelInput, hostReview: null, finalization: kernelFinalization };
   const action = asRecord(activeModelInput.action);
   const implementationOnly = ['implement', 'fix', 'debug'].includes(String(action.type || '').toLowerCase());
   const readinessValue = typeof bridge.assess === 'function'
@@ -299,22 +294,10 @@ const processHostLifecycleOutput = async ({ bridge, controlPlane, runId, modelIn
   }
 
   if (!isKernelReviewAction(activeModelInput) || typeof bridge.dispatchReview !== 'function') {
-    let settledOutput = activeModelInput;
-    let finalization: UnknownRecord | null = null;
-    if (runId
-      && isReadyReportDirective(settledOutput)
-      && typeof controlPlane.finalizeRun === 'function'
-      && typeof controlPlane.next === 'function') {
-      const finalized = asRecord(await controlPlane.finalizeRun(runId));
-      if (finalized.completionStatus === 'accepted') {
-        finalization = finalized;
-        settledOutput = asRecord(await controlPlane.next(runId));
-      }
-    }
     return {
-      output: reviewRequired ? { ...settledOutput, executionReadiness: readiness } : settledOutput,
+      output: reviewRequired ? { ...activeModelInput, executionReadiness: readiness } : activeModelInput,
       hostReview: null,
-      finalization,
+      finalization: kernelFinalization,
     };
   }
 
@@ -334,7 +317,11 @@ const processHostLifecycleOutput = async ({ bridge, controlPlane, runId, modelIn
   const nestedReview = asRecord(dispatchedReview.review);
   const hostReview = dispatched.hostReview ? asRecord(dispatched.hostReview) : {
     schemaVersion: 1,
-    status: dispatched.reviewReceiptId ? 'receipt-recorded' : 'blocked',
+    status: dispatched.reviewReceiptId
+      ? (dispatchedReview.proofSettled === false
+        ? 'proof-settlement-failed'
+        : (dispatchedReview.blockedReason ? 'settlement-blocked' : 'receipt-recorded'))
+      : 'blocked',
     reviewReceiptId: dispatched.reviewReceiptId || null,
     verdict: nestedReview.verdict || null,
     findings: Array.isArray(nestedReview.findings) ? nestedReview.findings : [],
@@ -343,27 +330,19 @@ const processHostLifecycleOutput = async ({ bridge, controlPlane, runId, modelIn
     readiness,
     wait: { owner: 'host', strategy: 'single-bounded-dispatch', repeatedPolling: false },
   };
-  let refreshedNext = dispatched.reviewReceiptId && typeof controlPlane.next === 'function'
-    ? asRecord(await controlPlane.next(runId as string))
-    : activeModelInput;
-  let finalization: UnknownRecord | null = null;
-  if (runId
-    && dispatched.reviewReceiptId
-    && hostReview.verdict === 'pass'
-    && isReadyReportDirective(refreshedNext)
-    && typeof controlPlane.finalizeRun === 'function'
-    && typeof controlPlane.next === 'function') {
-    const changedPaths = Array.isArray(asRecord(parameters.report).changedPaths)
-      ? (asRecord(parameters.report).changedPaths as unknown[]).filter((entry): entry is string => typeof entry === 'string')
-      : [];
-    const finalized = asRecord(await controlPlane.finalizeRun(runId, {
-      ...(changedPaths.length > 0 ? { changedPaths, changedFileCount: changedPaths.length } : {}),
-    }));
-    if (finalized.completionStatus === 'accepted') {
-      finalization = finalized;
-      refreshedNext = asRecord(await controlPlane.next(runId));
-    }
-  }
+  const dispatchedNext = dispatched.next && typeof dispatched.next === 'object'
+    ? asRecord(dispatched.next)
+    : null;
+  const refreshedNext = dispatchedNext
+    || (dispatched.reviewReceiptId && typeof controlPlane.next === 'function'
+      ? asRecord(await controlPlane.next(runId as string))
+      : activeModelInput);
+  const finalization = (dispatched.finalization && typeof dispatched.finalization === 'object'
+    ? asRecord(dispatched.finalization)
+    : null)
+    || (asRecord(refreshedNext.finalization).completionStatus
+      ? asRecord(refreshedNext.finalization)
+      : null);
   return {
     output: {
       ...refreshedNext,
@@ -401,6 +380,7 @@ export const handleMcpToolCall = async ({
     env,
   });
 
+  const hasDeclaredSession = Boolean(String(env.MOON_RELAY_KERNEL_SESSION_ID || '').trim());
   const openControlPlane = () => createKernelControlPlane({
     runtimeHome: resolvedRuntimeHome,
     projectRoot: resolvedWorkspaceRoot,
@@ -410,7 +390,7 @@ export const handleMcpToolCall = async ({
       ...(parameters.surface ? { MOON_RELAY_KERNEL_SURFACE: parameters.surface } : {}),
       ...(parameters.runId ? { MOON_RELAY_KERNEL_RUN_ID: parameters.runId } : {}),
     },
-    requireHostBinding: false,
+    requireHostBinding: hasDeclaredSession,
   });
   const cp = await openControlPlane();
   const requestedSurface = String(parameters.surface || env.MOON_RELAY_KERNEL_SURFACE || '').trim().toLowerCase();
@@ -528,6 +508,11 @@ export const handleMcpToolCall = async ({
         envRunId: env.MOON_RELAY_KERNEL_RUN_ID || null,
       });
       const res = asRecord(await cp.report(runId, parameters.report || {}));
+      // A replayed historical Report returns its durable stored result without
+      // re-entering Host review dispatch from a stale `review` directive.
+      if (res.idempotentReplay === true) {
+        return projectKernelModelView(res, { verbose: parameters.verbose === true });
+      }
       const processed = await processHostLifecycleOutput({
         bridge: lifecycleBridge,
         controlPlane: cp,
@@ -577,14 +562,18 @@ export const handleMcpToolCall = async ({
       if (!processed.hostReview && !processed.finalization && processed.output?.status !== 'execution-readiness-blocked' && processed.output === res.next) {
         return projectKernelModelView(res, { verbose: parameters.verbose === true });
       }
-      const finalizedCompletion = asRecord(processed.finalization).completionStatus === 'accepted';
+      const finalizationRecord = asRecord(processed.finalization);
+      const finalizedCompletion = finalizationRecord.completionStatus === 'accepted';
+      const finalizationCompleted = finalizedCompletion && finalizationRecord.finalizationStatus === 'completed';
       return projectKernelModelView({
         ...res,
         ...(finalizedCompletion ? {
-          status: asRecord(processed.finalization).finalizationStatus === 'completed' ? 'completed' : 'finalization-incomplete',
+          status: finalizationCompleted ? 'completed' : 'finalization-incomplete',
           workUnitStatus: 'complete',
-          goalStatus: 'complete',
-          continuation: { action: 'none', stepId: null },
+          goalStatus: finalizationCompleted ? 'complete' : 'active',
+          continuation: { action: finalizationCompleted ? 'none' : 'finalize', stepId: null },
+          finalization: processed.finalization,
+        } : processed.finalization ? {
           finalization: processed.finalization,
         } : {}),
         next: processed.output,
@@ -594,7 +583,7 @@ export const handleMcpToolCall = async ({
 
     if (name === 'kernel_status') {
       const explicitRunId = parameters.runId || null;
-      const runId = await cp.resolveRunId({
+      const runId = explicitRunId || await cp.resolveRunId({
         explicitRunId,
         envRunId: env.MOON_RELAY_KERNEL_RUN_ID || null,
       });

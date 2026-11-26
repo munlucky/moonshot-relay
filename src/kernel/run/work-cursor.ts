@@ -913,6 +913,7 @@ export const createWorkCursorApi = ({
       step,
       decision,
       contract: run.taskContract,
+      obligations: store.getRunObligations(runId).filter((entry) => entry.status !== 'superseded'),
       stage,
       obligationId,
       requiredChecks,

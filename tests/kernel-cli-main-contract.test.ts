@@ -124,3 +124,172 @@ test('standalone CLI main(argv, deps) reports unknown utilities without process 
   assert.equal(output.status, 'error');
   assert.equal(output.errorCode, 'UNKNOWN_STANDALONE');
 });
+
+test('S3 CLI authorized resume settles ready Run via Kernel without empty report while foreign/read-only calls never mutate', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-cli-s3-resume-'));
+  const projectRoot = path.join(root, 'project');
+  const runtimeHome = path.join(root, 'runtime');
+  const runId = 'run-cli-s3-resume';
+  const ownerSession = 'codex:s3-owner';
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^MOON_RELAY_KERNEL_|^CODEX_THREAD_ID$/.test(key)));
+  env.MOON_RELAY_KERNEL_REEXEC = '1';
+  const invoke = async (args: string[], sessionId: string = ownerSession) => {
+    const out: string[] = [];
+    const err: string[] = [];
+    const res = await kernelMain([...args, '--project-root', projectRoot, '--runtime-home', runtimeHome,
+      '--provider', 'codex', '--session-id', sessionId, '--json'], {
+      cwd: projectRoot, env, managedRuntimeHome: process.cwd(),
+      stdout: value => out.push(String(value)), stderr: value => err.push(String(value)),
+    });
+    return { exitCode: res.exitCode, body: JSON.parse((out.length > 0 ? out : err).join('\n')) };
+  };
+  try {
+    await mkdir(path.join(projectRoot, '.moon-relay'), { recursive: true });
+    await writeFile(path.join(projectRoot, '.moon-relay', 'track.yaml'), 'track: kernel\n');
+    await writeFile(path.join(projectRoot, '.moon-relay', 'project.identity.yaml'), 'projectId: cli-s3-resume\n');
+    await writeFile(path.join(projectRoot, 'package.json'), JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"', lint: 'node -e "process.exit(0)"' } }));
+    await writeFile(path.join(projectRoot, 'app.mjs'), 'export const value = 0;\n');
+    spawnSync('git', ['init', '-b', 'main'], { cwd: projectRoot, encoding: 'utf8' });
+    spawnSync('git', ['config', 'user.name', 'CLI S3'], { cwd: projectRoot, encoding: 'utf8' });
+    spawnSync('git', ['config', 'user.email', 'cli-s3@example.invalid'], { cwd: projectRoot, encoding: 'utf8' });
+    spawnSync('git', ['add', '.'], { cwd: projectRoot, encoding: 'utf8' });
+    spawnSync('git', ['commit', '-m', 'init', '--quiet'], { cwd: projectRoot, encoding: 'utf8' });
+
+    const cp = await createKernelControlPlane({
+      projectRoot, runtimeHome, requireHostBinding: true,
+      env: { ...env, MOON_RELAY_KERNEL_PROVIDER: 'codex', MOON_RELAY_KERNEL_SESSION_ID: ownerSession },
+    });
+    try {
+      await cp.ensureRun({
+        runId,
+        objective: 'Update app securely',
+        taskContract: { objective: 'Update app securely', surfaces: ['security_boundary'], acceptance: ['secure update'], allowedPaths: ['app.mjs'] },
+      });
+      await writeFile(path.join(projectRoot, 'app.mjs'), 'export const value = 1;\n');
+      await cp.report(runId, { summary: 'updated app', changedPaths: ['app.mjs'] });
+      await cp.approveObligation({
+        runId, obligationId: 'security-review', approver: 'operator',
+        reason: 'pre-existing evidence before resume', approvalRef: 'operator-ref:s3-resume',
+        autoFinalize: false,
+      });
+    } finally { await cp.close(); }
+
+    // 1. Read-only status must not finalize
+    const statusRes = await invoke(['status', '--run-id', runId]);
+    assert.equal(statusRes.exitCode, 0);
+    assert.equal(statusRes.body.run?.status, 'active');
+
+    // 2. Foreign owner next must fail closed without finalizing
+    const foreignRes = await invoke(['next', runId], 'codex:s3-foreign');
+    assert.equal(foreignRes.exitCode, 1);
+    assert.equal(foreignRes.body.errorCode, 'host_binding_missing');
+
+    // 3. Authorized owner next settles directly via Kernel to done without needing empty report
+    const ownerRes = await invoke(['next', runId], ownerSession);
+    assert.equal(ownerRes.exitCode, 0, JSON.stringify(ownerRes.body));
+    assert.equal(ownerRes.body.action?.type, 'done', JSON.stringify(ownerRes.body));
+    assert.equal(ownerRes.body.finalization?.completionStatus, 'accepted');
+    assert.equal(ownerRes.body.finalization?.finalizationStatus, 'completed');
+    const gitCount = spawnSync('git', ['rev-list', '--count', 'HEAD'], { cwd: projectRoot, encoding: 'utf8' }).stdout.trim();
+    assert.equal(gitCount, '1', 'no git commit created without explicit closeout request');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('S3 Moonremote CLI contract revision while review pending keeps passed Step ID on same scope, requires new evidence, and replans on real scope change', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-cli-moonremote-'));
+  const projectRoot = path.join(root, 'project');
+  const runtimeHome = path.join(root, 'runtime');
+  const runId = 'run-cli-moonremote-reentry';
+  const ownerSession = 'codex:moonremote-owner';
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^MOON_RELAY_KERNEL_|^CODEX_THREAD_ID$/.test(key)));
+  env.MOON_RELAY_KERNEL_REEXEC = '1';
+  const invoke = async (args: string[]) => {
+    const out: string[] = [];
+    const err: string[] = [];
+    const res = await kernelMain([...args, '--project-root', projectRoot, '--runtime-home', runtimeHome,
+      '--provider', 'codex', '--session-id', ownerSession, '--json'], {
+      cwd: projectRoot, env, managedRuntimeHome: process.cwd(),
+      stdout: value => out.push(String(value)), stderr: value => err.push(String(value)),
+    });
+    return { exitCode: res.exitCode, body: JSON.parse((out.length > 0 ? out : err).join('\n')) };
+  };
+  try {
+    await mkdir(path.join(projectRoot, '.moon-relay'), { recursive: true });
+    await writeFile(path.join(projectRoot, '.moon-relay', 'track.yaml'), 'track: kernel\n');
+    await writeFile(path.join(projectRoot, '.moon-relay', 'project.identity.yaml'), 'projectId: cli-moonremote\n');
+    await writeFile(path.join(projectRoot, 'package.json'), JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"', lint: 'node -e "process.exit(0)"' } }));
+    await writeFile(path.join(projectRoot, 'app.mjs'), 'export const v = 0;\n');
+    await writeFile(path.join(projectRoot, 'extra.mjs'), 'export const x = 0;\n');
+    spawnSync('git', ['init', '-b', 'main'], { cwd: projectRoot, encoding: 'utf8' });
+    spawnSync('git', ['config', 'user.name', 'Moonremote'], { cwd: projectRoot, encoding: 'utf8' });
+    spawnSync('git', ['config', 'user.email', 'moonremote@example.invalid'], { cwd: projectRoot, encoding: 'utf8' });
+    spawnSync('git', ['add', '.'], { cwd: projectRoot, encoding: 'utf8' });
+    spawnSync('git', ['commit', '-m', 'init', '--quiet'], { cwd: projectRoot, encoding: 'utf8' });
+
+    const c1 = path.join(root, 'contract-v1.json');
+    await writeFile(c1, JSON.stringify({
+      objective: 'Harden auth endpoint',
+      surfaces: ['security_boundary'],
+      acceptance: ['Unit tests pass for auth guard'],
+      allowedPaths: ['app.mjs'],
+    }));
+    const startRes = await invoke(['next', runId, '--contract-json', c1]);
+    assert.equal(startRes.exitCode, 0, JSON.stringify(startRes.body));
+    const originalStepId = startRes.body.stepId;
+    assert.ok(originalStepId);
+
+    await writeFile(path.join(projectRoot, 'app.mjs'), 'export const v = 1;\n');
+    const reportFile = path.join(root, 'report-v1.json');
+    await writeFile(reportFile, JSON.stringify({ summary: 'hardened auth guard', changedPaths: ['app.mjs'] }));
+    const repRes = await invoke(['report', runId, '--report-json', reportFile]);
+    assert.equal(repRes.exitCode, 0, JSON.stringify(repRes.body));
+    assert.equal(repRes.body.step?.state, 'passed');
+    assert.equal(repRes.body.next?.action?.type, 'review');
+
+    // Re-enter via CLI with reinforced Acceptance (added AC-2) and SAME implementation scope
+    const c2 = path.join(root, 'contract-v2.json');
+    await writeFile(c2, JSON.stringify({
+      objective: 'Harden auth endpoint',
+      surfaces: ['security_boundary'],
+      acceptance: [
+        'Unit tests pass for auth guard',
+        'Invalid token payload is rejected fail-closed',
+      ],
+      allowedPaths: ['app.mjs'],
+    }));
+    const revisedRes = await invoke(['next', runId, '--contract-json', c2]);
+    assert.equal(revisedRes.exitCode, 0, JSON.stringify(revisedRes.body));
+    assert.notEqual(revisedRes.body.action?.type, 'done', 'uncovered reinforced acceptance must require evidence');
+
+    const store = await openKernelStateStore({ runtimeHome });
+    try {
+      const runAfterV2 = store.getRun(runId);
+      assert.equal(runAfterV2?.contractRevision, 2);
+      assert.equal(runAfterV2?.planRevision, 1, 'same implementation scope must keep planRevision=1');
+      assert.equal(runAfterV2?.replanCount, 0, 'same implementation scope must not replan');
+      const stepsV2 = store.getRunSteps(runId);
+      assert.equal(stepsV2.length, 1);
+      assert.equal(stepsV2[0]?.stepId, originalStepId, 'existing passed Step ID must be preserved');
+    } finally { store.close(); }
+
+    // Now re-enter with an actual scope change (expanded allowedPaths) -> legitimate Replan allowed
+    const c3 = path.join(root, 'contract-v3.json');
+    await writeFile(c3, JSON.stringify({
+      objective: 'Harden auth endpoint',
+      surfaces: ['security_boundary'],
+      acceptance: [
+        'Unit tests pass for auth guard',
+        'Invalid token payload is rejected fail-closed',
+      ],
+      allowedPaths: ['app.mjs', 'extra.mjs'],
+    }));
+    const replannedRes = await invoke(['next', runId, '--contract-json', c3]);
+    assert.equal(replannedRes.exitCode, 0, JSON.stringify(replannedRes.body));
+    const store2 = await openKernelStateStore({ runtimeHome });
+    try {
+      const runAfterV3 = store2.getRun(runId);
+      assert.equal(runAfterV3?.planRevision, 2, 'real scope change must replan');
+      assert.equal(runAfterV3?.replanCount, 1);
+    } finally { store2.close(); }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

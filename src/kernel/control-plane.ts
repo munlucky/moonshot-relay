@@ -1,7 +1,7 @@
 import { requiredIndex } from '../shared/required-index.js';
 import { buildAgentRecovery } from './run/agent-recovery.js';
 import type { StepSettlementOutcome, WorkStepResolution } from './run/work-cursor.js';
-import { canonicalChangedPaths, canonicalReceiptValue, receiptValuesEqual, computeKernelSourceIdentity, findingClassOf, reviewReceiptRequired, buildRunRoute, resolveDeclaredStepForReplan, stepScopeChanged, planDiffersFromContract } from './run/control-plane-helpers.js';
+import { canonicalChangedPaths, canonicalReceiptValue, receiptValuesEqual, computeKernelSourceIdentity, findingClassOf, reviewReceiptRequired, buildRunRoute, resolveDeclaredStepForReplan, stepImplementationScopeChanged, stepScopeChanged, planDiffersFromContract } from './run/control-plane-helpers.js';
 export { computeKernelSourceIdentity, resolveDeclaredStepForReplan } from './run/control-plane-helpers.js';
 import { STATES, type KernelState } from './transition.js';
 import type { ProofTier } from './proof-route.js';
@@ -48,6 +48,11 @@ type KernelNextPayload = Partial<Omit<ReturnType<typeof buildNextPayload>, 'runI
   schemaVersion: number; runId: string | null; status?: string;
   knowledgeAuthority?: ReturnType<typeof buildKnowledgeAuthorityView> | null;
   completion?: ReturnType<typeof computeCompletionView>;
+  finalization?: UnknownRecord | null;
+  lease?: UnknownRecord | null;
+  reviewReceiptId?: string | null;
+  recoveredReviewReceiptIds?: string[];
+  blockedReason?: string | null;
   errorCode?: string; failureCode?: string; errorSummary?: string;
 };
 interface ParallelSettlement {
@@ -192,9 +197,10 @@ import {
 } from '../contracts/verification-settlement.js';
 import { discoverProjectCommands } from '../contracts/command-catalog.js';
 import { REPORT_LEASE_TTL_MS, SESSION_LEASE_TTL_MS } from './run/lease-policy.js';
-import { digestOfEvidence, digestOfPaths, evaluateReviewReceipt, reviewEvidenceRef, reviewSubjectAdoptionEligible, reviewSubjectKey } from './proof/review-receipt.js';
+import { digestOfEvidence, digestOfPaths, evaluateReviewReceipt, reviewEvidenceRef, reviewSubjectAdoptionEligible, reviewSubjectKey, TRUSTED_ENFORCEMENT_STATUSES } from './proof/review-receipt.js';
+import { isProtectedObligation } from './proof/protected-obligations.js';
 import { hashSessionId } from '../contracts/model-execution.js';
-import { allStepsPassed, currentStep as selectCurrentStep } from './run/run-step-ledger.js';
+import { allStepsPassed, currentStep as selectCurrentStep, evaluateStepCompletion, TERMINAL_STEP_STATES } from './run/run-step-ledger.js';
 import { planRunSteps } from './run/step-planner.js';
 import { createWorkCursorApi } from './run/work-cursor.js';
 import { admissionAllowsDispatch } from './routing/route-admission.js';
@@ -688,6 +694,29 @@ export const createKernelControlPlane = async ({
     if (!requireHostBinding || !hostSessionId) return { run, worktree: currentWorktree };
     const binding = getHostBinding({ runId });
     if (!binding) {
+      if (
+        ['next', 'status'].includes(command)
+        && run.status === 'completed'
+        && run.finalizationStatus === 'completed'
+        && run.ownerBindingId
+      ) {
+        const ownerBinding = store.getRunOwnerBinding?.(runId);
+        if (
+          ownerBinding
+          && ownerBinding.bindingId === run.ownerBindingId
+          && ownerBinding.sessionId === hostSessionId
+          && ownerBinding.projectId === currentProject.projectId
+          && (!run.workspaceId || !ownerBinding.workspaceId || ownerBinding.workspaceId === effectiveWorkspaceId)
+        ) {
+          return {
+            run,
+            binding: ownerBinding,
+            projectId: currentProject.projectId,
+            workspaceId: ownerBinding.workspaceId || effectiveWorkspaceId,
+            accessMode: ownerBinding.accessMode,
+          };
+        }
+      }
       // Strict Host entrypoints may only operate through their active owner
       // binding. Unbound legacy adoption is handled once in ensureRun; a
       // second native surface must not silently gain mutation authority by
@@ -1568,6 +1597,7 @@ export const createKernelControlPlane = async ({
         step,
         decision,
         contract: run.taskContract,
+        obligations: store.getRunObligations(runId).filter((entry) => entry.status !== 'superseded'),
         stage,
         obligationId,
         requiredChecks,
@@ -2124,7 +2154,7 @@ export const createKernelControlPlane = async ({
           const completed = store.getRunSteps(runId).filter((step) => step.state === 'passed');
           const findCompletedMatch = (candidate: typeof normalizedCandidatePlan[number]) => completed.find((step) => (
             String(step.objective || '') === String(candidate.objective || '')
-            && !stepScopeChanged(step, candidate)
+            && !stepImplementationScopeChanged(step, candidate)
           ));
           const remainingCandidates = activeContract.steps.length > 0
             ? normalizedCandidatePlan.filter((candidate) => !findCompletedMatch(candidate))
@@ -2136,12 +2166,24 @@ export const createKernelControlPlane = async ({
           );
           const blockedOnUnsupportedVerification = existing.status === 'blocked'
             && existing.blockedReason === 'unsupported-verification';
+          const passedSyntheticStep = !currentStep && activeContract.steps.length === 0 && currentPlan.length === 1 && currentPlan[0]?.state === 'passed'
+            ? currentPlan[0]
+            : null;
+          const syntheticCandidate = normalizedCandidatePlan[0] || null;
           const requiresSyntheticReplan = contractChanged && activeContract.steps.length === 0 && (
             blockedOnUnsupportedVerification
             || currentPlan.length !== normalizedCandidatePlan.length
-            || Boolean(currentStep?.synthetic) !== Boolean(normalizedAmendedStep?.synthetic)
-            || String(currentStep?.objective || '') !== String(normalizedAmendedStep?.objective || '')
-            || stepScopeChanged(currentStep, normalizedAmendedStep)
+            || (passedSyntheticStep
+              ? (
+                Boolean(passedSyntheticStep.synthetic) !== Boolean(syntheticCandidate?.synthetic)
+                || String(passedSyntheticStep.objective || '') !== String(syntheticCandidate?.objective || '')
+                || stepImplementationScopeChanged(passedSyntheticStep, syntheticCandidate)
+              )
+              : (
+                Boolean(currentStep?.synthetic) !== Boolean(normalizedAmendedStep?.synthetic)
+                || String(currentStep?.objective || '') !== String(normalizedAmendedStep?.objective || '')
+                || stepScopeChanged(currentStep, normalizedAmendedStep)
+              ))
           );
           const currentStepChanged = currentStep !== null && (
             !normalizedAmendedStep
@@ -3233,6 +3275,90 @@ export const createKernelControlPlane = async ({
       return store.listReviewReceipts(runId, options);
     },
 
+    resolveCapsuleBoundAcceptanceCoverage({
+      capsule,
+      run,
+      obligationId,
+      declaredObligation = null,
+    }: {
+      capsule?: UnknownRecord | null;
+      run: KernelRun;
+      obligationId: string;
+      declaredObligation?: PersistedRunObligation | null;
+    }): string[] {
+      const currentAcceptance = Array.isArray(run.taskContract?.acceptance) ? run.taskContract.acceptance : [];
+      const currentStatementById = new Map<string, string>();
+      for (const entry of currentAcceptance) {
+        const record = asRecord(entry);
+        const id = String(record.id || '').trim();
+        const statement = String(record.statement || '').trim();
+        if (id && statement) currentStatementById.set(id, statement);
+      }
+      const declaredIds = new Set(
+        (Array.isArray(declaredObligation?.acceptanceIds) ? declaredObligation.acceptanceIds : [])
+          .map(String)
+          .filter(Boolean),
+      );
+      const matched: string[] = [];
+      for (const rawItem of Array.isArray(capsule?.acceptance) ? capsule.acceptance : []) {
+        const item = asRecord(rawItem);
+        const boundObligations = Array.isArray(item.obligationIds) ? item.obligationIds.map(String) : [];
+        if (!boundObligations.includes(obligationId)) continue;
+        const acId = String(item.id || '').trim();
+        const capsuleStatement = String(item.statement || '').trim();
+        if (!acId || !declaredIds.has(acId)) continue;
+        const currentStatement = currentStatementById.get(acId);
+        if (!currentStatement || currentStatement !== capsuleStatement) continue;
+        matched.push(acId);
+      }
+      return [...new Set(matched)];
+    },
+
+    isReviewReceiptAcceptanceScopeCurrent(runId: string, run: KernelRun, receipt: ReviewReceipt): boolean {
+      const declaredObligation = store.getRunObligation(runId, receipt.obligationId);
+      const requiredIds = Array.isArray(declaredObligation?.acceptanceIds)
+        ? declaredObligation.acceptanceIds.map(String).filter(Boolean)
+        : [];
+      if (requiredIds.length === 0) return true;
+      const receiptCoverage = new Set(Array.isArray(receipt.acceptanceCoverage) ? receipt.acceptanceCoverage.map(String) : []);
+      const usage = receipt.reviewer?.usageReceiptId
+        ? store.getModelUsageReceipt(receipt.reviewer.usageReceiptId, { runId })
+        : null;
+      const capsule = usage?.capsuleId
+        ? store.getExecutionCapsule(usage.capsuleId, { runId })
+        : null;
+      if (capsule) {
+        const capsuleAcceptance = Array.isArray(capsule.acceptance) ? capsule.acceptance.map(asRecord) : [];
+        const hasCapsuleBindings = capsuleAcceptance.some(
+          (entry) => Array.isArray(entry.obligationIds) && entry.obligationIds.length > 0,
+        );
+        if (!hasCapsuleBindings) {
+          // Legacy pre-binding capsule (e.g. 8ac626d3): never auto-satisfy uncovered
+          // acceptance criteria; allow reuse only on the same revision when every
+          // shared AC is already covered by current hard verifications.
+          if (Number(receipt.planRevision || 1) !== Number(run.planRevision || run.contractRevision || 1)) {
+            return false;
+          }
+          const otherCoverage = new Set(
+            store.getVerifications(runId)
+              .filter((v) => v.obligationId !== receipt.obligationId && v.status === 'passed' && Number(v.contractRevision || 1) === Number(run.contractRevision || 1))
+              .flatMap((v) => Array.isArray(v.acceptanceCoverage) ? v.acceptanceCoverage.map(String) : []),
+          );
+          return requiredIds.every((acId) => receiptCoverage.has(acId) || otherCoverage.has(acId));
+        }
+        if (!requiredIds.every((acId) => receiptCoverage.has(acId))) return false;
+        const currentCapsuleCoverage = new Set(this.resolveCapsuleBoundAcceptanceCoverage({
+          capsule: asRecord(capsule),
+          run,
+          obligationId: receipt.obligationId,
+          declaredObligation,
+        }));
+        return requiredIds.every((acId) => currentCapsuleCoverage.has(acId));
+      }
+      if (!requiredIds.every((acId) => receiptCoverage.has(acId))) return false;
+      return Number(receipt.planRevision || 1) === Number(run.planRevision || run.contractRevision || 1);
+    },
+
     findReusableReviewReceipt(runId: string, { obligationId }: { obligationId?: string | null } = {}) {
       if (!runId || !obligationId) return null;
       const run = getRunSnapshot(runId);
@@ -3246,7 +3372,8 @@ export const createKernelControlPlane = async ({
         .find((receipt) => receipt?.verdict === 'pass'
           && receipt.subject?.workspaceIdentity === run.currentWorkspaceIdentity
           && Number(receipt.subject?.mutationRevision) === Number(run.mutationRevision)
-          && receipt.subject?.evidenceDigest === evidenceDigest) || null;
+          && receipt.subject?.evidenceDigest === evidenceDigest
+          && this.isReviewReceiptAcceptanceScopeCurrent(runId, run, receipt)) || null;
     },
 
     // Two-stage review plan (§31): which reviews apply and whether an
@@ -3601,22 +3728,965 @@ export const createKernelControlPlane = async ({
         return { status: 'blocked', blockedReason: 'incomplete_review_chain', findings: outcome.findings };
       }
       const obligationId = String(asRecord(capsule.reviewScope).obligationId || decision.obligationId || 'security-review');
-      const acceptanceCoverage = (Array.isArray(capsule.acceptance) ? capsule.acceptance.map(asRecord) : [])
-        .filter((item) => (Array.isArray(item.obligationIds) ? item.obligationIds : []).includes(obligationId))
-        .map((item) => String(item.id));
-      return this.recordReview(runId, {
+      const declaredObligation = store.getRunObligation(runId, obligationId);
+      const acceptanceCoverage = this.resolveCapsuleBoundAcceptanceCoverage({
+        capsule: asRecord(capsule),
+        run,
+        obligationId,
+        declaredObligation,
+      });
+      const changedPaths = Array.isArray(asRecord(capsule.subject).changedPaths)
+        ? asRecord(capsule.subject).changedPaths as string[]
+        : [];
+      const {
+        normalizeReviewVerdict,
+        assertIndependentReview,
+        assertIndependentReviewSession,
+        classifyReviewFindings,
+      } = await import('./proof/review-pipeline.js');
+      const normalized = normalizeReviewVerdict({
         stage: String(asRecord(capsule.reviewScope).stage || 'engineering'),
         verdict: outcome.verdict,
         reviewerId: reviewerSessionHash,
         findings: outcome.findings,
-      }, {
-        implementerId: implementationSession.actorSessionId,
-        reviewReceiptId: usageReceiptId,
+      });
+      if (run.proofTier === 'T3') {
+        assertIndependentReview({ verdict: normalized, implementerId: implementationSession.actorSessionId });
+        assertIndependentReviewSession({ reviewReceipt: usage, reviewDecision: decision, implementationSession });
+      }
+      run = assertLiveReviewWorkspace(runId, run, 'review-receipt').run;
+      const reviewReceipt = persistReviewReceipt(runId, {
+        runId,
         obligationId,
+        reviewStage: normalized.stage,
+        verdict: normalized.verdict,
+        findingClass: findingClassOf(normalized.findings),
+        planRevision: Number(run.planRevision || run.contractRevision || 1),
+        reviewer: {
+          actorSessionId: usage.actorSessionId,
+          usageReceiptId: usage.receiptId,
+          routeDecisionId: usage.decisionId,
+          modelClass: decision.modelClass || 'unrouted',
+          resolvedModel: usage.resolvedModel,
+          enforcementStatus: usage.enforcementStatus,
+        },
+        implementer: {
+          actorSessionId: implementationSession.actorSessionId || null,
+          usageReceiptId: implementationSession.receiptId || null,
+        },
+        stepId: usage.stepId
+          || implementationSession.stepId
+          || store.getLatestImplementationAttempt?.(runId)?.stepId
+          || null,
+        reviewerBindingId: usage.bindingId || null,
+        implementerAttemptId: implementationSession.attemptId
+          || store.getLatestImplementationAttempt?.(runId)?.attemptId
+          || null,
+        subject: {
+          workspaceIdentity: run.currentWorkspaceIdentity,
+          mutationRevision: run.mutationRevision,
+          changedPathsDigest: digestOfPaths(changedPaths),
+          evidenceDigest: digestOfEvidence(store.getVerifications(runId), { excludeObligationId: obligationId }),
+        },
         acceptanceCoverage,
-        changedPaths: Array.isArray(asRecord(capsule.subject).changedPaths) ? asRecord(capsule.subject).changedPaths as string[] : [],
+        findings: normalized.findings,
         rationale: `Host-ingested reviewer outcome (${outcome.evidenceRefs.length} evidence refs)`,
       });
+      const followUp = classifyReviewFindings(normalized.findings.map(asRecord));
+      return this.completeAcceptedReviewReceipt(runId, reviewReceipt, {
+        review: normalized,
+        followUp,
+        changedPaths,
+        directRecordProof: true,
+      });
+    },
+
+    // Single post-receipt settlement boundary shared by fresh review ingestion
+    // and interrupted-review recovery. Once a ReviewReceipt is durably stored,
+    // any subsequent failure in recordProof, settleAuthorizedRun, or
+    // prepareNext must preserve reviewReceiptId and return the real failure
+    // cause instead of throwing into Host's pre-receipt incomplete_review_chain.
+    async completeAcceptedReviewReceipt(
+      runId: string,
+      receipt: ReviewReceipt,
+      {
+        review = null,
+        followUp = null,
+        changedPaths = [],
+        directRecordProof = false,
+      }: {
+        review?: unknown;
+        followUp?: unknown;
+        changedPaths?: string[];
+        directRecordProof?: boolean;
+      } = {},
+    ) {
+      const safePrepareNext = async (): Promise<{ payload: UnknownRecord | null; error: unknown | null }> => {
+        try {
+          const nextPayload = await this.prepareNext(runId);
+          return { payload: nextPayload ? asRecord(nextPayload) : null, error: null };
+        } catch (nextError) {
+          return { payload: null, error: nextError };
+        }
+      };
+      const baseFields = {
+        ...(review ? { review } : {}),
+        ...(followUp ? { followUp } : {}),
+        reviewReceipt: receipt,
+        reviewReceiptId: receipt.receiptId,
+      };
+
+      let updatedRun: StoredKernelRun | null = null;
+      if (directRecordProof) {
+        try {
+          updatedRun = await this.recordProof(runId, {
+            obligationId: receipt.obligationId,
+            status: receipt.verdict === 'pass' ? 'passed' : 'failed',
+            evidenceRef: reviewEvidenceRef(runId, receipt.receiptId),
+            command: 'structured-review',
+            exitCode: receipt.verdict === 'pass' ? 0 : 1,
+            evidenceDigest: receipt.digest,
+            evidenceClass: 'judgment',
+            acceptanceCoverage: receipt.acceptanceCoverage,
+          });
+        } catch (proofError) {
+          const failure = asRecord(proofError);
+          const blockedReason = String(failure.errorCode || failure.code || 'review_proof_settlement_failed');
+          return {
+            status: 'proof-settlement-failed',
+            reviewReceiptAccepted: true,
+            proofSettled: false,
+            settlementStatus: 'blocked',
+            blockedReason,
+            errorSummary: errorMessage(proofError),
+            ...baseFields,
+            run: getRunSnapshot(runId),
+            finalization: null,
+            next: null,
+          };
+        }
+      } else {
+        const reconciled = await this.reconcilePendingReviewReceipts(runId, {
+          obligationId: receipt.obligationId,
+          receiptId: receipt.receiptId,
+        });
+        if (reconciled.blocked) {
+          const nextAttempt = await safePrepareNext();
+          return {
+            status: reconciled.blocked.reason === 'lease-conflict' ? 'lease-conflict' : 'blocked',
+            reviewReceiptAccepted: true,
+            proofSettled: false,
+            settlementStatus: 'blocked',
+            blockedReason: reconciled.blocked.reason,
+            errorSummary: reconciled.blocked.detail || reconciled.blocked.reason,
+            ...(reconciled.blocked.lease ? { lease: reconciled.blocked.lease } : {}),
+            ...baseFields,
+            run: getRunSnapshot(runId),
+            finalization: null,
+            next: nextAttempt.payload,
+          };
+        }
+        const currentRun = getRunSnapshot(runId);
+        const verificationsAfter = store.getVerifications(runId);
+        const expectedRef = reviewEvidenceRef(runId, receipt.receiptId);
+        const proofPresent = verificationsAfter.some((entry) => (
+          entry.obligationId === receipt.obligationId
+          && entry.evidenceClass === 'judgment'
+          && entry.evidenceRef === expectedRef
+          && entry.evidenceDigest === receipt.digest
+          && Number(entry.contractRevision || 1) === Number(currentRun?.contractRevision || 1)
+        ));
+        if (!proofPresent) {
+          const evalResult = evaluateReviewReceipt({
+            receipt,
+            run: currentRun ? { ...currentRun, verifications: verificationsAfter } : null,
+            requireIndependentSession: currentRun?.proofTier === 'T3' || isProtectedObligation(receipt.obligationId),
+            requireFrontierClass: currentRun?.proofTier === 'T3' || isProtectedObligation(receipt.obligationId),
+            requireTrustedEnforcement: true,
+            currentEvidenceDigest: digestOfEvidence(verificationsAfter, { excludeObligationId: receipt.obligationId }),
+          });
+          const reason = evalResult.reasons[0]
+            || (currentRun && !this.isReviewReceiptAcceptanceScopeCurrent(runId, currentRun, receipt)
+              ? 'review_acceptance_scope_changed'
+              : 'review_receipt_unusable');
+          const nextAttempt = await safePrepareNext();
+          return {
+            status: 'blocked',
+            reviewReceiptAccepted: true,
+            proofSettled: false,
+            settlementStatus: 'blocked',
+            blockedReason: reason,
+            errorSummary: evalResult.reasons.join(', ') || reason,
+            ...baseFields,
+            run: currentRun,
+            finalization: null,
+            next: nextAttempt.payload,
+          };
+        }
+      }
+
+      if (receipt.verdict !== 'pass') {
+        const nextAttempt = await safePrepareNext();
+        if (nextAttempt.error) {
+          const failure = asRecord(nextAttempt.error);
+          const blockedReason = String(failure.errorCode || failure.code || 'review_continuation_failed');
+          return {
+            status: 'continuation-failed',
+            reviewReceiptAccepted: true,
+            proofSettled: true,
+            settlementStatus: 'blocked',
+            blockedReason,
+            errorSummary: errorMessage(nextAttempt.error),
+            ...baseFields,
+            run: updatedRun || getRunSnapshot(runId),
+            finalization: null,
+            next: null,
+          };
+        }
+        return {
+          status: 'receipt-recorded',
+          reviewReceiptAccepted: true,
+          proofSettled: true,
+          settlementStatus: 'not-ready',
+          ...baseFields,
+          run: updatedRun || getRunSnapshot(runId),
+          finalization: null,
+          next: nextAttempt.payload,
+        };
+      }
+
+      let settlement: Awaited<ReturnType<typeof this.settleAuthorizedRun>>;
+      try {
+        settlement = await this.settleAuthorizedRun(runId, {
+          changedPaths,
+          preferredAttemptId: receipt.implementerAttemptId || null,
+        });
+      } catch (settlementError) {
+        const failure = asRecord(settlementError);
+        settlement = {
+          settled: false,
+          blockedReason: String(failure.errorCode || failure.code || 'finalization_error'),
+          errorSummary: errorMessage(settlementError),
+          finalization: null,
+        };
+      }
+
+      const nextAttempt = await safePrepareNext();
+      if (nextAttempt.error) {
+        const failure = asRecord(nextAttempt.error);
+        const blockedReason = String(failure.errorCode || failure.code || 'review_continuation_failed');
+        const fin = settlement.finalization ? asRecord(settlement.finalization) : null;
+        const finalizationAccepted = fin?.completionStatus === 'accepted';
+        const finalizationCompleted = finalizationAccepted && fin?.finalizationStatus === 'completed';
+        return {
+          status: 'continuation-failed',
+          reviewReceiptAccepted: true,
+          proofSettled: true,
+          settlementStatus: fin
+            ? (finalizationAccepted ? (finalizationCompleted ? 'completed' : 'partial') : 'blocked')
+            : 'blocked',
+          blockedReason,
+          errorSummary: errorMessage(nextAttempt.error),
+          ...baseFields,
+          run: getRunSnapshot(runId),
+          finalization: fin,
+          next: null,
+        };
+      }
+
+      const refreshedNext = settlement.finalization && nextAttempt.payload
+        ? { ...nextAttempt.payload, finalization: settlement.finalization }
+        : nextAttempt.payload;
+      if (settlement.leaseConflict) {
+        return {
+          status: 'lease-conflict',
+          reviewReceiptAccepted: true,
+          proofSettled: true,
+          settlementStatus: 'blocked',
+          blockedReason: 'lease-conflict',
+          errorSummary: 'Another runner holds the active Run lease',
+          lease: settlement.lease || null,
+          ...baseFields,
+          run: getRunSnapshot(runId),
+          finalization: null,
+          next: refreshedNext,
+        };
+      }
+      if (settlement.blockedReason && !settlement.accessDenied) {
+        return {
+          status: 'settlement-blocked',
+          reviewReceiptAccepted: true,
+          proofSettled: true,
+          settlementStatus: 'blocked',
+          blockedReason: settlement.blockedReason,
+          errorSummary: settlement.errorSummary || settlement.blockedReason,
+          ...baseFields,
+          run: getRunSnapshot(runId),
+          finalization: settlement.finalization || null,
+          next: refreshedNext,
+        };
+      }
+      const fin = settlement.finalization ? asRecord(settlement.finalization) : null;
+      const finalizationAccepted = fin?.completionStatus === 'accepted';
+      const finalizationCompleted = finalizationAccepted && fin?.finalizationStatus === 'completed';
+      return {
+        status: finalizationAccepted
+          ? (finalizationCompleted ? 'completed' : 'finalization-incomplete')
+          : 'receipt-recorded',
+        reviewReceiptAccepted: true,
+        proofSettled: true,
+        settlementStatus: fin
+          ? (finalizationAccepted ? (finalizationCompleted ? 'completed' : 'partial') : 'blocked')
+          : 'pending',
+        ...baseFields,
+        run: getRunSnapshot(runId),
+        finalization: fin,
+        next: refreshedNext,
+      };
+    },
+
+    // Reconciles an already-persisted ReviewReceipt whose Judgment Proof or
+    // Run finalization was interrupted before finishing. Never invokes a
+    // reviewer and never promotes a bare UsageReceipt.
+    async settleReviewReceipt(runId: string, { obligationId = null, receiptId = null }: { obligationId?: string | null; receiptId?: string | null } = {}) {
+      const run = getRunSnapshot(runId);
+      if (!run) return { status: 'not_found', reviewReceipt: null, reviewReceiptId: null, proofSettled: false, finalization: null, next: null };
+      const receipts = store.listReviewReceipts(runId, obligationId ? { obligationId } : {});
+      const receipt = receiptId
+        ? receipts.find((entry) => entry.receiptId === receiptId) || null
+        : receipts.slice().reverse().find((entry) => (
+          (!obligationId || entry.obligationId === obligationId)
+          && entry.subject?.workspaceIdentity === run.currentWorkspaceIdentity
+          && Number(entry.subject?.mutationRevision) === Number(run.mutationRevision)
+        )) || null;
+      if (!receipt) {
+        return {
+          status: 'not_found',
+          reviewReceipt: null,
+          reviewReceiptId: receiptId || null,
+          proofSettled: false,
+          finalization: null,
+          next: null,
+        };
+      }
+      return this.completeAcceptedReviewReceipt(runId, receipt, { directRecordProof: false });
+    },
+
+    async reconcilePendingReviewReceipts(runId: string, {
+      heldLeaseFencingToken = null,
+      obligationId = null,
+      receiptId = null,
+    }: { heldLeaseFencingToken?: number | null; obligationId?: string | null; receiptId?: string | null } = {}): Promise<{
+      reconciled: ReviewReceipt[];
+      blocked: { reason: string; detail: string; reviewReceiptId: string; lease?: UnknownRecord | null } | null;
+    }> {
+      const run = getRunSnapshot(runId);
+      if (!run || run.status !== 'active' || !run.currentWorkspaceIdentity) {
+        return { reconciled: [], blocked: null };
+      }
+      const storedReceipts = store.listReviewReceipts(runId, obligationId ? { obligationId } : {});
+      if (storedReceipts.length === 0) return { reconciled: [], blocked: null };
+
+      const obligations = store.getRunObligations(runId).filter((entry) => entry.status !== 'superseded');
+      const judgmentObligationIds = new Set(
+        obligations
+          .filter((entry) => entry.evidenceClass === 'judgment')
+          .map((entry) => String(entry.obligationId)),
+      );
+      const verifications = store.getVerifications(runId);
+      const isProofRecorded = (currentVerifications: PersistedVerification[], targetRun: KernelRun, receipt: ReviewReceipt) => {
+        const expectedRef = reviewEvidenceRef(runId, receipt.receiptId);
+        const expectedStatus = receipt.verdict === 'pass' ? 'passed' : 'failed';
+        return currentVerifications.some((entry) => (
+          entry.obligationId === receipt.obligationId
+          && entry.evidenceClass === 'judgment'
+          && entry.status === expectedStatus
+          && entry.evidenceRef === expectedRef
+          && entry.evidenceDigest === receipt.digest
+          && Number(entry.verifiedMutationRevision ?? entry.verifiedRuntimeRevision) === Number(targetRun.mutationRevision)
+          && Number(entry.contractRevision || 1) === Number(targetRun.contractRevision || 1)
+        ));
+      };
+
+      const latestByObligation = new Map<string, ReviewReceipt>();
+      for (const receipt of storedReceipts) {
+        if (receiptId && receipt.receiptId !== receiptId) continue;
+        if (!judgmentObligationIds.has(String(receipt.obligationId))) continue;
+        latestByObligation.set(String(receipt.obligationId), receipt);
+      }
+
+      const pending: ReviewReceipt[] = [];
+      for (const [targetObligationId, receipt] of latestByObligation.entries()) {
+        if (isProofRecorded(verifications, run, receipt)) continue;
+        const currentEvidenceDigest = digestOfEvidence(verifications, { excludeObligationId: targetObligationId });
+        if (
+          receipt.subject?.workspaceIdentity !== run.currentWorkspaceIdentity
+          || Number(receipt.subject?.mutationRevision) !== Number(run.mutationRevision)
+          || receipt.subject?.evidenceDigest !== currentEvidenceDigest
+        ) {
+          continue;
+        }
+        if (receipt.verdict === 'pass') {
+          const check = evaluateReviewReceipt({
+            receipt,
+            run: { ...run, verifications },
+            requireIndependentSession: run.proofTier === 'T3' || isProtectedObligation(targetObligationId),
+            requireFrontierClass: run.proofTier === 'T3' || isProtectedObligation(targetObligationId),
+            requireTrustedEnforcement: true,
+            currentEvidenceDigest,
+          });
+          if (!check.usable) continue;
+          if (!this.isReviewReceiptAcceptanceScopeCurrent(runId, run, receipt)) continue;
+        } else {
+          if (!(TRUSTED_ENFORCEMENT_STATUSES as readonly unknown[]).includes(receipt.reviewer?.enforcementStatus)) continue;
+        }
+        pending.push(receipt);
+      }
+
+      if (pending.length === 0) return { reconciled: [], blocked: null };
+
+      try {
+        preflight(runId, 'finalize');
+      } catch {
+        return { reconciled: [], blocked: null };
+      }
+
+      let liveObservation: WorkspaceObservation;
+      try {
+        liveObservation = observeWorkspaceIdentity({ projectRoot });
+      } catch (error) {
+        return {
+          reconciled: [],
+          blocked: {
+            reason: 'review_workspace_observation_failed',
+            detail: errorMessage(error),
+            reviewReceiptId: pending[0]!.receiptId,
+          },
+        };
+      }
+      if (!liveObservation?.identity || liveObservation.identity !== run.currentWorkspaceIdentity) {
+        if (liveObservation?.identity && liveObservation.identity !== run.currentWorkspaceIdentity) {
+          try { store.observeWorkspaceIdentity(runId, liveObservation.identity); } catch {}
+        }
+        return {
+          reconciled: [],
+          blocked: {
+            reason: 'review_workspace_identity_changed',
+            detail: 'Workspace changed after review receipt persistence; cannot settle stale judgment proof',
+            reviewReceiptId: pending[0]!.receiptId,
+          },
+        };
+      }
+
+      let acquiredHere = false;
+      let fencingToken = heldLeaseFencingToken;
+      if (fencingToken !== null) {
+        if (!store.isLeaseHeld(runId, { holder, fencingToken })) {
+          return {
+            reconciled: [],
+            blocked: {
+              reason: 'lease-conflict',
+              detail: 'Run lease was lost before pending review proof reconciliation',
+              reviewReceiptId: pending[0]!.receiptId,
+              lease: asRecord(store.getLease(runId)),
+            },
+          };
+        }
+      } else {
+        const leaseResult = acquireRunLease(runId, REPORT_LEASE_TTL_MS);
+        if (!leaseResult.acquired) {
+          return {
+            reconciled: [],
+            blocked: {
+              reason: 'lease-conflict',
+              detail: 'Another runner holds the active Run lease',
+              reviewReceiptId: pending[0]!.receiptId,
+              lease: asRecord(leaseResult.lease),
+            },
+          };
+        }
+        acquiredHere = true;
+        fencingToken = leaseResult.lease.fencingToken;
+      }
+
+      const reconciled: ReviewReceipt[] = [];
+      try {
+        for (const receipt of pending) {
+          const latestRun = getRunSnapshot(runId);
+          if (!latestRun || latestRun.status !== 'active') break;
+          const latestVerifications = store.getVerifications(runId);
+          if (isProofRecorded(latestVerifications, latestRun, receipt)) continue;
+          try {
+            await this.recordProof(runId, {
+              obligationId: receipt.obligationId,
+              status: receipt.verdict === 'pass' ? 'passed' : 'failed',
+              evidenceRef: reviewEvidenceRef(runId, receipt.receiptId),
+              command: receipt.reviewer?.enforcementStatus === 'operator_approved' ? 'operator-approval' : 'structured-review',
+              exitCode: receipt.verdict === 'pass' ? 0 : 1,
+              evidenceDigest: receipt.digest,
+              evidenceClass: 'judgment',
+              acceptanceCoverage: receipt.acceptanceCoverage,
+            });
+            reconciled.push(receipt);
+          } catch (proofError) {
+            const failure = asRecord(proofError);
+            return {
+              reconciled,
+              blocked: {
+                reason: String(failure.errorCode || failure.code || 'review_proof_settlement_failed'),
+                detail: errorMessage(proofError),
+                reviewReceiptId: receipt.receiptId,
+              },
+            };
+          }
+        }
+        return { reconciled, blocked: null };
+      } finally {
+        if (acquiredHere && fencingToken !== null) {
+          store.releaseLease(runId, { holder, fencingToken });
+        }
+      }
+    },
+
+    areStepsReadyForSettlement(
+      runId: string,
+      run: KernelRun,
+      completion: Completion,
+      verifications: PersistedVerification[],
+    ): boolean {
+      const planRevision = Number.isInteger(run.planRevision) ? Number(run.planRevision) : null;
+      const currentSteps = store.getRunSteps(runId, { planRevision });
+      if (currentSteps.length === 0 || allStepsPassed(currentSteps, planRevision)) return true;
+
+      const hasAttempts = (step: PersistedWorkStep) => (
+        Number(step.attemptCount || 0) > 0
+        || store.getStepAttempts(runId, { stepId: step.stepId }).length > 0
+      );
+      const isUntouched = (step: PersistedWorkStep) => (
+        (step.state === 'planned' || step.state === 'ready') && !hasAttempts(step)
+      );
+      // Do not auto-finalize when a multi-step plan still has unexecuted steps
+      // after earlier steps ran (matches finalizeRun's work_steps_unsettled guard).
+      if (currentSteps.every(isUntouched)) return true;
+      const acceptance = (Array.isArray(run.taskContract?.acceptance) ? run.taskContract.acceptance : []).map((item) => {
+        const entry = asRecord(item);
+        return { id: String(entry.id || ''), statement: String(entry.statement || '') };
+      });
+      for (const step of currentSteps) {
+        if ((TERMINAL_STEP_STATES as readonly string[]).includes(step.state)) continue;
+        if (isUntouched(step)) return false;
+        const complete = step.synthetic
+          ? Boolean(completion.readyExceptClose)
+            && Boolean(run.currentWorkspaceIdentity)
+            && completion.unsatisfiedObligations.length === 0
+          : evaluateStepCompletion({ step, verifications, run, acceptance }).complete;
+        if (!complete) return false;
+      }
+      return true;
+    },
+
+    buildStructuredSignalsFromCheckpoint(
+      runId: string,
+      checkpoint: ReportCheckpoint,
+      verifications: PersistedVerification[],
+    ) {
+      const { report, failures, executed } = checkpoint;
+      const structuredSignals = buildStructuredRunSignals({
+        runId,
+        failures: failures.map((failure) => ({ ...failure, fingerprint: failure.fingerprint || failureFingerprint(failure) })),
+        judgments: report.judgments,
+        executed,
+        changedPaths: report.changedPaths,
+        verifications,
+      });
+      structuredSignals.invariantObservations = report.knowledgeObservations
+        .filter((observation) => ['ontology_constraint', 'invariant', 'invariant_observation'].includes(String(observation?.proposedType || observation?.type)))
+        .map((observation) => ({ ...observation, evidenceRefs: observation.evidenceRefs || observation.evidenceRef || observation.evidenceDigest, scope: observation.scope || report.changedPaths }));
+      structuredSignals.supersessionEvidence = report.knowledgeObservations
+        .filter((observation) => Array.isArray(observation?.supersedes) || observation?.supersedes || observation?.supersedesId)
+        .map((observation) => ({ ...observation, evidenceRefs: observation.evidenceRefs || observation.evidenceRef || observation.evidenceDigest, scope: observation.scope || report.changedPaths }));
+      return structuredSignals;
+    },
+
+    resolveBoundReportCheckpoint(
+      runId: string,
+      run: KernelRun,
+      {
+        preferredAttemptId = null,
+        preferredReportKey = null,
+      }: { preferredAttemptId?: string | null; preferredReportKey?: string | null } = {},
+    ): { checkpoint: ReportCheckpoint | null; attempt: WorkAttempt | null; blockedReason: string | null; errorSummary: string | null } {
+      const parseAttemptCheckpoint = (attempt: WorkAttempt | null | undefined): ReportCheckpoint | null => {
+        if (!attempt?.reportCheckpoint) return null;
+        try {
+          return readReportCheckpoint(attempt.reportCheckpoint);
+        } catch {
+          return null;
+        }
+      };
+      const isImplementationAttempt = (attempt: WorkAttempt): boolean => {
+        if (attempt.provenanceKind === 'legacy-unattributed') return false;
+        if (attempt.provenanceKind === 'owner-session' || attempt.provenanceKind === 'host-owned-worker') return true;
+        if (attempt.provenanceKind !== 'routed') return false;
+        const decision = attempt.routeDecisionId
+          ? store.getModelRouteDecision(attempt.routeDecisionId, { runId })
+          : null;
+        return !decision || decision.role === 'implementer';
+      };
+
+      let boundAttempt: WorkAttempt | null = null;
+      let checkpoint: ReportCheckpoint | null = null;
+
+      if (preferredReportKey) {
+        const byKey = store.findStepAttemptByReportKey?.(runId, preferredReportKey) || null;
+        const parsed = parseAttemptCheckpoint(byKey);
+        if (byKey && parsed) {
+          boundAttempt = byKey;
+          checkpoint = parsed;
+        }
+      }
+      if (!checkpoint && preferredAttemptId) {
+        const byId = store.getStepAttemptByAttemptId(preferredAttemptId, { runId });
+        const parsed = parseAttemptCheckpoint(byId);
+        if (byId && parsed) {
+          boundAttempt = byId;
+          checkpoint = parsed;
+        }
+      }
+      if (!checkpoint) {
+        const matchingAttempts = store.getStepAttempts(runId)
+          .filter(isImplementationAttempt)
+          .map((attempt) => ({ attempt, checkpoint: parseAttemptCheckpoint(attempt) }))
+          .filter((entry): entry is { attempt: WorkAttempt; checkpoint: ReportCheckpoint } => (
+            Boolean(entry.checkpoint)
+            && entry.checkpoint!.runId === runId
+            && Number(entry.checkpoint!.planRevision) === Number(run.planRevision)
+            && Number(entry.checkpoint!.mutationRevision) === Number(run.mutationRevision)
+            && (!entry.attempt.reportKey || entry.attempt.reportKey === entry.checkpoint!.reportKey)
+          ));
+        const latestMatch = matchingAttempts.at(-1) || null;
+        if (latestMatch) {
+          boundAttempt = latestMatch.attempt;
+          checkpoint = latestMatch.checkpoint;
+        }
+      }
+
+      if (!checkpoint || !boundAttempt) {
+        return { checkpoint: null, attempt: null, blockedReason: null, errorSummary: null };
+      }
+
+      const closeoutRequested = checkpoint.report.gitCloseoutRequest?.requested === true;
+      const keyMatches = !boundAttempt.reportKey || boundAttempt.reportKey === checkpoint.reportKey;
+      const revisionMatches = checkpoint.runId === runId
+        && Number(checkpoint.planRevision) === Number(run.planRevision)
+        && Number(checkpoint.mutationRevision) === Number(run.mutationRevision);
+      const runIdentityMatches = !run.currentWorkspaceIdentity
+        || checkpoint.observation?.identity === run.currentWorkspaceIdentity;
+
+      if (!closeoutRequested) {
+        return revisionMatches && keyMatches && runIdentityMatches
+          ? { checkpoint, attempt: boundAttempt, blockedReason: null, errorSummary: null }
+          : { checkpoint: null, attempt: null, blockedReason: null, errorSummary: null };
+      }
+
+      const priorGitReceipt = store.getGitCloseoutReceipt(runId);
+      const authorizedGitRecovery = Boolean(
+        priorGitReceipt
+        && checkpoint.reportKey
+        && priorGitReceipt.receiptJson?.reportKey === checkpoint.reportKey
+        && asRecord(priorGitReceipt.receiptJson).verifiedWorkspaceIdentity === checkpoint.observation?.identity
+        && ['commit_created', 'push_failed', 'parity_failed', 'completed'].includes(String(priorGitReceipt.status || ''))
+        && typeof gitCloseoutHost?.isAuthorizedCloseoutWorkspace === 'function'
+        && gitCloseoutHost.isAuthorizedCloseoutWorkspace({ repoRoot: projectRoot, commitSha: priorGitReceipt.commitSha }),
+      );
+
+      if (!revisionMatches || !keyMatches || !checkpoint.reportKey || !checkpoint.observation?.identity || (!runIdentityMatches && !authorizedGitRecovery)) {
+        return {
+          checkpoint: null,
+          attempt: boundAttempt,
+          blockedReason: 'git_closeout_checkpoint_mismatch',
+          errorSummary: 'Approved Git closeout checkpoint no longer matches the bound Report key, plan/mutation revision, or Run workspace identity',
+        };
+      }
+
+      let liveObservation: WorkspaceObservation;
+      try {
+        liveObservation = observeWorkspaceIdentity({ projectRoot });
+      } catch (error) {
+        return {
+          checkpoint: null,
+          attempt: boundAttempt,
+          blockedReason: 'git_closeout_workspace_observation_failed',
+          errorSummary: errorMessage(error),
+        };
+      }
+
+      if (liveObservation.identity !== checkpoint.observation.identity && !authorizedGitRecovery) {
+        return {
+          checkpoint: null,
+          attempt: boundAttempt,
+          blockedReason: 'git_closeout_workspace_mismatch',
+          errorSummary: 'Live workspace identity no longer matches the verified workspace approved for Git closeout',
+        };
+      }
+
+      return { checkpoint, attempt: boundAttempt, blockedReason: null, errorSummary: null };
+    },
+
+    buildFinalizationInputFromCheckpoint({
+      run,
+      checkpoint = null,
+      verifications = [],
+      structuredSignals = null,
+      fallbackChangedPaths = [],
+    }: {
+      run: KernelRun;
+      checkpoint?: ReportCheckpoint | null;
+      verifications?: PersistedVerification[];
+      structuredSignals?: ReturnType<typeof buildStructuredRunSignals> | null;
+      fallbackChangedPaths?: string[];
+    }): Omit<Parameters<typeof finalizeRun>[0], 'store' | 'runtimeHome' | 'projectRoot' | 'runId'> {
+      if (checkpoint) {
+        const { report, observation, parallelSettlement, liveWorkspaceObservation, actualChangedPaths, reportKey } = checkpoint;
+        let finalizationChangedPaths = canonicalChangedPaths(report.changedPaths);
+        if (!parallelSettlement) {
+          let finalizationObservation: WorkspaceObservation | null = null;
+          try { finalizationObservation = observeWorkspaceIdentity({ projectRoot }); } catch {}
+          const finalizationChangeSet = deriveRunChangedPaths({
+            observation: finalizationObservation || liveWorkspaceObservation,
+            baselineChangedPaths: run.baselineChangedPaths,
+            baselineEntries: run.baselineWorkspaceEntries,
+            baselineStatus: run.workspaceBaselineStatus,
+          });
+          if (finalizationChangeSet.status === 'observed') {
+            const observedPaths = canonicalChangedPaths(finalizationChangeSet.actualChangedPaths);
+            if (observedPaths.length > 0) {
+              finalizationChangedPaths = observedPaths;
+            } else {
+              const priorGitReceipt = store.getGitCloseoutReceipt(run.runId);
+              const commitAlreadyCreated = Boolean(
+                report.gitCloseoutRequest?.requested === true
+                && priorGitReceipt
+                && ['commit_created', 'push_failed', 'parity_failed', 'completed'].includes(String(priorGitReceipt.status || '')),
+              );
+              finalizationChangedPaths = commitAlreadyCreated
+                ? canonicalChangedPaths(actualChangedPaths.length > 0 ? actualChangedPaths : report.changedPaths)
+                : observedPaths;
+            }
+          }
+        }
+        const computedSignals = structuredSignals || this.buildStructuredSignalsFromCheckpoint(run.runId, checkpoint, verifications);
+        return {
+          gitCloseoutRequest: report.gitCloseoutRequest
+            ? {
+              ...report.gitCloseoutRequest,
+              reportKey,
+              verifiedWorkspaceIdentity: observation.identity,
+            }
+            : null,
+          changedPaths: finalizationChangedPaths,
+          ...(finalizationChangedPaths.length > 0 ? { changedFileCount: finalizationChangedPaths.length } : {}),
+          knowledgeObservations: report.knowledgeObservations,
+          structuredSignals: computedSignals,
+        };
+      }
+
+      let effectiveChangedPaths = canonicalChangedPaths(fallbackChangedPaths);
+      if (effectiveChangedPaths.length === 0) {
+        const latestAttempt = store.getLatestImplementationAttempt?.(run.runId);
+        if (Array.isArray(latestAttempt?.changedPaths) && latestAttempt.changedPaths.length > 0) {
+          effectiveChangedPaths = canonicalChangedPaths(latestAttempt.changedPaths);
+        } else {
+          try {
+            const obs = observeWorkspaceIdentity({ projectRoot });
+            const derived = deriveRunChangedPaths({
+              observation: obs,
+              baselineChangedPaths: run.baselineChangedPaths,
+              baselineEntries: run.baselineWorkspaceEntries,
+              baselineStatus: run.workspaceBaselineStatus,
+            });
+            if (derived.status === 'observed') {
+              effectiveChangedPaths = canonicalChangedPaths(derived.actualChangedPaths);
+            }
+          } catch {}
+        }
+      }
+      return {
+        gitCloseoutRequest: null,
+        changedPaths: effectiveChangedPaths,
+        ...(effectiveChangedPaths.length > 0 ? { changedFileCount: effectiveChangedPaths.length } : {}),
+        knowledgeObservations: [],
+      };
+    },
+
+    async settleAuthorizedRun(runId: string, {
+      changedPaths = [],
+      heldLeaseFencingToken = null,
+      preferredAttemptId = null,
+      preferredReportKey = null,
+    }: { changedPaths?: string[]; heldLeaseFencingToken?: number | null; preferredAttemptId?: string | null; preferredReportKey?: string | null } = {}): Promise<{
+      settled: boolean;
+      alreadyCompleted?: boolean;
+      leaseConflict?: boolean;
+      accessDenied?: boolean;
+      lease?: UnknownRecord | null;
+      blockedReason?: string | null;
+      errorSummary?: string | null;
+      finalization: UnknownRecord | null;
+    }> {
+      try {
+        preflight(runId, 'finalize');
+      } catch (error) {
+        const failure = asRecord(error);
+        return {
+          settled: false,
+          accessDenied: true,
+          blockedReason: String(failure.errorCode || failure.code || 'run_access_denied'),
+          errorSummary: errorMessage(error),
+          finalization: null,
+        };
+      }
+
+      const initialRun = getRunSnapshot(runId);
+      if (!initialRun) return { settled: false, finalization: null };
+      if (initialRun.status === 'completed' && initialRun.finalizationStatus === 'completed') {
+        const existingReceipt = store.getFinalizationReceipt(runId)?.receiptJson;
+        return {
+          settled: true,
+          alreadyCompleted: true,
+          finalization: existingReceipt ? asRecord(existingReceipt) : null,
+        };
+      }
+      const isInterruptedFinalizationRecovery = initialRun.status === 'completed'
+        && initialRun.finalizationStatus !== 'completed'
+        && !store.getFinalizationReceipt(runId);
+      if (!isInterruptedFinalizationRecovery && (initialRun.status !== 'active' || initialRun.state !== 'PROVE')) {
+        return { settled: false, finalization: null };
+      }
+      if (!isInterruptedFinalizationRecovery) {
+        const initialVerifications = store.getVerifications(runId);
+        const initialCompletion = evaluateRunCompletion(runId, { verifications: initialVerifications });
+        if (
+          !initialCompletion.readyExceptClose
+          || initialCompletion.unsatisfiedObligations.length > 0
+          || !this.areStepsReadyForSettlement(runId, initialRun, initialCompletion, initialVerifications)
+        ) {
+          return { settled: false, finalization: null };
+        }
+      }
+
+      let acquiredHere = false;
+      let fencingToken = heldLeaseFencingToken;
+      if (fencingToken !== null) {
+        if (!store.isLeaseHeld(runId, { holder, fencingToken })) {
+          return {
+            settled: false,
+            leaseConflict: true,
+            lease: asRecord(store.getLease(runId)),
+            finalization: null,
+          };
+        }
+      } else {
+        const leaseResult = acquireRunLease(runId, REPORT_LEASE_TTL_MS);
+        if (!leaseResult.acquired) {
+          return {
+            settled: false,
+            leaseConflict: true,
+            lease: asRecord(leaseResult.lease),
+            finalization: null,
+          };
+        }
+        acquiredHere = true;
+        fencingToken = leaseResult.lease.fencingToken;
+      }
+
+      try {
+        const latestRun = getRunSnapshot(runId);
+        if (!latestRun) return { settled: false, finalization: null };
+        if (latestRun.status === 'completed' && latestRun.finalizationStatus === 'completed') {
+          const existingReceipt = store.getFinalizationReceipt(runId)?.receiptJson;
+          return {
+            settled: true,
+            alreadyCompleted: true,
+            finalization: existingReceipt ? asRecord(existingReceipt) : null,
+          };
+        }
+        const latestInterruptedRecovery = latestRun.status === 'completed'
+          && latestRun.finalizationStatus !== 'completed'
+          && !store.getFinalizationReceipt(runId);
+        if (!latestInterruptedRecovery && (latestRun.status !== 'active' || latestRun.state !== 'PROVE')) {
+          return { settled: false, finalization: null };
+        }
+        const latestVerifications = store.getVerifications(runId);
+        if (!latestInterruptedRecovery) {
+          const latestCompletion = evaluateRunCompletion(runId, { verifications: latestVerifications });
+          if (
+            !latestCompletion.readyExceptClose
+            || latestCompletion.unsatisfiedObligations.length > 0
+            || !this.areStepsReadyForSettlement(runId, latestRun, latestCompletion, latestVerifications)
+          ) {
+            return { settled: false, finalization: null };
+          }
+        }
+        if (!store.isLeaseHeld(runId, { holder, fencingToken })) {
+          return {
+            settled: false,
+            leaseConflict: true,
+            lease: asRecord(store.getLease(runId)),
+            finalization: null,
+          };
+        }
+
+        const resolvedCheckpoint = this.resolveBoundReportCheckpoint(runId, latestRun, {
+          preferredAttemptId,
+          preferredReportKey,
+        });
+        if (resolvedCheckpoint.blockedReason) {
+          return {
+            settled: false,
+            blockedReason: resolvedCheckpoint.blockedReason,
+            errorSummary: resolvedCheckpoint.errorSummary || resolvedCheckpoint.blockedReason,
+            finalization: null,
+          };
+        }
+        const finalizationInput = this.buildFinalizationInputFromCheckpoint({
+          run: latestRun,
+          checkpoint: resolvedCheckpoint.checkpoint,
+          verifications: latestVerifications,
+          fallbackChangedPaths: changedPaths,
+        });
+
+        const finalized = asRecord(await this.finalizeRun(runId, finalizationInput));
+        if (finalized.status === 'error' && finalized.errorCode) {
+          return {
+            settled: false,
+            accessDenied: ['run_access_denied', 'host_binding_missing', 'run_session_mismatch', 'run_project_mismatch', 'run_workspace_mismatch'].includes(String(finalized.errorCode)),
+            blockedReason: String(finalized.errorCode),
+            errorSummary: String(finalized.message || finalized.errorCode),
+            finalization: null,
+          };
+        }
+        return {
+          settled: finalized.completionStatus === 'accepted',
+          finalization: finalized,
+          ...(finalized.completionStatus !== 'accepted' ? {
+            blockedReason: String(finalized.reason || finalized.finalizationStatus || 'finalization_blocked'),
+            errorSummary: String(finalized.reason || 'Run finalization gates were not met'),
+          } : {}),
+        };
+      } catch (error) {
+        const failure = asRecord(error);
+        return {
+          settled: false,
+          blockedReason: String(failure.errorCode || failure.code || 'finalization_error'),
+          errorSummary: errorMessage(error),
+          finalization: null,
+        };
+      } finally {
+        if (acquiredHere && fencingToken !== null) {
+          store.releaseLease(runId, { holder, fencingToken });
+        }
+      }
     },
 
     // Within-run route/tier promotion only (§13.5). Demotion throws.
@@ -4025,7 +5095,7 @@ export const createKernelControlPlane = async ({
       } catch (error) {
         return bindingErrorPayload(error, { projectRoot, provider: hostProvider });
       }
-      return this.prepareNext(runId, { stepId });
+      return this.prepareNext(runId, { stepId, allowAuthorizedSettlement: true });
     },
 
     // One canonical continuation preparation path for next/report/resume.
@@ -4034,8 +5104,16 @@ export const createKernelControlPlane = async ({
     // Unit scope checks. It is an internal lifecycle primitive, not a new
     // model-visible command.
     async prepareNext(runId: string, {
-      stepId = null, [settlingHostWorkerAttempt]: settlingAttemptId = null,
-    }: { stepId?: string | null; [settlingHostWorkerAttempt]?: string | null } = {}) {
+      stepId = null,
+      allowAuthorizedSettlement = false,
+      heldLeaseFencingToken = null,
+      [settlingHostWorkerAttempt]: settlingAttemptId = null,
+    }: {
+      stepId?: string | null;
+      allowAuthorizedSettlement?: boolean;
+      heldLeaseFencingToken?: number | null;
+      [settlingHostWorkerAttempt]?: string | null;
+    } = {}) {
       let run = getRunSnapshot(runId);
       if (!run) return { schemaVersion: 1, runId, status: 'not_found' };
       const projectCommands = currentProjectCommands();
@@ -4071,6 +5149,38 @@ export const createKernelControlPlane = async ({
       // This is only a projection; it does not manufacture a completed Step.
       const pendingWorker = pendingHostWorker(runId, settlingAttemptId);
       if (pendingWorker) return hostWorkerContinuation(runId, pendingWorker);
+      let recoveredReviewReceiptIds: string[] = [];
+      if (allowAuthorizedSettlement && run.status === 'active') {
+        const reconciledReviews = await this.reconcilePendingReviewReceipts(runId, { heldLeaseFencingToken });
+        if (reconciledReviews.reconciled.length > 0) {
+          recoveredReviewReceiptIds = reconciledReviews.reconciled.map((entry) => entry.receiptId);
+          run = requireRun(runId);
+        }
+        if (reconciledReviews.blocked) {
+          const blocked = reconciledReviews.blocked;
+          const fallbackPayload = buildNextForRun(requireRun(runId), {
+            verifications: store.getVerifications(runId),
+            reviews: store.listReviewReceipts(runId),
+            completionDecision: store.getCompletionDecision(runId),
+            obligations: initialObligations,
+          });
+          return {
+            ...fallbackPayload,
+            status: blocked.reason === 'lease-conflict' ? 'lease-conflict' : 'blocked',
+            blockedReason: blocked.reason,
+            reviewReceiptId: blocked.reviewReceiptId,
+            ...(blocked.lease ? { lease: blocked.lease } : {}),
+            ...(recoveredReviewReceiptIds.length > 0 ? { recoveredReviewReceiptIds } : {}),
+            nextAction: 'blocked',
+            action: {
+              type: 'blocked',
+              reason: blocked.reason,
+              blockingClass: 'completion',
+              guidance: blocked.detail,
+            },
+          };
+        }
+      }
       let stageContext: UnknownRecord | null | undefined = store.getKnowledgeContextReceipt(runId, run.state)?.receiptJson;
       if (!stageContext) {
         stageContext = await this.refreshStageKnowledge(runId, { stage: run.state });
@@ -4123,6 +5233,134 @@ export const createKernelControlPlane = async ({
         reviews,
         scopedIdentities,
       });
+
+      const canAutoRecoverInterruptedFinalization = run.status === 'completed'
+        && run.finalizationStatus !== 'completed'
+        && !store.getFinalizationReceipt(runId);
+      if (
+        allowAuthorizedSettlement
+        && (
+          (run.status === 'active'
+            && isProve
+            && completion.readyExceptClose
+            && completion.unsatisfiedObligations.length === 0
+            && this.areStepsReadyForSettlement(runId, run, completion, verifications))
+          || canAutoRecoverInterruptedFinalization
+        )
+      ) {
+        const settlement = await this.settleAuthorizedRun(runId, { heldLeaseFencingToken });
+        if (settlement.leaseConflict) {
+          const conflictPayload = buildNextForRun(run, {
+            verifications,
+            reviews,
+            completionDecision,
+            scopedIdentities,
+            requiredObligations: run.requiredObligations,
+            obligations,
+            contract: run.taskContract ? contractBriefing(run.taskContract) : null,
+            completion,
+            step,
+            knowledgePromptBlock: asRecord(stageContext).promptBlock || null,
+            knowledgeSegments: asRecord(stageContext).segments ? asRecord(asRecord(stageContext).segments) : null,
+            context: stageContext ? asRecord(stageContext) : null,
+          });
+          return {
+            ...conflictPayload,
+            status: 'lease-conflict',
+            blockedReason: 'lease-conflict',
+            lease: settlement.lease || null,
+            ...(recoveredReviewReceiptIds.length > 0 ? { recoveredReviewReceiptIds } : {}),
+            nextAction: 'blocked',
+            action: {
+              type: 'blocked',
+              reason: 'lease-conflict',
+              blockingClass: 'completion',
+              guidance: 'Another runner holds the active Run lease. Settlement cannot proceed until the lease is released.',
+            },
+          };
+        }
+        if (settlement.blockedReason && !settlement.accessDenied && !settlement.finalization) {
+          const blockedPayload = buildNextForRun(run, {
+            verifications,
+            reviews,
+            completionDecision,
+            scopedIdentities,
+            requiredObligations: run.requiredObligations,
+            obligations,
+            contract: run.taskContract ? contractBriefing(run.taskContract) : null,
+            completion,
+            step,
+            knowledgePromptBlock: asRecord(stageContext).promptBlock || null,
+            knowledgeSegments: asRecord(stageContext).segments ? asRecord(asRecord(stageContext).segments) : null,
+            context: stageContext ? asRecord(stageContext) : null,
+          });
+          return {
+            ...blockedPayload,
+            status: 'blocked',
+            blockedReason: settlement.blockedReason,
+            ...(recoveredReviewReceiptIds.length > 0 ? { recoveredReviewReceiptIds } : {}),
+            nextAction: 'blocked',
+            action: {
+              type: 'blocked',
+              reason: settlement.blockedReason,
+              blockingClass: 'completion',
+              guidance: settlement.errorSummary || settlement.blockedReason,
+            },
+          };
+        }
+        if (settlement.finalization) {
+          const settledRun = requireRun(runId);
+          const settledSteps = store.getRunSteps(runId, { planRevision: settledRun.planRevision });
+          const settledStep = selectCurrentStep(settledSteps, { planRevision: settledRun.planRevision });
+          const settledVerifications = store.getVerifications(runId);
+          const settledReviews = store.listReviewReceipts(runId);
+          const settledDecision = store.getCompletionDecision(runId);
+          const settledScopedIdentities = verificationScopeIdentities(runId, obligations);
+          const settledCompletion = evaluateRunCompletion(runId, {
+            obligations,
+            verifications: settledVerifications,
+            reviews: settledReviews,
+            scopedIdentities: settledScopedIdentities,
+          });
+          const settledCapability = resolveRunCapabilityDecision({
+            run: settledRun,
+            stage: settledRun.state,
+            obligations,
+            verifications: settledVerifications,
+            completion: settledCompletion,
+            projectCommands,
+          });
+          const settledPayload = buildNextForRun(settledRun, {
+            verifications: settledVerifications,
+            reviews: settledReviews,
+            completionDecision: settledDecision,
+            scopedIdentities: settledScopedIdentities,
+            requiredObligations: settledRun.requiredObligations,
+            obligations,
+            contract: settledRun.taskContract ? contractBriefing(settledRun.taskContract) : null,
+            completion: settledCompletion,
+            step: settledStep,
+            knowledgePromptBlock: asRecord(stageContext).promptBlock || null,
+            knowledgeSegments: asRecord(stageContext).segments ? asRecord(asRecord(stageContext).segments) : null,
+            context: stageContext ? asRecord(stageContext) : null,
+            capabilities: settledCapability.selected.map((entry) => ({ id: entry.id, guidance: entry.guidance })),
+          });
+          settledPayload.finalization = settlement.finalization;
+          if (recoveredReviewReceiptIds.length > 0) {
+            settledPayload.recoveredReviewReceiptIds = recoveredReviewReceiptIds;
+          }
+          settledPayload.completion = computeCompletionView({
+            run: settledRun,
+            step: settledStep,
+            verifications: settledVerifications,
+            obligations,
+            reviews: settledReviews,
+            completionDecision: settledDecision,
+          });
+          return settledPayload;
+        }
+      }
+
       const capabilityDecision = resolveRunCapabilityDecision({
         run,
         stage: run.state,
@@ -4229,6 +5467,9 @@ export const createKernelControlPlane = async ({
         reviews,
         completionDecision,
       });
+      if (recoveredReviewReceiptIds.length > 0) {
+        payload.recoveredReviewReceiptIds = recoveredReviewReceiptIds;
+      }
       return payload;
     },
 
@@ -4327,21 +5568,26 @@ export const createKernelControlPlane = async ({
       if (!run) return { schemaVersion: 1, runId, status: 'not_found' };
       const leaseResult = acquireRunLease(runId, SESSION_LEASE_TTL_MS);
       if (!leaseResult.acquired) {
-        return { schemaVersion: 1, runId, status: 'lease-conflict', lease: leaseResult.lease, next: await this.next(runId) };
+        return { schemaVersion: 1, runId, status: 'lease-conflict', lease: leaseResult.lease, next: await this.prepareNext(runId) };
       }
+      const next = await this.prepareNext(runId, {
+        allowAuthorizedSettlement: true,
+        heldLeaseFencingToken: leaseResult.lease.fencingToken,
+      });
+      const refreshedRun = getRunSnapshot(runId) || run;
       const attempts = store.getStepAttempts(runId);
       const verifications = store.getVerifications(runId);
       const lastValidEvidence = verifications.filter((verification) => verification.status === 'passed').at(-1) || null;
       return {
         schemaVersion: 1,
         runId,
-        status: run.status === 'completed' ? 'completed' : run.status === 'blocked' ? 'blocked' : 'resumed',
-        state: run.state,
-        mutationRevision: run.mutationRevision,
+        status: refreshedRun.status === 'completed' ? 'completed' : refreshedRun.status === 'blocked' ? 'blocked' : 'resumed',
+        state: refreshedRun.state,
+        mutationRevision: refreshedRun.mutationRevision,
         attemptCount: attempts.length,
-        blockedReason: run.blockedReason || null,
+        blockedReason: refreshedRun.blockedReason || null,
         lastValidEvidence: lastValidEvidence ? { obligationId: lastValidEvidence.obligationId, evidenceDigest: lastValidEvidence.evidenceDigest, executor: lastValidEvidence.executor } : null,
-        next: await this.next(runId),
+        next,
       };
     },
 
@@ -4758,12 +6004,40 @@ export const createKernelControlPlane = async ({
       // A run that already reached accepted completion but whose finalization
       // is partial re-enters finalization instead of restarting the loop.
       if (run.status === 'completed' && run.finalizationStatus !== 'completed') {
-        const retried = await this.finalizeRun(runId, {
-          gitCloseoutRequest: payload?.gitCloseoutRequest || null,
-          changedPaths: Array.isArray(payload?.changedPaths) ? payload.changedPaths : [],
-          knowledgeObservations: Array.isArray(payload?.knowledgeObservations) ? payload.knowledgeObservations : [],
+        const resolvedCheckpoint = this.resolveBoundReportCheckpoint(runId, run, {
+          preferredAttemptId: incomingOperation.attempt?.attemptId || null,
+          preferredReportKey: reportKey || null,
         });
-        const finalRun = requireRun(runId);
+        if (resolvedCheckpoint.blockedReason && !payload?.gitCloseoutRequest) {
+          return {
+            schemaVersion: 1,
+            runId,
+            status: 'finalization-incomplete',
+            blockedReason: resolvedCheckpoint.blockedReason,
+            errorSummary: resolvedCheckpoint.errorSummary || resolvedCheckpoint.blockedReason,
+            executed: [],
+            failures: [],
+            finalization: null,
+            next: await this.prepareNext(runId),
+          };
+        }
+        const checkpointInput = resolvedCheckpoint.checkpoint
+          ? this.buildFinalizationInputFromCheckpoint({
+            run,
+            checkpoint: resolvedCheckpoint.checkpoint,
+            verifications: store.getVerifications(runId),
+          })
+          : null;
+        const retried = await this.finalizeRun(runId, {
+          gitCloseoutRequest: payload?.gitCloseoutRequest || checkpointInput?.gitCloseoutRequest || null,
+          changedPaths: Array.isArray(payload?.changedPaths) && payload.changedPaths.length > 0
+            ? payload.changedPaths
+            : (checkpointInput?.changedPaths || []),
+          knowledgeObservations: Array.isArray(payload?.knowledgeObservations) && payload.knowledgeObservations.length > 0
+            ? payload.knowledgeObservations
+            : (checkpointInput?.knowledgeObservations || []),
+          ...(checkpointInput?.structuredSignals ? { structuredSignals: checkpointInput.structuredSignals } : {}),
+        });
         return {
           schemaVersion: 1,
           runId,
@@ -5546,24 +6820,11 @@ export const createKernelControlPlane = async ({
 
     async settleVerifiedReport(runId: string, checkpoint: ReportCheckpoint, { fencingToken }: { fencingToken?: number } = {}) {
       const { report, executed, failures, observed, observation, workerWorkspace, parallelSettlement,
-        liveWorkspaceObservation, activeStep, actualChangedPaths, reportedChangedPaths, reportKey } = checkpoint;
+        activeStep, actualChangedPaths, reportedChangedPaths, reportKey } = checkpoint;
       const stepAttempt = checkpoint.stepAttemptId ? store.getStepAttemptByAttemptId(checkpoint.stepAttemptId, { runId }) : null;
       const refreshed = requireRun(runId);
       const verifications = store.getVerifications(runId);
-      const structuredSignals = buildStructuredRunSignals({
-        runId,
-        failures: failures.map((failure) => ({ ...failure, fingerprint: failure.fingerprint || failureFingerprint(failure) })),
-        judgments: report.judgments,
-        executed,
-        changedPaths: report.changedPaths,
-        verifications,
-      });
-      structuredSignals.invariantObservations = report.knowledgeObservations
-        .filter((observation) => ['ontology_constraint', 'invariant', 'invariant_observation'].includes(String(observation?.proposedType || observation?.type)))
-        .map((observation) => ({ ...observation, evidenceRefs: observation.evidenceRefs || observation.evidenceRef || observation.evidenceDigest, scope: observation.scope || report.changedPaths }));
-      structuredSignals.supersessionEvidence = report.knowledgeObservations
-        .filter((observation) => Array.isArray(observation?.supersedes) || observation?.supersedes || observation?.supersedesId)
-        .map((observation) => ({ ...observation, evidenceRefs: observation.evidenceRefs || observation.evidenceRef || observation.evidenceDigest, scope: observation.scope || report.changedPaths }));
+      const structuredSignals = this.buildStructuredSignalsFromCheckpoint(runId, checkpoint, verifications);
       if (typeof store.recordRunSignals === 'function') store.recordRunSignals(runId, structuredSignals);
       const completionPreview = evaluateRunCompletion(runId);
       const outstanding = completionPreview.unsatisfiedObligations.map((entry) => entry.obligationId);
@@ -5599,27 +6860,13 @@ export const createKernelControlPlane = async ({
         if (!store.isLeaseHeld(runId, { holder, fencingToken })) {
           return { schemaVersion: 1, runId, status: 'lease-conflict', lease: store.getLease(runId), next: await this.prepareNext(runId) };
         }
-        let finalizationChangedPaths = report.changedPaths;
-        if (!parallelSettlement) {
-          let finalizationObservation = null;
-          try { finalizationObservation = observeWorkspaceIdentity({ projectRoot }); } catch {}
-          const finalizationChangeSet = deriveRunChangedPaths({
-            observation: finalizationObservation || liveWorkspaceObservation,
-            baselineChangedPaths: refreshed.baselineChangedPaths,
-            baselineEntries: refreshed.baselineWorkspaceEntries,
-            baselineStatus: refreshed.workspaceBaselineStatus,
-          });
-          if (finalizationChangeSet.status === 'observed') {
-            finalizationChangedPaths = canonicalChangedPaths(finalizationChangeSet.actualChangedPaths);
-          }
-        }
-        finalization = await this.finalizeRun(runId, {
-          gitCloseoutRequest: report.gitCloseoutRequest ? { ...report.gitCloseoutRequest,
-            reportKey, verifiedWorkspaceIdentity: observation.identity } : null,
-          changedPaths: finalizationChangedPaths,
-          knowledgeObservations: report.knowledgeObservations,
+        const finalizationInput = this.buildFinalizationInputFromCheckpoint({
+          run: refreshed,
+          checkpoint,
+          verifications,
           structuredSignals,
         });
+        finalization = await this.finalizeRun(runId, finalizationInput);
       }
 
       const proofMutatedWorkspace = executed.some((entry) => entry.workspaceMutatedByProof === true);

@@ -726,6 +726,7 @@ export const buildReviewCapsule = ({
   step = null,
   decision = null,
   contract = null,
+  obligations = [],
   stage = 'engineering',
   obligationId = null,
   requiredChecks = [],
@@ -739,6 +740,7 @@ export const buildReviewCapsule = ({
   step?: StepLike | null;
   decision?: DecisionLike | null;
   contract?: ContractLike | null;
+  obligations?: ObligationLike[];
   stage?: unknown;
   obligationId?: unknown;
   requiredChecks?: unknown[];
@@ -756,6 +758,24 @@ export const buildReviewCapsule = ({
   }
 
   const activeRun = run as RunLike;
+  const activeObligations = (Array.isArray(obligations) ? obligations : [])
+    .filter((entry) => String(entry?.status || '') !== 'superseded');
+  const boundObligationIdsFor = (item: AcceptanceLike): string[] => {
+    const ids = new Set<string>(stringList(item.obligationIds));
+    const itemId = String(item.id || '').trim();
+    const itemStatement = String(item.statement || '').trim();
+    const planObligationId = String(recordOf(item.evidencePlan).obligationId || '').trim();
+    if (planObligationId) ids.add(planObligationId);
+    for (const obligation of activeObligations) {
+      const obId = String(obligation?.obligationId || '').trim();
+      if (!obId) continue;
+      const acIds = stringList(obligation.acceptanceIds);
+      if ((itemId && acIds.includes(itemId)) || (itemStatement && acIds.includes(itemStatement))) {
+        ids.add(obId);
+      }
+    }
+    return [...ids].sort();
+  };
   return normalizeReviewCapsule({
     runId: activeRun.runId,
     stepId: step?.stepId || null,
@@ -765,6 +785,7 @@ export const buildReviewCapsule = ({
     acceptance: (contract?.acceptance || []).map((item) => ({
       id: item.id,
       statement: item.statement,
+      obligationIds: boundObligationIdsFor(item),
     })),
     subject: {
       changedPaths,

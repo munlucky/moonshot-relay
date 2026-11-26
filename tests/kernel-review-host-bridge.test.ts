@@ -2,6 +2,8 @@ import { assertTestArray, assertTestNumber, assertTestPresent, assertTestRecord,
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
 import { createKernelControlPlane } from '../src/host/kernel/control-plane-runtime.js';
@@ -13,6 +15,7 @@ import { createModelRegistry } from '../src/host/kernel/model-registry.js';
 import { resolveReviewTransports } from '../src/host/kernel/review-transport-resolver.js';
 import { resolveCodexModelPolicy } from '../src/host/kernel/codex-model-policy.js';
 import { buildEvidenceIdentity } from '../src/kernel/proof/evidence-reuse.js';
+import { normalizeTaskContract } from '../src/kernel/task/task-contract.js';
 
 const REVIEW_ACTION = {
   actionKind: 'review_engineering',
@@ -1888,6 +1891,909 @@ test('reviewer admission fails closed when observed model mismatches requested p
     await cp.close();
     await rm(runtimeHome, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('S3 review crash recovery: post-receipt proof failure preserves reviewReceiptId and resumes with 0 extra reviewer runs', async () => {
+  const fixture = await prepareReviewRun('kernel-review-crash-w1', 'review-crash-w1');
+  try {
+    let reviewerCalls = 0;
+    const reviewer = createClaudeAdapter({
+      launch: async ({ invocation }) => {
+        reviewerCalls += 1;
+        return {
+          resolvedModel: assertTestRecord(invocation).model,
+          observedModel: assertTestRecord(invocation).model,
+          resolvedEffort: assertTestRecord(invocation).effort,
+          observedEffort: assertTestRecord(invocation).effort,
+          sessionId: 'crash-w1-reviewer',
+          outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://crash-w1'] },
+        };
+      },
+    });
+    const registry = createModelRegistry({
+      surface: 'claude',
+      env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'crash-frontier', MOON_RELAY_KERNEL_MODEL_FRONTIER_EFFORT: 'high' },
+    });
+
+    // Inject a failure right after ReviewReceipt persistence, before Judgment Proof is recorded.
+    const origRecordProof = fixture.cp.recordProof.bind(fixture.cp);
+    fixture.cp.recordProof = async () => {
+      throw Object.assign(new Error('injected proof write failure'), { code: 'injected_proof_failure' });
+    };
+
+    const interrupted = await dispatchKernelTurn({
+      controlPlane: fixture.cp,
+      runId: 'review-crash-w1',
+      adapter: reviewer,
+      registry,
+      actionContext: REVIEW_ACTION,
+    });
+    assert.equal(reviewerCalls, 1);
+    const savedReceiptId = assertTestString(interrupted.reviewReceiptId);
+    assert.match(savedReceiptId, /^review-receipt-[a-f0-9]{24}$/);
+    const interruptedReview = assertTestRecord(interrupted.review);
+    assert.equal(interruptedReview.reviewReceiptAccepted, true);
+    assert.equal(interruptedReview.proofSettled, false);
+    assert.equal(interruptedReview.blockedReason, 'injected_proof_failure');
+    assert.notEqual(interruptedReview.blockedReason, 'incomplete_review_chain');
+    assert.equal(assertTestRecord(interrupted.blocker).reason, 'injected_proof_failure');
+    assert.equal(fixture.cp.listReviewReceipts('review-crash-w1').length, 1);
+    assert.equal(
+      fixture.cp.stateStore.getVerifications('review-crash-w1').some((v) => v.obligationId === 'security-review'),
+      false,
+      'judgment proof must not exist yet after crash window 1',
+    );
+    assert.equal((await fixture.cp.getRun('review-crash-w1'))?.status, 'active');
+
+    // Restore normal control plane in a fresh instance (simulating new process)
+    fixture.cp.recordProof = origRecordProof;
+    await fixture.cp.close();
+
+    const freshCp = await createKernelControlPlane({ runtimeHome: fixture.runtimeHome, projectRoot: fixture.root });
+    try {
+      const resumedNext = assertTestRecord(await freshCp.next('review-crash-w1'));
+      assert.equal(reviewerCalls, 1, 'resuming from saved receipt must run reviewer 0 additional times');
+      assert.equal(assertTestRecord(resumedNext.action).type, 'done', JSON.stringify(resumedNext));
+      assert.deepEqual(resumedNext.recoveredReviewReceiptIds, [savedReceiptId]);
+      assert.equal(assertTestRecord(resumedNext.finalization).completionStatus, 'accepted');
+      assert.equal(assertTestRecord(resumedNext.finalization).finalizationStatus, 'completed');
+      assert.equal(freshCp.listReviewReceipts('review-crash-w1').length, 1);
+      assert.equal(freshCp.listReviewReceipts('review-crash-w1')[0].receiptId, savedReceiptId);
+      const judgmentProofs = freshCp.stateStore.getVerifications('review-crash-w1')
+        .filter((v) => v.obligationId === 'security-review');
+      assert.equal(judgmentProofs.length, 1);
+      assert.equal(judgmentProofs[0].evidenceRef, `review://review-crash-w1/${savedReceiptId}`);
+      assert.equal((await freshCp.getRun('review-crash-w1'))?.status, 'completed');
+    } finally {
+      await freshCp.close();
+    }
+  } finally {
+    await rm(fixture.runtimeHome, { recursive: true, force: true });
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('S3 review crash recovery: cross-process exits after receipt write and after proof write both resume on same receiptId with 0 reviewer reruns', async () => {
+  for (const crashPhase of ['after-receipt', 'after-proof'] as const) {
+    const runId = `review-subproc-${crashPhase}`;
+    const fixture = await prepareReviewRun(`kernel-review-${crashPhase}`, runId);
+    const coordDir = await mkdtemp(path.join(os.tmpdir(), `kernel-review-coord-${crashPhase}-`));
+    try {
+      await fixture.cp.close();
+      const cpUrl = pathToFileURL(path.resolve('scripts/host/kernel/control-plane-runtime.js')).href;
+      const dispUrl = pathToFileURL(path.resolve('scripts/host/kernel/turn-dispatcher.js')).href;
+      const claudeUrl = pathToFileURL(path.resolve('scripts/host/kernel/adapters/claude.js')).href;
+      const regUrl = pathToFileURL(path.resolve('scripts/host/kernel/model-registry.js')).href;
+      const scriptPath = path.join(coordDir, 'crash-child.mjs');
+      await writeFile(scriptPath, `
+import { createKernelControlPlane } from '${cpUrl}';
+import { dispatchKernelTurn } from '${dispUrl}';
+import { createClaudeAdapter } from '${claudeUrl}';
+import { createModelRegistry } from '${regUrl}';
+
+const [runtimeHome, projectRoot, runId, crashPhase] = process.argv.slice(2);
+const cp = await createKernelControlPlane({ runtimeHome, projectRoot });
+if (crashPhase === 'after-receipt') {
+  const orig = cp.stateStore.recordReviewReceipt.bind(cp.stateStore);
+  cp.stateStore.recordReviewReceipt = (...args) => {
+    const saved = orig(...args);
+    process.stdout.write(JSON.stringify({ crashedAt: crashPhase, reviewReceiptId: saved.receiptId }) + '\\n');
+    process.exit(0);
+  };
+} else {
+  const orig = cp.recordProof.bind(cp);
+  cp.recordProof = async (...args) => {
+    const updated = await orig(...args);
+    const receipt = cp.listReviewReceipts(runId).at(-1);
+    process.stdout.write(JSON.stringify({ crashedAt: crashPhase, reviewReceiptId: receipt?.receiptId || null }) + '\\n');
+    process.exit(0);
+  };
+}
+const reviewer = createClaudeAdapter({
+  launch: async ({ invocation }) => ({
+    resolvedModel: invocation.model,
+    observedModel: invocation.model,
+    resolvedEffort: invocation.effort,
+    observedEffort: invocation.effort,
+    sessionId: 'subproc-reviewer-' + crashPhase,
+    outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://' + crashPhase] },
+  }),
+});
+await dispatchKernelTurn({
+  controlPlane: cp,
+  runId,
+  adapter: reviewer,
+  registry: createModelRegistry({
+    surface: 'claude',
+    env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'subproc-frontier', MOON_RELAY_KERNEL_MODEL_FRONTIER_EFFORT: 'high' },
+  }),
+  actionContext: {
+    actionKind: 'review_engineering',
+    obligationId: 'security-review',
+    executionMode: 'native-subagent',
+    delegationRequested: true,
+    changedPaths: ['app.mjs'],
+  },
+});
+process.exit(3);
+`);
+      const child = spawnSync(process.execPath, [scriptPath, fixture.runtimeHome, fixture.root, runId, crashPhase], {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        timeout: 30000,
+      });
+      assert.equal(child.status, 0, child.stderr || child.stdout);
+      const crashedInfo = assertTestRecord(JSON.parse(assertTestString(child.stdout.trim().split(/\r?\n/).at(-1))));
+      const receiptId = assertTestString(crashedInfo.reviewReceiptId);
+      assert.match(receiptId, /^review-receipt-[a-f0-9]{24}$/);
+
+      // Fresh process resumes via dispatchKernelTurn (must deduplicate & settle with 0 reviewer calls)
+      const freshCp = await createKernelControlPlane({ runtimeHome: fixture.runtimeHome, projectRoot: fixture.root });
+      try {
+        const proofCountBefore = freshCp.stateStore.getVerificationHistory(runId).length;
+        if (crashPhase === 'after-receipt') {
+          assert.equal(freshCp.stateStore.getVerifications(runId).some((v) => v.obligationId === 'security-review'), false);
+        } else {
+          assert.equal(freshCp.stateStore.getVerifications(runId).some((v) => v.obligationId === 'security-review'), true);
+        }
+        assert.equal((await freshCp.getRun(runId))?.status, 'active');
+
+        let rerunCalls = 0;
+        const guardReviewer = createClaudeAdapter({
+          launch: async () => {
+            rerunCalls += 1;
+            throw new Error('reviewer must not run again during recovery');
+          },
+        });
+        const recovered = await dispatchKernelTurn({
+          controlPlane: freshCp,
+          runId,
+          adapter: guardReviewer,
+          registry: createModelRegistry({
+            surface: 'claude',
+            env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'subproc-frontier', MOON_RELAY_KERNEL_MODEL_FRONTIER_EFFORT: 'high' },
+          }),
+          actionContext: REVIEW_ACTION,
+        });
+        assert.equal(rerunCalls, 0, `${crashPhase}: reviewer must not execute again`);
+        assert.equal(recovered.deduplicated, true);
+        assert.equal(recovered.reviewReceiptId, receiptId);
+        assert.equal(assertTestRecord(assertTestRecord(recovered.next).action).type, 'done');
+        assert.equal(assertTestRecord(recovered.finalization).finalizationStatus, 'completed');
+        assert.equal(freshCp.listReviewReceipts(runId).length, 1);
+        assert.equal(
+          freshCp.stateStore.getVerificationHistory(runId).length,
+          crashPhase === 'after-receipt' ? proofCountBefore + 1 : proofCountBefore,
+          `${crashPhase}: settle only missing proof`,
+        );
+        assert.equal((await freshCp.getRun(runId))?.status, 'completed');
+      } finally {
+        await freshCp.close();
+      }
+    } finally {
+      await rm(coordDir, { recursive: true, force: true });
+      await rm(fixture.runtimeHome, { recursive: true, force: true });
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('S3 review recovery fail-closed: workspace drift after receipt returns real blocker + receiptId; bare usage receipt is never accepted', async () => {
+  // 1. Bare usage receipt without ReviewReceipt must never settle or satisfy security-review.
+  const usageFixture = await prepareReviewRun('kernel-review-usage-only', 'review-usage-only');
+  try {
+    const failingReviewer = createClaudeAdapter({
+      launch: async ({ invocation }) => ({
+        resolvedModel: assertTestRecord(invocation).model,
+        observedModel: assertTestRecord(invocation).model,
+        resolvedEffort: assertTestRecord(invocation).effort,
+        observedEffort: assertTestRecord(invocation).effort,
+        sessionId: 'usage-only-reviewer',
+        status: 'failed',
+        outcome: null,
+      }),
+    });
+    await dispatchKernelTurn({
+      controlPlane: usageFixture.cp,
+      runId: 'review-usage-only',
+      adapter: failingReviewer,
+      registry: createModelRegistry({
+        surface: 'claude',
+        env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'drift-frontier', MOON_RELAY_KERNEL_MODEL_FRONTIER_EFFORT: 'high' },
+      }),
+      actionContext: REVIEW_ACTION,
+    });
+    assert.ok(usageFixture.cp.stateStore.listModelUsageReceipts('review-usage-only').length >= 1);
+    assert.equal(usageFixture.cp.listReviewReceipts('review-usage-only').length, 0);
+    const nextAfterUsageOnly = assertTestRecord(await usageFixture.cp.next('review-usage-only'));
+    assert.equal(assertTestRecord(nextAfterUsageOnly.action).type, 'review', 'bare usage receipt must not be treated as accepted review');
+    assert.equal((await usageFixture.cp.getRun('review-usage-only'))?.status, 'active');
+  } finally {
+    await cleanupReviewRun(usageFixture);
+  }
+
+  // 2. Save a real ReviewReceipt, interrupt before recordProof, then mutate the workspace!
+  const driftFixture = await prepareReviewRun('kernel-review-drift', 'review-drift');
+  try {
+    const origRecordProof = driftFixture.cp.recordProof.bind(driftFixture.cp);
+    driftFixture.cp.recordProof = async () => {
+      throw new Error('crash-before-proof');
+    };
+    const passingReviewer = createClaudeAdapter({
+      launch: async ({ invocation }) => ({
+        resolvedModel: assertTestRecord(invocation).model,
+        observedModel: assertTestRecord(invocation).model,
+        resolvedEffort: assertTestRecord(invocation).effort,
+        observedEffort: assertTestRecord(invocation).effort,
+        sessionId: 'drift-passing-reviewer',
+        outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://drift'] },
+      }),
+    });
+    const accepted = await dispatchKernelTurn({
+      controlPlane: driftFixture.cp,
+      runId: 'review-drift',
+      adapter: passingReviewer,
+      registry: createModelRegistry({
+        surface: 'claude',
+        env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'drift-frontier', MOON_RELAY_KERNEL_MODEL_FRONTIER_EFFORT: 'high' },
+      }),
+      actionContext: REVIEW_ACTION,
+    });
+    const receiptId = assertTestString(accepted.reviewReceiptId);
+    driftFixture.cp.recordProof = origRecordProof;
+
+    // Mutate workspace before recovery -> unrecoverable drift must fail closed with original receiptId + actual reason
+    await writeFile(path.join(driftFixture.root, 'app.mjs'), 'export const value = 999;\n');
+    const blockedOnDrift = assertTestRecord(await driftFixture.cp.next('review-drift'));
+    assert.equal(blockedOnDrift.status, 'blocked');
+    assert.equal(blockedOnDrift.blockedReason, 'review_workspace_identity_changed');
+    assert.equal(blockedOnDrift.reviewReceiptId, receiptId);
+    assert.notEqual(assertTestRecord(blockedOnDrift.action).type, 'done');
+    assert.equal((await driftFixture.cp.getRun('review-drift'))?.status, 'active');
+  } finally {
+    await cleanupReviewRun(driftFixture);
+  }
+});
+
+test('S3 settlement guards: lease conflict blocks settlement without promoting to done, and multi-obligation stays in review until last passes', async () => {
+  const fixture = await prepareReviewRun('kernel-review-guards', 'review-guards');
+  try {
+    // Acquire live lease from a competing holder before review settles
+    const competing = fixture.cp.stateStore.acquireLease('review-guards', { holder: 'competing-runner', ttlMs: 60000 });
+    assert.equal(competing.acquired, true);
+
+    const reviewer = createClaudeAdapter({
+      launch: async ({ invocation }) => ({
+        resolvedModel: assertTestRecord(invocation).model,
+        observedModel: assertTestRecord(invocation).model,
+        resolvedEffort: assertTestRecord(invocation).effort,
+        observedEffort: assertTestRecord(invocation).effort,
+        sessionId: 'lease-guard-reviewer',
+        outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://lease-guard'] },
+      }),
+    });
+    const result = await dispatchKernelTurn({
+      controlPlane: fixture.cp,
+      runId: 'review-guards',
+      adapter: reviewer,
+      registry: createModelRegistry({
+        surface: 'claude',
+        env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'guard-frontier', MOON_RELAY_KERNEL_MODEL_FRONTIER_EFFORT: 'high' },
+      }),
+      actionContext: REVIEW_ACTION,
+    });
+    const receiptId = assertTestString(result.reviewReceiptId);
+    assert.equal(assertTestRecord(result.review).blockedReason, 'lease-conflict');
+    assert.equal((await fixture.cp.getRun('review-guards'))?.status, 'active');
+
+    // Authorized next while lease is still held must also fail closed with lease-conflict (never done)
+    const blockedNext = assertTestRecord(await fixture.cp.next('review-guards'));
+    assert.equal(blockedNext.status, 'lease-conflict');
+    assert.notEqual(assertTestRecord(blockedNext.action).type, 'done');
+    assert.equal((await fixture.cp.getRun('review-guards'))?.status, 'active');
+
+    // Release competing lease -> authorized next now settles to done with 0 new receipts
+    fixture.cp.stateStore.releaseLease('review-guards', { holder: 'competing-runner', fencingToken: competing.lease.fencingToken });
+    const settled = assertTestRecord(await fixture.cp.next('review-guards'));
+    assert.equal(assertTestRecord(settled.action).type, 'done');
+    assert.equal(fixture.cp.listReviewReceipts('review-guards').length, 1);
+    assert.equal(fixture.cp.listReviewReceipts('review-guards')[0].receiptId, receiptId);
+    assert.equal((await fixture.cp.getRun('review-guards'))?.status, 'completed');
+  } finally {
+    await cleanupReviewRun(fixture);
+  }
+});
+
+test('S3 multi-obligation review: Run stays in review after 1st judgment passes and settles to done only when last judgment passes', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-review-multi-'));
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-review-multi-state-'));
+  const runId = 'review-multi-obligation';
+  await mkdir(path.join(root, '.moon-relay'), { recursive: true });
+  await writeFile(path.join(root, '.moon-relay', 'track.yaml'), 'track: kernel\n');
+  await writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"', lint: 'node -e "process.exit(0)"' } }));
+  await writeFile(path.join(root, 'app.mjs'), 'export const value = 0;\n');
+  const cp = await createKernelControlPlane({ runtimeHome, projectRoot: root });
+  try {
+    await cp.startRun({
+      runId,
+      objective: 'multi-judgment change',
+      taskContract: {
+        surfaces: ['security_boundary'],
+        acceptance: [
+          { id: 'AC-1', acceptance: 'unit tests pass', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test'], obligationId: 'default' } },
+          { id: 'AC-2', acceptance: 'design review passes', evidencePlan: { class: 'judgment', method: 'review', obligationId: 'judgment-ac-2' } },
+        ],
+        allowedPaths: ['app.mjs'],
+      },
+    });
+    const implementer = createClaudeAdapter({
+      launch: async ({ invocation }) => ({
+        resolvedModel: assertTestRecord(invocation).model,
+        observedModel: assertTestRecord(invocation).model,
+        resolvedEffort: assertTestRecord(invocation).effort,
+        observedEffort: assertTestRecord(invocation).effort,
+        sessionId: `${runId}-implementer`,
+      }),
+    });
+    const impl = await dispatchKernelTurn({
+      controlPlane: cp,
+      runId,
+      adapter: implementer,
+      registry: createModelRegistry({
+        surface: 'claude',
+        env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'configured-frontier', MOON_RELAY_KERNEL_MODEL_VALUE: 'configured-value' },
+      }),
+      actionContext: { executionMode: 'native-subagent', delegationRequested: true },
+    });
+    await writeFile(path.join(root, 'app.mjs'), 'export const value = 1;\n');
+    await cp.report(runId, {
+      summary: 'implemented',
+      capsuleId: assertTestPresent(impl.executionCapsule).capsuleId,
+      stepId: assertTestPresent(impl.executionCapsule).stepId,
+      changedPaths: ['app.mjs'],
+      verifications: [{ obligationId: 'default', commandRef: 'test', acceptanceCoverage: ['AC-1'] }],
+    });
+
+    const reviewer = createClaudeAdapter({
+      launch: async ({ invocation }) => ({
+        resolvedModel: assertTestRecord(invocation).model,
+        observedModel: assertTestRecord(invocation).model,
+        resolvedEffort: assertTestRecord(invocation).effort,
+        observedEffort: assertTestRecord(invocation).effort,
+        sessionId: `${runId}-reviewer`,
+        outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://multi'] },
+      }),
+    });
+    const registry = createModelRegistry({
+      surface: 'claude',
+      env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'multi-frontier', MOON_RELAY_KERNEL_MODEL_FRONTIER_EFFORT: 'high' },
+    });
+
+    // 1st judgment passes: 2nd judgment still pending -> must NOT settle to done!
+    const firstReview = await dispatchKernelTurn({
+      controlPlane: cp,
+      runId,
+      adapter: reviewer,
+      registry,
+      actionContext: { ...REVIEW_ACTION, obligationId: 'security-review' },
+    });
+    assert.ok(firstReview.reviewReceiptId);
+    assert.equal(assertTestRecord(assertTestRecord(firstReview.next).action).type, 'review');
+    assert.deepEqual(assertTestRecord(assertTestRecord(firstReview.next).action).outstandingObligations, ['judgment-ac-2']);
+    assert.equal((await cp.getRun(runId))?.status, 'active');
+
+    // 2nd (last) judgment passes -> Kernel settles directly to done!
+    const secondReview = await dispatchKernelTurn({
+      controlPlane: cp,
+      runId,
+      adapter: reviewer,
+      registry,
+      actionContext: { ...REVIEW_ACTION, obligationId: 'judgment-ac-2' },
+    });
+    assert.ok(secondReview.reviewReceiptId);
+    assert.equal(assertTestRecord(assertTestRecord(secondReview.next).action).type, 'done');
+    assert.equal(assertTestRecord(secondReview.finalization).finalizationStatus, 'completed');
+    assert.equal((await cp.getRun(runId))?.status, 'completed');
+    assert.equal(cp.listReviewReceipts(runId).length, 2);
+  } finally {
+    await cp.close();
+    await rm(runtimeHome, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('S3 P1 post-receipt boundary: prepareNext failure after recordProof preserves reviewReceiptId and resumes with 0 extra reviewer runs', async () => {
+  const fixture = await prepareReviewRun('kernel-review-prepnext-fail', 'review-prepnext-fail');
+  try {
+    let reviewerCalls = 0;
+    const reviewer = createClaudeAdapter({
+      launch: async ({ invocation }) => {
+        reviewerCalls += 1;
+        return {
+          resolvedModel: assertTestRecord(invocation).model,
+          observedModel: assertTestRecord(invocation).model,
+          resolvedEffort: assertTestRecord(invocation).effort,
+          observedEffort: assertTestRecord(invocation).effort,
+          sessionId: 'prepnext-fail-reviewer',
+          outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://prepnext-fail'] },
+        };
+      },
+    });
+    const registry = createModelRegistry({
+      surface: 'claude',
+      env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'prepnext-frontier', MOON_RELAY_KERNEL_MODEL_FRONTIER_EFFORT: 'high' },
+    });
+
+    // Let persistReviewReceipt AND recordProof succeed; inject a failure inside prepareNext!
+    const origPrepareNext = fixture.cp.prepareNext.bind(fixture.cp);
+    const origRecordProof = fixture.cp.recordProof.bind(fixture.cp);
+    let proofRecorded = false;
+    fixture.cp.recordProof = async (...args) => {
+      const result = await origRecordProof(...args);
+      proofRecorded = true;
+      return result;
+    };
+    fixture.cp.prepareNext = async (...args) => {
+      if (proofRecorded) {
+        throw Object.assign(new Error('injected prepareNext continuation failure'), { code: 'injected_prepare_next_failure' });
+      }
+      return origPrepareNext(...args);
+    };
+
+    const interrupted = await dispatchKernelTurn({
+      controlPlane: fixture.cp,
+      runId: 'review-prepnext-fail',
+      adapter: reviewer,
+      registry,
+      actionContext: REVIEW_ACTION,
+    });
+    assert.equal(reviewerCalls, 1);
+    assert.equal(proofRecorded, true);
+    const dbReceipts = fixture.cp.listReviewReceipts('review-prepnext-fail');
+    assert.equal(dbReceipts.length, 1);
+    const savedReceiptId = dbReceipts[0]!.receiptId;
+    assert.equal(interrupted.reviewReceiptId, savedReceiptId, 'accepted reviewReceiptId must not vanish when prepareNext fails');
+    const reviewRecord = assertTestRecord(interrupted.review);
+    assert.equal(reviewRecord.reviewReceiptAccepted, true);
+    assert.equal(reviewRecord.proofSettled, true);
+    assert.equal(reviewRecord.blockedReason, 'injected_prepare_next_failure');
+    assert.notEqual(reviewRecord.blockedReason, 'incomplete_review_chain');
+    assert.equal(assertTestRecord(interrupted.blocker).reason, 'injected_prepare_next_failure');
+
+    fixture.cp.prepareNext = origPrepareNext;
+    fixture.cp.recordProof = origRecordProof;
+    await fixture.cp.close();
+
+    // Resume in a fresh control plane instance: must converge to done with 0 extra reviewer calls and 1 Judgment Proof.
+    const freshCp = await createKernelControlPlane({ runtimeHome: fixture.runtimeHome, projectRoot: fixture.root });
+    try {
+      const resumed = assertTestRecord(await freshCp.next('review-prepnext-fail'));
+      assert.equal(reviewerCalls, 1);
+      assert.equal(assertTestRecord(resumed.action).type, 'done', JSON.stringify(resumed));
+      assert.equal(freshCp.listReviewReceipts('review-prepnext-fail').length, 1);
+      assert.equal(freshCp.listReviewReceipts('review-prepnext-fail')[0]!.receiptId, savedReceiptId);
+      const judgmentProofs = freshCp.stateStore.getVerificationHistory('review-prepnext-fail')
+        .filter((v) => v.obligationId === 'security-review');
+      assert.equal(judgmentProofs.length, 1, 'must preserve exactly one Judgment Proof');
+      assert.equal(judgmentProofs[0]!.evidenceRef, `review://review-prepnext-fail/${savedReceiptId}`);
+      assert.equal((await freshCp.getRun('review-prepnext-fail'))?.status, 'completed');
+    } finally {
+      await freshCp.close();
+    }
+  } finally {
+    await rm(fixture.runtimeHome, { recursive: true, force: true });
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('S3 P1 capsule-pinned acceptance scope: late v1 pass cannot satisfy added or strengthened AC, while unrelated contract revision reuses receipt', async () => {
+  const initReviewContractRepo = async (prefix: string, runId: string) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), `${prefix}-`));
+    const runtimeHome = await mkdtemp(path.join(os.tmpdir(), `${prefix}-state-`));
+    await mkdir(path.join(root, '.moon-relay'), { recursive: true });
+    await writeFile(path.join(root, '.moon-relay', 'track.yaml'), 'track: kernel\n');
+    await writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"', lint: 'node -e "process.exit(0)"' } }));
+    await writeFile(path.join(root, 'app.mjs'), 'export const value = 0;\n');
+    const cp = await createKernelControlPlane({ runtimeHome, projectRoot: root });
+    await cp.startRun({
+      runId,
+      objective: 'Verify capsule-pinned acceptance coverage',
+      taskContract: {
+        surfaces: ['security_boundary'],
+        acceptance: [
+          { id: 'AC-1', acceptance: 'unit tests pass', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test'], obligationId: 'default' } },
+          { id: 'AC-2', acceptance: 'auth check passes basic review', evidencePlan: { class: 'judgment', method: 'review', obligationId: 'security-review' } },
+        ],
+        allowedPaths: ['app.mjs'],
+      },
+    });
+    const implementer = createClaudeAdapter({
+      launch: async ({ invocation }) => ({
+        resolvedModel: assertTestRecord(invocation).model,
+        observedModel: assertTestRecord(invocation).model,
+        resolvedEffort: assertTestRecord(invocation).effort,
+        observedEffort: assertTestRecord(invocation).effort,
+        sessionId: `${runId}-implementer`,
+      }),
+    });
+    const impl = await dispatchKernelTurn({
+      controlPlane: cp,
+      runId,
+      adapter: implementer,
+      registry: createModelRegistry({
+        surface: 'claude',
+        env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'configured-frontier', MOON_RELAY_KERNEL_MODEL_VALUE: 'configured-value' },
+      }),
+      actionContext: { executionMode: 'native-subagent', delegationRequested: true },
+    });
+    await writeFile(path.join(root, 'app.mjs'), 'export const value = 1;\n');
+    await cp.report(runId, {
+      summary: 'implemented',
+      capsuleId: assertTestPresent(impl.executionCapsule).capsuleId,
+      stepId: assertTestPresent(impl.executionCapsule).stepId,
+      changedPaths: ['app.mjs'],
+      verifications: [{ obligationId: 'default', commandRef: 'test', acceptanceCoverage: ['AC-1'] }],
+    });
+    return { root, runtimeHome, cp, impl };
+  };
+
+  // Direction A1: contract adds AC-3 bound to security-review while v1 review is in flight (no file edits).
+  const addedFixture = await initReviewContractRepo('kernel-review-ac-added', 'review-ac-added');
+  try {
+    const reviewer = createClaudeAdapter({
+      launch: async ({ invocation }) => {
+        // Contract is revised to add AC-3 AFTER capsule was issued, BEFORE reviewer verdict returns!
+        await addedFixture.cp.reviseContract('review-ac-added', normalizeTaskContract({
+          objective: 'Verify capsule-pinned acceptance coverage',
+          surfaces: ['security_boundary'],
+          acceptance: [
+            { id: 'AC-1', acceptance: 'unit tests pass', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test'], obligationId: 'default' } },
+            { id: 'AC-2', acceptance: 'auth check passes basic review', evidencePlan: { class: 'judgment', method: 'review', obligationId: 'security-review' } },
+            { id: 'AC-3', acceptance: 'rate limiting boundary verified', evidencePlan: { class: 'judgment', method: 'review', obligationId: 'security-review' } },
+          ],
+          allowedPaths: ['app.mjs'],
+        }));
+        return {
+          resolvedModel: assertTestRecord(invocation).model,
+          observedModel: assertTestRecord(invocation).model,
+          resolvedEffort: assertTestRecord(invocation).effort,
+          observedEffort: assertTestRecord(invocation).effort,
+          sessionId: 'ac-added-reviewer-v1',
+          outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://ac-added-v1'] },
+        };
+      },
+    });
+    const res = await dispatchKernelTurn({
+      controlPlane: addedFixture.cp,
+      runId: 'review-ac-added',
+      adapter: reviewer,
+      registry: createModelRegistry({
+        surface: 'claude',
+        env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'scope-frontier', MOON_RELAY_KERNEL_MODEL_FRONTIER_EFFORT: 'high' },
+      }),
+      actionContext: REVIEW_ACTION,
+    });
+    const receipt = assertTestPresent(res.reviewReceipt);
+    assert.deepEqual(receipt.acceptanceCoverage, ['AC-2'], 'v1 review must only cover AC-2 that was in its capsule, never unseen AC-3');
+    assert.notEqual(assertTestRecord(assertTestRecord(res.next).action).type, 'done');
+    assert.equal((await addedFixture.cp.getRun('review-ac-added'))?.status, 'active');
+    assert.equal(addedFixture.cp.findReusableReviewReceipt('review-ac-added', { obligationId: 'security-review' }), null);
+  } finally {
+    await addedFixture.cp.close();
+    await rm(addedFixture.runtimeHome, { recursive: true, force: true });
+    await rm(addedFixture.root, { recursive: true, force: true });
+  }
+
+  // Direction A2: contract strengthens AC-2 statement wording while v1 review is in flight.
+  const strengthenedFixture = await initReviewContractRepo('kernel-review-ac-strengthened', 'review-ac-strengthened');
+  try {
+    const reviewer = createClaudeAdapter({
+      launch: async ({ invocation }) => {
+        await strengthenedFixture.cp.reviseContract('review-ac-strengthened', normalizeTaskContract({
+          objective: 'Verify capsule-pinned acceptance coverage',
+          surfaces: ['security_boundary'],
+          acceptance: [
+            { id: 'AC-1', acceptance: 'unit tests pass', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test'], obligationId: 'default' } },
+            { id: 'AC-2', acceptance: 'auth check enforces strict mTLS and replay protection', evidencePlan: { class: 'judgment', method: 'review', obligationId: 'security-review' } },
+          ],
+          allowedPaths: ['app.mjs'],
+        }));
+        return {
+          resolvedModel: assertTestRecord(invocation).model,
+          observedModel: assertTestRecord(invocation).model,
+          resolvedEffort: assertTestRecord(invocation).effort,
+          observedEffort: assertTestRecord(invocation).effort,
+          sessionId: 'ac-strengthened-reviewer-v1',
+          outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://ac-strengthened-v1'] },
+        };
+      },
+    });
+    const res = await dispatchKernelTurn({
+      controlPlane: strengthenedFixture.cp,
+      runId: 'review-ac-strengthened',
+      adapter: reviewer,
+      registry: createModelRegistry({
+        surface: 'claude',
+        env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'scope-frontier', MOON_RELAY_KERNEL_MODEL_FRONTIER_EFFORT: 'high' },
+      }),
+      actionContext: REVIEW_ACTION,
+    });
+    const receipt = assertTestPresent(res.reviewReceipt);
+    assert.deepEqual(receipt.acceptanceCoverage, [], 'v1 review must not cover AC-2 after its statement wording changed');
+    assert.notEqual(assertTestRecord(assertTestRecord(res.next).action).type, 'done');
+    assert.equal((await strengthenedFixture.cp.getRun('review-ac-strengthened'))?.status, 'active');
+    assert.equal(strengthenedFixture.cp.findReusableReviewReceipt('review-ac-strengthened', { obligationId: 'security-review' }), null);
+  } finally {
+    await strengthenedFixture.cp.close();
+    await rm(strengthenedFixture.runtimeHome, { recursive: true, force: true });
+    await rm(strengthenedFixture.root, { recursive: true, force: true });
+  }
+
+  // Direction B: unrelated contract revision (constraints only) preserves capsule-pinned AC-2 coverage
+  // both during an in-flight review AND for subsequent receipt reuse without re-running the reviewer.
+  const unrelatedFixture = await initReviewContractRepo('kernel-review-ac-unrelated', 'review-ac-unrelated');
+  try {
+    let reviewerCalls = 0;
+    const registry = createModelRegistry({
+      surface: 'claude',
+      env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'scope-frontier', MOON_RELAY_KERNEL_MODEL_FRONTIER_EFFORT: 'high' },
+    });
+    const reviewer = createClaudeAdapter({
+      launch: async ({ invocation }) => {
+        reviewerCalls += 1;
+        // Revise an UNRELATED part of the contract (constraints only) while v1 review is in flight;
+        // AC-2 id, statement, and security-review binding stay identical.
+        await unrelatedFixture.cp.reviseContract('review-ac-unrelated', normalizeTaskContract({
+          objective: 'Verify capsule-pinned acceptance coverage',
+          surfaces: ['security_boundary'],
+          constraints: ['keep diff minimal'],
+          acceptance: [
+            { id: 'AC-1', acceptance: 'unit tests pass', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test'], obligationId: 'default' } },
+            { id: 'AC-2', acceptance: 'auth check passes basic review', evidencePlan: { class: 'judgment', method: 'review', obligationId: 'security-review' } },
+          ],
+          allowedPaths: ['app.mjs'],
+        }));
+        return {
+          resolvedModel: assertTestRecord(invocation).model,
+          observedModel: assertTestRecord(invocation).model,
+          resolvedEffort: assertTestRecord(invocation).effort,
+          observedEffort: assertTestRecord(invocation).effort,
+          sessionId: 'ac-unrelated-reviewer-v1',
+          outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://ac-unrelated-v1'] },
+        };
+      },
+    });
+    const first = await dispatchKernelTurn({
+      controlPlane: unrelatedFixture.cp,
+      runId: 'review-ac-unrelated',
+      adapter: reviewer,
+      registry,
+      actionContext: REVIEW_ACTION,
+    });
+    const receiptId = assertTestString(first.reviewReceiptId);
+    assert.equal(reviewerCalls, 1);
+    assert.deepEqual(assertTestPresent(first.reviewReceipt).acceptanceCoverage, ['AC-2'], 'unrelated contract revision must preserve AC-2 coverage');
+
+    // Another unrelated contract revision (constraints only): existing receipt must stay reusable!
+    await unrelatedFixture.cp.reviseContract('review-ac-unrelated', normalizeTaskContract({
+      objective: 'Verify capsule-pinned acceptance coverage',
+      surfaces: ['security_boundary'],
+      constraints: ['keep diff minimal', 'document rationale'],
+      acceptance: [
+        { id: 'AC-1', acceptance: 'unit tests pass', evidencePlan: { class: 'hard', method: 'unit-test', commandRefs: ['test'], obligationId: 'default' } },
+        { id: 'AC-2', acceptance: 'auth check passes basic review', evidencePlan: { class: 'judgment', method: 'review', obligationId: 'security-review' } },
+      ],
+      allowedPaths: ['app.mjs'],
+    }));
+    const reusable = unrelatedFixture.cp.findReusableReviewReceipt('review-ac-unrelated', { obligationId: 'security-review' });
+    assert.equal(reusable?.receiptId, receiptId, 'unrelated contract revision must keep matching review receipt reusable');
+
+    // Dispatching review turn again with a guard adapter must reuse the existing receipt with 0 extra reviewer calls.
+    const guardReviewer = createClaudeAdapter({
+      launch: async () => {
+        reviewerCalls += 1;
+        throw new Error('reviewer must not run again on unrelated contract revision');
+      },
+    });
+    const reused = await dispatchKernelTurn({
+      controlPlane: unrelatedFixture.cp,
+      runId: 'review-ac-unrelated',
+      adapter: guardReviewer,
+      registry,
+      actionContext: REVIEW_ACTION,
+    });
+    assert.equal(reviewerCalls, 1, 'reviewer must execute 0 extra times when AC scope is unchanged');
+    assert.equal(reused.deduplicated, true);
+    assert.equal(reused.reviewReceiptId, receiptId);
+    assert.equal(assertTestRecord(reused.review).proofSettled, true);
+  } finally {
+    await unrelatedFixture.cp.close();
+    await rm(unrelatedFixture.runtimeHome, { recursive: true, force: true });
+    await rm(unrelatedFixture.root, { recursive: true, force: true });
+  }
+});
+
+test('S3 P1 interrupted Git closeout resumes from existingCommitSha without second commit, and drifted closeout workspace fails closed', async () => {
+  const initGitReviewRun = async (prefix: string, runId: string) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), `${prefix}-`));
+    const runtimeHome = await mkdtemp(path.join(os.tmpdir(), `${prefix}-state-`));
+    spawnSync('git', ['init', '-b', 'main'], { cwd: root, encoding: 'utf8' });
+    spawnSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root, encoding: 'utf8' });
+    spawnSync('git', ['config', 'user.name', 'Test User'], { cwd: root, encoding: 'utf8' });
+    await mkdir(path.join(root, '.moon-relay'), { recursive: true });
+    await writeFile(path.join(root, '.moon-relay', 'track.yaml'), 'track: kernel\n');
+    await writeFile(path.join(root, 'package.json'), JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"', lint: 'node -e "process.exit(0)"' } }));
+    await writeFile(path.join(root, 'app.mjs'), 'export const value = 0;\n');
+    spawnSync('git', ['add', '.'], { cwd: root, encoding: 'utf8' });
+    spawnSync('git', ['commit', '-m', 'initial commit'], { cwd: root, encoding: 'utf8' });
+    const cp = await createKernelControlPlane({ runtimeHome, projectRoot: root });
+    await cp.startRun({
+      runId,
+      objective: 'Test interrupted git closeout resume',
+      taskContract: {
+        surfaces: ['security_boundary'],
+        acceptance: ['app updated'],
+        allowedPaths: ['app.mjs'],
+      },
+    });
+    const implementer = createClaudeAdapter({
+      launch: async ({ invocation }) => ({
+        resolvedModel: assertTestRecord(invocation).model,
+        observedModel: assertTestRecord(invocation).model,
+        resolvedEffort: assertTestRecord(invocation).effort,
+        observedEffort: assertTestRecord(invocation).effort,
+        sessionId: `${runId}-implementer`,
+      }),
+    });
+    const impl = await dispatchKernelTurn({
+      controlPlane: cp,
+      runId,
+      adapter: implementer,
+      registry: createModelRegistry({
+        surface: 'claude',
+        env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'configured-frontier', MOON_RELAY_KERNEL_MODEL_VALUE: 'configured-value' },
+      }),
+      actionContext: { executionMode: 'native-subagent', delegationRequested: true },
+    });
+    await writeFile(path.join(root, 'app.mjs'), 'export const value = 7;\n');
+    await cp.report(runId, {
+      summary: 'updated app with approved commit',
+      capsuleId: assertTestPresent(impl.executionCapsule).capsuleId,
+      stepId: assertTestPresent(impl.executionCapsule).stepId,
+      changedPaths: ['app.mjs'],
+      gitCloseoutRequest: {
+        requested: true,
+        mode: 'commit',
+        approvalReceipt: `${runId}-approval`,
+        commitMessage: `feat: ${runId}`,
+      },
+    });
+    return { root, runtimeHome, cp };
+  };
+
+  // 1. Crash right after commit creation (before finalization_receipt is written): resume must finish with SAME commit SHA & 0 extra commits.
+  const crashFixture = await initGitReviewRun('kernel-git-crash', 'git-closeout-crash');
+  try {
+    const countBefore = Number(spawnSync('git', ['rev-list', '--count', 'HEAD'], { cwd: crashFixture.root, encoding: 'utf8' }).stdout.trim());
+    const origRecordFin = crashFixture.cp.stateStore.recordFinalizationReceipt.bind(crashFixture.cp.stateStore);
+    let injectedCrash = false;
+    crashFixture.cp.stateStore.recordFinalizationReceipt = (...args) => {
+      if (!injectedCrash) {
+        injectedCrash = true;
+        throw Object.assign(new Error('crash after git commit before finalization receipt'), { code: 'injected_post_commit_crash' });
+      }
+      return origRecordFin(...args);
+    };
+    const reviewer = createClaudeAdapter({
+      launch: async ({ invocation }) => ({
+        resolvedModel: assertTestRecord(invocation).model,
+        observedModel: assertTestRecord(invocation).model,
+        resolvedEffort: assertTestRecord(invocation).effort,
+        observedEffort: assertTestRecord(invocation).effort,
+        sessionId: 'git-crash-reviewer',
+        outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://git-crash'] },
+      }),
+    });
+    const interrupted = await dispatchKernelTurn({
+      controlPlane: crashFixture.cp,
+      runId: 'git-closeout-crash',
+      adapter: reviewer,
+      registry: createModelRegistry({
+        surface: 'claude',
+        env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'crash-frontier', MOON_RELAY_KERNEL_MODEL_FRONTIER_EFFORT: 'high' },
+      }),
+      actionContext: REVIEW_ACTION,
+    });
+    assert.equal(injectedCrash, true);
+    assert.ok(interrupted.reviewReceiptId);
+    const headAfterCommit = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: crashFixture.root, encoding: 'utf8' }).stdout.trim();
+    const countAfterCommit = Number(spawnSync('git', ['rev-list', '--count', 'HEAD'], { cwd: crashFixture.root, encoding: 'utf8' }).stdout.trim());
+    assert.equal(countAfterCommit, countBefore + 1, 'local commit must have succeeded before crash');
+    assert.equal(crashFixture.cp.stateStore.getFinalizationReceipt('git-closeout-crash'), null);
+
+    crashFixture.cp.stateStore.recordFinalizationReceipt = origRecordFin;
+    await crashFixture.cp.close();
+
+    // Fresh process resumes via next() -> finishes finalization with SAME commit SHA and no duplicate commit!
+    const freshCp = await createKernelControlPlane({ runtimeHome: crashFixture.runtimeHome, projectRoot: crashFixture.root });
+    try {
+      const resumed = assertTestRecord(await freshCp.next('git-closeout-crash'));
+      assert.equal(assertTestRecord(resumed.action).type, 'done', JSON.stringify(resumed));
+      const fin = assertTestRecord(resumed.finalization);
+      assert.equal(fin.finalizationStatus, 'completed');
+      assert.equal(fin.gitCloseoutStatus, 'completed');
+      assert.equal(assertTestRecord(fin.gitCloseoutReceipt).commitSha, headAfterCommit);
+      assert.equal(spawnSync('git', ['rev-parse', 'HEAD'], { cwd: crashFixture.root, encoding: 'utf8' }).stdout.trim(), headAfterCommit);
+      assert.equal(Number(spawnSync('git', ['rev-list', '--count', 'HEAD'], { cwd: crashFixture.root, encoding: 'utf8' }).stdout.trim()), countBefore + 1);
+    } finally {
+      await freshCp.close();
+    }
+  } finally {
+    await rm(crashFixture.runtimeHome, { recursive: true, force: true });
+    await rm(crashFixture.root, { recursive: true, force: true });
+  }
+
+  // 2. Workspace drifts after review before closeout runs -> must fail closed, never skip closeout and return done!
+  const driftFixture = await initGitReviewRun('kernel-git-drift', 'git-closeout-drift');
+  try {
+    const headBefore = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: driftFixture.root, encoding: 'utf8' }).stdout.trim();
+    const competing = driftFixture.cp.stateStore.acquireLease('git-closeout-drift', { holder: 'pause-before-closeout', ttlMs: 60000 });
+    assert.equal(competing.acquired, true);
+    const reviewer = createClaudeAdapter({
+      launch: async ({ invocation }) => ({
+        resolvedModel: assertTestRecord(invocation).model,
+        observedModel: assertTestRecord(invocation).model,
+        resolvedEffort: assertTestRecord(invocation).effort,
+        observedEffort: assertTestRecord(invocation).effort,
+        sessionId: 'git-drift-reviewer',
+        outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://git-drift'] },
+      }),
+    });
+    await dispatchKernelTurn({
+      controlPlane: driftFixture.cp,
+      runId: 'git-closeout-drift',
+      adapter: reviewer,
+      registry: createModelRegistry({
+        surface: 'claude',
+        env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'drift-frontier', MOON_RELAY_KERNEL_MODEL_FRONTIER_EFFORT: 'high' },
+      }),
+      actionContext: REVIEW_ACTION,
+    });
+    driftFixture.cp.stateStore.releaseLease('git-closeout-drift', { holder: 'pause-before-closeout', fencingToken: competing.lease.fencingToken });
+
+    // Tamper with workspace after review passed, before authorized resume settles closeout!
+    await writeFile(path.join(driftFixture.root, 'app.mjs'), 'export const value = 999;\n');
+    const blocked = assertTestRecord(await driftFixture.cp.next('git-closeout-drift'));
+    assert.equal(blocked.status, 'blocked', JSON.stringify(blocked));
+    assert.equal(blocked.blockedReason, 'git_closeout_workspace_mismatch');
+    assert.notEqual(assertTestRecord(blocked.action).type, 'done');
+    assert.equal((await driftFixture.cp.getRun('git-closeout-drift'))?.status, 'active');
+    assert.equal(spawnSync('git', ['rev-parse', 'HEAD'], { cwd: driftFixture.root, encoding: 'utf8' }).stdout.trim(), headBefore);
+  } finally {
+    await driftFixture.cp.close();
+    await rm(driftFixture.runtimeHome, { recursive: true, force: true });
+    await rm(driftFixture.root, { recursive: true, force: true });
   }
 });
 
