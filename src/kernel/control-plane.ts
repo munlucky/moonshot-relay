@@ -474,15 +474,17 @@ export const createKernelControlPlane = async ({
       },
     });
   }
-  // An already registered exact root remains usable when an unrelated
-  // checkout later claims the same remote URL. The remote alias keeps its
-  // existing owner; it must not merge either project's Run or Knowledge.
-  // Newly observed roots still go through strict alias admission unchanged.
+  // An already registered exact root or proven linked worktree remains usable
+  // when an unrelated checkout later claims the same remote URL. The remote
+  // alias keeps its existing owner; it must not merge either project's Run or
+  // Knowledge. Newly observed roots without exact-root or linked-worktree
+  // proof still go through strict alias admission unchanged.
   const exactRootIdentity = store.getProjectIdentity({ canonicalRoot: currentProject.canonicalRoot });
-  const registrationAliases = exactRootIdentity && identityState.currentIdentity?.projectId === exactRootIdentity.projectId
+  const verifiedIdentity = exactRootIdentity || identityState.currentIdentity;
+  const registrationAliases = verifiedIdentity && identityState.currentIdentity?.projectId === verifiedIdentity.projectId
     ? currentProject.aliases.filter((alias) => {
         const owner = store.getProjectIdentity({ alias });
-        return !owner || owner.projectId === exactRootIdentity.projectId;
+        return !owner || owner.projectId === verifiedIdentity.projectId;
       })
     : currentProject.aliases;
   const persistedIdentity = store.registerProjectIdentity({
@@ -2247,7 +2249,11 @@ export const createKernelControlPlane = async ({
     async abandon(runId: string, { reason = 'user_requested' }: { reason?: string } = {}) {
       if (!runId) throw new Error('abandon requires a runId');
       const result = store.abandonRun(runId, { reason });
-      await syncRunLocator(result);
+      const snapshot = getRunSnapshot(runId);
+      await syncRunLocator(snapshot || result);
+      if (!result.alreadyTerminal && snapshot) {
+        await projectRunState(snapshot, { runtimeHome });
+      }
       return result;
     },
 
@@ -2399,8 +2405,11 @@ export const createKernelControlPlane = async ({
 
     async abandonRun(runId: string) {
       const updated = store.abandonRun(runId);
-      await syncRunLocator(updated);
-      await projectRunState(updated, { runtimeHome });
+      const snapshot = getRunSnapshot(runId);
+      await syncRunLocator(snapshot || updated);
+      if (!updated.alreadyTerminal && snapshot) {
+        await projectRunState(snapshot, { runtimeHome });
+      }
       return updated;
     },
 

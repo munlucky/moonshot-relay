@@ -6,6 +6,7 @@ import { computeKernelSourceIdentity } from '../../kernel/control-plane.js';
 import { resolveCanonicalHostSession } from '../../host/kernel/host-session.js';
 import { recoveryForKernelError } from '../../kernel/run/binding-preflight.js';
 import { discoverRunLocator } from '../../kernel/run/run-locator.js';
+import { createFinalizationIncompleteError } from '../../kernel/run/invocation-resolver.js';
 import { normalizeTaskContract } from '../../kernel/task/task-contract.js';
 import { STATES } from '../../kernel/transition.js';
 import { createOpaqueRunId } from '../../kernel/run/run-identity.js';
@@ -50,6 +51,7 @@ export async function runKernelCliApplication(argv = [], options = {}) {
                 'worker-host': 'kernel worker-host [--project-root <path>] [--runtime-home <path>] [--run-id <id>] [--enable-io-writer] [--enable-io-reader] (local JSON lines: capabilities/start/resume/status/attach/interrupt; opt-in io-write/io-read)',
                 'mcp-bridge': 'kernel mcp-bridge [--runtime-home <path>] [--enable-io-writer] [--enable-io-reader] (Kernel MCP; opt-in kernel_attach.ioWrite/ioRead)',
                 finalize: 'kernel finalize [run-id] [--json]',
+                abandon: 'kernel abandon [run-id] [--run-id <run-id>] [--reason <text>] [--project-root <path>] [--json]',
                 resume: 'kernel resume [run-id] [--json]',
                 'recover-owner': 'kernel recover-owner <run-id> --expected-owner <binding-id> --approval-ref <user-authorization-ref> [--json] (inactive blocked owner only; preserves proof and blocker)',
                 doctor: 'kernel doctor [--project-root <path>] [--json]',
@@ -699,12 +701,7 @@ export async function runKernelCliApplication(argv = [], options = {}) {
                         res = successor.next;
                     }
                     else if (invocation.mode === 'finalization-retry') {
-                        throw Object.assign(new Error('finalization_incomplete'), {
-                            code: 'finalization_incomplete',
-                            errorCode: 'finalization_incomplete',
-                            nextAction: 'retry-finalization',
-                            runId: invocation.runId,
-                        });
+                        throw createFinalizationIncompleteError(invocation);
                     }
                     else if (invocation.mode === 'done') {
                         res = await cp.next(invocation.runId);

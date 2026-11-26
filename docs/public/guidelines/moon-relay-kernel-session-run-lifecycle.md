@@ -20,11 +20,22 @@ Moon Relay Kernel은 Host 세션, Kernel Run, 프로젝트, 실제 workspace를 
 | 없음 | 없음 | 있음 | `create` |
 | active/blocked | pending | 동일 | `resume` |
 | active/blocked | pending | 변경 | `revise` |
-| completed | partial/blocked | 무관 | `finalization-retry` |
+| completed | partial/blocked | 무관 | `finalization-retry` (영구 게이트 실패 시 `abandon` 또는 `workspaceRecovery`) |
 | completed | completed | 없거나 동일 | `done` |
 | completed | completed | 새 계약 | `successor` |
 
 `report`는 successor를 만들지 않으며 현재 active owner binding의 Run에만 기록한다.
+
+### 미완료 finalization (`incomplete_gates` / `blocked`) 복구
+
+`completed` 상태의 Run이 외부 커밋 등으로 인해 `finalizationStatus`가 `blocked`/`incomplete_gates` 상태로 고착되어 `finalize`가 더 이상 통과할 수 없는 경우, 다음 두 공식 복구 경로 중 하나를 사용한다.
+
+1. **Workspace 기준선 복구(`workspaceRecovery`)**: `kernel next --contract-json ... --invocation-intent new-task`에 `taskContract.workspaceRecovery.acknowledgedIdentity`를 현재 관찰된 workspace identity와 일치시켜 전달하면, 이전 미완료 Run과 분리된 새 `create` Run으로 시작한다. (`pending`/`partial`처럼 아직 재시도 가능한 finalization은 기존대로 `finalization-retry`로 유지된다.)
+2. **명시적 Run 정리(`kernel abandon`)**: `kernel abandon --run-id <run-id> --reason <text>`는 `finalizationStatus !== 'completed'`인 미정산 `completed` Run도 `abandoned`로 전환하여 새 Run을 열 수 있게 한다. (`finalizationStatus === 'completed'`까지 마친 Run은 불변 이력을 위해 `alreadyTerminal: true`를 유지한다.)
+
+### Linked `git worktree` 프로젝트 신원 귀속
+
+`git worktree add`로 생성된 linked worktree는 primary repo와 동일한 `gitCommonDir`을 공유하므로 기존 등록된 `projectId`에 자동 귀속되며, 각 worktree는 별도의 `worktreeId`/`workspaceId`를 가진다. 동일 저장소에서 동일 remote URL을 다른 체크아웃(예: 컨테이너 경로 등)이 이미 소유하고 있더라도 `canonical_root` 또는 `gitCommonDir` 증명이 확인된 기존 프로젝트/linked worktree는 해당 프로젝트 신원을 그대로 유지한다.
 
 ## Successor 원자성
 

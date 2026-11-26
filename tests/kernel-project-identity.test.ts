@@ -3056,3 +3056,82 @@ test('an existing exact-root identity resumes across a conflicting remote withou
     await rm(tmp, { recursive: true, force: true });
   }
 });
+
+test('linked git worktree retains registered primary repo projectId even when another checkout owns the remote alias', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'kernel-identity-linked-worktree-alias-'));
+  const runtimeHome = path.join(tmp, 'runtime');
+  const primaryRoot = path.join(tmp, 'copilot-loop-agent');
+  const linkedWorktreeRoot = path.join(tmp, 'copilot-loop-agent-chat-ui');
+  const containerCloneRoot = path.join(tmp, 'shared-clone');
+  const unrelatedRoot = path.join(tmp, 'unrelated');
+  const remote = 'https://example.invalid/munlucky/copilot-loop-agent.git';
+  const open = async (projectRoot: string) => {
+    const cp = await createKernelControlPlane({ runtimeHome, projectRoot, requireHostBinding: false });
+    await cp.close();
+  };
+  try {
+    for (const root of [primaryRoot, containerCloneRoot, unrelatedRoot]) {
+      await mkdir(root, { recursive: true });
+      runGit(root, ['init', '-q']);
+      runGit(root, ['config', 'user.name', 'Test User']);
+      runGit(root, ['config', 'user.email', 'test@example.invalid']);
+    }
+    await writeFile(path.join(primaryRoot, 'README.md'), 'primary\n');
+    runGit(primaryRoot, ['add', 'README.md']);
+    runGit(primaryRoot, ['commit', '-q', '-m', 'init']);
+
+    // Register primary root before origin alias discovery, then register another
+    // checkout that owns the shared remote alias (matching containerized/secondary clones).
+    await open(primaryRoot);
+    runGit(containerCloneRoot, ['remote', 'add', 'origin', remote]);
+    await open(containerCloneRoot);
+
+    const beforeStore = await openKernelStateStore({ runtimeHome });
+    const primary = assertTestPresent(beforeStore.getProjectIdentity({ canonicalRoot: primaryRoot }));
+    const secondary = assertTestPresent(beforeStore.getProjectIdentity({ canonicalRoot: containerCloneRoot }));
+    beforeStore.close();
+    assert.notEqual(primary.projectId, secondary.projectId);
+
+    // Primary now has origin remote, and user adds a linked git worktree from it.
+    runGit(primaryRoot, ['remote', 'add', 'origin', remote]);
+    runGit(primaryRoot, ['worktree', 'add', '-q', '-b', 'feat/chat-ui', linkedWorktreeRoot, 'HEAD']);
+
+    const inspection = await inspectKernelProjectIdentity({
+      projectRoot: linkedWorktreeRoot,
+      runtimeHome,
+    });
+    assert.equal(inspection.projectId, primary.projectId);
+    assert.equal(assertTestPresent(inspection.identity).projectId, primary.projectId);
+
+    await open(linkedWorktreeRoot);
+
+    const afterStore = await openKernelStateStore({ runtimeHome });
+    try {
+      const primaryWs = assertTestPresent(afterStore.getProjectWorkspace(
+        resolveStableWorkspaceIdentity({ projectId: primary.projectId, workspaceRoot: primaryRoot }).workspaceId,
+      ));
+      const linkedWs = assertTestPresent(afterStore.getProjectWorkspace(
+        resolveStableWorkspaceIdentity({ projectId: primary.projectId, workspaceRoot: linkedWorktreeRoot }).workspaceId,
+      ));
+      assert.notEqual(primaryWs.workspaceId, linkedWs.workspaceId);
+      assert.equal(primaryWs.projectId, primary.projectId);
+      assert.equal(linkedWs.projectId, primary.projectId);
+      assert.equal(canonicalTestRoot(primaryWs.canonicalRoot), canonicalTestRoot(primaryRoot));
+      assert.equal(canonicalTestRoot(linkedWs.canonicalRoot), canonicalTestRoot(linkedWorktreeRoot));
+      assert.equal(canonicalTestRoot(assertTestString(primaryWs.gitCommonDir)), canonicalTestRoot(path.join(primaryRoot, '.git')));
+      assert.equal(canonicalTestRoot(assertTestString(linkedWs.gitCommonDir)), canonicalTestRoot(path.join(primaryRoot, '.git')));
+      assert.equal(assertTestPresent(afterStore.getProjectIdentity({ alias: remote.replace(/\.git$/, '') })).projectId, secondary.projectId);
+    } finally {
+      afterStore.close();
+    }
+
+    // Unrelated repo sharing only the remote URL still fails closed.
+    runGit(unrelatedRoot, ['remote', 'add', 'origin', remote]);
+    await assert.rejects(open(unrelatedRoot), (error: unknown) => (
+      ['project_identity_alias_ownership_unproven', 'project_identity_git_common_dir_unverified', 'project_identity_alias_conflict']
+        .includes(String(assertTestRecord(error).code))
+    ));
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});

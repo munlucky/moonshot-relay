@@ -5,6 +5,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { isDirectEntrypoint } from '../../shared/runtime-assets.js';
 import { resolveKernelRuntimeHome } from '../runtime-home.js';
 import { projectKernelModelView } from '../run/model-view.js';
+import { createFinalizationIncompleteError } from '../run/invocation-resolver.js';
 import {
   createKernelControlPlane,
   createHostWorkerSessions,
@@ -484,12 +485,7 @@ export const handleMcpToolCall = async ({
           if (startsWorker) return { runId: invocation.runId };
           res = asRecord(successor.next);
         } else if (invocation.mode === 'finalization-retry') {
-          throw Object.assign(new Error('finalization_incomplete'), {
-            code: 'finalization_incomplete',
-            errorCode: 'finalization_incomplete',
-            nextAction: 'retry-finalization',
-            runId: invocation.runId,
-          });
+          throw createFinalizationIncompleteError(invocation);
         } else if (invocation.mode === 'done') {
           res = asRecord(await cp.next(String(invocation.runId || '')));
         } else {

@@ -685,3 +685,208 @@ test('session-tagged Kernel CLI rejects a foreign report without completing or s
     await rm(fixture.runtimeHome, { recursive: true, force: true });
   }
 });
+
+test('finalization-retry deadlock after external workspace drift recovers via workspaceRecovery or kernel abandon', async () => {
+  const { observeWorkspaceIdentity } = await import('../src/host/kernel/workspace/workspace-identity.js');
+  const runGit = (cwd: string, args: string[]) => {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    return result.stdout.trim();
+  };
+  const invokeCli = (cwd: string, args: string[]) => spawnSync(process.execPath, [kernelCli, ...args], {
+    cwd,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      MOON_RELAY_KERNEL_REEXEC: '1',
+      MOON_RELAY_KERNEL_RUN_ID: '',
+      MOON_RELAY_KERNEL_SESSION_ID: '',
+      MOON_RELAY_KERNEL_PROJECT_ID: '',
+      MOON_RELAY_KERNEL_WORKSPACE_ID: '',
+      CODEX_THREAD_ID: '',
+    },
+  });
+  const setupDriftedBlockedFixture = async (prefix: string) => {
+    const fixture = await makeProject(prefix);
+    const sessionId = `codex:${prefix}-session`;
+    await writeFile(path.join(fixture.projectRoot, 'app.mjs'), 'export const value = 1;\n');
+    runGit(fixture.projectRoot, ['init', '-q']);
+    runGit(fixture.projectRoot, ['config', 'user.name', 'Test User']);
+    runGit(fixture.projectRoot, ['config', 'user.email', 'test@example.invalid']);
+    runGit(fixture.projectRoot, ['add', '-A']);
+    runGit(fixture.projectRoot, ['commit', '-q', '-m', 'initial commit']);
+
+    const contractAPath = path.join(fixture.runtimeHome, 'contract-a.json');
+    await writeFile(contractAPath, JSON.stringify({
+      objective: 'contract A before external drift',
+      allowedPaths: ['app.mjs'],
+      acceptance: ['initial task completes'],
+    }));
+    const started = invokeNext({ ...fixture, sessionId, contractPath: contractAPath });
+    assert.equal(started.status, 0, started.stderr || started.stdout);
+    const runId = assertTestString(parseCliJson(started).runId);
+
+    await markTerminal({ runtimeHome: fixture.runtimeHome, runId, finalizationStatus: 'pending' });
+
+    await writeFile(path.join(fixture.projectRoot, 'app.mjs'), 'export const value = 2;\n');
+    runGit(fixture.projectRoot, ['add', 'app.mjs']);
+    runGit(fixture.projectRoot, ['commit', '-q', '-m', 'external commit after completion']);
+    const postDriftIdentity = assertTestString(observeWorkspaceIdentity({ projectRoot: fixture.projectRoot }).identity);
+
+    const finalizeCmd = invokeCli(fixture.projectRoot, [
+      'finalize',
+      '--run-id',
+      runId,
+      '--project-root',
+      fixture.projectRoot,
+      '--runtime-home',
+      fixture.runtimeHome,
+      '--json',
+    ]);
+    assert.equal(finalizeCmd.status, 0, finalizeCmd.stderr || finalizeCmd.stdout);
+    const finalizePayload = parseCliJson(finalizeCmd);
+    assert.equal(finalizePayload.finalizationStatus, 'incomplete_gates');
+
+    const store = await openKernelStateStore({ runtimeHome: fixture.runtimeHome });
+    try {
+      const blockedRun = assertTestPresent(store.getRun(runId));
+      const receipt = assertTestPresent(store.getFinalizationReceipt(runId));
+      assert.equal(blockedRun.status, 'completed');
+      assert.equal(blockedRun.finalizationStatus, 'blocked');
+      assert.equal(blockedRun.currentWorkspaceIdentity, postDriftIdentity);
+      assert.equal(receipt.finalizationStatus, 'incomplete_gates');
+    } finally {
+      store.close();
+    }
+
+    return { fixture, sessionId, runId, postDriftIdentity };
+  };
+
+  // Path 1: workspaceRecovery + new-task opens a fresh Run while preserving the blocked Run's record.
+  const recoveryCase = await setupDriftedBlockedFixture('kernel-deadlock-recovery');
+  try {
+    const plainNextPath = path.join(recoveryCase.fixture.runtimeHome, 'contract-b-plain.json');
+    await writeFile(plainNextPath, JSON.stringify({
+      objective: 'contract B plain',
+      acceptance: ['fresh task runs after recovery'],
+    }));
+    const rejected = invokeNext({
+      ...recoveryCase.fixture,
+      sessionId: recoveryCase.sessionId,
+      contractPath: plainNextPath,
+      invocationIntent: 'new-task',
+    });
+    assert.notEqual(rejected.status, 0);
+    const rejectedPayload = parseCliJson(rejected);
+    assert.equal(rejectedPayload.errorCode, 'finalization_incomplete');
+    assert.equal(rejectedPayload.nextAction, 'abandon-or-recover-workspace-baseline');
+    const diagnostics = assertTestRecord(rejectedPayload.diagnostics);
+    const remediation = assertTestRecord(diagnostics.remediation);
+    assert.equal(remediation.action, 'abandon-or-recover-workspace-baseline');
+    const wsRecovery = assertTestRecord(remediation.workspaceRecovery);
+    assert.equal(wsRecovery.acknowledgedIdentity, recoveryCase.postDriftIdentity);
+
+    const recoveryContractPath = path.join(recoveryCase.fixture.runtimeHome, 'contract-b-recovery.json');
+    await writeFile(recoveryContractPath, JSON.stringify({
+      objective: 'contract B with acknowledged baseline',
+      acceptance: ['fresh task starts cleanly'],
+      workspaceRecovery: {
+        acknowledgedIdentity: recoveryCase.postDriftIdentity,
+      },
+    }));
+    const recovered = invokeNext({
+      ...recoveryCase.fixture,
+      sessionId: recoveryCase.sessionId,
+      contractPath: recoveryContractPath,
+      invocationIntent: 'new-task',
+    });
+    assert.equal(recovered.status, 0, recovered.stderr || recovered.stdout);
+    const recoveredPayload = parseCliJson(recovered);
+    const recoveredRunId = assertTestString(recoveredPayload.runId);
+    assert.notEqual(recoveredRunId, recoveryCase.runId);
+
+    const store = await openKernelStateStore({ runtimeHome: recoveryCase.fixture.runtimeHome });
+    try {
+      const newRun = assertTestPresent(store.getRun(recoveredRunId));
+      assert.equal(newRun.status, 'active');
+      const oldRun = assertTestPresent(store.getRun(recoveryCase.runId));
+      assert.equal(oldRun.status, 'completed');
+      assert.equal(oldRun.finalizationStatus, 'blocked');
+    } finally {
+      store.close();
+    }
+  } finally {
+    await rm(recoveryCase.fixture.projectRoot, { recursive: true, force: true });
+    await rm(recoveryCase.fixture.runtimeHome, { recursive: true, force: true });
+  }
+
+  // Path 2: kernel abandon unblocks a blocked-finalization completed Run, while finalized completed Runs stay immutable.
+  const abandonCase = await setupDriftedBlockedFixture('kernel-deadlock-abandon');
+  const finalizedFixture = await makeProject('kernel-finalized-immutable');
+  try {
+    const abandonCmd = invokeCli(abandonCase.fixture.projectRoot, [
+      'abandon',
+      '--run-id',
+      abandonCase.runId,
+      '--reason',
+      'external-workspace-change',
+      '--project-root',
+      abandonCase.fixture.projectRoot,
+      '--runtime-home',
+      abandonCase.fixture.runtimeHome,
+      '--json',
+    ]);
+    assert.equal(abandonCmd.status, 0, abandonCmd.stderr || abandonCmd.stdout);
+    const abandonPayload = parseCliJson(abandonCmd);
+    assert.equal(abandonPayload.status, 'abandoned');
+    assert.equal(abandonPayload.alreadyTerminal, false);
+
+    const nextContractPath = path.join(abandonCase.fixture.runtimeHome, 'contract-after-abandon.json');
+    await writeFile(nextContractPath, JSON.stringify({
+      objective: 'contract B after abandon',
+      acceptance: ['fresh task starts without workspaceRecovery once abandoned'],
+    }));
+    const reopened = invokeNext({
+      ...abandonCase.fixture,
+      sessionId: `codex:${abandonCase.runId}-fresh-session`,
+      contractPath: nextContractPath,
+    });
+    assert.equal(reopened.status, 0, reopened.stderr || reopened.stdout);
+    assert.notEqual(parseCliJson(reopened).runId, abandonCase.runId);
+
+    const finalizedSessionId = 'codex:finalized-immutable';
+    const finalizedRunId = 'run-finalized-immutable';
+    await startOwnedRun({
+      ...finalizedFixture,
+      sessionId: finalizedSessionId,
+      runId: finalizedRunId,
+      objective: 'immutable finalized task',
+    });
+    await markTerminal({
+      runtimeHome: finalizedFixture.runtimeHome,
+      runId: finalizedRunId,
+      finalizationStatus: 'completed',
+    });
+    const finalizedAbandon = invokeCli(finalizedFixture.projectRoot, [
+      'abandon',
+      '--run-id',
+      finalizedRunId,
+      '--reason',
+      'should-stay-immutable',
+      '--project-root',
+      finalizedFixture.projectRoot,
+      '--runtime-home',
+      finalizedFixture.runtimeHome,
+      '--json',
+    ]);
+    assert.equal(finalizedAbandon.status, 0, finalizedAbandon.stderr || finalizedAbandon.stdout);
+    const finalizedPayload = parseCliJson(finalizedAbandon);
+    assert.equal(finalizedPayload.status, 'completed');
+    assert.equal(finalizedPayload.alreadyTerminal, true);
+  } finally {
+    await rm(abandonCase.fixture.projectRoot, { recursive: true, force: true });
+    await rm(abandonCase.fixture.runtimeHome, { recursive: true, force: true });
+    await rm(finalizedFixture.projectRoot, { recursive: true, force: true });
+    await rm(finalizedFixture.runtimeHome, { recursive: true, force: true });
+  }
+});

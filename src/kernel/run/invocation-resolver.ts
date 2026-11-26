@@ -42,6 +42,7 @@ interface ResolverRun {
   objective?: unknown;
   taskContract?: import('../persistence/state-store-contracts.js').StoredTaskContract | null;
   finalizationStatus?: string | null;
+  mutationRevision?: number | null;
   currentWorkspaceIdentity?: string | null;
 }
 
@@ -71,6 +72,8 @@ interface InvocationStateStore {
   abandonRun?: (runId: string, input: { reason: string }) => unknown;
   getRun: (runId: string) => ResolverRun | null;
   getLatestRunForWorktree?: (scope: RunScope) => ResolverRun | null;
+  getFinalizationReceipt?: (runId: string) => { finalizationStatus?: unknown; receiptJson?: unknown } | null;
+  getCompletionDecision?: (runId: string) => { decision?: unknown; mutationRevision?: unknown } | null;
 }
 
 interface InvocationInput {
@@ -108,6 +111,12 @@ interface ConflictDetailsInput {
   reason: string;
 }
 
+interface FinalizationRecoveryInfo {
+  finalizationStatus: string | null;
+  observedWorkspaceIdentity: string | null;
+  unrecoverable: boolean;
+}
+
 interface InvocationResolution {
   mode: 'create' | 'revise' | 'resume' | 'finalization-retry' | 'done' | 'successor';
   runId: string;
@@ -116,7 +125,83 @@ interface InvocationResolution {
   reason: string;
   taskContract: ResolverContract | null;
   changeClass: ReturnType<typeof classifyContractChange> | null;
+  finalizationRecovery?: FinalizationRecoveryInfo | null;
 }
+
+export const UNRECOVERABLE_FINALIZATION_STATUSES = new Set([
+  'blocked',
+  'incomplete_gates',
+  'blocked_completion',
+]);
+
+const isUnrecoverableFinalizationRun = (
+  stateStore: InvocationStateStore,
+  run: ResolverRun,
+): boolean => {
+  const finalizationStatus = String(run.finalizationStatus || 'pending');
+  if (UNRECOVERABLE_FINALIZATION_STATUSES.has(finalizationStatus)) return true;
+
+  const receipt = typeof stateStore.getFinalizationReceipt === 'function'
+    ? stateStore.getFinalizationReceipt(run.runId)
+    : null;
+  const receiptJson = provenanceRecord(receipt?.receiptJson);
+  const receiptStatus = typeof receipt?.finalizationStatus === 'string'
+    ? receipt.finalizationStatus
+    : typeof receiptJson.finalizationStatus === 'string'
+      ? String(receiptJson.finalizationStatus)
+      : null;
+  if (receiptStatus && UNRECOVERABLE_FINALIZATION_STATUSES.has(receiptStatus)) {
+    return true;
+  }
+
+  const decision = typeof stateStore.getCompletionDecision === 'function'
+    ? stateStore.getCompletionDecision(run.runId)
+    : null;
+  if (
+    decision?.decision === 'accepted'
+    && typeof run.mutationRevision === 'number'
+    && Number.isInteger(Number(decision.mutationRevision))
+    && Number(decision.mutationRevision) !== Number(run.mutationRevision)
+  ) {
+    return true;
+  }
+
+  return false;
+};
+
+export const createFinalizationIncompleteError = (
+  invocation: Pick<InvocationResolution, 'runId' | 'finalizationRecovery'>,
+) => {
+  const recovery = invocation.finalizationRecovery;
+  if (recovery?.unrecoverable) {
+    return Object.assign(new Error('finalization_incomplete'), {
+      code: 'finalization_incomplete',
+      errorCode: 'finalization_incomplete',
+      nextAction: 'abandon-or-recover-workspace-baseline',
+      runId: invocation.runId,
+      details: {
+        finalizationStatus: recovery.finalizationStatus,
+        observedWorkspaceIdentity: recovery.observedWorkspaceIdentity,
+        remediation: {
+          action: 'abandon-or-recover-workspace-baseline',
+          abandonCommand: `kernel abandon --run-id ${invocation.runId} --reason external-workspace-change`,
+          workspaceRecovery: recovery.observedWorkspaceIdentity
+            ? {
+                invocationIntent: NEW_TASK_INVOCATION_INTENT,
+                acknowledgedIdentity: recovery.observedWorkspaceIdentity,
+              }
+            : null,
+        },
+      },
+    });
+  }
+  return Object.assign(new Error('finalization_incomplete'), {
+    code: 'finalization_incomplete',
+    errorCode: 'finalization_incomplete',
+    nextAction: 'retry-finalization',
+    runId: invocation.runId,
+  });
+};
 
 
 const codedError = (code: string, nextAction: string, details: UnknownRecord = {}) => Object.assign(new Error(code), {
@@ -390,27 +475,46 @@ export const resolveBoundInvocation = ({
   }
 
   if (cursorRun.status === 'completed') {
-    if (cursorRun.finalizationStatus !== 'completed') {
+    const finalizationStatus = cursorRun.finalizationStatus || 'pending';
+    const unrecoverableFinalization = isUnrecoverableFinalizationRun(stateStore, cursorRun);
+    // Explicit recovery starts a fresh proof baseline; never rewrite the
+    // completed Run or claim continuity across an externally changed checkout.
+    // When a completed Run's finalization has already failed permanently (for
+    // example incomplete_gates after external commits refreshed its workspace
+    // identity), allow acknowledged new-baseline recovery even if the Run's
+    // currentWorkspaceIdentity already reflects the post-drift checkout.
+    if (isNewTask && !requestedRunId && contract
+      && observedWorkspaceIdentity
+      && taskContract?.workspaceRecovery?.acknowledgedIdentity === observedWorkspaceIdentity
+      && (
+        (finalizationStatus === 'completed' && cursorRun.currentWorkspaceIdentity !== observedWorkspaceIdentity)
+        || unrecoverableFinalization
+      )) {
+      return {
+        mode: 'create', runId: createOpaqueRunId(), predecessorRunId: null,
+        binding: null,
+        reason: unrecoverableFinalization
+          ? 'user-acknowledged-new-workspace-baseline-after-blocked-finalization'
+          : 'user-acknowledged-new-workspace-baseline',
+        taskContract: contract, changeClass: null,
+      };
+    }
+    if (finalizationStatus !== 'completed') {
       return {
         mode: 'finalization-retry',
         runId: cursorRun.runId,
         predecessorRunId: null,
         binding: null,
-        reason: 'completed-run-finalization-incomplete',
+        reason: unrecoverableFinalization
+          ? 'completed-run-finalization-blocked'
+          : 'completed-run-finalization-incomplete',
         taskContract: contract,
         changeClass: contract ? classifyContractChange({ previous: cursorRun.taskContract, next: contract }) : null,
-      };
-    }
-    // Explicit recovery starts a fresh proof baseline; never rewrite the
-    // completed Run or claim continuity across an externally changed checkout.
-    if (isNewTask && !requestedRunId && contract
-      && observedWorkspaceIdentity
-      && taskContract?.workspaceRecovery?.acknowledgedIdentity === observedWorkspaceIdentity
-      && cursorRun.currentWorkspaceIdentity !== observedWorkspaceIdentity) {
-      return {
-        mode: 'create', runId: createOpaqueRunId(), predecessorRunId: null,
-        binding: null, reason: 'user-acknowledged-new-workspace-baseline',
-        taskContract: contract, changeClass: null,
+        finalizationRecovery: {
+          finalizationStatus,
+          observedWorkspaceIdentity: observedWorkspaceIdentity || null,
+          unrecoverable: unrecoverableFinalization,
+        },
       };
     }
     if (!isNewTask && (!contract || cursorRun.taskContract?.digest === contract.digest)) {

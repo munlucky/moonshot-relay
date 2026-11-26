@@ -2443,6 +2443,46 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
           }
           row = crossSurfaceMatches[0] || null;
         }
+        // An explicit local identity or linked worktree sharing git_common_dir
+        // is a logical project namespace that may be checked out in more than
+        // one worktree. Verify and reuse that immutable project row before
+        // scanning remote aliases so a proven linked worktree or exact root
+        // stays attached to its repository identity.
+        if (!row) {
+          const projectIdRow = projectIdentityPersistence.getIdentityByProjectId(projectId);
+          if (projectIdRow) {
+            const sameRoot = sameOwnershipPath(projectIdRow.canonical_root, canonicalRoot);
+            const commonDirProof = Boolean(incomingGitCommonDir && (
+              workLifecyclePersistence
+                .listProjectWorkspaceRecords(projectIdRow.project_id)
+                .some((workspace) => sameOwnershipPath(workspace.gitCommonDir, incomingGitCommonDir))
+              || hasPairedCrossSurfaceRepositoryEvidence({
+                projectId: projectIdRow.project_id,
+                persistedRoot: projectIdRow.canonical_root,
+                observedRoot: canonicalRoot,
+                observedGitCommonDir: incomingGitCommonDir,
+              })
+            ));
+            const aliasRegistryAuthorized = identitySource === 'account_alias_registry'
+              && projectIdRow.project_id === projectId;
+            if (!sameRoot && !commonDirProof && !aliasRegistryAuthorized && identitySource !== 'workspace_root') {
+              const code = incomingGitCommonDir
+                ? 'project_identity_git_common_dir_unverified'
+                : 'project_identity_alias_ownership_unproven';
+              throw Object.assign(new Error(code), {
+                code,
+                nextAction: 'inspect-project-identity-candidates',
+                projectId,
+                canonicalRoot,
+                gitCommonDir: incomingGitCommonDir,
+              });
+            }
+            if (sameRoot || commonDirProof || aliasRegistryAuthorized) {
+              row = projectIdRow;
+            }
+          }
+        }
+
         if (!row) {
           const projectMatches = projectIdentityPersistence.listIdentityMatchesByAliases(
             incomingAliases.map(({ alias }) => alias),
@@ -2482,44 +2522,6 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
             });
           }
           row = compatibleProjectMatches[0] || null;
-        }
-
-        // An explicit local identity or linked worktree sharing git_common_dir
-        // is a logical project namespace that may be checked out in more than
-        // one worktree. Reuse that immutable project row instead of attempting
-        // a second row with the same project_id; project_workspaces remains
-        // the per-root registry.
-        if (!row) {
-          const projectIdRow = projectIdentityPersistence.getIdentityByProjectId(projectId);
-          if (projectIdRow) {
-            const sameRoot = sameOwnershipPath(projectIdRow.canonical_root, canonicalRoot);
-            const commonDirProof = Boolean(incomingGitCommonDir && (
-              workLifecyclePersistence
-                .listProjectWorkspaceRecords(projectIdRow.project_id)
-                .some((workspace) => sameOwnershipPath(workspace.gitCommonDir, incomingGitCommonDir))
-              || hasPairedCrossSurfaceRepositoryEvidence({
-                projectId: projectIdRow.project_id,
-                persistedRoot: projectIdRow.canonical_root,
-                observedRoot: canonicalRoot,
-                observedGitCommonDir: incomingGitCommonDir,
-              })
-            ));
-            if (!sameRoot && !commonDirProof && identitySource !== 'workspace_root') {
-              const code = incomingGitCommonDir
-                ? 'project_identity_git_common_dir_unverified'
-                : 'project_identity_alias_ownership_unproven';
-              throw Object.assign(new Error(code), {
-                code,
-                nextAction: 'inspect-project-identity-candidates',
-                projectId,
-                canonicalRoot,
-                gitCommonDir: incomingGitCommonDir,
-              });
-            }
-            if (sameRoot || commonDirProof) {
-              row = projectIdRow;
-            }
-          }
         }
 
         let canonicalProjectId = row?.project_id || projectId;
@@ -3356,7 +3358,10 @@ export const openKernelStateStore = async ({ runtimeHome: runtimeHomeInput = res
       return db.transaction(() => {
         const run = workLifecyclePersistence.getRunLifecycleIdentity(runId);
         if (!run) throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
-        if (['completed', 'abandoned'].includes(run.status)) {
+        if (
+          run.status === 'abandoned'
+          || (run.status === 'completed' && (run.finalizationStatus || 'pending') === 'completed')
+        ) {
           return { status: run.status, runId, alreadyTerminal: true };
         }
         const observed = now();

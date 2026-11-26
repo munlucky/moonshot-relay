@@ -49,6 +49,7 @@ export interface RunLifecycleIdentity {
   workspaceId: string | null;
   ownerBindingId: string | null;
   status: string;
+  finalizationStatus?: string | null;
 }
 
 export interface RunInitializationIdentity extends RunLifecycleIdentity {
@@ -410,6 +411,7 @@ interface RunLifecycleRow {
   workspaceId: string | null;
   ownerBindingId: string | null;
   status: string;
+  finalizationStatus: string | null;
 }
 
 interface SessionBindingRow {
@@ -497,7 +499,8 @@ export const createWorkLifecyclePersistence = ({
   const getRunLifecycleIdentity: WorkLifecyclePersistence['getRunLifecycleIdentity'] = (runId) => {
     const row = db.prepare(`
       SELECT run_id AS runId, project_id AS projectId, worktree_id AS worktreeId,
-        workspace_id AS workspaceId, owner_binding_id AS ownerBindingId, status
+        workspace_id AS workspaceId, owner_binding_id AS ownerBindingId, status,
+        finalization_status AS finalizationStatus
       FROM runs
       WHERE run_id=?
     `).get(runId) as RunLifecycleRow | undefined;
@@ -602,7 +605,7 @@ export const createWorkLifecyclePersistence = ({
     }
     const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
     const rows = db.prepare(
-      `SELECT run_id AS runId FROM runs ${where} ORDER BY updated_at DESC`,
+      `SELECT run_id AS runId FROM runs ${where} ORDER BY updated_at DESC, rowid DESC`,
     ).all(...values) as Array<{ runId: string }>;
     return rows.map((row) => row.runId);
   };

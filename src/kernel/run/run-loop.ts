@@ -2,6 +2,7 @@ import { TRANSITIONS, type KernelState } from '../transition.js';
 import { sanitizePersistentPayload } from '../../shared/persistent-sanitizer.js';
 import { resolveWorkBlockingClass } from './work-authority.js';
 import { selectBoundCommandRef } from './obligation-compiler.js';
+import { UNRECOVERABLE_FINALIZATION_STATUSES } from './invocation-resolver.js';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -411,12 +412,16 @@ export const buildNextPayload = ({
     return currentAction({ type: 'done', guidance: 'Run is complete. No further work is required.' });
   }
   // Accepted completion whose knowledge commit or Git closeout did not finish
-  // is NOT done; the run stays retryable (P0-7).
+  // is NOT done; the run stays retryable (P0-7), unless finalization gates
+  // are already unrecoverably blocked after external workspace changes.
   if (run.status === 'completed') {
+    const unrecoverableFinalization = UNRECOVERABLE_FINALIZATION_STATUSES.has(String(run.finalizationStatus || ''));
     return currentAction({
         type: 'finalize',
         finalizationStatus: run.finalizationStatus,
-        guidance: 'Evidence was accepted but finalization did not complete. Submit kernel report again to retry the outstanding finalization step.',
+        guidance: unrecoverableFinalization
+          ? 'Evidence was accepted previously, but finalization gates are blocked after workspace changes. Run `kernel abandon --run-id <runId>` or reopen with `invocationIntent: "new-task"` and `workspaceRecovery.acknowledgedIdentity` matching the current workspace.'
+          : 'Evidence was accepted but finalization did not complete. Submit kernel report again to retry the outstanding finalization step.',
       });
   }
   if (run.status === 'blocked' && run.blockedReason) {
