@@ -15,7 +15,7 @@ import { resolveRecordType } from '../knowledge/records.js';
 import { projectRunState } from '../state-projector.js';
 import { authoritativeVerificationScope } from '../../contracts/verification-settlement.js';
 import { assertCompletionProvenance } from '../proof/completion-provenance.js';
-import { evaluateTrustCompletion, type EvaluateTrustCompletionInput } from '../proof/trust-authority.js';
+import { evaluateTrustCompletion, resolveReviewCapsulesByReceiptId, type EvaluateTrustCompletionInput } from '../proof/trust-authority.js';
 import {
   allStepsPassed,
   dependenciesSatisfied,
@@ -117,7 +117,7 @@ interface PersistableCandidate extends ReviewKnowledgeCandidate {
 }
 
 type FinalizationStore = Pick<Awaited<ReturnType<typeof import('../state-store.js').openKernelStateStore>>, "getRun" | "listKnowledgeRecords" | "getKnowledgeApproval" | "ensureRunObligation" | "getRunObligations" | "getVerifications" | "recordCandidateEvidenceBinding" | "getProjectKnowledgeRevision" | "commitKnowledgeTransaction" | "getCompletionDecision" | "getMutationProvenance" | "observeWorkspaceIdentity" | "recordGitCloseoutReceipt" | "getGitCloseoutReceipt" | "recordKnowledgeReviewReceipt" | "recordKnowledgeCandidate" | "setKnowledgeStatus" | "recordFinalizationReceipt" | "setFinalizationStatus" | "getFinalizationReceipt" | "getWaivers" | "listReviewReceipts" | "getLatestEvidencePack" | "recordKnowledgeApproval" | "transition" | "persistCompletionDecision" | "getProjectRunSignals" | "getKnowledgeCandidates" | "recordKnowledgeCommitReceipt" | "getKnowledgeCommitReceipt" | "getDeferredKnowledgeRuns">
-  & Partial<Pick<Awaited<ReturnType<typeof import('../state-store.js').openKernelStateStore>>, "getRunSteps" | "getStepAttempts" | "updateRunStep">>;
+  & Partial<Pick<Awaited<ReturnType<typeof import('../state-store.js').openKernelStateStore>>, "getRunSteps" | "getStepAttempts" | "updateRunStep" | "getModelUsageReceipt" | "getExecutionCapsule">>;
 
 type SettlementStore = Pick<FinalizationStore,
   'getRun' | 'getFinalizationReceipt' | 'getCompletionDecision'
@@ -588,16 +588,20 @@ export const finalizeRun = async ({
   // Both are recovered here so a retry resumes where the failure happened.
   const priorReceipt = asRecord(store.getFinalizationReceipt(runId)?.receiptJson);
   const priorGitReceipt = store.getGitCloseoutReceipt(runId);
-  const evaluateCompletion = () => evaluateTrustCompletion({
-    run: requireRun(store, runId),
-    verifications: store.getVerifications(runId),
-    obligations: store.getRunObligations(runId),
-    waivers: store.getWaivers(runId),
-    reviewReceipts: store.listReviewReceipts(runId),
-    releaseEvidence: store.getLatestEvidencePack(runId),
-    mutationProvenance: store.getMutationProvenance(runId),
-    verificationScopeIdentities: verificationScopeIdentities || buildVerificationScopeIdentities({ store, runId, projectRoot, observeScopedWorkspaceIdentity }),
-  });
+  const evaluateCompletion = () => {
+    const reviewReceipts = store.listReviewReceipts(runId);
+    return evaluateTrustCompletion({
+      run: requireRun(store, runId),
+      verifications: store.getVerifications(runId),
+      obligations: store.getRunObligations(runId),
+      waivers: store.getWaivers(runId),
+      reviewReceipts,
+      reviewCapsulesByReceiptId: resolveReviewCapsulesByReceiptId(store, runId, reviewReceipts),
+      releaseEvidence: store.getLatestEvidencePack(runId),
+      mutationProvenance: store.getMutationProvenance(runId),
+      verificationScopeIdentities: verificationScopeIdentities || buildVerificationScopeIdentities({ store, runId, projectRoot, observeScopedWorkspaceIdentity }),
+    });
+  };
   run = refreshFinalizationWorkspaceIdentity({ store, runId, projectRoot, priorGitReceipt, observeWorkspaceIdentity, gitCloseoutHost });
   const normalizedChangeSet = normalizeChangedContract({
     changedPaths: changedPaths.length > 0 ? changedPaths : strings(priorReceipt?.changedPaths),

@@ -2015,14 +2015,26 @@ export const dispatchKernelTurn = async ({
   const reviewStepId = decision.stepId || turnAttempt.stepId || turnExecutionCapsule?.stepId;
   const reviewPlanRevision = turnExecutionCapsule?.planRevision ?? turnAttempt.planRevision ?? null;
   const reviewMutationRevision = turnExecutionCapsule?.mutationRevision ?? turnAttempt.mutationRevision ?? null;
+  const reviewObligationId = String(decision.obligationId || 'review');
+  const reviewAcceptanceScope = (Array.isArray(turnExecutionCapsule?.acceptance) ? turnExecutionCapsule.acceptance : [])
+    .map(asRecord)
+    .filter((entry) => (Array.isArray(entry.obligationIds) ? entry.obligationIds.map(String) : []).includes(reviewObligationId))
+    .map((entry) => ({
+      id: String(entry.id || '').trim(),
+      statement: String(entry.statement || '').trim(),
+    }))
+    .filter((entry) => entry.id || entry.statement)
+    .sort((left, right) => left.id.localeCompare(right.id) || left.statement.localeCompare(right.statement));
   // The claim label is part of the durable subject identity. Including the
-  // plan and step prevents a new plan from inheriting a stale old-plan claim.
+  // plan, step, and capsule-bound acceptance scope prevents a revised contract
+  // wording or new plan from inheriting a stale claim from an older review.
   const reviewClaimKey = JSON.stringify({
     runId,
     stepId: reviewStepId || null,
     planRevision: reviewPlanRevision,
     mutationRevision: reviewMutationRevision,
-    obligationId: decision.obligationId || 'review',
+    obligationId: reviewObligationId,
+    ...(reviewAcceptanceScope.length > 0 ? { acceptanceScope: reviewAcceptanceScope } : {}),
   });
   const reviewClaimHolder = `host-review:${process.pid}:${randomUUID()}`;
   const reviewClaim = controlPlane.claimReviewAttempt?.({

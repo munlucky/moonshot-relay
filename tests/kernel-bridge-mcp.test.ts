@@ -2201,3 +2201,161 @@ test('S3 P1: approved Git closeout on MCP report executes exactly once after ind
     await rm(workspaceRoot, { recursive: true, force: true });
   }
 });
+
+test('S3 P1-A: public MCP kernel_report preserves accepted reviewReceiptId, proofSettled=true, blockedReason, and makes 0 extra next calls when continuation fails', async () => {
+  const workspaceRoot = await createFixtureRepo();
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-mcp-post-receipt-block-'));
+  const runId = 'mcp-s3-post-receipt-continuation-fail';
+  try {
+    await writeFile(path.join(workspaceRoot, 'package.json'), JSON.stringify({
+      name: 'bridge-fixture',
+      scripts: { test: 'node -e "process.exit(0)"', lint: 'node -e "process.exit(0)"' },
+    }));
+    await writeFile(path.join(workspaceRoot, 'app.mjs'), 'export const value = 0;\n');
+    spawnSync('git', ['add', 'package.json', 'app.mjs'], { cwd: workspaceRoot, encoding: 'utf8' });
+    spawnSync('git', ['commit', '-m', 'add app fixture'], { cwd: workspaceRoot, encoding: 'utf8' });
+
+    const cpInit = await createKernelControlPlane({ runtimeHome, projectRoot: workspaceRoot });
+    let stepId: string;
+    let capsuleId: string;
+    let attemptId: string;
+    try {
+      await cpInit.startRun({
+        runId,
+        objective: 'Preserve accepted review receipt when post-proof continuation fails',
+        taskContract: {
+          surfaces: ['security_boundary'],
+          acceptance: ['app updated'],
+          allowedPaths: ['app.mjs'],
+        },
+      });
+      const implementer = createClaudeAdapter({
+        launch: async ({ invocation }) => ({
+          resolvedModel: assertTestRecord(invocation).model,
+          observedModel: assertTestRecord(invocation).model,
+          resolvedEffort: assertTestRecord(invocation).effort,
+          observedEffort: assertTestRecord(invocation).effort,
+          sessionId: 'mcp-post-receipt-implementer',
+        }),
+      });
+      const implTurn = await dispatchKernelTurn({
+        controlPlane: cpInit,
+        runId,
+        adapter: implementer,
+        registry: createModelRegistry({
+          surface: 'claude',
+          env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'configured-frontier', MOON_RELAY_KERNEL_MODEL_VALUE: 'configured-value' },
+        }),
+        actionContext: { executionMode: 'native-subagent', delegationRequested: true },
+      });
+      stepId = assertTestString(assertTestPresent(implTurn.executionCapsule).stepId);
+      capsuleId = assertTestString(assertTestPresent(implTurn.executionCapsule).capsuleId);
+      attemptId = assertTestString(assertTestPresent(cpInit.stateStore.getStepAttempts(runId).at(-1)).attemptId);
+    } finally {
+      await cpInit.close();
+    }
+
+    const reviewer = createClaudeAdapter({
+      launch: async ({ invocation }) => ({
+        resolvedModel: assertTestRecord(invocation).model,
+        observedModel: assertTestRecord(invocation).model,
+        resolvedEffort: assertTestRecord(invocation).effort,
+        observedEffort: assertTestRecord(invocation).effort,
+        sessionId: 'mcp-post-receipt-reviewer',
+        outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://post-receipt-pass'] },
+      }),
+    });
+    const innerBridge = createKernelHostReviewBridge({
+      adapter: reviewer,
+      registry: createModelRegistry({
+        surface: 'claude',
+        env: {
+          MOON_RELAY_KERNEL_MODEL_FRONTIER: 'mcp-review-frontier',
+          MOON_RELAY_KERNEL_MODEL_FRONTIER_EFFORT: 'high',
+        },
+      }),
+      runtimeHome,
+      env: {},
+      parentSessionId: 'mcp-post-receipt-owner',
+    });
+
+    // Inject persistent failure in prepareNext AFTER recordProof succeeds, and count any extra next() calls MCP makes!
+    let extraNextCalls = 0;
+    let proofRecorded = false;
+    const instrumentedBridge = {
+      ...innerBridge,
+      dispatchReview: async (input: Parameters<typeof innerBridge.dispatchReview>[0]) => {
+        const cp = input?.controlPlane as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+        const origRecordProof = cp.recordProof.bind(cp);
+        const origPrepareNext = cp.prepareNext.bind(cp);
+        const origNext = cp.next.bind(cp);
+        cp.recordProof = async (...args: unknown[]) => {
+          const out = await origRecordProof(...args);
+          proofRecorded = true;
+          return out;
+        };
+        cp.prepareNext = async (...args: unknown[]) => {
+          if (proofRecorded) {
+            throw Object.assign(new Error('persistent post-proof continuation failure'), { code: 'injected_continuation_failure' });
+          }
+          return origPrepareNext(...args);
+        };
+        cp.next = async (...args: unknown[]) => {
+          if (proofRecorded) extraNextCalls += 1;
+          return origNext(...args);
+        };
+        return innerBridge.dispatchReview(input);
+      },
+    };
+
+    const handler = createMcpBridgeHandler({ runtimeHome, env: {}, hostBridge: instrumentedBridge });
+    await writeFile(path.join(workspaceRoot, 'app.mjs'), 'export const value = 123;\n');
+
+    const rawResponse = await handler({
+      jsonrpc: '2.0',
+      id: 240,
+      method: 'tools/call',
+      params: {
+        name: 'kernel_report',
+        arguments: {
+          workspaceRoot,
+          runId,
+          surface: 'claude_app',
+          report: {
+            stepId,
+            capsuleId,
+            attemptId,
+            summary: 'updated app.mjs and triggered review whose post-proof continuation fails',
+            changedPaths: ['app.mjs'],
+          },
+        },
+      },
+    });
+    assert.equal(assertTestRecord(assertTestRecord(rawResponse).result).isError, false, JSON.stringify(rawResponse));
+    const reported = parseToolText(rawResponse);
+
+    const cpCheck = await createKernelControlPlane({ runtimeHome, projectRoot: workspaceRoot });
+    try {
+      const receipts = cpCheck.listReviewReceipts(runId);
+      assert.equal(receipts.length, 1);
+      const savedReceiptId = receipts[0]!.receiptId;
+      assert.equal(proofRecorded, true);
+      assert.equal(extraNextCalls, 0, 'MCP must make 0 extra next() calls after Kernel returns next: null with blocker');
+      assert.equal(reported.reviewReceiptId, savedReceiptId, JSON.stringify(reported));
+      assert.equal(reported.reviewReceiptAccepted, true);
+      assert.equal(reported.proofSettled, true);
+      assert.equal(reported.blockedReason, 'injected_continuation_failure');
+      assert.equal(assertTestRecord(reported.blocker).reason, 'injected_continuation_failure');
+      assert.equal(reported.next, null);
+      const hostReview = assertTestRecord(reported.hostReview);
+      assert.equal(hostReview.reviewReceiptId, savedReceiptId);
+      assert.equal(hostReview.proofSettled, true);
+      assert.equal(hostReview.blockedReason, 'injected_continuation_failure');
+    } finally {
+      await cpCheck.close();
+    }
+  } finally {
+    await rm(runtimeHome, { recursive: true, force: true });
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});

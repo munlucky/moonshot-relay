@@ -222,23 +222,39 @@ const summarizeReviewDispatch = (
   const dispatch = recordOf(result.dispatch);
   const review = recordOf(result.review);
   const nestedReview = recordOf(review.review);
+  const blockerRecord = recordOf(result.blocker);
+  const blockedReason = review.blockedReason
+    ? String(review.blockedReason)
+    : (blockerRecord.reason ? String(blockerRecord.reason) : null);
+  const errorSummary = review.errorSummary
+    ? String(review.errorSummary)
+    : (blockerRecord.detail ? String(blockerRecord.detail) : null);
   return {
     schemaVersion: KERNEL_HOST_REVIEW_BRIDGE_SCHEMA_VERSION,
     status: result.reviewReceiptId
       ? (review.proofSettled === false
         ? 'proof-settlement-failed'
-        : (review.blockedReason ? 'settlement-blocked' : 'receipt-recorded'))
+        : (review.status === 'continuation-failed'
+          ? 'continuation-failed'
+          : (blockedReason ? 'settlement-blocked' : 'receipt-recorded')))
       : result.dispatched
         ? (review.status || 'pending')
         : 'blocked',
     reviewReceiptId: result.reviewReceiptId || null,
+    ...(review.reviewReceiptAccepted !== undefined || result.reviewReceiptId
+      ? { reviewReceiptAccepted: review.reviewReceiptAccepted === true || Boolean(result.reviewReceiptId) }
+      : {}),
+    ...(typeof review.proofSettled === 'boolean' ? { proofSettled: review.proofSettled } : {}),
+    ...(typeof review.settlementStatus === 'string' ? { settlementStatus: review.settlementStatus } : {}),
+    ...(blockedReason ? { blockedReason } : {}),
+    ...(errorSummary ? { errorSummary } : {}),
     transport: dispatch.dispatchMechanism || null,
     verdict: nestedReview.verdict || null,
     findings: nestedReview.findings || [],
     evidenceRefs: nestedReview.evidenceRefs || [],
-    blocker: result.blocker || (review.blockedReason ? {
-      reason: review.blockedReason,
-      detail: review.errorSummary || null,
+    blocker: result.blocker || (blockedReason ? {
+      reason: blockedReason,
+      detail: errorSummary,
     } : null),
     readiness,
     wait: {

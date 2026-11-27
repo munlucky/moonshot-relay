@@ -214,11 +214,164 @@ export interface EvaluateTrustCompletionInput {
   obligations?: PersistedRunObligation[];
   waivers?: PersistedWaiver[];
   reviewReceipts?: ReviewReceipt[];
+  reviewCapsulesByReceiptId?: Record<string, UnknownRecord | null> | null;
   releaseEvidence?: PersistedEvidencePack | null;
   mutationProvenance?: MutationProvenanceAuthority | null;
   expectedSourceIdentity?: string | null;
   verificationScopeIdentities?: Record<string, string | { status?: string; identity?: string | null; reason?: string | null } | null | undefined> | null;
 }
+
+export const resolveReviewCapsulesByReceiptId = (
+  store: {
+    getModelUsageReceipt?: (receiptId: string, options?: { runId?: string | null }) => { capsuleId?: string | null } | null;
+    getExecutionCapsule?: (capsuleId: string, options?: { runId?: string | null }) => UnknownRecord | null;
+  } | null | undefined,
+  runId: string,
+  reviewReceipts: readonly ReviewReceipt[] = [],
+): Record<string, UnknownRecord | null> => {
+  const result: Record<string, UnknownRecord | null> = {};
+  if (!store || typeof store.getModelUsageReceipt !== 'function' || typeof store.getExecutionCapsule !== 'function') {
+    return result;
+  }
+  for (const receipt of reviewReceipts) {
+    if (!receipt?.receiptId) continue;
+    const usageId = receipt.reviewer?.usageReceiptId || null;
+    if (!usageId) {
+      result[receipt.receiptId] = null;
+      continue;
+    }
+    const usage = store.getModelUsageReceipt(usageId, { runId });
+    const capsuleId = usage?.capsuleId ? String(usage.capsuleId) : null;
+    result[receipt.receiptId] = capsuleId
+      ? (store.getExecutionCapsule(capsuleId, { runId }) || null)
+      : null;
+  }
+  return result;
+};
+
+export const resolveReviewReceiptVerifiedAcceptanceIds = ({
+  receipt,
+  capsule = null,
+  run,
+  obligationId,
+  declaredObligation = null,
+}: {
+  receipt?: ReviewReceipt | null;
+  capsule?: UnknownRecord | null;
+  run: Pick<PersistedKernelRun, 'planRevision' | 'contractRevision' | 'taskContract'>;
+  obligationId: string;
+  declaredObligation?: PersistedRunObligation | null;
+}): {
+  requiredIds: string[];
+  verifiedIds: string[];
+  satisfied: boolean;
+  reason: string | null;
+} => {
+  const requiredIds = Array.isArray(declaredObligation?.acceptanceIds)
+    ? [...new Set(declaredObligation.acceptanceIds.map(String).filter(Boolean))]
+    : [];
+  if (requiredIds.length === 0) {
+    return { requiredIds: [], verifiedIds: [], satisfied: true, reason: null };
+  }
+  if (!receipt) {
+    return { requiredIds, verifiedIds: [], satisfied: false, reason: 'review-receipt-missing' };
+  }
+
+  const currentAcceptance = Array.isArray(run.taskContract?.acceptance) ? run.taskContract.acceptance : [];
+  const currentStatementById = new Map<string, string>();
+  for (const entry of currentAcceptance) {
+    const record = asRecord(entry);
+    const id = String(record.id || '').trim();
+    const statement = String(record.statement || '').trim();
+    if (id && statement) currentStatementById.set(id, statement);
+  }
+  const receiptCoverage = new Set(
+    (Array.isArray(receipt.acceptanceCoverage) ? receipt.acceptanceCoverage : [])
+      .map(String)
+      .filter(Boolean),
+  );
+  const expectedRevision = Number(run.planRevision || run.contractRevision || 1);
+
+  if (capsule) {
+    const capsuleAcceptance = Array.isArray(capsule.acceptance) ? capsule.acceptance.map(asRecord) : [];
+    const hasExplicitBindings = capsuleAcceptance.some(
+      (entry) => Array.isArray(entry.obligationIds) && entry.obligationIds.length > 0,
+    );
+    if (hasExplicitBindings) {
+      const verifiedIds: string[] = [];
+      for (const acId of requiredIds) {
+        if (!receiptCoverage.has(acId)) continue;
+        const currentStatement = currentStatementById.get(acId);
+        if (!currentStatement) continue;
+        const matched = capsuleAcceptance.some((entry) => (
+          String(entry.id || '').trim() === acId
+          && String(entry.statement || '').trim() === currentStatement
+          && (Array.isArray(entry.obligationIds) ? entry.obligationIds.map(String) : []).includes(obligationId)
+        ));
+        if (matched) verifiedIds.push(acId);
+      }
+      const satisfied = requiredIds.every((acId) => verifiedIds.includes(acId));
+      return {
+        requiredIds,
+        verifiedIds,
+        satisfied,
+        reason: satisfied ? null : 'review-acceptance-scope-unverified',
+      };
+    }
+
+    // Legacy pre-binding review capsule (e.g., 8ac626d3): never substitute
+    // evidence from other obligations; verify strictly from the capsule's own
+    // persisted acceptance IDs, statements, reviewScope, and planRevision.
+    const capsuleScopeObligation = String(asRecord(capsule.reviewScope).obligationId || '').trim() || null;
+    if (
+      (capsuleScopeObligation && capsuleScopeObligation !== obligationId)
+      || Number(receipt.planRevision || 1) !== expectedRevision
+    ) {
+      return {
+        requiredIds,
+        verifiedIds: [],
+        satisfied: false,
+        reason: 'review-legacy-capsule-acceptance-mismatch',
+      };
+    }
+    const verifiedIds: string[] = [];
+    for (const acId of requiredIds) {
+      const currentStatement = currentStatementById.get(acId);
+      if (!currentStatement) continue;
+      const matched = capsuleAcceptance.some((entry) => (
+        String(entry.id || '').trim() === acId
+        && String(entry.statement || '').trim() === currentStatement
+      ));
+      if (matched) verifiedIds.push(acId);
+    }
+    const satisfied = requiredIds.every((acId) => verifiedIds.includes(acId));
+    return {
+      requiredIds,
+      verifiedIds,
+      satisfied,
+      reason: satisfied ? null : 'review-legacy-capsule-acceptance-mismatch',
+    };
+  }
+
+  // No capsule available (e.g., operator approval or direct receipt): require
+  // same planRevision and explicit acceptanceCoverage on this receipt itself.
+  if (Number(receipt.planRevision || 1) !== expectedRevision) {
+    return {
+      requiredIds,
+      verifiedIds: [],
+      satisfied: false,
+      reason: 'review-plan-revision-mismatch',
+    };
+  }
+  const verifiedIds = requiredIds.filter((acId) => receiptCoverage.has(acId));
+  const satisfied = requiredIds.every((acId) => verifiedIds.includes(acId));
+  return {
+    requiredIds,
+    verifiedIds,
+    satisfied,
+    reason: satisfied ? null : 'review-acceptance-coverage-missing',
+  };
+};
 
 export const evaluateTrustCompletion = ({
   run,
@@ -226,6 +379,7 @@ export const evaluateTrustCompletion = ({
   obligations = [],
   waivers = [],
   reviewReceipts = [],
+  reviewCapsulesByReceiptId = null,
   releaseEvidence = null,
   mutationProvenance = null,
   expectedSourceIdentity = null,
@@ -362,14 +516,22 @@ export const evaluateTrustCompletion = ({
       // rerun after the review changes nothing about the workspace.
       currentEvidenceDigest: digestOfEvidence(verifications, { excludeObligationId: obligationId }),
     });
-    const allReasons = [...reasons, ...evaluation.reasons];
+    const capsule = receipt && reviewCapsulesByReceiptId
+      ? (reviewCapsulesByReceiptId[receipt.receiptId] || null)
+      : null;
+    const acceptanceScope = resolveReviewReceiptVerifiedAcceptanceIds({
+      receipt,
+      capsule,
+      run,
+      obligationId,
+      declaredObligation: declared || null,
+    });
+    const scopeReasons = !acceptanceScope.satisfied && acceptanceScope.reason
+      ? [acceptanceScope.reason]
+      : [];
+    const allReasons = [...reasons, ...evaluation.reasons, ...scopeReasons];
     return { required: true, usable: allReasons.length === 0, receiptId: parsed.receiptId, reasons: allReasons };
   };
-
-  const coveredAcceptance = new Set([
-    ...verifications.filter(isVerificationValid).flatMap((v) => normalizedCoverageFor(v) || []),
-    ...waivers.flatMap((w) => w.acceptanceCoverage || []),
-  ]);
 
   const obligationSatisfied = (obligationId: string) => {
     const declared = declaredById.get(obligationId);
@@ -378,13 +540,16 @@ export const evaluateTrustCompletion = ({
     if (verification && isVerificationValid(verification)) {
       if (expectedClass === 'judgment') {
         if (verification.evidenceClass === 'judgment') {
-          if (!reviewLineageFor(obligationId, verification, declared).usable) return false;
-          const requiredAcceptanceIds = Array.isArray(declared?.acceptanceIds)
-            ? declared.acceptanceIds.map(String).filter(Boolean)
-            : [];
-          if (requiredAcceptanceIds.length > 0) {
-            const coverage = normalizedCoverageFor(verification) || [];
-            if (!requiredAcceptanceIds.every((acId) => coverage.includes(acId) || coveredAcceptance.has(acId))) return false;
+          const lineage = reviewLineageFor(obligationId, verification, declared);
+          if (!lineage.usable) return false;
+          if (!lineage.required) {
+            const requiredAcceptanceIds = Array.isArray(declared?.acceptanceIds)
+              ? declared.acceptanceIds.map(String).filter(Boolean)
+              : [];
+            if (requiredAcceptanceIds.length > 0) {
+              const coverage = normalizedCoverageFor(verification) || [];
+              if (!requiredAcceptanceIds.every((acId) => coverage.includes(acId))) return false;
+            }
           }
           return true;
         }
@@ -446,6 +611,10 @@ export const evaluateTrustCompletion = ({
   const goalEvidenceSatisfied = goalEvidenceObligations.length > 0
     && (requiredGoalEvidence.length === 0 || goalEvidenceCount > 0);
 
+  const coveredAcceptance = new Set([
+    ...verifications.filter(isVerificationValid).flatMap((v) => normalizedCoverageFor(v) || []),
+    ...waivers.flatMap((w) => w.acceptanceCoverage || []),
+  ]);
   // Coverage may be declared by acceptance id (AC-1) or by statement.
   const contractAcceptance = Array.isArray(run.taskContract?.acceptance) ? run.taskContract.acceptance : [];
   // Completion must not trust a legacy verification row merely because it

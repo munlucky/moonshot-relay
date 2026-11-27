@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
@@ -2794,6 +2795,282 @@ test('S3 P1 interrupted Git closeout resumes from existingCommitSha without seco
     await driftFixture.cp.close();
     await rm(driftFixture.runtimeHome, { recursive: true, force: true });
     await rm(driftFixture.root, { recursive: true, force: true });
+  }
+});
+
+test('S3 P1-B: shared AC requiring both hard proof and independent review stays pending review until a receipt covers the current AC wording', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-shared-ac-review-'));
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-shared-ac-review-state-'));
+  const runId = 'review-shared-ac-strict';
+  await mkdir(path.join(root, '.moon-relay'), { recursive: true });
+  await writeFile(path.join(root, '.moon-relay', 'track.yaml'), 'track: kernel\n');
+  await writeFile(path.join(root, 'package.json'), JSON.stringify({
+    scripts: { test: 'node -e "process.exit(0)"', lint: 'node -e "process.exit(0)"' },
+  }));
+  await writeFile(path.join(root, 'app.mjs'), 'export const value = 0;\n');
+  const cp = await createKernelControlPlane({ runtimeHome, projectRoot: root });
+  try {
+    // Plain acceptance criterion (no explicit evidencePlan): compiled onto BOTH hard proofs AND security-review!
+    await cp.startRun({
+      runId,
+      objective: 'Shared AC must require independent review on current wording even when hard proofs pass',
+      taskContract: {
+        surfaces: ['security_boundary'],
+        acceptance: ['auth boundary validates bearer token'],
+        allowedPaths: ['app.mjs'],
+      },
+    });
+    const implementer = createClaudeAdapter({
+      launch: async ({ invocation }) => ({
+        resolvedModel: assertTestRecord(invocation).model,
+        observedModel: assertTestRecord(invocation).model,
+        resolvedEffort: assertTestRecord(invocation).effort,
+        observedEffort: assertTestRecord(invocation).effort,
+        sessionId: `${runId}-implementer`,
+      }),
+    });
+    const impl = await dispatchKernelTurn({
+      controlPlane: cp,
+      runId,
+      adapter: implementer,
+      registry: createModelRegistry({
+        surface: 'claude',
+        env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'configured-frontier', MOON_RELAY_KERNEL_MODEL_VALUE: 'configured-value' },
+      }),
+      actionContext: { executionMode: 'native-subagent', delegationRequested: true },
+    });
+    await writeFile(path.join(root, 'app.mjs'), 'export const value = 1;\n');
+    await cp.report(runId, {
+      summary: 'implemented v1',
+      capsuleId: assertTestPresent(impl.executionCapsule).capsuleId,
+      stepId: assertTestPresent(impl.executionCapsule).stepId,
+      changedPaths: ['app.mjs'],
+    });
+
+    const registry = createModelRegistry({
+      surface: 'claude',
+      env: { MOON_RELAY_KERNEL_MODEL_FRONTIER: 'strict-frontier', MOON_RELAY_KERNEL_MODEL_FRONTIER_EFFORT: 'high' },
+    });
+
+    // Strengthen AC-1 wording while v1 review is in flight, AND refresh hard proofs on v2 so hard proof covers AC-1!
+    const v1Reviewer = createClaudeAdapter({
+      launch: async ({ invocation }) => {
+        await cp.reviseContract(runId, normalizeTaskContract({
+          objective: 'Shared AC must require independent review on current wording even when hard proofs pass',
+          surfaces: ['security_boundary'],
+          acceptance: ['auth boundary enforces strict bearer token + audience verification'],
+          allowedPaths: ['app.mjs'],
+        }));
+        await cp.executeProof(runId, { obligationId: 'unit-test', commandRef: 'test', acceptanceCoverage: ['AC-1'] });
+        await cp.executeProof(runId, { obligationId: 'static-analysis', commandRef: 'lint', acceptanceCoverage: ['AC-1'] });
+        return {
+          resolvedModel: assertTestRecord(invocation).model,
+          observedModel: assertTestRecord(invocation).model,
+          resolvedEffort: assertTestRecord(invocation).effort,
+          observedEffort: assertTestRecord(invocation).effort,
+          sessionId: `${runId}-reviewer-v1`,
+          outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://shared-ac-v1'] },
+        };
+      },
+    });
+    const stalePass = await dispatchKernelTurn({
+      controlPlane: cp,
+      runId,
+      adapter: v1Reviewer,
+      registry,
+      actionContext: REVIEW_ACTION,
+    });
+    assert.ok(stalePass.reviewReceiptId);
+    assert.deepEqual(assertTestPresent(stalePass.reviewReceipt).acceptanceCoverage, [], 'v1 review must not cover strengthened AC-1');
+
+    // Even though hard proofs ALREADY cover AC-1 on v2 (gates.acceptanceCovered === true),
+    // security-review must remain UNSATISFIED and Run must stay pending review (NEVER done)!
+    const completion = await cp.assessCompletion(runId);
+    assert.equal(completion.gates.acceptanceCovered, true, 'hard proofs already cover AC-1 on v2');
+    const reviewStatus = completion.obligationStatuses.find((entry) => entry.obligationId === 'security-review');
+    assert.equal(reviewStatus?.satisfied, false, 'hard proof must NEVER satisfy security-review for an unreviewed AC wording');
+    assert.equal(completion.readyExceptClose, false);
+    assert.equal(assertTestRecord(assertTestRecord(stalePass.next).action).type, 'review');
+    assert.equal((await cp.getRun(runId))?.status, 'active');
+
+    // Now a fresh v2 reviewer reviews the new AC-1 statement -> completes cleanly to done!
+    const v2Reviewer = createClaudeAdapter({
+      launch: async ({ invocation }) => ({
+        resolvedModel: assertTestRecord(invocation).model,
+        observedModel: assertTestRecord(invocation).model,
+        resolvedEffort: assertTestRecord(invocation).effort,
+        observedEffort: assertTestRecord(invocation).effort,
+        sessionId: `${runId}-reviewer-v2`,
+        outcome: { verdict: 'pass', findings: [], risks: [], evidenceRefs: ['review://shared-ac-v2'] },
+      }),
+    });
+    const freshPass = await dispatchKernelTurn({
+      controlPlane: cp,
+      runId,
+      adapter: v2Reviewer,
+      registry,
+      actionContext: REVIEW_ACTION,
+    });
+    assert.deepEqual(assertTestPresent(freshPass.reviewReceipt).acceptanceCoverage, ['AC-1']);
+    assert.equal(assertTestRecord(assertTestRecord(freshPass.next).action).type, 'done');
+    assert.equal((await cp.getRun(runId))?.status, 'completed');
+  } finally {
+    await cp.close();
+    await rm(runtimeHome, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('S3 P1-C: unreadable or mismatched bound report checkpoint never adopts another attempt on the same revision and blocks without Git commit or done', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'kernel-bound-cp-strict-'));
+  const runtimeHome = await mkdtemp(path.join(os.tmpdir(), 'kernel-bound-cp-strict-state-'));
+  const runId = 'bound-checkpoint-strict';
+  const flakyFlag = path.join(runtimeHome, 'pass-next.flag');
+  const flakyScript = path.join(runtimeHome, 'flaky-test.mjs');
+  await writeFile(flakyScript, `import { existsSync, writeFileSync } from 'node:fs';\nif (!existsSync(${JSON.stringify(flakyFlag)})) { writeFileSync(${JSON.stringify(flakyFlag)}, '1'); process.exit(1); }\nprocess.exit(0);\n`);
+  spawnSync('git', ['init', '-b', 'main'], { cwd: root, encoding: 'utf8' });
+  spawnSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root, encoding: 'utf8' });
+  spawnSync('git', ['config', 'user.name', 'Test User'], { cwd: root, encoding: 'utf8' });
+  await mkdir(path.join(root, '.moon-relay'), { recursive: true });
+  await writeFile(path.join(root, '.moon-relay', 'track.yaml'), 'track: kernel\n');
+  await writeFile(path.join(root, 'package.json'), JSON.stringify({
+    scripts: { test: `node ${JSON.stringify(flakyScript)}`, lint: 'node -e "process.exit(0)"' },
+  }));
+  await writeFile(path.join(root, 'app.mjs'), 'export const value = 0;\n');
+  spawnSync('git', ['add', '.'], { cwd: root, encoding: 'utf8' });
+  spawnSync('git', ['commit', '-m', 'initial commit'], { cwd: root, encoding: 'utf8' });
+  const headBefore = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim();
+
+  const cp = await createKernelControlPlane({ runtimeHome, projectRoot: root });
+  try {
+    await cp.startRun({
+      runId,
+      objective: 'Strict bound report checkpoint lookup across sibling reports on same revision',
+      taskContract: {
+        surfaces: ['security_boundary'],
+        acceptance: [
+          {
+            id: 'AC-1',
+            acceptance: 'app updated',
+            evidencePlan: {
+              class: 'hard',
+              method: 'unit-test',
+              commandRefs: ['test'],
+              obligationId: 'unit-test',
+              evidenceLevel: 'work',
+            },
+          },
+        ],
+        steps: [
+          {
+            stepId: 'step-1',
+            objective: 'update app.mjs',
+            allowedPaths: ['app.mjs'],
+            acceptanceIds: ['AC-1'],
+            obligationIds: ['unit-test'],
+          },
+        ],
+        allowedPaths: ['app.mjs'],
+      },
+    });
+    const step = assertTestPresent(cp.getCurrentStep(runId));
+    await writeFile(path.join(root, 'app.mjs'), 'export const value = 2;\n');
+
+    // Submit Report 1 on attempt-1 (1st work-level test execution fails -> step fails and stays retryable on SAME mutationRevision=1).
+    const report1 = assertTestRecord(await cp.report(runId, {
+      stepId: step.stepId,
+      summary: 'report 1 with closeout approval',
+      changedPaths: ['app.mjs'],
+      verifications: [{ obligationId: 'unit-test', commandRef: 'test', acceptanceCoverage: ['AC-1'] }],
+      gitCloseoutRequest: {
+        requested: true,
+        mode: 'commit',
+        approvalReceipt: 'report-1-approval',
+        commitMessage: 'feat: report 1 commit',
+      },
+    }));
+    const reportKey1 = assertTestString(report1.reportKey);
+    assert.equal(report1.status, 'evidence-failed');
+    const attempt1 = assertTestPresent(cp.stateStore.findStepAttemptByReportKey(runId, reportKey1));
+
+    // Submit Report 2 on attempt-2 on the EXACT SAME mutationRevision=1 (2nd test execution passes -> step passes).
+    const report2 = assertTestRecord(await cp.report(runId, {
+      stepId: step.stepId,
+      summary: 'report 2 sibling on same revision',
+      verifications: [
+        { obligationId: 'unit-test', commandRef: 'test', acceptanceCoverage: ['AC-1'] },
+        { obligationId: 'static-analysis', commandRef: 'lint' },
+      ],
+      gitCloseoutRequest: {
+        requested: true,
+        mode: 'commit',
+        approvalReceipt: 'report-2-approval',
+        commitMessage: 'feat: report 2 sibling commit',
+      },
+    }));
+    const reportKey2 = assertTestString(report2.reportKey);
+    assert.equal(report2.status, 'in-progress');
+    const attempt2 = assertTestPresent(cp.stateStore.findStepAttemptByReportKey(runId, reportKey2));
+    assert.notEqual(attempt1.attemptId, attempt2.attemptId);
+    assert.notEqual(reportKey1, reportKey2);
+
+    // Approve security-review without auto-finalizing so Run is ready for settlement.
+    await cp.approveObligation({
+      runId,
+      obligationId: 'security-review',
+      approver: 'operator',
+      reason: 'ready to test strict checkpoint resolution',
+      approvalRef: 'operator-ref:bound-cp',
+      autoFinalize: false,
+    });
+
+    // Corrupt attempt-2's report_checkpoint_json directly in SQLite while attempt-1 remains valid on the SAME revision!
+    const rawDb = new DatabaseSync(cp.stateStore.dbPath);
+    try {
+      rawDb.prepare('UPDATE run_step_attempts SET report_checkpoint_json = ? WHERE attempt_id = ?')
+        .run(JSON.stringify({ schemaVersion: 999, broken: true }), attempt2.attemptId);
+    } finally {
+      rawDb.close();
+    }
+
+    // 1. Targeting attempt2Id must FAIL CLOSED (must NOT fall back to sibling attempt1's checkpoint, commit, or return done!).
+    const byCorruptAttempt = await cp.settleAuthorizedRun(runId, { preferredAttemptId: attempt2.attemptId });
+    assert.equal(byCorruptAttempt.settled, false);
+    assert.equal(byCorruptAttempt.blockedReason, 'report_checkpoint_unreadable');
+    assert.equal(byCorruptAttempt.finalization, null);
+    assert.equal(spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim(), headBefore);
+    assert.equal((await cp.getRun(runId))?.status, 'active');
+
+    // 2. Targeting reportKey2 must ALSO FAIL CLOSED!
+    const byCorruptKey = await cp.settleAuthorizedRun(runId, { preferredReportKey: reportKey2 });
+    assert.equal(byCorruptKey.settled, false);
+    assert.equal(byCorruptKey.blockedReason, 'report_checkpoint_unreadable');
+    assert.equal(byCorruptKey.finalization, null);
+    assert.equal(spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim(), headBefore);
+    assert.equal((await cp.getRun(runId))?.status, 'active');
+
+    // 3. Default resume (no explicit preferred id/key) sees latest reported attempt (attempt2) is corrupt -> FAIL CLOSED!
+    const byDefaultResume = assertTestRecord(await cp.next(runId));
+    assert.equal(byDefaultResume.status, 'blocked');
+    assert.equal(byDefaultResume.blockedReason, 'report_checkpoint_unreadable');
+    assert.notEqual(assertTestRecord(byDefaultResume.action).type, 'done');
+    assert.equal(spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim(), headBefore);
+    assert.equal((await cp.getRun(runId))?.status, 'active');
+
+    // 4. Passing mismatched preferredReportKey + preferredAttemptId (reportKey1 + attempt2Id) must FAIL CLOSED!
+    const mismatchedPair = await cp.settleAuthorizedRun(runId, {
+      preferredAttemptId: attempt2.attemptId,
+      preferredReportKey: reportKey1,
+    });
+    assert.equal(mismatchedPair.settled, false);
+    assert.equal(mismatchedPair.blockedReason, 'report_checkpoint_binding_mismatch');
+    assert.equal(mismatchedPair.finalization, null);
+    assert.equal(spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout.trim(), headBefore);
+    assert.equal((await cp.getRun(runId))?.status, 'active');
+  } finally {
+    await cp.close();
+    await rm(runtimeHome, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 });
 

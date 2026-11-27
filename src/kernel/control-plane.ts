@@ -227,7 +227,7 @@ import { buildReviewCapsule, capsuleStaleness } from './run/execution-capsule.js
 import { buildHostExecutionContract } from '../contracts/host-execution-contract.js';
 import { buildReportOperationKey, compareReportOperation, reportPayloadDigest } from './run/report-identity.js';
 import { buildWorkAuthorityView, resolveWorkBlockingClass } from './run/work-authority.js';
-import { buildTrustAuthorityView, evaluateTrustCompletion } from './proof/trust-authority.js';
+import { buildTrustAuthorityView, evaluateTrustCompletion, resolveReviewCapsulesByReceiptId, resolveReviewReceiptVerifiedAcceptanceIds } from './proof/trust-authority.js';
 import { assertWaiverAllowed } from './proof/protected-obligations.js';
 import { findScopeViolations } from './run/capsule-selection.js';
 import { assertOwnerWorkspaceMutationCAS } from './run/mutation-guard.js';
@@ -972,12 +972,14 @@ export const createKernelControlPlane = async ({
     const run = store.getRun(runId);
     if (!run) throw new Error('run_not_found');
     const resolvedObligations = obligations || store.getRunObligations(runId);
+    const resolvedReviews = reviews || store.listReviewReceipts(runId);
     return evaluateTrustCompletion({
       run,
       verifications: verifications || store.getVerifications(runId),
       obligations: resolvedObligations,
       waivers: store.getWaivers(runId),
-      reviewReceipts: reviews || store.listReviewReceipts(runId),
+      reviewReceipts: resolvedReviews,
+      reviewCapsulesByReceiptId: resolveReviewCapsulesByReceiptId(store, runId, resolvedReviews),
       releaseEvidence: store.getLatestEvidencePack(runId),
       mutationProvenance: store.getMutationProvenance(runId),
       verificationScopeIdentities: scopedIdentities || verificationScopeIdentities(runId, resolvedObligations),
@@ -3316,47 +3318,19 @@ export const createKernelControlPlane = async ({
 
     isReviewReceiptAcceptanceScopeCurrent(runId: string, run: KernelRun, receipt: ReviewReceipt): boolean {
       const declaredObligation = store.getRunObligation(runId, receipt.obligationId);
-      const requiredIds = Array.isArray(declaredObligation?.acceptanceIds)
-        ? declaredObligation.acceptanceIds.map(String).filter(Boolean)
-        : [];
-      if (requiredIds.length === 0) return true;
-      const receiptCoverage = new Set(Array.isArray(receipt.acceptanceCoverage) ? receipt.acceptanceCoverage.map(String) : []);
       const usage = receipt.reviewer?.usageReceiptId
         ? store.getModelUsageReceipt(receipt.reviewer.usageReceiptId, { runId })
         : null;
       const capsule = usage?.capsuleId
         ? store.getExecutionCapsule(usage.capsuleId, { runId })
         : null;
-      if (capsule) {
-        const capsuleAcceptance = Array.isArray(capsule.acceptance) ? capsule.acceptance.map(asRecord) : [];
-        const hasCapsuleBindings = capsuleAcceptance.some(
-          (entry) => Array.isArray(entry.obligationIds) && entry.obligationIds.length > 0,
-        );
-        if (!hasCapsuleBindings) {
-          // Legacy pre-binding capsule (e.g. 8ac626d3): never auto-satisfy uncovered
-          // acceptance criteria; allow reuse only on the same revision when every
-          // shared AC is already covered by current hard verifications.
-          if (Number(receipt.planRevision || 1) !== Number(run.planRevision || run.contractRevision || 1)) {
-            return false;
-          }
-          const otherCoverage = new Set(
-            store.getVerifications(runId)
-              .filter((v) => v.obligationId !== receipt.obligationId && v.status === 'passed' && Number(v.contractRevision || 1) === Number(run.contractRevision || 1))
-              .flatMap((v) => Array.isArray(v.acceptanceCoverage) ? v.acceptanceCoverage.map(String) : []),
-          );
-          return requiredIds.every((acId) => receiptCoverage.has(acId) || otherCoverage.has(acId));
-        }
-        if (!requiredIds.every((acId) => receiptCoverage.has(acId))) return false;
-        const currentCapsuleCoverage = new Set(this.resolveCapsuleBoundAcceptanceCoverage({
-          capsule: asRecord(capsule),
-          run,
-          obligationId: receipt.obligationId,
-          declaredObligation,
-        }));
-        return requiredIds.every((acId) => currentCapsuleCoverage.has(acId));
-      }
-      if (!requiredIds.every((acId) => receiptCoverage.has(acId))) return false;
-      return Number(receipt.planRevision || 1) === Number(run.planRevision || run.contractRevision || 1);
+      return resolveReviewReceiptVerifiedAcceptanceIds({
+        receipt,
+        capsule: capsule ? asRecord(capsule) : null,
+        run,
+        obligationId: receipt.obligationId,
+        declaredObligation,
+      }).satisfied;
     },
 
     findReusableReviewReceipt(runId: string, { obligationId }: { obligationId?: string | null } = {}) {
@@ -4316,12 +4290,20 @@ export const createKernelControlPlane = async ({
         preferredReportKey = null,
       }: { preferredAttemptId?: string | null; preferredReportKey?: string | null } = {},
     ): { checkpoint: ReportCheckpoint | null; attempt: WorkAttempt | null; blockedReason: string | null; errorSummary: string | null } {
-      const parseAttemptCheckpoint = (attempt: WorkAttempt | null | undefined): ReportCheckpoint | null => {
-        if (!attempt?.reportCheckpoint) return null;
+      const inspectAttemptCheckpoint = (attempt: WorkAttempt | null | undefined):
+        | { state: 'absent' }
+        | { state: 'ok'; checkpoint: ReportCheckpoint }
+        | { state: 'corrupt'; error: unknown } => {
+        if (!attempt || attempt.reportCheckpoint === null || attempt.reportCheckpoint === undefined) {
+          return { state: 'absent' };
+        }
         try {
-          return readReportCheckpoint(attempt.reportCheckpoint);
-        } catch {
-          return null;
+          const parsed = readReportCheckpoint(attempt.reportCheckpoint);
+          return parsed
+            ? { state: 'ok', checkpoint: parsed }
+            : { state: 'corrupt', error: new Error('REPORT_CHECKPOINT_INVALID') };
+        } catch (error) {
+          return { state: 'corrupt', error };
         }
       };
       const isImplementationAttempt = (attempt: WorkAttempt): boolean => {
@@ -4333,41 +4315,192 @@ export const createKernelControlPlane = async ({
           : null;
         return !decision || decision.role === 'implementer';
       };
+      const hasBoundReportRecord = (attempt: WorkAttempt | null | undefined): boolean => Boolean(
+        attempt && (
+          attempt.reportKey
+          || attempt.reportPayloadDigest
+          || attempt.reportResult
+          || (attempt.reportCheckpoint !== null && attempt.reportCheckpoint !== undefined)
+        ),
+      );
+      const isCurrentRevisionAttempt = (attempt: WorkAttempt): boolean => {
+        const parsed = inspectAttemptCheckpoint(attempt);
+        if (parsed.state === 'ok') {
+          return parsed.checkpoint.runId === runId
+            && Number(parsed.checkpoint.planRevision) === Number(run.planRevision)
+            && Number(parsed.checkpoint.mutationRevision) === Number(run.mutationRevision);
+        }
+        return Number(attempt.planRevision || 1) === Number(run.planRevision)
+          && Number(attempt.mutationRevision ?? run.mutationRevision) === Number(run.mutationRevision);
+      };
 
+      const explicitKey = preferredReportKey ? String(preferredReportKey).trim() : null;
+      const explicitAttemptId = preferredAttemptId ? String(preferredAttemptId).trim() : null;
+      const explicitTarget = Boolean(explicitKey || explicitAttemptId);
       let boundAttempt: WorkAttempt | null = null;
       let checkpoint: ReportCheckpoint | null = null;
 
-      if (preferredReportKey) {
-        const byKey = store.findStepAttemptByReportKey?.(runId, preferredReportKey) || null;
-        const parsed = parseAttemptCheckpoint(byKey);
-        if (byKey && parsed) {
-          boundAttempt = byKey;
-          checkpoint = parsed;
+      if (explicitKey && explicitAttemptId) {
+        const byKey = store.findStepAttemptByReportKey?.(runId, explicitKey) || null;
+        const byId = store.getStepAttemptByAttemptId(explicitAttemptId, { runId });
+        if (!byKey || !byId || byKey.attemptId !== byId.attemptId) {
+          return {
+            checkpoint: null,
+            attempt: byId || byKey,
+            blockedReason: 'report_checkpoint_binding_mismatch',
+            errorSummary: 'Specified reportKey and attemptId do not resolve to the same implementation Attempt',
+          };
         }
-      }
-      if (!checkpoint && preferredAttemptId) {
-        const byId = store.getStepAttemptByAttemptId(preferredAttemptId, { runId });
-        const parsed = parseAttemptCheckpoint(byId);
-        if (byId && parsed) {
+        const inspected = inspectAttemptCheckpoint(byId);
+        if (inspected.state === 'corrupt') {
+          return {
+            checkpoint: null,
+            attempt: byId,
+            blockedReason: 'report_checkpoint_unreadable',
+            errorSummary: `Bound Report checkpoint for attempt ${byId.attemptId} could not be restored: ${errorMessage(inspected.error)}`,
+          };
+        }
+        if (inspected.state === 'absent') {
+          return {
+            checkpoint: null,
+            attempt: byId,
+            blockedReason: 'report_checkpoint_missing',
+            errorSummary: `Bound Report checkpoint for attempt ${byId.attemptId} (${explicitKey}) is missing`,
+          };
+        }
+        boundAttempt = byId;
+        checkpoint = inspected.checkpoint;
+      } else if (explicitKey) {
+        const byKey = store.findStepAttemptByReportKey?.(runId, explicitKey) || null;
+        if (!byKey) {
+          return {
+            checkpoint: null,
+            attempt: null,
+            blockedReason: 'report_checkpoint_missing',
+            errorSummary: `No implementation Attempt found for bound reportKey ${explicitKey}`,
+          };
+        }
+        const inspected = inspectAttemptCheckpoint(byKey);
+        if (inspected.state === 'corrupt') {
+          return {
+            checkpoint: null,
+            attempt: byKey,
+            blockedReason: 'report_checkpoint_unreadable',
+            errorSummary: `Bound Report checkpoint for reportKey ${explicitKey} could not be restored: ${errorMessage(inspected.error)}`,
+          };
+        }
+        if (inspected.state === 'absent') {
+          return {
+            checkpoint: null,
+            attempt: byKey,
+            blockedReason: 'report_checkpoint_missing',
+            errorSummary: `Bound Report checkpoint for reportKey ${explicitKey} is missing`,
+          };
+        }
+        boundAttempt = byKey;
+        checkpoint = inspected.checkpoint;
+      } else if (explicitAttemptId) {
+        const byId = store.getStepAttemptByAttemptId(explicitAttemptId, { runId });
+        if (!byId) {
+          return {
+            checkpoint: null,
+            attempt: null,
+            blockedReason: 'report_checkpoint_missing',
+            errorSummary: `Bound implementation Attempt ${explicitAttemptId} was not found`,
+          };
+        }
+        const inspected = inspectAttemptCheckpoint(byId);
+        if (inspected.state === 'corrupt') {
+          return {
+            checkpoint: null,
+            attempt: byId,
+            blockedReason: 'report_checkpoint_unreadable',
+            errorSummary: `Bound Report checkpoint for attempt ${byId.attemptId} could not be restored: ${errorMessage(inspected.error)}`,
+          };
+        }
+        if (inspected.state === 'ok') {
           boundAttempt = byId;
-          checkpoint = parsed;
+          checkpoint = inspected.checkpoint;
+        } else if (hasBoundReportRecord(byId)) {
+          return {
+            checkpoint: null,
+            attempt: byId,
+            blockedReason: 'report_checkpoint_missing',
+            errorSummary: `Bound implementation Attempt ${byId.attemptId} recorded a Report without a restorable checkpoint`,
+          };
+        } else {
+          // Pre-report routed Attempt (e.g., dispatchKernelTurn(impl) followed by
+          // report without attemptId): never guess when multiple reported attempts
+          // exist on the same revision; allow resolution only if unambiguous.
+          const currentReportedAttempts = store.getStepAttempts(runId)
+            .filter(isImplementationAttempt)
+            .filter(hasBoundReportRecord)
+            .filter(isCurrentRevisionAttempt);
+          if (currentReportedAttempts.length > 1) {
+            return {
+              checkpoint: null,
+              attempt: byId,
+              blockedReason: 'report_checkpoint_ambiguous',
+              errorSummary: 'Multiple reported Attempts exist on the current revision; refusing to adopt an unbound Report checkpoint',
+            };
+          }
+          const singleAttempt = currentReportedAttempts[0] || null;
+          if (singleAttempt) {
+            const singleInspected = inspectAttemptCheckpoint(singleAttempt);
+            if (singleInspected.state === 'corrupt') {
+              return {
+                checkpoint: null,
+                attempt: singleAttempt,
+                blockedReason: 'report_checkpoint_unreadable',
+                errorSummary: `Report checkpoint for attempt ${singleAttempt.attemptId} could not be restored: ${errorMessage(singleInspected.error)}`,
+              };
+            }
+            if (singleInspected.state === 'absent') {
+              return {
+                checkpoint: null,
+                attempt: singleAttempt,
+                blockedReason: 'report_checkpoint_missing',
+                errorSummary: `Report checkpoint for attempt ${singleAttempt.attemptId} is missing`,
+              };
+            }
+            boundAttempt = singleAttempt;
+            checkpoint = singleInspected.checkpoint;
+          }
         }
-      }
-      if (!checkpoint) {
-        const matchingAttempts = store.getStepAttempts(runId)
+      } else {
+        const priorGitReceipt = store.getGitCloseoutReceipt(runId);
+        const priorReceiptReportKey = typeof priorGitReceipt?.receiptJson?.reportKey === 'string'
+          && priorGitReceipt.receiptJson.reportKey.trim()
+          ? String(priorGitReceipt.receiptJson.reportKey).trim()
+          : null;
+        if (priorReceiptReportKey) {
+          return this.resolveBoundReportCheckpoint(runId, run, { preferredReportKey: priorReceiptReportKey });
+        }
+        const currentReportedAttempts = store.getStepAttempts(runId)
           .filter(isImplementationAttempt)
-          .map((attempt) => ({ attempt, checkpoint: parseAttemptCheckpoint(attempt) }))
-          .filter((entry): entry is { attempt: WorkAttempt; checkpoint: ReportCheckpoint } => (
-            Boolean(entry.checkpoint)
-            && entry.checkpoint!.runId === runId
-            && Number(entry.checkpoint!.planRevision) === Number(run.planRevision)
-            && Number(entry.checkpoint!.mutationRevision) === Number(run.mutationRevision)
-            && (!entry.attempt.reportKey || entry.attempt.reportKey === entry.checkpoint!.reportKey)
-          ));
-        const latestMatch = matchingAttempts.at(-1) || null;
-        if (latestMatch) {
-          boundAttempt = latestMatch.attempt;
-          checkpoint = latestMatch.checkpoint;
+          .filter(hasBoundReportRecord)
+          .filter(isCurrentRevisionAttempt);
+        const latestReported = currentReportedAttempts.at(-1) || null;
+        if (latestReported) {
+          const inspected = inspectAttemptCheckpoint(latestReported);
+          if (inspected.state === 'corrupt') {
+            return {
+              checkpoint: null,
+              attempt: latestReported,
+              blockedReason: 'report_checkpoint_unreadable',
+              errorSummary: `Report checkpoint for attempt ${latestReported.attemptId} could not be restored: ${errorMessage(inspected.error)}`,
+            };
+          }
+          if (inspected.state === 'absent') {
+            return {
+              checkpoint: null,
+              attempt: latestReported,
+              blockedReason: 'report_checkpoint_missing',
+              errorSummary: `Report checkpoint for attempt ${latestReported.attemptId} is missing`,
+            };
+          }
+          boundAttempt = latestReported;
+          checkpoint = inspected.checkpoint;
         }
       }
 
@@ -4376,7 +4509,8 @@ export const createKernelControlPlane = async ({
       }
 
       const closeoutRequested = checkpoint.report.gitCloseoutRequest?.requested === true;
-      const keyMatches = !boundAttempt.reportKey || boundAttempt.reportKey === checkpoint.reportKey;
+      const keyMatches = (!boundAttempt.reportKey || boundAttempt.reportKey === checkpoint.reportKey)
+        && (!explicitKey || checkpoint.reportKey === explicitKey);
       const revisionMatches = checkpoint.runId === runId
         && Number(checkpoint.planRevision) === Number(run.planRevision)
         && Number(checkpoint.mutationRevision) === Number(run.mutationRevision);
@@ -4384,9 +4518,18 @@ export const createKernelControlPlane = async ({
         || checkpoint.observation?.identity === run.currentWorkspaceIdentity;
 
       if (!closeoutRequested) {
-        return revisionMatches && keyMatches && runIdentityMatches
-          ? { checkpoint, attempt: boundAttempt, blockedReason: null, errorSummary: null }
-          : { checkpoint: null, attempt: null, blockedReason: null, errorSummary: null };
+        if (revisionMatches && keyMatches && runIdentityMatches) {
+          return { checkpoint, attempt: boundAttempt, blockedReason: null, errorSummary: null };
+        }
+        if (explicitTarget) {
+          return {
+            checkpoint: null,
+            attempt: boundAttempt,
+            blockedReason: 'report_checkpoint_binding_mismatch',
+            errorSummary: 'Bound Report checkpoint does not match the current Run revision, reportKey, or workspace identity',
+          };
+        }
+        return { checkpoint: null, attempt: null, blockedReason: null, errorSummary: null };
       }
 
       const priorGitReceipt = store.getGitCloseoutReceipt(runId);

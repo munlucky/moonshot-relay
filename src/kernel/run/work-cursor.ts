@@ -15,7 +15,7 @@ import { planReplacementSteps, planRunSteps } from './step-planner.js';
 import { canonicalDigest } from '../../shared/canonical-digest.js';
 import { authoritativeVerificationScope } from '../../contracts/verification-settlement.js';
 import { projectRunState } from '../state-projector.js';
-import { evaluateTrustCompletion } from '../proof/trust-authority.js';
+import { evaluateTrustCompletion, resolveReviewCapsulesByReceiptId } from '../proof/trust-authority.js';
 import { assertAttemptLineage } from './attempt-provenance.js';
 import { assertImplementationWorkUnitScope, resolveWorkUnitAllowedPaths } from '../../contracts/work-unit-scope.js';
 import { assertRunWorktreeMutationAuthority } from '../../contracts/worktree-authority.js';
@@ -159,7 +159,8 @@ interface RepositoryInspection {
   aggregateDigest: string;
 }
 
-type WorkCursorStore = Pick<Awaited<ReturnType<typeof openKernelStateStore>>, 'getRun' | 'getRunStep' | 'getRunSteps' | 'createRunSteps' | 'updateRunStep' | 'recordStepAttempt' | 'updateStepAttempt' | 'getActiveStepAttempt' | 'getStepAttempts' | 'getStepAttemptByAttemptId' | 'attachAttemptLineage' | 'recordStepResult' | 'finishStepAttempt' | 'getRunOwnerBinding' | 'getRunObligations' | 'replaceRunPlanAtomic' | 'getProjectWorkspace' | 'registerProjectWorkspace' | 'getWorktreeMutationLease' | 'getVerifications' | 'getWaivers' | 'listReviewReceipts' | 'getLatestEvidencePack' | 'getMutationProvenance' | 'recordExecutionCapsule' | 'getExecutionCapsule' | 'latestExecutionCapsule' | 'getImplementationPrincipal'>;
+type WorkCursorStore = Pick<Awaited<ReturnType<typeof openKernelStateStore>>, 'getRun' | 'getRunStep' | 'getRunSteps' | 'createRunSteps' | 'updateRunStep' | 'recordStepAttempt' | 'updateStepAttempt' | 'getActiveStepAttempt' | 'getStepAttempts' | 'getStepAttemptByAttemptId' | 'attachAttemptLineage' | 'recordStepResult' | 'finishStepAttempt' | 'getRunOwnerBinding' | 'getRunObligations' | 'replaceRunPlanAtomic' | 'getProjectWorkspace' | 'registerProjectWorkspace' | 'getWorktreeMutationLease' | 'getVerifications' | 'getWaivers' | 'listReviewReceipts' | 'getLatestEvidencePack' | 'getMutationProvenance' | 'recordExecutionCapsule' | 'getExecutionCapsule' | 'latestExecutionCapsule' | 'getImplementationPrincipal'>
+  & Partial<Pick<Awaited<ReturnType<typeof openKernelStateStore>>, 'getModelUsageReceipt'>>;
 
 interface StepBinding extends UnknownRecord {
   workspaceId?: string | null;
@@ -838,12 +839,14 @@ export const createWorkCursorApi = ({
         scopes: authority.scope,
       });
     }
+    const reviewReceipts = store.listReviewReceipts(runId);
     const completion = evaluateTrustCompletion({
       run: persistedRun,
       verifications: store.getVerifications(runId),
       obligations,
       waivers: store.getWaivers(runId),
-      reviewReceipts: store.listReviewReceipts(runId),
+      reviewReceipts,
+      reviewCapsulesByReceiptId: resolveReviewCapsulesByReceiptId(store, runId, reviewReceipts),
       releaseEvidence: store.getLatestEvidencePack(runId),
       mutationProvenance: store.getMutationProvenance(runId),
       verificationScopeIdentities,

@@ -247,7 +247,20 @@ const readinessBlockedPayload = ({ modelInput, readiness }: { modelInput: Unknow
   };
 };
 
-const processHostLifecycleOutput = async ({ bridge, controlPlane, runId, modelInput }: { bridge: HostLifecycleBridge | null; controlPlane: ControlPlane; runId: string | null; modelInput: UnknownRecord | null; parameters?: McpParameters }): Promise<{ output: UnknownRecord | null; hostReview: UnknownRecord | null; finalization?: UnknownRecord | null }> => {
+const processHostLifecycleOutput = async ({ bridge, controlPlane, runId, modelInput }: { bridge: HostLifecycleBridge | null; controlPlane: ControlPlane; runId: string | null; modelInput: UnknownRecord | null; parameters?: McpParameters }): Promise<{
+  output: UnknownRecord | null;
+  hostReview: UnknownRecord | null;
+  finalization?: UnknownRecord | null;
+  postReceiptBlocked?: boolean;
+  reviewStatus?: string;
+  reviewReceiptId?: string | null;
+  reviewReceiptAccepted?: boolean;
+  proofSettled?: boolean | undefined;
+  settlementStatus?: string | undefined;
+  blockedReason?: string | null;
+  errorSummary?: string | null;
+  blocker?: UnknownRecord | null;
+}> => {
   if (!modelInput || modelInput.status === 'contract-rejected') return { output: modelInput, hostReview: null, finalization: null };
   let activeModelInput = modelInput;
   if (runId && asRecord(activeModelInput.action).type === 'baseline-required'
@@ -315,31 +328,111 @@ const processHostLifecycleOutput = async ({ bridge, controlPlane, runId, modelIn
   }));
   const dispatchedReview = asRecord(dispatched.review);
   const nestedReview = asRecord(dispatchedReview.review);
+  const dispatchedBlocker = dispatched.blocker && typeof dispatched.blocker === 'object'
+    ? asRecord(dispatched.blocker)
+    : null;
+  const blockedReason = dispatchedReview.blockedReason
+    ? String(dispatchedReview.blockedReason)
+    : (dispatchedBlocker?.reason ? String(dispatchedBlocker.reason) : null);
+  const errorSummary = dispatchedReview.errorSummary
+    ? String(dispatchedReview.errorSummary)
+    : (dispatchedBlocker?.detail ? String(dispatchedBlocker.detail) : null);
+  const reviewReceiptId = dispatched.reviewReceiptId ? String(dispatched.reviewReceiptId) : null;
+  const reviewReceiptAccepted = dispatchedReview.reviewReceiptAccepted === true || Boolean(reviewReceiptId);
+  const proofSettled = typeof dispatchedReview.proofSettled === 'boolean' ? dispatchedReview.proofSettled : undefined;
+  const settlementStatus = typeof dispatchedReview.settlementStatus === 'string' ? dispatchedReview.settlementStatus : undefined;
   const hostReview = dispatched.hostReview ? asRecord(dispatched.hostReview) : {
     schemaVersion: 1,
-    status: dispatched.reviewReceiptId
-      ? (dispatchedReview.proofSettled === false
+    status: reviewReceiptId
+      ? (proofSettled === false
         ? 'proof-settlement-failed'
-        : (dispatchedReview.blockedReason ? 'settlement-blocked' : 'receipt-recorded'))
+        : (dispatchedReview.status === 'continuation-failed'
+          ? 'continuation-failed'
+          : (blockedReason ? 'settlement-blocked' : 'receipt-recorded')))
       : 'blocked',
-    reviewReceiptId: dispatched.reviewReceiptId || null,
+    reviewReceiptId,
+    ...(reviewReceiptAccepted ? { reviewReceiptAccepted: true } : {}),
+    ...(proofSettled !== undefined ? { proofSettled } : {}),
+    ...(settlementStatus ? { settlementStatus } : {}),
+    ...(blockedReason ? { blockedReason } : {}),
+    ...(errorSummary ? { errorSummary } : {}),
     verdict: nestedReview.verdict || null,
     findings: Array.isArray(nestedReview.findings) ? nestedReview.findings : [],
     evidenceRefs: Array.isArray(nestedReview.evidenceRefs) ? nestedReview.evidenceRefs : [],
-    blocker: dispatched.blocker || null,
+    blocker: dispatchedBlocker || (blockedReason ? { reason: blockedReason, detail: errorSummary } : null),
     readiness,
     wait: { owner: 'host', strategy: 'single-bounded-dispatch', repeatedPolling: false },
   };
+  const resolvedBlockedReason = blockedReason
+    || (hostReview.blockedReason ? String(hostReview.blockedReason) : null)
+    || (asRecord(hostReview.blocker).reason ? String(asRecord(hostReview.blocker).reason) : null);
+  const resolvedErrorSummary = errorSummary
+    || (hostReview.errorSummary ? String(hostReview.errorSummary) : null)
+    || (asRecord(hostReview.blocker).detail ? String(asRecord(hostReview.blocker).detail) : null);
+  const resolvedBlocker = dispatchedBlocker
+    || (hostReview.blocker && typeof hostReview.blocker === 'object' ? asRecord(hostReview.blocker) : null)
+    || (resolvedBlockedReason ? { reason: resolvedBlockedReason, detail: resolvedErrorSummary } : null);
+  const resolvedProofSettled = proofSettled !== undefined
+    ? proofSettled
+    : (typeof hostReview.proofSettled === 'boolean' ? hostReview.proofSettled : undefined);
   const dispatchedNext = dispatched.next && typeof dispatched.next === 'object'
     ? asRecord(dispatched.next)
     : null;
-  const refreshedNext = dispatchedNext
-    || (dispatched.reviewReceiptId && typeof controlPlane.next === 'function'
-      ? asRecord(await controlPlane.next(runId as string))
-      : activeModelInput);
+  const hasExplicitNullNext = Object.prototype.hasOwnProperty.call(dispatched, 'next') && dispatched.next === null;
+  const hasStructuredBlocker = Boolean(
+    resolvedBlockedReason
+    || resolvedBlocker
+    || ['continuation-failed', 'proof-settlement-failed', 'settlement-blocked', 'lease-conflict', 'blocked']
+      .includes(String(dispatchedReview.status || hostReview.status || '')),
+  );
+  const kernelReturnedBlockedContinuation = !dispatchedNext && (
+    hasExplicitNullNext
+    || hasStructuredBlocker
+    || reviewReceiptAccepted
+  );
   const finalization = (dispatched.finalization && typeof dispatched.finalization === 'object'
     ? asRecord(dispatched.finalization)
-    : null)
+    : null);
+  if (kernelReturnedBlockedContinuation) {
+    const blockedStatus = String(dispatchedReview.status || hostReview.status || 'blocked');
+    return {
+      output: {
+        schemaVersion: 1,
+        runId,
+        status: blockedStatus,
+        reviewReceiptId,
+        reviewReceiptAccepted,
+        ...(resolvedProofSettled !== undefined ? { proofSettled: resolvedProofSettled } : {}),
+        ...(settlementStatus ? { settlementStatus } : {}),
+        ...(resolvedBlockedReason ? { blockedReason: resolvedBlockedReason } : {}),
+        ...(resolvedErrorSummary ? { errorSummary: resolvedErrorSummary } : {}),
+        ...(resolvedBlocker ? { blocker: resolvedBlocker } : {}),
+        executionReadiness: readiness,
+        hostReview,
+        ...(finalization ? { finalization } : {}),
+        next: null,
+        action: {
+          type: 'blocked',
+          reason: resolvedBlockedReason || 'review_continuation_failed',
+          blockingClass: 'completion',
+          guidance: resolvedErrorSummary || resolvedBlockedReason || 'Review was accepted by Kernel but continuation could not be prepared.',
+        },
+      },
+      postReceiptBlocked: true,
+      reviewStatus: blockedStatus,
+      reviewReceiptId,
+      reviewReceiptAccepted,
+      proofSettled: resolvedProofSettled,
+      settlementStatus,
+      blockedReason: resolvedBlockedReason,
+      errorSummary: resolvedErrorSummary,
+      blocker: resolvedBlocker,
+      hostReview,
+      finalization,
+    };
+  }
+  const refreshedNext = dispatchedNext || activeModelInput;
+  const resolvedFinalization = finalization
     || (asRecord(refreshedNext.finalization).completionStatus
       ? asRecord(refreshedNext.finalization)
       : null);
@@ -348,10 +441,11 @@ const processHostLifecycleOutput = async ({ bridge, controlPlane, runId, modelIn
       ...refreshedNext,
       executionReadiness: readiness,
       hostReview,
-      ...(finalization ? { finalization } : {}),
+      ...(resolvedFinalization ? { finalization: resolvedFinalization } : {}),
     },
+    postReceiptBlocked: false,
     hostReview,
-    finalization,
+    finalization: resolvedFinalization,
   };
 };
 
@@ -558,6 +652,22 @@ export const handleMcpToolCall = async ({
           ...view, loopHandoff,
           loopContinuation: await continueWith(cp),
         };
+      }
+      if (processed.postReceiptBlocked === true) {
+        return projectKernelModelView({
+          ...res,
+          status: String(processed.reviewStatus || asRecord(processed.hostReview).status || 'blocked'),
+          ...(processed.reviewReceiptId ? { reviewReceiptId: processed.reviewReceiptId } : {}),
+          ...(processed.reviewReceiptAccepted !== undefined ? { reviewReceiptAccepted: processed.reviewReceiptAccepted } : {}),
+          ...(processed.proofSettled !== undefined ? { proofSettled: processed.proofSettled } : {}),
+          ...(processed.settlementStatus ? { settlementStatus: processed.settlementStatus } : {}),
+          ...(processed.blockedReason ? { blockedReason: processed.blockedReason } : {}),
+          ...(processed.errorSummary ? { errorSummary: processed.errorSummary } : {}),
+          ...(processed.blocker ? { blocker: processed.blocker } : {}),
+          ...(processed.finalization ? { finalization: processed.finalization } : {}),
+          next: null,
+          ...(processed.hostReview ? { hostReview: processed.hostReview } : {}),
+        }, { verbose: parameters.verbose === true });
       }
       if (!processed.hostReview && !processed.finalization && processed.output?.status !== 'execution-readiness-blocked' && processed.output === res.next) {
         return projectKernelModelView(res, { verbose: parameters.verbose === true });

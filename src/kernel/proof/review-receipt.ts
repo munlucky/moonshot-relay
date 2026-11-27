@@ -123,16 +123,22 @@ export const TRUSTED_ENFORCEMENT_STATUSES = Object.freeze([
   'operator_approved',
 ] as const);
 
-export const reviewSubjectKey = (receipt: ReviewReceiptInput = {}) => `review-subject-${createHash('sha256').update(JSON.stringify({
-  runId: receipt.runId || null,
-  obligationId: receipt.obligationId || null,
-  stepId: receipt.stepId || null,
-  planRevision: Number(receipt.planRevision || 1),
-  mutationRevision: Number(receipt.subject?.mutationRevision || 0),
-  workspaceIdentity: receipt.subject?.workspaceIdentity || null,
-  changedPathsDigest: receipt.subject?.changedPathsDigest || null,
-  evidenceDigest: receipt.subject?.evidenceDigest || null,
-})).digest('hex')}`;
+export const reviewSubjectKey = (receipt: ReviewReceiptInput = {}) => {
+  const acceptanceCoverage = [
+    ...new Set((Array.isArray(receipt.acceptanceCoverage) ? receipt.acceptanceCoverage : []).map(String).filter(Boolean)),
+  ].sort();
+  return `review-subject-${createHash('sha256').update(JSON.stringify({
+    runId: receipt.runId || null,
+    obligationId: receipt.obligationId || null,
+    stepId: receipt.stepId || null,
+    planRevision: Number(receipt.planRevision || 1),
+    mutationRevision: Number(receipt.subject?.mutationRevision || 0),
+    workspaceIdentity: receipt.subject?.workspaceIdentity || null,
+    changedPathsDigest: receipt.subject?.changedPathsDigest || null,
+    evidenceDigest: receipt.subject?.evidenceDigest || null,
+    acceptanceCoverage,
+  })).digest('hex')}`;
+};
 
 export const reviewSubjectAdoptionEligible = (receipt: ReviewReceiptInput = {}) => {
   const enforcement = receipt.reviewer?.enforcementStatus || null;
